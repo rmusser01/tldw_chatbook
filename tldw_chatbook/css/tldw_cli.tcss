@@ -84,7 +84,12 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     border: round $primary-lighten-2;
     background: $primary-background;
 }
+/* --- End of Sidebar Styling --- */
+/* ----------------------------- ************************* ----------------------------- */
 
+
+
+/* ----------------------------- ************************* ----------------------------- */
 /* --- Chat Window specific layouts --- */
 #chat-main-content {
     layout: vertical;
@@ -131,6 +136,64 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     height: 3;
     margin-top: 0;
 }
+
+/* Save Chat Button in chat-right-sidebar in Chat Tab */
+.save-chat-button { /* Class used in character_sidebar.py */
+    margin-top: 2;   /* Add 1 cell/unit of space above the button */
+    /*width: 100%;      Optional: make it full width like other sidebar buttons */
+}
+
+/* chat-right-sidebar Specific Styles */
+#chat-right-sidebar #chat-conversation-title-input { /* Title input */
+    /* width: 100%; (from .sidebar-input) */
+    /* margin-bottom: 1; (from .sidebar-input) */
+}
+
+#chat-right-sidebar .chat-keywords-textarea { /* Keywords TextArea specific class */
+    height: 4;  /* Or 3 to 5, adjust as preferred */
+    /* width: 100%; (from .sidebar-textarea) */
+    /* border: round $surface; (from .sidebar-textarea) */
+    /* margin-bottom: 1; (from .sidebar-textarea) */
+}
+
+/* Styling for the new "Save Details" button */
+#chat-right-sidebar .save-details-button {
+    margin-top: 1; /* Space above this button */
+    /* width: 100%;    Make it full width */
+}
+
+/* Ensure the Save Current Chat button also has clear styling if needed */
+#chat-right-sidebar .save-chat-button {
+    margin-top: 1; /* Ensure it has some space if it's after keywords */
+    /* width: 100%; */
+}
+
+/* Chat Sidebar - Prompts Section */
+#chat-prompts-collapsible Input,
+#chat-prompts-collapsible ListView,
+#chat-prompts-collapsible Button {
+    margin-bottom: 1; /* Consistent spacing */
+}
+#chat-prompt-list-view { /* ID for the prompt list in chat sidebar */
+    height: 8; /* Adjust as needed */
+    border: round $surface;
+    margin-bottom: 1;
+}
+.loaded-prompt-area { /* Container for loaded prompt details in chat sidebar */
+    margin-top: 1;
+    padding: 0 1;        /* Padding for content inside */
+    background: $surface; /* Slightly different background to group elements */
+    /* To get rounded corners for the area itself, apply a border style */
+    border: round $primary-background-lighten-1; /* Example: round border with a light color */
+                                               /* Or use 'round $surface' if you want it less distinct */
+                                               /* Or 'none' if you only want background and no explicit border */
+}
+/* End of Character Sidebar Specific Styles */
+
+/* --- End of Chat Window specific layouts --- */
+/* ----------------------------- ************************* ----------------------------- */
+
+
 
 /* --- Conversations, Characters & Prompts Window specific layouts (previously Character Chat) --- */
 /* Main container for the three-pane layout */
@@ -214,7 +277,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     margin-top: 2; /* Add some space above export options */
 }
 
-
 /* Old styles for #conv-char-main-content, #conv-char-top-area etc. are removed */
 /* as the structure within #conversations_characters_prompts-window is now different. */
 /* Portrait styling - if still needed, would be part of a specific pane's content now */
@@ -228,6 +290,124 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     align: center top;
 }
 
+/* Right Pane Styling */
+.cc-right-pane {
+    width: 25%; /* Keep 25% or 30% - adjust as needed */
+    min-width: 20; /* ADD a minimum width */
+    height: 100%;
+    background: $boost;
+    padding: 1;
+    border-left: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* ADD THIS: Collapsed state for the CCP tab's right pane */
+.cc-right-pane.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-left: none !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: none !important; /* Ensures it doesn't take space or grab focus */
+}
+
+/* Styles for the dynamic view areas within the CCP center pane */
+.ccp-view-area {
+    width: 100%;
+    height: auto; /* Allow height to be determined by content */
+    /* overflow: auto; /* If content within might overflow */
+}
+
+/* Add this class to hide elements */
+.ccp-view-area.hidden,
+.ccp-right-pane-section.hidden { /* For sections in the right pane */
+    display: none !important;
+}
+
+/* By default, let conversation messages be visible, and editor hidden */
+#ccp-conversation-messages-view {
+    /* display: block; /* or whatever its natural display is, usually block for Container */
+}
+#ccp-prompt-editor-view {
+    display: none; /* Initially hidden by CSS */
+}
+
+#ccp-character-card-view {
+    display: none; /* Initially hidden, to be shown by Python logic */
+}
+
+#ccp-character-editor-view {
+    display: none; /* Initially hidden, to be shown by Python logic */
+}
+
+/* Ensure the right pane sections also respect hidden class */
+#ccp-right-pane-llm-settings-container {
+    /* display: block; default */
+}
+#ccp-right-pane-llm-settings-container.hidden {
+    display: none !important;
+}
+
+/* Collapsible Sidebar Toggle Button For Character/Conversation Editing Page */
+.cc-sidebar-toggle-button { /* Applied to the "☰" button */
+    width: 5; /* Adjust width as needed */
+    height: 100%; /* Match parent Horizontal height, or set fixed e.g., 1 or 3 */
+    min-width: 0; /* Override other button styles if necessary */
+    border: none; /* Style as you like, e.g., remove border */
+    background: $surface-darken-1; /* Example background */
+    color: $text;
+}
+.cc-sidebar-toggle-button:hover {
+    background: $surface;
+}
+/* End of Collapsible Sidebar Toggle Button for character/conversation editing */
+
+/* --- Prompts Sidebar Vertical --- */
+.ccp-prompt-textarea { /* Specific class for prompt textareas if needed */
+    height: 10; /* Example height */
+    /* width: 100%; (from .sidebar-textarea) */
+    /* margin-bottom: 1; (from .sidebar-textarea) */
+}
+
+#ccp-prompts-listview { /* ID for the prompt list */
+    height: 10; /* Or 1fr if it's the main element in its collapsible */
+    border: round $surface;
+    margin-bottom: 1;
+}
+
+.ccp-prompt-action-buttons {
+    margin-top: 1; /* Add space above the button bar */
+    height: auto; /* Allow container height to fit buttons */
+    padding-bottom: 1; /* Add space below buttons before parent's padding */
+}
+
+.ccp-prompt-action-buttons Button {
+    width: 1fr; /* Make buttons share space */
+    margin: 0 1 0 0; /* Small right margin for all but last */
+    height: auto; /* Let button height fit its content (typically 1 line) */
+}
+.ccp-prompt-action-buttons Button:last-of-type { /* Corrected pseudo-class */
+    margin-right: 0;
+}
+
+/* Ensure Collapsible titles are clear */
+#conv-char-right-pane Collapsible > .collapsible--header {
+    background: $primary-background-darken-1; /* Example to differentiate */
+    color: $text;
+}
+
+#conv-char-right-pane Collapsible.-active > .collapsible--header { /* Optional: when expanded */
+    background: $primary-background;
+}
+/* --- End of Prompts Sidebar Vertical --- */
+/* --- End of Conversations, Characters & Prompts Window specific layouts --- */
+/* ----------------------------- ************************* ----------------------------- */
+
+
+
+/* ----------------------------- ************************* ----------------------------- */
+/* --- Logs Window --- */
 /* Logs Window adjustments */
 #logs-window {
     layout: vertical; /* Override .window's default horizontal layout for this specific window */
@@ -254,7 +434,12 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* old #logs-window { padding: 0; border: none; height: 100%; width: 100%; }
 #app-log-display { border: none; height: 1fr; width: 1fr; margin: 0; padding: 1; }
 */
+/* --- End of Logs Window --- */
+/* ----------------------------- ************************* ----------------------------- */
 
+
+
+/* ----------------------------- ************************* ----------------------------- */
 /* --- ChatMessage Styling --- */
 ChatMessage {
     width: 100%;
@@ -364,7 +549,11 @@ Collapsible > .collapsible--header {
     border: round $surface;
     margin-bottom: 1;
 }
+/* ----------------------------- ************************* ----------------------------- */
 
+
+
+/* ----------------------------- ************************* ----------------------------- */
 /* --- Notes Tab Window --- */
 /* (Assuming #notes-window has layout: horizontal; by default from .window or is set in Python) */
 
@@ -387,7 +576,12 @@ Collapsible > .collapsible--header {
     align: center middle; /* Aligns buttons horizontally if Horizontal container */
                            /* If this itself is a Vertical container, this might not do much */
 }
+/* --- End of Notes Tab Window --- */
+/* ----------------------------- ************************* ----------------------------- */
 
+
+
+/* ----------------------------- ************************* ----------------------------- */
 /* --- Metrics Screen Styling --- */
 MetricsScreen {
     padding: 1 2; /* Add some padding around the screen content */
@@ -439,177 +633,12 @@ MetricsScreen Label.-info-message {
     /* border: round $primary-lighten-1; /* Optional: border for info messages */
     text-style: italic;
 }
-
-
-/* Collapsible Sidebar Toggle Button For Character/Conversation Editing Page */
-.cc-sidebar-toggle-button { /* Applied to the "☰" button */
-    width: 5; /* Adjust width as needed */
-    height: 100%; /* Match parent Horizontal height, or set fixed e.g., 1 or 3 */
-    min-width: 0; /* Override other button styles if necessary */
-    border: none; /* Style as you like, e.g., remove border */
-    background: $surface-darken-1; /* Example background */
-    color: $text;
-}
-.cc-sidebar-toggle-button:hover {
-    background: $surface;
-}
-/* End of Collapsible Sidebar Toggle Button for character/conversation editing */
-
-
-/* Save Chat Button in Character Sidebar in Chat Tab */
-.save-chat-button { /* Class used in character_sidebar.py */
-    margin-top: 2;   /* Add 1 cell/unit of space above the button */
-    /*width: 100%;      Optional: make it full width like other sidebar buttons */
-}
+/* --- End of Metrics Screen Styling --- */
+/* ----------------------------- ************************* ----------------------------- */
 
 
 
-/* Character Sidebar Specific Styles */
-#chat-right-sidebar #chat-conversation-title-input { /* Title input */
-    /* width: 100%; (from .sidebar-input) */
-    /* margin-bottom: 1; (from .sidebar-input) */
-}
-
-#chat-right-sidebar .chat-keywords-textarea { /* Keywords TextArea specific class */
-    height: 4;  /* Or 3 to 5, adjust as preferred */
-    /* width: 100%; (from .sidebar-textarea) */
-    /* border: round $surface; (from .sidebar-textarea) */
-    /* margin-bottom: 1; (from .sidebar-textarea) */
-}
-
-/* Styling for the new "Save Details" button */
-#chat-right-sidebar .save-details-button {
-    margin-top: 1; /* Space above this button */
-    /* width: 100%;    Make it full width */
-}
-
-/* Ensure the Save Current Chat button also has clear styling if needed */
-#chat-right-sidebar .save-chat-button {
-    margin-top: 1; /* Ensure it has some space if it's after keywords */
-    /* width: 100%; */
-}
-
-/* Chat Sidebar - Prompts Section */
-#chat-prompts-collapsible Input,
-#chat-prompts-collapsible ListView,
-#chat-prompts-collapsible Button {
-    margin-bottom: 1; /* Consistent spacing */
-}
-#chat-prompt-list-view { /* ID for the prompt list in chat sidebar */
-    height: 8; /* Adjust as needed */
-    border: round $surface;
-    margin-bottom: 1;
-}
-.loaded-prompt-area { /* Container for loaded prompt details in chat sidebar */
-    margin-top: 1;
-    padding: 0 1;        /* Padding for content inside */
-    background: $surface; /* Slightly different background to group elements */
-    /* To get rounded corners for the area itself, apply a border style */
-    border: round $primary-background-lighten-1; /* Example: round border with a light color */
-                                               /* Or use 'round $surface' if you want it less distinct */
-                                               /* Or 'none' if you only want background and no explicit border */
-}
-/* End of Character Sidebar Specific Styles */
-
-
-/* --- Prompts Sidebar Vertical --- */
-.ccp-prompt-textarea { /* Specific class for prompt textareas if needed */
-    height: 10; /* Example height */
-    /* width: 100%; (from .sidebar-textarea) */
-    /* margin-bottom: 1; (from .sidebar-textarea) */
-}
-
-#ccp-prompts-listview { /* ID for the prompt list */
-    height: 10; /* Or 1fr if it's the main element in its collapsible */
-    border: round $surface;
-    margin-bottom: 1;
-}
-
-.ccp-prompt-action-buttons {
-    margin-top: 1; /* Add space above the button bar */
-    height: auto; /* Allow container height to fit buttons */
-    padding-bottom: 1; /* Add space below buttons before parent's padding */
-}
-
-.ccp-prompt-action-buttons Button {
-    width: 1fr; /* Make buttons share space */
-    margin: 0 1 0 0; /* Small right margin for all but last */
-    height: auto; /* Let button height fit its content (typically 1 line) */
-}
-.ccp-prompt-action-buttons Button:last-of-type { /* Corrected pseudo-class */
-    margin-right: 0;
-}
-
-/* Ensure Collapsible titles are clear */
-#conv-char-right-pane Collapsible > .collapsible--header {
-    background: $primary-background-darken-1; /* Example to differentiate */
-    color: $text;
-}
-
-#conv-char-right-pane Collapsible.-active > .collapsible--header { /* Optional: when expanded */
-    background: $primary-background;
-}
-/* --- End of Prompts Sidebar Vertical --- */
-
-/* Right Pane Styling */
-.cc-right-pane {
-    width: 25%; /* Keep 25% or 30% - adjust as needed */
-    min-width: 20; /* ADD a minimum width */
-    height: 100%;
-    background: $boost;
-    padding: 1;
-    border-left: thick $background-darken-1;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-/* ADD THIS: Collapsed state for the CCP tab's right pane */
-.cc-right-pane.collapsed {
-    width: 0 !important;
-    min-width: 0 !important;
-    border-left: none !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    display: none !important; /* Ensures it doesn't take space or grab focus */
-}
-
-/* Styles for the dynamic view areas within the CCP center pane */
-.ccp-view-area {
-    width: 100%;
-    height: auto; /* Allow height to be determined by content */
-    /* overflow: auto; /* If content within might overflow */
-}
-
-/* Add this class to hide elements */
-.ccp-view-area.hidden,
-.ccp-right-pane-section.hidden { /* For sections in the right pane */
-    display: none !important;
-}
-
-/* By default, let conversation messages be visible, and editor hidden */
-#ccp-conversation-messages-view {
-    /* display: block; /* or whatever its natural display is, usually block for Container */
-}
-#ccp-prompt-editor-view {
-    display: none; /* Initially hidden by CSS */
-}
-
-#ccp-character-card-view {
-    display: none; /* Initially hidden, to be shown by Python logic */
-}
-
-#ccp-character-editor-view {
-    display: none; /* Initially hidden, to be shown by Python logic */
-}
-
-/* Ensure the right pane sections also respect hidden class */
-#ccp-right-pane-llm-settings-container {
-    /* display: block; default */
-}
-#ccp-right-pane-llm-settings-container.hidden {
-    display: none !important;
-}
-
+/* ----------------------------- ************************* ----------------------------- */
 /* --- Tools & Settings Tab --- */
 #tools_settings-window { /* Matches TAB_TOOLS_SETTINGS */
     layout: horizontal; /* Main layout for this tab */
@@ -835,11 +864,11 @@ MetricsScreen Label.-info-message {
 .llm-nav-pane .llm-nav-button:hover {
     background: $accent 70%; /* Example hover */
 }
-/* Active state for selected llm nav button (optional) */
-/* .llm-nav-pane .llm-nav-button.-active-view {
+/* Active state for selected llm nav button */
+.llm-nav-pane .llm-nav-button.-active {
     background: $accent;
     color: $text;
-} */
+}
 
 .llm-content-pane { /* Style for the right content display area */
     width: 1fr;
@@ -854,10 +883,6 @@ MetricsScreen Label.-info-message {
     display: none; /* Initially hidden until activated */
 }
 
-/* Make the initial default view visible */
-#llm-view-llama-cpp {
-    display: block; /* Initially visible */
-}
 
 /* Chat Sidebar Prompts Section Specific Styles */
 #chat-sidebar-prompts-collapsible { /* The collapsible container itself */
@@ -890,7 +915,12 @@ MetricsScreen Label.-info-message {
     margin-top: 0; /* Remove top margin if directly after TextArea */
     margin-bottom: 1; /* Space after copy buttons */
 }
+/* -
+/* ----------------------------- ************************* ----------------------------- */
 
+
+
+/* ----------------------------- ************************* ----------------------------- */
 /* --- Media Tab --- */
 #media-window { /* Matches TAB_MEDIA */
     layout: horizontal; /* Main layout for this tab */
@@ -930,7 +960,12 @@ MetricsScreen Label.-info-message {
     width: 100%;
     height: 100%; /* Or auto if content dictates height */
 }
+/* --- End of Media Tab --- */
+/* ----------------------------- ************************* ----------------------------- */
 
+
+
+/* ----------------------------- ************************* ----------------------------- */
 /* --- Search Tab (RAG/Embeddings) --- */
 #search-window { /* Matches TAB_SEARCH, .window class provides layout: horizontal */
     /* No explicit layout needed here if .window handles it */
@@ -985,9 +1020,87 @@ MetricsScreen Label.-info-message {
     height: 100%;
     align: center middle;
 }
+/* --- End of Search Tab --- */
+/* ----------------------------- ************************* ----------------------------- */
 
 
 
+/* ----------------------------- ************************* ----------------------------- */
+/* --- Evals Tab --- */
+#evals-window { /* Matches TAB_EVALS, .window class provides layout: horizontal */
+    /* layout: horizontal; /* Provided by .window by default */
+}
+
+#evals-sidebar {
+    dock: left;
+    width: 25%;
+    min-width: 20;
+    max-width: 50; /* Adjusted max-width */
+    height: 100%;
+    background: $boost;
+    padding: 1; /* Standard padding */
+    border-right: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#evals-sidebar.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-right: none !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: none !important; /* Ensure it's hidden */
+}
+
+/* Styles for the main content area within the Evals tab */
+#evals-main-content-area {
+    width: 1fr; /* Takes remaining horizontal space */
+    height: 100%;
+    padding: 1 2; /* Padding for the content area */
+    /* border: round $primary; /* Optional: for visual debugging */
+}
+
+/* Styles for the sidebar toggle button in the Evals tab */
+#toggle-evals-sidebar {
+    /* Positioned by EvalsWindow's compose, next to the content area */
+    /* dock: left; is set in EvalsWindow.py's DEFAULT_CSS for the button */
+    width: auto; /* Small width, text will determine */
+    height: 3;   /* Standard button height */
+    min-width: 0; /* Allow it to be small */
+    margin: 0 1 0 0; /* Top, Right, Bottom, Left margin - space it from main content */
+    /* color: $text; */
+    /* background: $surface-darken-1; */
+    /* border: none; */
+}
+/* Hover state for the toggle button if needed, can inherit from general .sidebar-toggle if class is added */
+/* #toggle-evals-sidebar:hover { background: $surface; } */
+
+/* Common sidebar elements within EvalsSidebar (if not covered by global .sidebar-title etc.) */
+#evals-sidebar .sidebar-title { /* Already styled globally, but can be overridden */
+    /* text-style: bold underline; */
+    /* text-align: center; */
+    /* width: 100%; */
+    /* margin-bottom: 1; */
+}
+
+#evals-sidebar Collapsible {
+    margin-bottom: 1; /* Space between collapsibles */
+}
+
+#evals-sidebar .collapsible-content-placeholder { /* From EvalsSidebar.py */
+    padding: 1;
+    background: $panel-lighten-1;
+    border: round $surface;
+    color: $text-muted;
+    text-align: center; /* Center placeholder text */
+}
+/* --- End Evals Tab --- */
+/* ----------------------------- ************************* ----------------------------- */
+
+
+
+/* ----------------------------- ************************* ----------------------------- */
 /* --- Media Tab Specific Options --- */
 .ingest-form-scrollable {
     height: 1fr; /* Allow scrolling within the form area */
@@ -1034,8 +1147,12 @@ MetricsScreen Label.-info-message {
 }
 
 /* --- End of Media Tab Specific Options --- */
+/* ----------------------------- ************************* ----------------------------- */
 
 
+
+/* ----------------------------- ************************* ----------------------------- */
+/* --- Conversations, Characters & Prompts Window specific layouts --- */
 #send-chat {
     width: 20;
     min-width: 20 !important;
@@ -1051,3 +1168,18 @@ MetricsScreen Label.-info-message {
     /* height: 3; /* Already set by .stop-button class, but can be reiterated if needed */
     /* margin-top: 0; /* Already set by .stop-button class */
 }
+/* --- End of Conversations, Characters & Prompts Window specific layouts --- */
+/* ----------------------------- ************************* ----------------------------- */
+
+
+
+/* ----------------------------- ************************* ----------------------------- */
+/* --- LLM Management Tab --- */
+
+.llm-view-area { /* Common class for individual content areas */
+    width: 100%;
+    height: 100%; /* Or auto */
+    display: none; /* Initially hidden until activated */
+}
+/* --- End of LLM Management Tab --- */
+/* ----------------------------- ************************* ----------------------------- */

@@ -12,6 +12,8 @@ from textual.widgets import Button
 # Local Imports
 if TYPE_CHECKING:
     from ..app import TldwCli  # Not strictly needed for compose but good for context
+
+from ..Constants import TAB_CCP, TAB_TOOLS_SETTINGS, TAB_INGEST, TAB_LLM, TAB_EVALS # Added import
 #
 #######################################################################################################################
 #
@@ -32,14 +34,16 @@ class TabBar(Horizontal):  # The outer container for the tab bar
         with HorizontalScroll(id="tabs"):  # Inner scrollable area
             for tab_id_loop in self.tab_ids:
                 # Determine label based on tab_id (matches logic in app.py)
-                if tab_id_loop == "conversations_characters_prompts":  # TAB_CCP
+                if tab_id_loop == TAB_CCP:
                     label_text = "CCP"
-                elif tab_id_loop == "tools_settings":  # TAB_TOOLS_SETTINGS
+                elif tab_id_loop == TAB_TOOLS_SETTINGS:
                     label_text = "Tools & Settings"
-                elif tab_id_loop == "ingest":  # TAB_INGEST
+                elif tab_id_loop == TAB_INGEST:
                     label_text = "Ingest Content"
-                elif tab_id_loop == "llm":  # TAB_LLM ("llm_management")
-                    label_text = "LLM Management"  # Use the shorter name for the button
+                elif tab_id_loop == TAB_LLM:
+                    label_text = "LLM Management"
+                elif tab_id_loop == TAB_EVALS: # Added this condition
+                    label_text = "Evals"
                 else:
                     label_text = tab_id_loop.replace('_', ' ').capitalize()
 

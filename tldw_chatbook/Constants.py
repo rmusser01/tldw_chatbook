@@ -19,11 +19,12 @@ TAB_MEDIA = "media"
 TAB_SEARCH = "search"
 TAB_INGEST = "ingest"
 TAB_TOOLS_SETTINGS = "tools_settings"
-TAB_LLM = "llm"
+TAB_LLM = "llm_management"
 TAB_STATS = "stats"
 TAB_LOGS = "logs"
+TAB_EVALS = "evals"
 ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
-            TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, TAB_STATS]
+            TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, TAB_STATS, TAB_EVALS]
 
 
 # --- CSS definition ---
