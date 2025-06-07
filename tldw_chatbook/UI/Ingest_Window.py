@@ -57,7 +57,7 @@ class IngestWindow(Container):
         if not analysis_provider_options:
             analysis_provider_options = [("No Providers Configured", Select.BLANK)]
 
-        with VerticalScroll(classes="ingest-form-scrollable"): # TODO: Consider if this scrollable itself needs a unique ID if we have nested ones. For now, assuming not.
+        with VerticalScroll(classes="ingest-form-scrollable"): # FIXME/TODO: Needs unique Header ID since this is temlplate for whatever media type is selected
             yield Static("TLDW API Configuration", classes="sidebar-title")
             yield Label("API Endpoint URL:")
             yield Input(default_api_url, id=f"tldw-api-endpoint-url-{media_type}", placeholder="http://localhost:8000")

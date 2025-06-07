@@ -16,7 +16,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from cv2 import data
+#from cv2 import data
 from textual.containers import Container
 from textual.css.query import QueryError
 from textual.widgets import Input, TextArea, RichLog
@@ -33,7 +33,8 @@ if TYPE_CHECKING:
 __all__ = [
     # ─── Ollama ───────────────────────────────────────────────────────────────
     "handle_ollama_nav_button_pressed",
-    "handle_ollama_list_models_button_pressed",
+    # FIXME
+    #"handle_ollama_list_models_button_pressed",
     "handle_ollama_show_model_button_pressed",
     "handle_ollama_delete_model_button_pressed",
     "handle_ollama_copy_model_button_pressed",
@@ -106,57 +107,58 @@ async def handle_ollama_nav_button_pressed(app: "TldwCli") -> None:
         app.notify("An unexpected error occurred while switching to Ollama view.", severity="error")
 
 
-async def handle_ollama_list_models_button_pressed(app: "TldwCli") -> None:
-    """Handles the 'List Models' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
-    logger.debug("Ollama 'List Models' button pressed.")
-    try:
-        base_url_input = app.query_one("#ollama-server-url", Input)
-        log_output_widget = app.query_one("#ollama-combined-output", RichLog)
-
-        base_url = base_url_input.value.strip()
-        if not base_url:
-            app.notify("Ollama Server URL is required.", severity="error")
-            base_url_input.focus()
-            return
-
-        log_output_widget.clear()
-        _update_ollama_combined_output(app, f"Attempting to list models from: {base_url}...")
-
-        app.run_worker(
-            _worker_ollama_list_models,
-            base_url,
-            thread=True,
-            name=f"ollama_list_models_{time.monotonic()}",
-            group="ollama_api",
-            description="Listing Ollama local models",
-            on_success=partial(_on_list_models_success, app),
-            on_error=partial(_on_ollama_worker_error, app, "list_models")
-        )
-        if logging.error:
-            log_output_widget.write(f"Error listing models: {logging.error}")
-
-        if logging.error: # This is the original error check, the one above is newly added by script
-            log_output_widget.write(f"Error listing models: {logging.error}")
-            app.notify("Error listing Ollama models.", severity="error")
-        elif data and data.get('models'):
-            try:
-                # Assuming 'data' is the JSON response, and 'models' is a list within it.
-                formatted_models = json.dumps(data['models'], indent=2)
-                log_output_widget.write(formatted_models)
-                app.notify(f"Successfully listed {len(data['models'])} Ollama models.")
-            except (TypeError, KeyError, json.JSONDecodeError) as e:
-                log_output_widget.write(f"Error processing model list response: {e}\nRaw data: {data}")
-                app.notify("Error processing model list from Ollama.", severity="error")
-        else:
-            log_output_widget.write("No models found or unexpected response.")
-            app.notify("No Ollama models found or unexpected response.", severity="warning")
-    except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
-        app.notify("Error accessing Ollama UI elements for listing models.", severity="error")
-    except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
-        app.notify("An unexpected error occurred while listing Ollama models.", severity="error")
+# FIXME
+# async def handle_ollama_list_models_button_pressed(app: "TldwCli") -> None:
+#     """Handles the 'List Models' button press for Ollama."""
+#     logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+#     logger.debug("Ollama 'List Models' button pressed.")
+#     try:
+#         base_url_input = app.query_one("#ollama-server-url", Input)
+#         log_output_widget = app.query_one("#ollama-combined-output", RichLog)
+#
+#         base_url = base_url_input.value.strip()
+#         if not base_url:
+#             app.notify("Ollama Server URL is required.", severity="error")
+#             base_url_input.focus()
+#             return
+#
+#         log_output_widget.clear()
+#         _update_ollama_combined_output(app, f"Attempting to list models from: {base_url}...")
+#
+#         app.run_worker(
+#             _worker_ollama_list_models,
+#             base_url,
+#             thread=True,
+#             name=f"ollama_list_models_{time.monotonic()}",
+#             group="ollama_api",
+#             description="Listing Ollama local models",
+#             on_success=partial(_on_list_models_success, app),
+#             on_error=partial(_on_ollama_worker_error, app, "list_models")
+#         )
+#         if logging.error:
+#             log_output_widget.write(f"Error listing models: {logging.error}")
+#
+#         if logging.error: # This is the original error check, the one above is newly added by script
+#             log_output_widget.write(f"Error listing models: {logging.error}")
+#             app.notify("Error listing Ollama models.", severity="error")
+#         elif data and data.get('models'):
+#             try:
+#                 # Assuming 'data' is the JSON response, and 'models' is a list within it.
+#                 formatted_models = json.dumps(data['models'], indent=2)
+#                 log_output_widget.write(formatted_models)
+#                 app.notify(f"Successfully listed {len(data['models'])} Ollama models.")
+#             except (TypeError, KeyError, json.JSONDecodeError) as e:
+#                 log_output_widget.write(f"Error processing model list response: {e}\nRaw data: {data}")
+#                 app.notify("Error processing model list from Ollama.", severity="error")
+#         else:
+#             log_output_widget.write("No models found or unexpected response.")
+#             app.notify("No Ollama models found or unexpected response.", severity="warning")
+#     except QueryError as e: # pragma: no cover
+#         logger.error(f"QueryError in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
+#         app.notify("Error accessing Ollama UI elements for listing models.", severity="error")
+#     except Exception as e: # pragma: no cover
+#         logger.error(f"Unexpected error in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
+#         app.notify("An unexpected error occurred while listing Ollama models.", severity="error")
 
 
 async def handle_ollama_show_model_button_pressed(app: "TldwCli") -> None:

@@ -26,6 +26,7 @@ Current status: Working/In-Progress
   - Launch with `python3 -m tldw_chatbook.app` (working on pip packaging)
   - Inspiration from [Elia Chat](https://github.com/darrenburns/elia)
 
+#### Chat Features
 <details>
 <summary> Chat Features </summary>
 
@@ -57,6 +58,7 @@ Current status: Working/In-Progress
 - Support for searchingloading/editing/saving Notes from the Notes Database.
 </details>
 
+#### Notes & Media Features
 <details>
 <summary> Notes & Media Features </summary>
 
@@ -75,7 +77,7 @@ Current status: Working/In-Progress
   - 
 </details>
 
-
+#### Local LLM Management Features
 <details>
 <summary> Local LLM Inference </summary>
 

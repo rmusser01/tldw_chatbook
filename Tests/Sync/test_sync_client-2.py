@@ -14,11 +14,11 @@ import sys
 
 import requests
 
-from tldw_cli.tldw_app.DB.Media_DB import Database, DatabaseError
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, DatabaseError
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from tldw_cli.tldw_app.DB.Sync_Client import ClientSyncEngine, SYNC_BATCH_SIZE  # Your client sync engine
+from tldw_chatbook.DB.Sync_Client import ClientSyncEngine, SYNC_BATCH_SIZE  # Your client sync engine
 
 
 

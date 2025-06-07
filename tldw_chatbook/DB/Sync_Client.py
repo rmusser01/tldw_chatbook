@@ -13,10 +13,7 @@ from loguru import logger
 # Third-Party Imports
 #
 # Local Imports
-try:
-    from tldw_cli.tldw_app.DB.Media_DB import Database, ConflictError, DatabaseError, InputError
-except ImportError:
-    logger.error("ERROR: Could not import the 'Media_DB' library. Make sure Media_DB.py is accessible.")
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError, DatabaseError, InputError
 #
 #######################################################################################################################
 #

@@ -12,8 +12,8 @@ from unittest.mock import patch, MagicMock, call
 import requests
 #
 # Local Imports
-from .test_sqlite_db import get_entity_version
-from tldw_cli.tldw_app.DB.Sync_Client import ClientSyncEngine
+from .test_media_db_v2 import get_entity_version
+from tldw_chatbook.DB.Sync_Client import ClientSyncEngine
 #
 #######################################################################################################################
 #

@@ -1121,7 +1121,8 @@ class PromptsDatabase:
     def get_prompt_by_id(self, prompt_id: int, include_deleted: bool = False) -> Optional[Dict]:
         query = "SELECT * FROM Prompts WHERE id = ?"
         params = [prompt_id]
-        if not include_deleted: query += " AND deleted = 0"
+        if not include_deleted:
+            query += " AND deleted = 0"
         try:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
@@ -1133,7 +1134,8 @@ class PromptsDatabase:
     def get_prompt_by_uuid(self, prompt_uuid: str, include_deleted: bool = False) -> Optional[Dict]:
         query = "SELECT * FROM Prompts WHERE uuid = ?"
         params = [prompt_uuid]
-        if not include_deleted: query += " AND deleted = 0"
+        if not include_deleted:
+            query += " AND deleted = 0"
         try:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
@@ -1145,7 +1147,8 @@ class PromptsDatabase:
     def get_prompt_by_name(self, name: str, include_deleted: bool = False) -> Optional[Dict]:
         query = "SELECT * FROM Prompts WHERE name = ?"
         params = [name]
-        if not include_deleted: query += " AND deleted = 0"
+        if not include_deleted:
+            query += " AND deleted = 0"
         try:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
@@ -1231,7 +1234,7 @@ class PromptsDatabase:
 
     def search_prompts(self,
                        search_query: Optional[str],
-                       search_fields: Optional[List[str]] = None, # e.g. ['name', 'details', 'keywords']
+                       search_fields: Optional[List[str]] = None,  # e.g. ['name', 'details', 'keywords']
                        page: int = 1,
                        results_per_page: int = 20,
                        include_deleted: bool = False
@@ -1240,96 +1243,86 @@ class PromptsDatabase:
         if results_per_page < 1: raise ValueError("Results per page must be >= 1")
 
         if search_query and not search_fields:
-            search_fields = ["name", "details", "system_prompt", "user_prompt", "author"] # Default FTS fields
+            search_fields = ["name", "details", "system_prompt", "user_prompt", "author"]
         elif not search_fields:
             search_fields = []
 
         offset = (page - 1) * results_per_page
 
-        base_select_parts = ["p.id", "p.uuid", "p.name", "p.author", "p.details",
-                             "p.system_prompt", "p.user_prompt", "p.last_modified", "p.version", "p.deleted"]
-        count_select = "COUNT(DISTINCT p.id)"
-        base_from = "FROM Prompts p"
-        joins = []
+        base_select = "SELECT p.*"
+        count_select = "SELECT COUNT(p.id)"
+        from_clause = "FROM Prompts p"
         conditions = []
         params = []
 
         if not include_deleted:
             conditions.append("p.deleted = 0")
 
-        fts_search_active = False
-        if search_query:
-            fts_query_parts = []
-            if "name" in search_fields: fts_query_parts.append("name")
-            if "author" in search_fields: fts_query_parts.append("author")
-            if "details" in search_fields: fts_query_parts.append("details")
-            if "system_prompt" in search_fields: fts_query_parts.append("system_prompt")
-            if "user_prompt" in search_fields: fts_query_parts.append("user_prompt")
+        # --- Robust FTS search using subqueries ---
+        if search_query and search_fields:
+            matching_prompt_ids = set()
+            text_search_fields = {"name", "author", "details", "system_prompt", "user_prompt"}
 
-            # FTS on prompt fields
-            if fts_query_parts:
-                fts_search_active = True
-                if not any("prompts_fts fts_p" in j_item for j_item in joins):
-                    joins.append("JOIN prompts_fts fts_p ON fts_p.rowid = p.id")
-                # Build FTS query: field1:query OR field2:query ...
-                # For simple matching, just use the query directly if FTS table covers all these.
-                # The FTS table definition needs to match these fields.
-                # Assuming prompts_fts has 'name', 'author', 'details', 'system_prompt', 'user_prompt'
-                conditions.append("fts_p.prompts_fts MATCH ?")
-                params.append(search_query) # User provides FTS syntax or simple terms
+            # Search in prompt text fields
+            if any(field in text_search_fields for field in search_fields):
+                try:
+                    cursor = self.execute_query("SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?", (search_query,))
+                    matching_prompt_ids.update(row['rowid'] for row in cursor.fetchall())
+                except sqlite3.Error as e:
+                    logging.error(f"FTS search on prompts failed: {e}", exc_info=True)
+                    raise DatabaseError(f"FTS search on prompts failed: {e}") from e
 
-            # FTS on keywords (if specified in search_fields)
+
+            # Search in keywords
             if "keywords" in search_fields:
-                fts_search_active = True
-                # Join for keywords
-                if not any("PromptKeywordLinks pkl" in j_item for j_item in joins):
-                    joins.append("JOIN PromptKeywordLinks pkl ON p.id = pkl.prompt_id")
-                if not any("PromptKeywordsTable pkw" in j_item for j_item in joins):
-                    joins.append("JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id AND pkw.deleted = 0")
-                if not any("prompt_keywords_fts fts_k" in j_item for j_item in joins):
-                    joins.append("JOIN prompt_keywords_fts fts_k ON fts_k.rowid = pkw.id")
+                try:
+                    # 1. Find keyword IDs matching the query
+                    kw_cursor = self.execute_query("SELECT rowid FROM prompt_keywords_fts WHERE prompt_keywords_fts MATCH ?", (search_query,))
+                    matching_keyword_ids = {row['rowid'] for row in kw_cursor.fetchall()}
 
-                conditions.append("fts_k.prompt_keywords_fts MATCH ?")
-                params.append(search_query) # Match against keywords
+                    # 2. Find prompt IDs linked to those keywords
+                    if matching_keyword_ids:
+                        placeholders = ','.join('?' * len(matching_keyword_ids))
+                        link_cursor = self.execute_query(
+                            f"SELECT DISTINCT prompt_id FROM PromptKeywordLinks WHERE keyword_id IN ({placeholders})",
+                            tuple(matching_keyword_ids)
+                        )
+                        matching_prompt_ids.update(row['prompt_id'] for row in link_cursor.fetchall())
+                except sqlite3.Error as e:
+                    logging.error(f"FTS search on keywords failed: {e}", exc_info=True)
+                    raise DatabaseError(f"FTS search on keywords failed: {e}") from e
 
-        order_by_clause_str = "ORDER BY p.last_modified DESC, p.id DESC"
-        if fts_search_active:
-            # FTS results are naturally sorted by relevance (rank) by SQLite.
-            # We can select rank if needed for explicit sorting or display.
-            if "fts_p.rank AS relevance_score" not in " ".join(base_select_parts) and "fts_p" in " ".join(joins) :
-                base_select_parts.append("fts_p.rank AS relevance_score") # Add if fts_p is used
-            elif "fts_k.rank AS relevance_score_kw" not in " ".join(base_select_parts) and "fts_k" in " ".join(joins):
-                base_select_parts.append("fts_k.rank AS relevance_score_kw") # Add if fts_k is used
-            # A more complex ranking might be needed if both prompt and keyword FTS are active.
-            # For now, default sort or rely on SQLite's combined FTS rank if multiple MATCH clauses are used.
-            order_by_clause_str = "ORDER BY p.last_modified DESC, p.id DESC" # Fallback, FTS rank is implicit
+            if not matching_prompt_ids:
+                return [], 0  # No matches found, short-circuit
 
-        final_select_stmt = f"SELECT DISTINCT {', '.join(base_select_parts)}"
-        join_clause = " ".join(list(dict.fromkeys(joins))) # Unique joins
-        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            # Add the final ID list to the main query conditions
+            id_placeholders = ','.join('?' * len(matching_prompt_ids))
+            conditions.append(f"p.id IN ({id_placeholders})")
+            params.extend(list(matching_prompt_ids))
+
+        # --- Build and Execute Final Query ---
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        order_by_clause = "ORDER BY p.last_modified DESC, p.id DESC"
 
         try:
-            count_sql = f"SELECT {count_select} {base_from} {join_clause} {where_clause}"
-            count_cursor = self.execute_query(count_sql, tuple(params))
-            total_matches = count_cursor.fetchone()[0]
+            # Get total count
+            count_sql = f"{count_select} {from_clause} {where_clause}"
+            total_matches = self.execute_query(count_sql, tuple(params)).fetchone()[0]
 
             results_list = []
-            if total_matches > 0 and offset < total_matches:
-                results_sql = f"{final_select_stmt} {base_from} {join_clause} {where_clause} {order_by_clause_str} LIMIT ? OFFSET ?"
+            if total_matches > 0:
+                # Get paginated results
+                results_sql = f"{base_select} {from_clause} {where_clause} {order_by_clause} LIMIT ? OFFSET ?"
                 paginated_params = tuple(params + [results_per_page, offset])
                 results_cursor = self.execute_query(results_sql, paginated_params)
                 results_list = [dict(row) for row in results_cursor.fetchall()]
-                # If keywords need to be attached to each result
+                # Attach keywords to each result
                 for res_dict in results_list:
                     res_dict['keywords'] = self.fetch_keywords_for_prompt(res_dict['id'], include_deleted=False)
 
             return results_list, total_matches
-        except sqlite3.Error as e:
-            if "no such table: prompts_fts" in str(e).lower() or "no such table: prompt_keywords_fts" in str(e).lower():
-                logging.error(f"FTS table missing in {self.db_path_str}. Search may fail or be incomplete.")
-                # Fallback to LIKE search or raise error
-                # For now, let it fail and be caught by generic error.
-            logging.error(f"DB error during prompt search in '{self.db_path_str}': {e}", exc_info=True)
+        except (DatabaseError, sqlite3.Error) as e:
+            logging.error(f"DB error during prompt search: {e}", exc_info=True)
             raise DatabaseError(f"Failed to search prompts: {e}") from e
 
     # --- Sync Log Access Methods ---
@@ -1354,6 +1347,7 @@ class PromptsDatabase:
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error fetching sync_log entries: {e}")
             raise DatabaseError("Failed to fetch sync_log entries") from e
+
 
     def delete_sync_log_entries(self, change_ids: List[int]) -> int:
         if not change_ids: return 0

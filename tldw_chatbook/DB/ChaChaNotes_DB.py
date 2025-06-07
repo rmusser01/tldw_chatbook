@@ -1901,6 +1901,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during the search.
         """
+        safe_search_term = f'"{search_term}"'
         query = """
                 SELECT cc.*
                 FROM character_cards_fts fts
@@ -1914,7 +1915,7 @@ UPDATE db_schema_version
             rows = cursor.fetchall()
             return [self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS) for row in rows if row]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching character cards for '{search_term}': {e}")
+            logger.error(f"Error searching character cards for '{safe_search_term}': {e}")
             raise
 
     # --- Conversation Methods ---
@@ -2296,6 +2297,7 @@ UPDATE db_schema_version
         if not title_query.strip():
             logger.warning("Empty title_query provided for conversation search. Returning empty list.")
             return []
+        safe_search_term = f'"{title_query}"'
         base_query = """
                      SELECT c.*
                      FROM conversations_fts fts
@@ -2315,7 +2317,7 @@ UPDATE db_schema_version
             cursor = self.execute_query(base_query, tuple(params_list))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching conversations for title '{title_query}': {e}")
+            logger.error(f"Error searching conversations for title '{safe_search_term}': {e}")
             raise
 
     # --- Message Methods ---
@@ -2429,27 +2431,25 @@ UPDATE db_schema_version
                                       order_by_timestamp: str = "ASC") -> List[Dict[str, Any]]:
         """
         Lists messages for a specific conversation.
-
         Returns non-deleted messages, ordered by `timestamp` according to `order_by_timestamp`.
-        Includes all fields, including `image_data` and `image_mime_type`.
-
-        Args:
-            conversation_id: The UUID of the conversation.
-            limit: Maximum number of messages to return. Defaults to 100.
-            offset: Number of messages to skip. Defaults to 0.
-            order_by_timestamp: Sort order for 'timestamp' field ("ASC" or "DESC").
-                                Defaults to "ASC".
-
-        Returns:
-            A list of message dictionaries. Can be empty.
-
-        Raises:
-            InputError: If `order_by_timestamp` has an invalid value.
-            CharactersRAGDBError: For database errors.
+        Crucially, it also ensures the parent conversation is not soft-deleted.
         """
         if order_by_timestamp.upper() not in ["ASC", "DESC"]:
             raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
-        query = f"SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted FROM messages WHERE conversation_id = ? AND deleted = 0 ORDER BY timestamp {order_by_timestamp} LIMIT ? OFFSET ?"  # Explicitly list columns
+
+        # The new query joins with conversations to check its 'deleted' status.
+        query = f"""
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
+                   m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
+                   m.last_modified, m.version, m.client_id, m.deleted 
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ? 
+              AND m.deleted = 0
+              AND c.deleted = 0
+            ORDER BY m.timestamp {order_by_timestamp} 
+            LIMIT ? OFFSET ?
+        """
         try:
             cursor = self.execute_query(query, (conversation_id, limit, offset))
             return [dict(row) for row in cursor.fetchall()]
@@ -2667,6 +2667,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database search errors.
         """
+        safe_search_term = f'"{content_query}"'
         base_query = """
                      SELECT m.*
                      FROM messages_fts fts
@@ -2686,7 +2687,7 @@ UPDATE db_schema_version
             cursor = self.execute_query(base_query, tuple(params_list))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
-            logger.error(f"Error searching messages for content '{content_query}': {e}")
+            logger.error(f"Error searching messages for content '{safe_search_term}': {e}")
             raise
 
     # --- Keyword, KeywordCollection, Note Methods (CRUD + Search) ---
@@ -3252,7 +3253,8 @@ UPDATE db_schema_version
         Returns:
             A list of matching keyword dictionaries.
         """
-        return self._search_generic_items_fts("keywords_fts", "keywords", "keyword", search_term, limit)
+        safe_search_term = f'"{search_term}"'
+        return self._search_generic_items_fts("keywords_fts", "keywords", "keyword", safe_search_term, limit)
 
     # Keyword Collections
     def add_keyword_collection(self, name: str, parent_id: Optional[int] = None) -> Optional[int]:
@@ -3372,7 +3374,8 @@ UPDATE db_schema_version
         )
 
     def search_keyword_collections(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
-        return self._search_generic_items_fts("keyword_collections_fts", "keyword_collections", "name", search_term,
+        safe_search_term = f'"{search_term}"'
+        return self._search_generic_items_fts("keyword_collections_fts", "keyword_collections", "name", safe_search_term,
                                               limit)
 
     # Notes (Now with UUID and specific methods)
@@ -3536,19 +3539,21 @@ UPDATE db_schema_version
 
     def search_notes(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Searches notes_fts (title and content). Corrected JOIN condition."""
-        # notes_fts matches against title and content
-        # FTS table column group: notes_fts
-        # Content table: notes, content_rowid: rowid (maps to notes.rowid)
+        # FTS5 requires wrapping terms with special characters in double quotes
+        # to be treated as a literal phrase.
+        safe_search_term = f'"{search_term}"'
+
         query = """
                 SELECT main.*
                 FROM notes_fts fts
-                         JOIN notes main ON fts.rowid = main.rowid -- Corrected Join condition
-                WHERE fts.notes_fts MATCH ? \
+                         JOIN notes main ON fts.rowid = main.rowid
+                WHERE fts.notes_fts MATCH ?
                   AND main.deleted = 0
-                ORDER BY rank LIMIT ? \
+                ORDER BY rank LIMIT ?
                 """
         try:
-            cursor = self.execute_query(query, (search_term, limit))
+            # Pass the quoted string as the parameter
+            cursor = self.execute_query(query, (safe_search_term, limit))
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logger.error(f"Error searching notes for '{search_term}': {e}")
@@ -3823,6 +3828,7 @@ class TransactionContextManager:
             # The outermost block will handle the rollback.
             logger.debug(
                 f"Exception in nested transaction block on thread {threading.get_ident()}: {exc_type.__name__}. Outermost transaction will handle rollback if this exception propagates.")
+
 
         # Return False to re-raise any exceptions that occurred within the `with` block,
         # allowing them to be handled by the caller or to propagate further up.

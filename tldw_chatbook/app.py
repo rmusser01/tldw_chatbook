@@ -2070,19 +2070,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def on_input_changed(self, event: Input.Changed) -> None:
         input_id = event.input.id
         current_active_tab = self.current_tab
-        # --- Chat Sidebar Prompt Search ---
-        if input_id == "chat-prompt-search-input" and current_active_tab == TAB_CHAT:
-            await chat_handlers.handle_chat_sidebar_prompt_search_input_changed(self, event.value)
         # --- Notes Search ---
-        elif input_id == "notes-search-input" and current_active_tab == TAB_NOTES:
+        if input_id == "notes-search-input" and current_active_tab == TAB_NOTES: # Changed from elif to if
             await notes_handlers.handle_notes_search_input_changed(self, event.value)
         # --- Chat Sidebar Conversation Search ---
         elif input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
         elif input_id == "conv-char-search-input" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_conversation_search_input_changed(self, event.value)
+            await ccp_handlers.handle_ccp_conversation_search_input_changed(self, event)
         elif input_id == "ccp-prompt-search-input" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_prompt_search_input_changed(self, event.value)
+            await ccp_handlers.handle_ccp_prompt_search_input_changed(self, event)
         elif input_id == "chat-prompt-search-input" and current_active_tab == TAB_CHAT: # New condition
             if self._chat_sidebar_prompt_search_timer: # Use the new timer variable
                 self._chat_sidebar_prompt_search_timer.stop()

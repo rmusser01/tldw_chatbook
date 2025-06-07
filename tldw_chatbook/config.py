@@ -867,7 +867,7 @@ users_name = "default_user" # Default user name for the TUI
 [tldw_api]
 base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 # Default auth token can be stored here, or leave empty if user must always provide
-# auth_token = "your_secret_token_if_you_have_a_default"
+auth_token = "default-secret-key-for-single-user"
 
 [logging]
 # Log file will be placed in the same directory as the chachanotes_db_path below.
@@ -894,6 +894,11 @@ Ollama = "http://localhost:11434"
 vLLM = "http://localhost:8000" # Check if your API provider uses this address
 Custom = "http://localhost:1234/v1"
 Custom_2 = "http://localhost:5678/v1"
+Custom_3 = "http://localhost:5678/v1"
+Custom_4 = "http://localhost:5678/v1"
+Custom_5 = "http://localhost:5678/v1"
+Custom_6 = "http://localhost:5678/v1"
+
 # Add other local URLs if needed
 
 [providers]
@@ -1395,6 +1400,84 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
         logger.warning("  'api_settings' key NOT FOUND in the loaded configuration for load_cli_config_and_ensure_existence.")
 
     return _CONFIG_CACHE
+
+
+def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
+    """
+    Saves a specific setting to the user's CLI TOML configuration file.
+
+    This function reads the current config, updates a specific key within a
+    section (handling nested sections like 'api_settings.openai'), and writes
+    the entire configuration back to the file. It then forces a reload of the
+    config cache.
+
+    Args:
+        section: The name of the TOML section (e.g., "general", "api_settings.openai").
+        key: The key within the section to update.
+        value: The new value for the key.
+
+    Returns:
+        True if the setting was saved successfully, False otherwise.
+    """
+    global _CONFIG_CACHE, settings
+    logger.info(f"Attempting to save setting: [{section}].{key} = {repr(value)}")
+
+    # Ensure the parent directory for the config file exists.
+    try:
+        DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Could not create config directory {DEFAULT_CONFIG_PATH.parent}: {e}")
+        return False
+
+    # Step 1: Read the current configuration from the user's file.
+    # If the file doesn't exist, we start with an empty dictionary.
+    config_data: Dict[str, Any] = {}
+    if DEFAULT_CONFIG_PATH.exists():
+        try:
+            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+                config_data = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            logger.error(f"Corrupted config file at {DEFAULT_CONFIG_PATH}. Cannot save. Please fix or delete it. Error: {e}")
+            # Consider creating a backup of the corrupt file for the user.
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error reading {DEFAULT_CONFIG_PATH}: {e}", exc_info=True)
+            return False
+
+    # Step 2: Modify the configuration data in memory.
+    # This handles nested sections by splitting the section string.
+    keys = section.split('.')
+    current_level = config_data
+
+    try:
+        for part in keys:
+            # Traverse or create the nested dictionary structure.
+            current_level = current_level.setdefault(part, {})
+        # Assign the new value to the key in the target section.
+        current_level[key] = value
+    except (TypeError, AttributeError):
+        # This error occurs if a key in the path (e.g., 'api_settings') is a value, not a table.
+        logger.error(
+            f"Configuration structure conflict. Could not set '{key}' in section '{section}' "
+            f"because a part of the path is not a table/dictionary. Please check your config file."
+        )
+        return False
+
+    # Step 3: Write the updated configuration back to the TOML file.
+    try:
+        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
+            toml.dump(config_data, f)
+        logger.success(f"Successfully saved setting to {DEFAULT_CONFIG_PATH}")
+
+        # Step 4: Invalidate and reload global config caches to reflect changes immediately.
+        load_cli_config_and_ensure_existence(force_reload=True)
+        settings = load_settings()
+        logger.info("Global configuration caches reloaded.")
+
+        return True
+    except (IOError, toml.TomlDecodeError) as e:
+        logger.error(f"Failed to write updated config to {DEFAULT_CONFIG_PATH}: {e}", exc_info=True)
+        return False
 
 
 # --- CLI Setting Getter ---

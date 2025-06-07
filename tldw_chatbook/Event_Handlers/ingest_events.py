@@ -1135,6 +1135,7 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
                 submit_button.disabled = False
                 status_area.load_text("Custom token required. Submission halted.")
                 return
+        # FIXME
         elif auth_method == "config_token":
             auth_token = app.app_config.get("tldw_api", {}).get("auth_token_config")
             if not auth_token:
