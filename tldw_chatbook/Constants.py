@@ -1974,9 +1974,28 @@ LLAMAFILE_SERVER_ARGS_HELP_TEXT = """
 MLX_LM_SERVER_ARGS_HELP_TEXT = """
 [bold cyan]--- MLX-LM Server Arguments ---[/]
 
+options:
+  --adapter-path ADAPTER_PATH
+                        Optional path for the trained adapter weights and
+                        config.
+  
+
+
+  --temp TEMP           Default sampling temperature (default: 0.0)
+  --top-p TOP_P         Default nucleus sampling top-p (default: 1.0)
+  --top-k TOP_K         Default top-k sampling (default: 0, disables top-k)
+  --min-p MIN_P         Default min-p sampling (default: 0.0, disables min-p)
+  --max-tokens MAX_TOKENS
+                        Default maximum number of tokens to generate (default:
+                        512)
+  --chat-template-args CHAT_TEMPLATE_ARGS
+                        A JSON formatted string of arguments for the
+                        tokenizer's apply_chat_template, e.g.
+                        '{"enable_thinking":false}'
+
 [bold]--model MODEL[/]
-  Path to the model directory or HuggingFace model ID
-  (e.g., [italic]--model mlx-community/Nous-Hermes-2-Mistral-7B-DPO-4bit-MLX[/])
+  The path to the MLX model weights, tokenizer, and config
+  (e.g., [italic]--model mlx-community/Qwen3-30B-A3B-4bit[/])
 
 [bold]--host HOST[/]
   Host address to bind the server to (default: 127.0.0.1)
@@ -1986,9 +2005,21 @@ MLX_LM_SERVER_ARGS_HELP_TEXT = """
   Port to run the server on (default: 8080)
   (e.g., [italic]--port 8000[/])
 
-[bold]--max-tokens N[/]
-  Maximum number of tokens to generate (default: 100)
-  (e.g., [italic]--max-tokens 512[/])
+[bold]--draft-model DRAFT_MODEL[/]
+    A model to be used for speculative decoding.
+    (e.g., [italic]--draft-model mlx-community/Qwen3-0.6B-8bit[/])
+
+[bold]--num-draft-tokens NUM_DRAFT_TOKENS[/]
+    Number of tokens to draft when using speculative decoding.
+
+[bold]--trust-remote-code[/]
+  Enable trusting remote code for tokenizer
+  
+[bold]--chat-template CHAT_TEMPLATE[/]
+    Specify a chat template for the tokenizer
+
+[bold]--use-default-chat-template[/]
+    Use the default chat template
 
 [bold]--temperature TEMP[/]
   Sampling temperature (default: 0.8)
@@ -2002,28 +2033,15 @@ MLX_LM_SERVER_ARGS_HELP_TEXT = """
   Top-k sampling (default: 40)
   (e.g., [italic]--top-k 50[/])
 
-[bold]--seed SEED[/]
-  Random seed for reproducibility (default: None)
-  (e.g., [italic]--seed 42[/])
+[bold]--min-p MIN_P[/]
+    Default min-p sampling (default: 0.0, disables min-p)
 
-[bold]--batch-size N[/]
-  Batch size for inference (default: 1)
-  (e.g., [italic]--batch-size 4[/])
+[bold]--max-tokens N[/]
+  Maximum number of tokens to generate (default: 100)
+  (e.g., [italic]--max-tokens 512[/])
 
-[bold]--quantization {int8,int4,fp16,fp32}[/]
-  Quantization method to use (default: None)
-  (e.g., [italic]--quantization int4[/])
-
-[bold]--device {cpu,gpu}[/]
-  Device to run inference on (default: auto-detect)
-  (e.g., [italic]--device gpu[/])
-
-[bold]--trust-remote-code[/]
-  Trust remote code when loading models from HuggingFace
-
-[bold]--revision REVISION[/]
-  Specific model revision to use from HuggingFace
-  (e.g., [italic]--revision main[/])
+[bold]--chat-template-args CHAT_TEMPLATE_ARGS[/]
+    A JSON formatted string of arguments for the tokenizer's apply_chat_template, e.g. '{"enable_thinking":false}'
 """
 
 # End of Constants.py
