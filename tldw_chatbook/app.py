@@ -973,27 +973,50 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_watch:
             self.loguru_logger.error(f"Unexpected error in watch_search_active_sub_tab: {e_watch}", exc_info=True)
 
-    # ############################################
-    # --- Media Loaded Item Watcher ---
-    # ############################################
-    def watch_current_loaded_media_item(self, media_data: Optional[Dict[str, Any]]) -> None:
-        """Watcher to display details when a media item is loaded."""
-        if not self._ui_ready: return
+        # ############################################
+        # --- Media Loaded Item Watcher ---
+        # ############################################
+        async def watch_current_loaded_media_item(self, media_data: Optional[Dict[str, Any]]) -> None:
+            """Watcher to display details when a media item is loaded."""
+            if not self._ui_ready:
+                self.loguru_logger.debug("watch_current_loaded_media_item: UI not ready, returning.")
+                return
 
-        type_slug = self.current_media_type_filter_slug
-        if not type_slug: return
+            type_slug = self.current_media_type_filter_slug
+            if not type_slug:
+                self.loguru_logger.warning(
+                    "watch_current_loaded_media_item: type_slug is not set, cannot update details display.")
+                return
 
-        try:
-            details_display = self.query_one(f"#media-details-display-{type_slug}", TextArea)
-            if media_data:
-                formatted_markdown = media_events.format_media_details_as_markdown(self, media_data)
-                details_display.load_text(formatted_markdown)
-                self.notify(f"Details for '{media_data.get('title', 'N/A')}' displayed.")
-            else:
-                # This case is handled by the calling functions, but as a fallback:
-                details_display.load_text("")
-        except QueryError:
-            self.loguru_logger.warning(f"Could not find details display for slug '{type_slug}' to update.")
+            details_display_widget_id = f"media-details-display-{type_slug}"
+            try:
+                # Target Markdown widget
+                details_display = self.query_one(f"#{details_display_widget_id}", Markdown)
+
+                if media_data:
+                    # Special formatting for "analysis-review"
+                    if type_slug == "analysis-review":
+                        title = media_data.get('title', 'Untitled')
+                        url = media_data.get('url', 'No URL')
+                        analysis_content = media_data.get('analysis_content', '')
+                        if not analysis_content:
+                            analysis_content = "No analysis available for this item."
+                        markdown_details_string = f"## {title}\n\n**URL:** {url}\n\n### Analysis\n{analysis_content}"
+                    else:
+                        # Use the existing format_media_details_as_markdown function from media_events
+                        markdown_details_string = media_events.format_media_details_as_markdown(self, media_data)
+
+                    await details_display.update(markdown_details_string)  # Use await and update()
+                    # self.notify(f"Details for '{media_data.get('title', 'N/A')}' displayed via watcher.") # Optional notification
+                else:
+                    await details_display.update("### No media item loaded or item cleared.")  # Use await and update()
+
+            except QueryError:
+                self.loguru_logger.warning(
+                    f"watch_current_loaded_media_item: Could not find Markdown details display '#{details_display_widget_id}' for slug '{type_slug}' to update."
+                )
+            except Exception as e:
+                self.loguru_logger.error(f"Error in watch_current_loaded_media_item: {e}", exc_info=True)
 
     # ############################################
     # --- Ingest Tab Watcher ---
