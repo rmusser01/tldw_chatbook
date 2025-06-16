@@ -1183,17 +1183,18 @@ MetricsScreen Label.-info-message {
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Media Tab --- */
-#media-window { /* Matches TAB_MEDIA */
-    layout: horizontal; /* Main layout for this tab */
+#media-window {
+    layout: horizontal;
+    height: 100%;
 }
 
 .media-nav-pane {
     dock: left;
-    width: 25%; /* Adjust as needed */
-    min-width: 20; /* Example min-width */
-    max-width: 50; /* Example max-width */
+    width: 25%;
+    min-width: 20;
+    max-width: 50;
     height: 100%;
-    background: $boost; /* Or a different background */
+    background: $boost;
     padding: 1;
     border-right: thick $background-darken-1;
     overflow-y: auto;
@@ -1206,38 +1207,137 @@ MetricsScreen Label.-info-message {
     border-right: none !important;
     padding: 0 !important;
     overflow: hidden !important;
-    display: none !important; /* Ensures it doesn't take space or grab focus */
+    display: none !important;
 }
 
-.media-nav-pane .media-nav-button { /* Style for navigation buttons */
+.media-nav-pane .media-nav-button {
     width: 100%;
     margin-bottom: 1;
     border: none;
     height: 3;
 }
 .media-nav-pane .media-nav-button:hover {
-    background: $accent 75%; /* Example hover, distinct from other navs */
+    background: $accent 75%;
 }
 
 .media-content-pane {
-    width: 1fr; /* Takes remaining horizontal space */
+    width: 1fr;
     height: 100%;
-    padding: 1 2; /* Padding for the content area */
-    overflow-y: auto; /* If content within sub-views might scroll */
+    padding: 0;
+    layout: vertical;
 }
 
-.media-view-area { /* Class for individual content areas in Media tab */
+#media-content-pane > Button#media-sidebar-toggle-button {
+    dock: top; /* Will be at the top of media-content-pane */
+    height: 3;
+    width: 5;
+    margin: 0 0 1 1;
+    /* Removed position:absolute, dock:top is better here */
+}
+
+.media-view-area {
     width: 100%;
-    height: 100%; /* Or auto if content dictates height */
+    height: 1fr; /* This takes remaining space in media-content-pane */
+    layout: horizontal;
+    /* border: 1px solid red; /* For debugging */
 }
 
-.media-content-left-pane {
+/* Target ListItems inside the media list to control their height */
+.media-items-list > ListItem {
+    height: auto; /* This prevents a single item from stretching to fill the whole ListView */
+    padding: 1;
+    margin-bottom: 1;
+}
+
+/* Styles for media item components */
+.media-item-title {
+    height: auto;
+    text-style: bold;
+}
+
+.media-item-snippet {
+    height: auto;
+    color: $text-muted;
+    max-height: 2;
+    overflow-y: hidden;
+}
+
+.media-item-meta {
+    height: auto;
+    text-style: italic;
+    color: $text-disabled;
+}
+
+/* Style for the Vertical container inside ListItems */
+.media-items-list > ListItem > Vertical {
+    height: auto;
+    width: 100%;
+}
+
+.media-content-left-pane { /* This is the Vertical container */
     width: 35%;
+    height: 100%;          /* It should fill the vertical space of its parent */
+    layout: vertical;      /* <<< THIS IS THE FIX. It tells this container HOW to arrange its children. */
+    padding: 0 1 1 1;      /* Optional: Add some padding (Top, Right, Bottom, Left) */
 }
 
-.media-content-right-pane {
-    width: 65%;
+
+/* Children of .media-content-left-pane */
+.media-content-left-pane > Label.pane-title {
+    height: auto; /* Or a fixed height like 2 or 3 if you prefer */
+    width: 100%;
+    text-align: center;
+    margin-bottom: 1;
 }
+.media-content-left-pane > Input.media-search-input {
+    height: 3; /* Fixed height for the input field */
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* ListView for media items */
+.media-items-list {
+    height: 1fr; /* Crucial: Make the ListView take all available vertical space */
+    /* Add styles that were previously inherited from .sidebar-listview */
+    border: round $primary-lighten-2;
+    background: $primary-background;
+    margin-bottom: 1; /* Add a little space before the pagination */
+    overflow-y: auto; /* Enable vertical scrolling if needed */
+    overflow-x: hidden; /* Hide horizontal overflow */
+}
+
+.media-pagination-bar { /* Container for pagination buttons */
+    height: 3; /* Fixed height for the pagination bar */
+    width: 100%;
+    align-horizontal: center;
+    /* padding: 1 0; /* Removed, height:3 should be enough */
+}
+.media-pagination-bar Button {
+    width: auto;
+    min-width: 10;
+    margin: 0 1;
+    height: 100%; /* Fill the pagination bar height */
+}
+.media-pagination-bar .media-page-label {
+    width: 1fr;
+    text-align: center;
+    height: 100%; /* Fill the pagination bar height */
+    padding: 0 1;
+}
+
+
+.media-content-right-pane { /* This is a VerticalScroll */
+    width: 1fr;
+    height: 100%;
+    padding: 1; /* Padding for the content area within the scroll view */
+    /* border: 1px solid orange; /* For debugging */
+}
+
+.media-details-theme {
+    height: 100%;
+    width: 100%;
+}
+
 /* --- End of Media Tab --- */
 /* ----------------------------- ************************* ----------------------------- */
 
