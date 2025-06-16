@@ -111,7 +111,7 @@ async def handle_media_list_item_selected(app: 'TldwCli', event: ListView.Select
     details_display.text = "Loading details..."
 
     if not hasattr(event.item, 'media_data') or not event.item.media_data:
-        await details_display.update("### Error: Selected item has no displayable data.")
+        details_display.text = "Error: Selected item has no displayable data."
         app.current_loaded_media_item = None
         return
 
@@ -119,18 +119,18 @@ async def handle_media_list_item_selected(app: 'TldwCli', event: ListView.Select
     media_id_raw = lightweight_media_data.get('id')
 
     if media_id_raw is None:
-        await details_display.update("### Error: Selected item has no ID.")
+        details_display.text = "Error: Selected item has no ID."
         app.current_loaded_media_item = None
         return
     try:
         media_id = int(media_id_raw)
     except (ValueError, TypeError):
-        await details_display.update(f"### Error: Invalid media ID format '{media_id_raw}'.")
+        details_display.text = f"Error: Invalid media ID format '{media_id_raw}'."
         app.current_loaded_media_item = None
         return
 
     if not app.media_db:
-        await details_display.update("### Error: Database connection is not available.")
+        details_display.text = "Error: Database connection is not available."
         app.current_loaded_media_item = None
         return
 
@@ -182,7 +182,7 @@ async def handle_media_load_selected_button_pressed(app: 'TldwCli', event: Butto
 
     try:
         list_view = app.query_one(f"#{list_view_id}", ListView)
-        details_display = app.query_one(f"#{details_display_widget_id}", Markdown) # Expect Markdown
+        details_display = app.query_one(f"#{details_display_widget_id}", TextArea) # Expect TextArea
     except QueryError as e:
         logger.error(f"UI component not found for media load selected '{button_id}': {e}", exc_info=True)
         app.notify("Load details UI error.", severity="error")
@@ -190,7 +190,7 @@ async def handle_media_load_selected_button_pressed(app: 'TldwCli', event: Butto
 
     if not list_view.highlighted_child or not hasattr(list_view.highlighted_child, 'media_data'):
         app.notify("No media item selected from the list.", severity="warning")
-        await details_display.update("### No item selected from the list.")
+        details_display.text = "No item selected from the list."
         app.current_loaded_media_item = None
         return
 
@@ -248,8 +248,8 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
         await list_view.clear()
 
         try:
-            details_display = app.query_one(f"#{details_display_id}", Markdown) # Expect Markdown
-            await details_display.update("### Select an item to see details") # Use await and update
+            details_display = app.query_one(f"#{details_display_id}", TextArea) # Expect TextArea
+            details_display.text = "Select an item to see details" # Use .text property
         except QueryError:
             logger.warning(f"Details display widget '#{details_display_id}' not found for clearing.")
             pass # Continue if details display isn't critical for search itself
