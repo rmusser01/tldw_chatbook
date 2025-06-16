@@ -1222,10 +1222,9 @@ MetricsScreen Label.-info-message {
 
 .media-content-pane {
     width: 1fr;
-    height: 100%;
+    height: 1fr;
     padding: 0;
     layout: vertical;
-    min-height: 100vh; /* Set a very large minimum height */
 }
 
 #media-content-pane > Button#media-sidebar-toggle-button {
@@ -1238,10 +1237,9 @@ MetricsScreen Label.-info-message {
 
 .media-view-area {
     width: 100%;
-    height: 100%; /* This takes remaining space in media-content-pane */
+    height: 1fr; /* Use 1fr to take all available space */
     layout: horizontal;
     /* border: 1px solid red; /* For debugging */
-    min-height: 100vh; /* Set a very large minimum height */
 }
 
 /* Target ListItems inside the media list to control their height */
@@ -1278,8 +1276,8 @@ MetricsScreen Label.-info-message {
 
 .media-content-left-pane { /* This is the Vertical container */
     width: 35%;
-    height: 100%;          /* It should fill the vertical space of its parent */
-    layout: vertical;      /*
+    height: 1fr;          /* Use 1fr to properly fill the vertical space */
+    layout: vertical;
     padding: 0 1 1 1;      /* Optional: Add some padding (Top, Right, Bottom, Left) */
 }
 
@@ -1329,16 +1327,34 @@ MetricsScreen Label.-info-message {
 
 .media-content-right-pane { /* This is a VerticalScroll */
     width: 1fr;
-    height: 1fr; /* Fill the remaining space in media-content-pane */
+    height: 1fr; /* Ensure it takes all available vertical space */
     padding: 1; /* Padding for the content area within the scroll view */
     /* border: 1px solid orange; /* For debugging */
     overflow-y: auto; /* Enable vertical scrolling when content exceeds height */
     layout: vertical; /* Ensure vertical layout for child elements */
-    height: auto; /* Allow it to grow with content */
-    /* min-height: 100vh; */ /* Set a very large minimum height */
 }
 
+.media-details-theme {
+    height: 1fr; /* Use 1fr to take all available space within the scroll container */
+    width: 100%; /* Explicitly set width to 100% too */
+    overflow-y: auto !important;
+    min-height: 0; /* Allow the content to shrink if needed and expand when there's space */
+}
 
+/* Force Markdown content in Media tab to expand fully */
+.media-content-right-pane Markdown {
+    height: 1fr !important;
+    overflow-y: auto !important;
+}
+
+/* Additional override for any potential Textual default constraints */
+VerticalScroll.media-content-right-pane {
+    height: 1fr !important;
+}
+
+VerticalScroll.media-content-right-pane > Markdown {
+    height: 1fr !important;
+}
 
 /* --- End of Media Tab --- */
 /* ----------------------------- ************************* ----------------------------- */
@@ -1715,8 +1731,8 @@ AppFooterStatus {
 }
 .detail-field-container .detail-label { width: 1fr; }
 .detail-field-container .copy-button { width: auto; height: 1; border: none; }
-.detail-textarea { height: 5; margin-bottom: 1; }
-.detail-textarea.content-display { height: 10; }
+.detail-textarea { height: auto; min-height: 5; margin-bottom: 1; }
+.detail-textarea.content-display { height: 1fr; min-height: 10; }
 
 
 /* ----------------------------- ************************* ----------------------------- */
