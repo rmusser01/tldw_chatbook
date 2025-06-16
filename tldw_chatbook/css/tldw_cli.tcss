@@ -1701,9 +1701,9 @@ AppFooterStatus {
 
 /* Chat Sidebar Media Search Section Specific Styles */
 #chat-media-collapsible .sidebar-listview {
-    min-height: 8;
-    max-height: 25;
-    height: 18;
+    min-height: 10;
+    max-height: 35;
+    height: 22;
     border: round $surface;
     margin-bottom: 1;
 }
@@ -1731,8 +1731,8 @@ AppFooterStatus {
 }
 .detail-field-container .detail-label { width: 1fr; }
 .detail-field-container .copy-button { width: auto; height: 1; border: none; }
-.detail-textarea { height: auto; min-height: 3; max-height: 8; margin-bottom: 1; }
-.detail-textarea.content-display { height: auto; min-height: 8; max-height: 15; margin-bottom: 1; }
+.detail-textarea { height: auto; min-height: 4; max-height: 18; margin-bottom: 1; }
+.detail-textarea.content-display { height: auto; min-height: 10; max-height: 30; margin-bottom: 1; }
 
 
 /* ----------------------------- ************************* ----------------------------- */
