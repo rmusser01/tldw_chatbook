@@ -1329,12 +1329,15 @@ MetricsScreen Label.-info-message {
 .media-content-right-pane { /* This is a VerticalScroll */
     width: 1fr;
     height: 100%;
+    min-height: 100vh; /* Force it to be at least the full viewport height */
     padding: 1; /* Padding for the content area within the scroll view */
     /* border: 1px solid orange; /* For debugging */
+    overflow-y: auto; /* Enable vertical scrolling when content exceeds height */
 }
 
 .media-details-theme {
-    height: 100%;
+    height: auto; /* Allow content to determine height */
+    min-height: 100vh; /* Force it to be at least the full viewport height */
     width: 100%;
 }
 
