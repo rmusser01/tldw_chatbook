@@ -219,14 +219,18 @@ class MediaWindow(Container):
                             yield Label("Page 1 / 1", id=f"media-page-label-{type_slug}", classes="media-page-label")
                             yield Button("Next", id=f"media-next-page-button-{type_slug}", disabled=True)
 
-                    # --- RIGHT PANE (standardized to Markdown) ---
+                    # --- RIGHT PANE (standardized to TextArea for better height control) ---
                     # This VerticalScroll is the .media-content-right-pane
                     with VerticalScroll(classes="media-content-right-pane"):
-                        yield Markdown(
+                        text_area_widget = TextArea(
                             "Select an item from the list to see its details.",
                             id=f"media-details-display-{type_slug}",
-                            classes="media-details-theme"
+                            classes="media-details-theme",
+                            read_only=True
                         )
+                        # Force the TextArea widget to expand to fill available space
+                        text_area_widget.styles.height = "1fr"
+                        yield text_area_widget
 
             # Hide all views by default; watcher will manage visibility
             # This loop is crucial for the initial state.

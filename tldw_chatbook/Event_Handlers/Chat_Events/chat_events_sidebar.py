@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 import logging
 
 # 3rd-party Libraries
-from loguru import logger as loguru_logger
+from loguru import logger as loguru_logger, logger
 from textual.widgets import ListItem, Input, ListView, TextArea, Button, Label
 from textual.css.query import QueryError
 from textual.app import App

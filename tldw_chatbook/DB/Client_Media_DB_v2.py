@@ -3951,6 +3951,50 @@ class MediaDatabase:
         return self.get_media_by_ids_for_embedding(media_ids_found)
     # ============================= End of Embedding-related Functions ===================================================
 
+    # ============================= Chat UI Functions for Search ===================================================
+    def fetch_keywords_for_media_batch(self, media_ids: List[int]) -> Dict[int, List[str]]:
+        """
+        Fetches keywords associated with a batch of media IDs.
+
+        Args:
+            media_ids: List of media IDs to fetch keywords for.
+
+        Returns:
+            A dictionary mapping media IDs to lists of associated keywords.
+
+        Raises:
+            DatabaseError: If a database error occurs.
+        """
+        if not media_ids:
+            return {}
+
+        placeholders = ','.join('?' * len(media_ids))
+        query = f"""
+            SELECT mk.media_id, k.keyword
+            FROM MediaKeywords mk
+            JOIN Keywords k ON mk.keyword_id = k.id
+            WHERE mk.media_id IN ({placeholders}) AND k.deleted = 0
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.execute(query, tuple(media_ids))
+            results = cursor.fetchall()
+
+            # Group keywords by media ID
+            keywords_by_media = {}
+            for media_id, keyword in results:
+                if media_id not in keywords_by_media:
+                    keywords_by_media[media_id] = []
+                keywords_by_media[media_id].append(keyword)
+
+            return keywords_by_media
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching keywords for media batch: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to fetch keywords for media batch: {e}") from e
+
+    # ============================= End of Chat UI Functions for Search ===================================================
+
+
 
 # =========================================================================
 # Standalone Functions (REQUIRE db_instance passed explicitly)

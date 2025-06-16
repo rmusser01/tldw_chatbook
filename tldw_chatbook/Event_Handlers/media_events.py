@@ -102,13 +102,13 @@ async def handle_media_list_item_selected(app: 'TldwCli', event: ListView.Select
     details_display_widget_id = f"media-details-display-{type_slug}"
 
     try:
-        details_display = app.query_one(f"#{details_display_widget_id}", Markdown)
+        details_display = app.query_one(f"#{details_display_widget_id}", TextArea)
     except QueryError:
-        logger.error(f"Markdown details display widget '#{details_display_widget_id}' not found for type_slug '{type_slug}'.")
+        logger.error(f"TextArea details display widget '#{details_display_widget_id}' not found for type_slug '{type_slug}'.")
         app.notify(f"Details display area missing for {type_slug}.", severity="error")
         return
 
-    await details_display.update("### Loading details...")
+    details_display.text = "Loading details..."
 
     if not hasattr(event.item, 'media_data') or not event.item.media_data:
         await details_display.update("### Error: Selected item has no displayable data.")
@@ -138,9 +138,7 @@ async def handle_media_list_item_selected(app: 'TldwCli', event: ListView.Select
     full_media_data = app.media_db.get_media_by_id(media_id, include_trash=True)
 
     if full_media_data is None:
-        await details_display.update(
-            f"### Error\n\nCould not find media item with ID `{media_id}`. It may have been deleted."
-        )
+        details_display.text = f"Error\n\nCould not find media item with ID `{media_id}`. It may have been deleted."
         app.current_loaded_media_item = None
         return
 
@@ -157,7 +155,7 @@ async def handle_media_list_item_selected(app: 'TldwCli', event: ListView.Select
     else:
         markdown_details_string = format_media_details_as_markdown(app, full_media_data)
 
-    await details_display.update(markdown_details_string)
+    details_display.text = markdown_details_string
     details_display.scroll_home(animate=False)
     logger.info(f"Displayed details for media ID {media_id} in '#{details_display_widget_id}'.")
 
