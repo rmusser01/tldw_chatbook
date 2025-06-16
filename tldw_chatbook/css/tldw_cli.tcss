@@ -1225,6 +1225,7 @@ MetricsScreen Label.-info-message {
     height: 100%;
     padding: 0;
     layout: vertical;
+    min-height: 100vh; /* Set a very large minimum height */
 }
 
 #media-content-pane > Button#media-sidebar-toggle-button {
@@ -1237,9 +1238,10 @@ MetricsScreen Label.-info-message {
 
 .media-view-area {
     width: 100%;
-    height: 1fr; /* This takes remaining space in media-content-pane */
+    height: 100%; /* This takes remaining space in media-content-pane */
     layout: horizontal;
     /* border: 1px solid red; /* For debugging */
+    min-height: 100vh; /* Set a very large minimum height */
 }
 
 /* Target ListItems inside the media list to control their height */
@@ -1277,7 +1279,7 @@ MetricsScreen Label.-info-message {
 .media-content-left-pane { /* This is the Vertical container */
     width: 35%;
     height: 100%;          /* It should fill the vertical space of its parent */
-    layout: vertical;      /* <<< THIS IS THE FIX. It tells this container HOW to arrange its children. */
+    layout: vertical;      /*
     padding: 0 1 1 1;      /* Optional: Add some padding (Top, Right, Bottom, Left) */
 }
 
@@ -1325,21 +1327,18 @@ MetricsScreen Label.-info-message {
     padding: 0 1;
 }
 
-
 .media-content-right-pane { /* This is a VerticalScroll */
     width: 1fr;
-    height: 100%;
-    min-height: 100vh; /* Force it to be at least the full viewport height */
+    height: 1fr; /* Fill the remaining space in media-content-pane */
     padding: 1; /* Padding for the content area within the scroll view */
     /* border: 1px solid orange; /* For debugging */
     overflow-y: auto; /* Enable vertical scrolling when content exceeds height */
+    layout: vertical; /* Ensure vertical layout for child elements */
+    height: auto; /* Allow it to grow with content */
+    /* min-height: 100vh; */ /* Set a very large minimum height */
 }
 
-.media-details-theme {
-    height: auto; /* Allow content to determine height */
-    min-height: 100vh; /* Force it to be at least the full viewport height */
-    width: 100%;
-}
+
 
 /* --- End of Media Tab --- */
 /* ----------------------------- ************************* ----------------------------- */

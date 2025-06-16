@@ -5,7 +5,6 @@
 # Currently, uses naive approaches. Nothing fancy.
 #
 ####
-# Import necessary libraries
 import hashlib
 import json
 import re
@@ -14,22 +13,14 @@ import xml.etree.ElementTree as ET
 #
 # Import 3rd party
 from loguru import logger
-from tqdm import tqdm
 from langdetect import detect, LangDetectException # Import specific exception
-from transformers import AutoTokenizer, PreTrainedTokenizerBase # Using AutoTokenizer for flexibility
 import nltk
 from nltk.tokenize import sent_tokenize
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+
 #
 # Import Local
 from tldw_chatbook.config import load_settings, get_cli_setting
-from tldw_chatbook.config import global_default_chunk_language
 #
-# FIXME
-def load_and_log_configs():
-    pass
-#######################################################################################################################
 #######################################################################################################################
 # Custom Exceptions
 class ChunkingError(Exception):
@@ -160,16 +151,28 @@ class Chunker:
 
         logger.debug(f"Chunker initialized with options: {self.options}")
 
-        try:
-            # Use the tokenizer specified in options if available, otherwise use the argument
-            tokenizer_to_load = self.options.get('tokenizer_name_or_path', tokenizer_name_or_path)
-            self.tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(tokenizer_to_load)
-            logger.info(f"Tokenizer '{tokenizer_to_load}' loaded successfully.")
-        except Exception as e:
-            logger.error(f"Failed to load tokenizer '{self.options.get('tokenizer_name_or_path', tokenizer_name_or_path)}': {e}. Some token-based methods may fail.")
-            # Fallback or raise error? For now, set to None and let methods handle it.
-            self.tokenizer = None
-            # raise ChunkingError(f"Failed to load tokenizer: {e}") from e
+        from transformers import PreTrainedTokenizerBase
+        self._tokenizer: Optional[PreTrainedTokenizerBase] = None
+        self._tokenizer_path_to_load: str = self.options.get('tokenizer_name_or_path', tokenizer_name_or_path)
+
+    from transformers import PreTrainedTokenizerBase
+    @property
+    def tokenizer(self) -> PreTrainedTokenizerBase:
+        if self._tokenizer is None:
+            try:
+                from transformers import AutoTokenizer, PreTrainedTokenizerBase # Import here
+                logger.info(f"Lazily loading tokenizer: {self._tokenizer_path_to_load}")
+                self._tokenizer = AutoTokenizer.from_pretrained(self._tokenizer_path_to_load)
+            except ImportError:
+                logger.error("Transformers library not found. Please install it to use token-based chunking.")
+                raise ChunkingError("Transformers library not found.")
+            except Exception as e:
+                logger.error(f"Failed to lazy-load tokenizer '{self._tokenizer_path_to_load}': {e}")
+                # Optionally, raise a more specific error or allow fallback if applicable
+                raise ChunkingError(f"Failed to load tokenizer: {e}") from e
+        if self._tokenizer is None: # Should not happen if logic above is correct, but as a safeguard
+            raise ChunkingError("Tokenizer could not be loaded.")
+        return self._tokenizer
 
     def _get_option(self, key: str, default_override: Optional[Any] = None) -> Any:
         """Helper to get an option, allowing for a dynamic default."""
@@ -259,10 +262,15 @@ class Chunker:
             base_adaptive_size = self._get_option('base_adaptive_chunk_size')
             min_adaptive_size = self._get_option('min_adaptive_chunk_size')
             max_adaptive_size = self._get_option('max_adaptive_chunk_size')
-            if self.tokenizer: # NLTK based adaptive_chunk_size needs punkt
-                 max_size = self._adaptive_chunk_size_nltk(text, base_adaptive_size, min_adaptive_size, max_adaptive_size, language)
-            else: # Fallback if no tokenizer for NLTK based one.
-                 max_size = self._adaptive_chunk_size_non_punkt(text, base_adaptive_size, min_adaptive_size, max_adaptive_size)
+            # Accessing self.tokenizer property here will trigger lazy loading if not already loaded.
+            try:
+                if self.tokenizer: # NLTK based adaptive_chunk_size needs punkt
+                     max_size = self._adaptive_chunk_size_nltk(text, base_adaptive_size, min_adaptive_size, max_adaptive_size, language)
+                else: # Fallback if no tokenizer for NLTK based one. (tokenizer property would have raised if failed to load)
+                     max_size = self._adaptive_chunk_size_non_punkt(text, base_adaptive_size, min_adaptive_size, max_adaptive_size)
+            except ChunkingError: # Raised by tokenizer property if transformers not found or load fails
+                logger.warning("Tokenizer could not be loaded for adaptive chunk sizing. Using non-NLTK adaptive sizing.")
+                max_size = self._adaptive_chunk_size_non_punkt(text, base_adaptive_size, min_adaptive_size, max_adaptive_size)
             logger.info(f"Adaptive chunking adjusted max_size to: {max_size}")
 
 
@@ -279,8 +287,7 @@ class Chunker:
         elif chunk_method == 'paragraphs':
             return self._chunk_text_by_paragraphs(text, max_paragraphs=max_size, overlap=overlap)
         elif chunk_method == 'tokens':
-            if not self.tokenizer:
-                raise ChunkingError("Tokenizer not loaded, cannot use 'tokens' chunking method.")
+            # self.tokenizer will raise ChunkingError if it cannot be loaded by its property.
             return self._chunk_text_by_tokens(text, max_tokens=max_size, overlap=overlap)
         elif chunk_method == 'semantic':
             # semantic_chunking needs to be a method of the class too
@@ -301,8 +308,7 @@ class Chunker:
         elif chunk_method == 'rolling_summarize':
             if not llm_call_function:
                 raise ChunkingError("Missing 'llm_call_function' for 'rolling_summarize' method.")
-            if not self.tokenizer:  # Still need tokenizer for token counting in helper
-                raise ChunkingError("Tokenizer required for 'rolling_summarize' to estimate chunk sizes for LLM.")
+            # self.tokenizer will raise ChunkingError if it cannot be loaded by its property.
 
             summary = self._rolling_summarize(
                 text_to_summarize=text,
@@ -486,10 +492,8 @@ class Chunker:
 
     def _chunk_text_by_tokens(self, text: str, max_tokens: int, overlap: int) -> List[str]:
         # This uses the accurate tokenizer version
-        if not self.tokenizer:
-            logger.error("Tokenizer not available for token-based chunking.")
-            raise ChunkingError("Tokenizer not loaded, cannot use 'tokens' chunking method.")
-
+        # Accessing self.tokenizer property here will trigger lazy loading.
+        # If it fails, ChunkingError will be raised by the property.
         logger.info(f"Chunking by tokens: max_tokens={max_tokens}, overlap_tokens={overlap} (token overlap)")
         if max_tokens <= 0:
             logger.warning("max_tokens must be positive. Returning single chunk or empty.")
@@ -642,11 +646,16 @@ class Chunker:
         def _count_units(txt: str, unit_type: str) -> int:
             if unit_type == 'words':
                 return len(txt.split())
-            elif unit_type == 'tokens' and self.tokenizer:
+            elif unit_type == 'tokens': # self.tokenizer property will be used here
                 return len(self.tokenizer.encode(txt))
             elif unit_type == 'characters':
                 return len(txt)
-            logger.warning(f"Unknown unit type '{unit_type}' or tokenizer missing for tokens. Defaulting to word count.")
+            # Tokenizer might not be available if transformers is not installed.
+            # The self.tokenizer property would raise ChunkingError if called when not available.
+            # So, if unit_type is 'tokens' and we reach here, it should be available.
+            # However, to be safe, let's consider the case it might still be None if an error occurred
+            # but wasn't propagated in a way that prevented this call.
+            logger.warning(f"Unknown unit type '{unit_type}' or tokenizer issues for tokens. Defaulting to word count.")
             return len(txt.split())
 
 
@@ -927,9 +936,18 @@ class Chunker:
         for i, chap_data in enumerate(chapter_splits):
             chap_data['metadata']['chunk_index_in_book'] = i + 1
             chap_data['metadata']['total_chapters_detected'] = len(chapter_splits)
-            tokenizer_available = hasattr(self, 'tokenizer') and self.tokenizer and hasattr(self.tokenizer,
-                                                                                            'encode') and callable(
-                self.tokenizer.encode)
+            # Access self.tokenizer property, will lazy load or raise.
+            tokenizer_available = False
+            try:
+                # Check if tokenizer can be accessed and used
+                _ = self.tokenizer.encode("test") # A simple check that it works
+                tokenizer_available = True
+            except ChunkingError: # From tokenizer property
+                logger.warning("Tokenizer not available for sub-chunking ebook chapters by tokens.")
+            except Exception as e_tok_check: # Other unexpected errors
+                logger.warning(f"Unexpected error checking tokenizer for ebook sub-chunking: {e_tok_check}")
+
+
             if max_size > 0 and tokenizer_available and len(
                     # FIXME
                     self.tokenizer.encode(chap_data['text'])) > max_size:
@@ -1045,9 +1063,7 @@ class Chunker:
                            system_prompt_content: str,
                            additional_instructions: Optional[str]
                            ) -> str:
-        if not self.tokenizer: # Should have been checked by caller (chunk_text)
-            raise ChunkingError("Tokenizer required for rolling summarization.")
-
+        # self.tokenizer property will be accessed here.
         logger.info(f"Rolling summarization called. Detail: {detail}")
         text_token_length = len(self.tokenizer.encode(text_to_summarize))
         max_summarization_chunks = max(1, text_token_length // min_chunk_tokens)
@@ -1069,6 +1085,14 @@ class Chunker:
         final_system_prompt = system_prompt_content
         if additional_instructions:
             final_system_prompt += f"\n\n{additional_instructions}"
+
+        try:
+            from tqdm import tqdm # Import here
+        except ImportError:
+            logger.warning("tqdm library not found. Progress bar for summarization parts will be disabled. Install with 'pip install tqdm'.")
+            # Define a dummy tqdm if not found, so the loop doesn't break
+            def tqdm(iterable, *args, **kwargs):
+                return iterable
 
         accumulated_summaries = []
         for i, chunk_for_llm in enumerate(tqdm(text_chunks_for_llm, desc="Summarizing parts", disable=not verbose)):
@@ -1117,8 +1141,7 @@ class Chunker:
                                  header: Optional[str] = None,
                                  add_ellipsis_for_overflow: bool = True,
                                  ) -> Tuple[List[str], List[List[int]], int]:
-        if not self.tokenizer:
-            raise ChunkingError("Tokenizer required for _combine_chunks_for_llm.")
+        # self.tokenizer property will be accessed here.
 
         dropped_chunk_count = 0
         output_combined_texts = []

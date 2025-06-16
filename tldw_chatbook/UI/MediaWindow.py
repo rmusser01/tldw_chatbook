@@ -206,7 +206,7 @@ class MediaWindow(Container):
                 # Each media view is a Horizontal container for left (list) and right (details) panes
                 with Horizontal(id=view_id, classes="media-view-area"):
                     # --- LEFT PANE (for list and controls) ---
-                    with Vertical(classes="media-content-left-pane"):
+                    with Container(classes="media-content-left-pane"):
                         yield Label(f"{media_type_display_name} Management", classes="pane-title")
                         yield Input(placeholder=f"Search in {media_type_display_name}...",
                                     id=f"media-search-input-{type_slug}",
