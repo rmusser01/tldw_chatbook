@@ -6,6 +6,7 @@
 # External Imports
 import json
 import tempfile
+from ..Utils.secure_temp_files import secure_temp_file, create_secure_temp_file
 import threading
 import time
 import os
@@ -88,12 +89,16 @@ def save_chat_history(history: List[Tuple[str, str]]) -> str:
     # Consider a proper storage strategy if these are not truly temporary.
     # FIXME
     try:
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json', encoding='utf-8') as temp_file:
-            json.dump(history, temp_file)
-            save_duration = time.time() - start_time
-            log_histogram("save_chat_history_duration", save_duration)
-            log_counter("save_chat_history_success")
-            return temp_file.name
+        # Use secure temporary file creation
+        temp_path = create_secure_temp_file(
+            json.dumps(history, indent=2), 
+            suffix='.json', 
+            prefix='chat_history_'
+        )
+        save_duration = time.time() - start_time
+        log_histogram("save_chat_history_duration", save_duration)
+        log_counter("save_chat_history_success")
+        return temp_path
     except Exception as e:
         log_counter("save_chat_history_error", labels={"error": str(e)})
         logging.error(f"Error saving chat history: {str(e)}")

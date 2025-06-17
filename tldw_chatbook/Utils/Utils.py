@@ -37,6 +37,7 @@ import logging
 import os
 import re
 import tempfile
+from .secure_temp_files import get_temp_manager, secure_delete_file
 import time
 import uuid
 from datetime import timedelta, datetime
@@ -444,30 +445,26 @@ def safe_int(value: str, default: Optional[int], name: str) -> Optional[int]:
 #
 # File Handling Functions
 
-# Track temp files for cleanup
-temp_files = []
-
-temp_file_paths = []
-
+# Secure temporary file management using the new secure utilities
 def save_temp_file(file):
-    global temp_files
-    temp_dir = tempfile.gettempdir()
-    temp_path = os.path.join(temp_dir, file.name)
-    with open(temp_path, 'wb') as f:
-        f.write(file.read())
-    temp_files.append(temp_path)
+    """Save uploaded file to a secure temporary location."""
+    temp_manager = get_temp_manager()
+    
+    # Read file content
+    file_content = file.read()
+    
+    # Create secure temporary file
+    temp_path = temp_manager.create_temp_file(
+        file_content, 
+        suffix=f"_{file.name}",
+        prefix="upload_"
+    )
     return temp_path
 
 def cleanup_temp_files():
-    global temp_files
-    for file_path in temp_files:
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                logging.info(f"Removed temporary file: {file_path}")
-            except Exception as e:
-                logging.error(f"Failed to remove temporary file {file_path}: {e}")
-    temp_files.clear()
+    """Clean up all temporary files using secure deletion."""
+    temp_manager = get_temp_manager()
+    temp_manager.cleanup_all()
 
 
 def generate_unique_id():

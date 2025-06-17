@@ -21,6 +21,7 @@ import os
 import random
 import re
 import tempfile
+from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 import warnings
 from datetime import datetime, timedelta
@@ -1389,17 +1390,20 @@ def save_chat_history(
         safe_conversation_name = re.sub(r'[^a-zA-Z0-9_-]', '_', conversation_name)
         base_filename = f"{safe_conversation_name}_{timestamp}.json"
 
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as temp_file:
-            temp_file.write(content)
-            temp_file_path = temp_file.name
+        # Create a secure temporary file
+        temp_file_path = create_secure_temp_file(content, suffix='.json', prefix='chat_export_')
 
-        # Generate a unique filename
-        unique_filename = generate_unique_filename(os.path.dirname(temp_file_path), base_filename)
-        final_path = os.path.join(os.path.dirname(temp_file_path), unique_filename)
+        try:
+            # Generate a unique filename
+            unique_filename = generate_unique_filename(os.path.dirname(temp_file_path), base_filename)
+            final_path = os.path.join(os.path.dirname(temp_file_path), unique_filename)
 
-        # Rename the temporary file to the unique filename
-        os.rename(temp_file_path, final_path)
+            # Rename the temporary file to the unique filename
+            os.rename(temp_file_path, final_path)
+        except Exception:
+            # Clean up temp file if renaming fails
+            secure_delete_file(temp_file_path)
+            raise
 
         save_duration = time.time() - start_time
         log_histogram("save_chat_history_duration", save_duration)

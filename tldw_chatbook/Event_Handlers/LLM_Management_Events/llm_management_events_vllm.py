@@ -10,6 +10,7 @@ This module isolates vLLM-specific logic from the main llm_management_events.py.
 from __future__ import annotations
 #
 import logging
+import re
 import shlex
 import subprocess
 import sys
@@ -28,6 +29,93 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events im
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
 #
 #
+########################################################################################################################
+#
+# Security functions for input validation
+
+def validate_python_path(python_path: str) -> bool:
+    """Validate python executable path to prevent command injection."""
+    if not python_path:
+        return False
+    
+    # Allow only simple python executable names or absolute paths
+    # Reject paths with shell metacharacters
+    safe_pattern = re.compile(r'^[a-zA-Z0-9_.\-/\\:]+$')
+    if not safe_pattern.match(python_path):
+        return False
+    
+    # Common python executable names
+    allowed_names = {'python', 'python3', 'python3.8', 'python3.9', 'python3.10', 'python3.11', 'python3.12'}
+    
+    # If it's just a name (no path), check against whitelist
+    if '/' not in python_path and '\\' not in python_path:
+        return python_path in allowed_names
+    
+    # For paths, validate they don't contain dangerous patterns
+    dangerous_patterns = ['&&', '||', ';', '|', '>', '<', '`', '$', '(', ')']
+    return not any(pattern in python_path for pattern in dangerous_patterns)
+
+def validate_host(host: str) -> bool:
+    """Validate host address to prevent command injection."""
+    if not host:
+        return False
+    
+    # IPv4 pattern
+    ipv4_pattern = re.compile(r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$')
+    # Hostname pattern (simplified)
+    hostname_pattern = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$')
+    
+    return (host == 'localhost' or 
+            host == '127.0.0.1' or 
+            host == '0.0.0.0' or
+            ipv4_pattern.match(host) or 
+            hostname_pattern.match(host))
+
+def validate_port(port: str) -> bool:
+    """Validate port number to prevent command injection."""
+    if not port:
+        return False
+    
+    try:
+        port_num = int(port)
+        return 1 <= port_num <= 65535
+    except ValueError:
+        return False
+
+def validate_model_path(model_path: str) -> bool:
+    """Validate model path to prevent command injection."""
+    if not model_path:
+        return False
+    
+    # Allow alphanumeric, hyphens, underscores, dots, slashes for paths and HF repo IDs
+    safe_pattern = re.compile(r'^[a-zA-Z0-9_.\-/\\:]+$')
+    if not safe_pattern.match(model_path):
+        return False
+    
+    # Reject paths with dangerous shell metacharacters
+    dangerous_patterns = ['&&', '||', ';', '|', '>', '<', '`', '$', '(', ')']
+    return not any(pattern in model_path for pattern in dangerous_patterns)
+
+def validate_additional_args(args_str: str) -> bool:
+    """Validate additional arguments to prevent command injection."""
+    if not args_str.strip():
+        return True  # Empty is fine
+    
+    try:
+        # Use shlex to parse - this will raise ValueError for malformed input
+        parsed_args = shlex.split(args_str)
+        
+        # Check each argument for dangerous patterns
+        dangerous_patterns = ['&&', '||', ';', '|', '>', '<', '`', '$']
+        for arg in parsed_args:
+            if any(pattern in arg for pattern in dangerous_patterns):
+                return False
+        
+        return True
+    except ValueError:
+        # shlex.split failed, indicating malformed shell syntax
+        return False
+
 ########################################################################################################################
 #
 # Functions:
@@ -210,6 +298,32 @@ async def handle_start_vllm_server_button_pressed(app: "TldwCli", event: Button.
         host = host_input.value.strip() or "127.0.0.1" # Default from snippet was 127.0.0.1
         port = port_input.value.strip() or "8000" # Default from snippet was 8000, not 8002
         additional_args_str = additional_args_input.text.strip()
+
+        # Validate all inputs to prevent command injection
+        if not validate_python_path(python_path):
+            app.notify(f"Invalid Python path: {python_path}. Only safe Python executable names/paths are allowed.", severity="error")
+            python_path_input.focus()
+            return
+
+        if not validate_model_path(model_path):
+            app.notify(f"Invalid model path: {model_path}. Path contains unsafe characters.", severity="error")
+            model_path_input.focus()
+            return
+
+        if not validate_host(host):
+            app.notify(f"Invalid host: {host}. Only valid IP addresses and hostnames are allowed.", severity="error")
+            host_input.focus()
+            return
+
+        if not validate_port(port):
+            app.notify(f"Invalid port: {port}. Port must be a number between 1 and 65535.", severity="error")
+            port_input.focus()
+            return
+
+        if not validate_additional_args(additional_args_str):
+            app.notify("Invalid additional arguments. Arguments contain unsafe shell metacharacters.", severity="error")
+            additional_args_input.focus()
+            return
 
         # vLLM model can be a HuggingFace repo ID, so Path(model_path).exists() is not always appropriate.
         # We'll let vLLM handle model path validation.

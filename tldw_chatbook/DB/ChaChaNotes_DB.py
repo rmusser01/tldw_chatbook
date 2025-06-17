@@ -2513,6 +2513,67 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching messages for conversation ID {conversation_id}: {e}")
             raise
 
+    def get_messages_for_conversations_batch(self, conversation_ids: List[str], limit_per_conversation: int = 100,
+                                           order_by_timestamp: str = "ASC") -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Batch fetch messages for multiple conversations to avoid N+1 queries.
+        
+        Args:
+            conversation_ids: List of conversation IDs to fetch messages for
+            limit_per_conversation: Maximum messages per conversation
+            order_by_timestamp: Order by timestamp ASC or DESC
+            
+        Returns:
+            Dictionary mapping conversation_id to list of messages
+        """
+        if not conversation_ids:
+            return {}
+            
+        if order_by_timestamp.upper() not in ["ASC", "DESC"]:
+            raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
+        
+        # Use ROW_NUMBER() window function to limit messages per conversation
+        placeholders = ','.join('?' * len(conversation_ids))
+        query = f"""
+            WITH ranked_messages AS (
+                SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
+                       m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
+                       m.last_modified, m.version, m.client_id, m.deleted,
+                       ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
+                FROM messages m
+                JOIN conversations c ON m.conversation_id = c.id
+                WHERE m.conversation_id IN ({placeholders})
+                  AND m.deleted = 0
+                  AND c.deleted = 0
+            )
+            SELECT * FROM ranked_messages 
+            WHERE row_num <= ?
+            ORDER BY conversation_id, timestamp {order_by_timestamp}
+        """
+        
+        try:
+            cursor = self.execute_query(query, tuple(conversation_ids) + (limit_per_conversation,))
+            all_messages = [dict(row) for row in cursor.fetchall()]
+            
+            # Group messages by conversation_id
+            result = {}
+            for message in all_messages:
+                conv_id = message['conversation_id']
+                if conv_id not in result:
+                    result[conv_id] = []
+                result[conv_id].append(message)
+            
+            # Ensure all requested conversation IDs are in the result (even if empty)
+            for conv_id in conversation_ids:
+                if conv_id not in result:
+                    result[conv_id] = []
+                    
+            return result
+            
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error fetching messages for conversations: {e}")
+            raise
+
     def update_message(self, message_id: str, update_data: Dict[str, Any], expected_version: int) -> bool | None:
         """
         Updates an existing message using optimistic locking.

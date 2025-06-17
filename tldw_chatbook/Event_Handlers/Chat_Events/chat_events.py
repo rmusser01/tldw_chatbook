@@ -21,6 +21,7 @@ from textual.css.query import QueryError
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
+from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.titlebar import TitleBar
 from tldw_chatbook.Utils.Emoji_Handling import (
@@ -35,6 +36,38 @@ from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 #
+########################################################################################################################
+#
+# Security Functions:
+
+def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Union[dict, list]]:
+    """
+    Safely parse JSON with size limits to prevent DoS attacks.
+    
+    Args:
+        json_str: The JSON string to parse
+        max_size: Maximum allowed size in bytes (default 1MB)
+    
+    Returns:
+        Parsed JSON object or None if parsing fails
+    """
+    if not json_str or not json_str.strip():
+        return None
+    
+    # Check size limit
+    if len(json_str.encode('utf-8')) > max_size:
+        loguru_logger.warning(f"JSON string too large: {len(json_str)} bytes (max {max_size})")
+        return None
+    
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        loguru_logger.warning(f"Invalid JSON: {e}")
+        return None
+    except Exception as e:
+        loguru_logger.error(f"Unexpected error parsing JSON: {e}")
+        return None
+
 ########################################################################################################################
 #
 # Functions:
@@ -104,6 +137,17 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
 
     # --- 2. Get Message and Parameters from UI ---
     message_text_from_input = text_area.text.strip()
+    
+    # Validate user message input
+    if message_text_from_input:
+        if not validate_text_input(message_text_from_input, max_length=100000, allow_html=False):
+            await chat_container.mount(ChatMessage(Text.from_markup("Error: Message contains invalid content or is too long."), role="System", classes="-error"))
+            loguru_logger.warning(f"Invalid user message input rejected")
+            return
+        
+        # Sanitize the message text to remove dangerous characters
+        message_text_from_input = sanitize_string(message_text_from_input, max_length=100000)
+    
     reuse_last_user_bubble = False
 
     if not message_text_from_input: # Try to reuse last user message if input is empty
@@ -129,10 +173,37 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     selected_provider = str(provider_widget.value) if provider_widget.value != Select.BLANK else None
     selected_model = str(model_widget.value) if model_widget.value != Select.BLANK else None
     system_prompt = system_prompt_widget.text
+    
+    # Validate system prompt input
+    if system_prompt and not validate_text_input(system_prompt, max_length=50000, allow_html=False):
+        await chat_container.mount(ChatMessage(Text.from_markup("Error: System prompt contains invalid content or is too long."), role="System", classes="-error"))
+        loguru_logger.warning(f"Invalid system prompt input rejected")
+        return
+    
+    # Sanitize system prompt
+    if system_prompt:
+        system_prompt = sanitize_string(system_prompt, max_length=50000)
     temperature = safe_float(temp_widget.value, 0.7, "temperature") # Use imported safe_float
     top_p = safe_float(top_p_widget.value, 0.95, "top_p")
     min_p = safe_float(min_p_widget.value, 0.05, "min_p")
     top_k = safe_int(top_k_widget.value, 50, "top_k") # Use imported safe_int
+    
+    # Validate parameter ranges
+    if not validate_number_range(temperature, 0.0, 2.0):
+        await chat_container.mount(ChatMessage(Text.from_markup("Error: Temperature must be between 0.0 and 2.0."), role="System", classes="-error"))
+        return
+    
+    if not validate_number_range(top_p, 0.0, 1.0):
+        await chat_container.mount(ChatMessage(Text.from_markup("Error: Top-p must be between 0.0 and 1.0."), role="System", classes="-error"))
+        return
+    
+    if not validate_number_range(min_p, 0.0, 1.0):
+        await chat_container.mount(ChatMessage(Text.from_markup("Error: Min-p must be between 0.0 and 1.0."), role="System", classes="-error"))
+        return
+    
+    if not validate_number_range(top_k, 1, 1000):
+        await chat_container.mount(ChatMessage(Text.from_markup("Error: Top-k must be between 1 and 1000."), role="System", classes="-error"))
+        return
     custom_prompt = ""  # Assuming this isn't used directly in chat send, but passed
 
     # Determine if streaming should be enabled based on provider settings
@@ -186,19 +257,21 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     llm_frequency_penalty_value = safe_float(llm_frequency_penalty_widget.value, 0.0, "llm_frequency_penalty")
     llm_tool_choice_value = llm_tool_choice_widget.value.strip() or None
 
-    try:
-        llm_logit_bias_text = llm_logit_bias_widget.text.strip()
-        llm_logit_bias_value = json.loads(llm_logit_bias_text) if llm_logit_bias_text and llm_logit_bias_text != "{}" else None
-    except json.JSONDecodeError:
-        loguru_logger.warning(f"Invalid JSON in llm_logit_bias: '{llm_logit_bias_widget.text}'")
-        await chat_container.mount(ChatMessage(Text.from_markup("Error: Invalid JSON in LLM Logit Bias. Parameter not used."), role="System", classes="-error"))
+    # Safely parse logit bias JSON with size limits
+    llm_logit_bias_text = llm_logit_bias_widget.text.strip()
+    if llm_logit_bias_text and llm_logit_bias_text != "{}":
+        llm_logit_bias_value = safe_json_loads(llm_logit_bias_text, max_size=64 * 1024)  # 64KB limit
+        if llm_logit_bias_value is None and llm_logit_bias_text:
+            await chat_container.mount(ChatMessage(Text.from_markup("Error: Invalid or too large JSON in LLM Logit Bias. Parameter not used."), role="System", classes="-error"))
+    else:
         llm_logit_bias_value = None
-    try:
-        llm_tools_text = llm_tools_widget.text.strip()
-        llm_tools_value = json.loads(llm_tools_text) if llm_tools_text and llm_tools_text != "[]" else None
-    except json.JSONDecodeError:
-        loguru_logger.warning(f"Invalid JSON in llm_tools: '{llm_tools_widget.text}'")
-        await chat_container.mount(ChatMessage(Text.from_markup("Error: Invalid JSON in LLM Tools. Parameter not used."), role="System", classes="-error"))
+    # Safely parse tools JSON with size limits
+    llm_tools_text = llm_tools_widget.text.strip()
+    if llm_tools_text and llm_tools_text != "[]":
+        llm_tools_value = safe_json_loads(llm_tools_text, max_size=256 * 1024)  # 256KB limit for tools
+        if llm_tools_value is None and llm_tools_text:
+            await chat_container.mount(ChatMessage(Text.from_markup("Error: Invalid or too large JSON in LLM Tools. Parameter not used."), role="System", classes="-error"))
+    else:
         llm_tools_value = None
 
     # --- 3. Basic Validation ---

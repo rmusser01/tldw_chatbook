@@ -27,6 +27,7 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError as MediaDatabaseError
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
+from ..Utils.pagination import paginated_fetch
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -1215,11 +1216,21 @@ class SearchWindow(Container):
             try:
                 if selection_mode == "all":
                     await update_status(
-                        f"⏳ Loading ALL items from Media DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)})...")
-                    # Use get_all_active_media_for_embedding to get items with content
-                    raw_media_items = await asyncio.to_thread(
-                        media_db_instance.get_all_active_media_for_embedding,
-                        limit=10000  # Large number to fetch "all"
+                        f"⏳ Loading items from Media DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)}) with pagination...")
+                    
+                    # Create a wrapper function for pagination that matches the expected signature
+                    def fetch_media_page(limit: int, offset: int) -> List[Dict[str, Any]]:
+                        return media_db_instance.get_all_active_media_for_embedding(limit=limit, offset=offset)
+                    
+                    # Use paginated fetch to avoid loading too many items at once
+                    async def status_updater(msg: str):
+                        await update_status(msg)
+                    
+                    raw_media_items = await paginated_fetch(
+                        fetch_func=fetch_media_page,
+                        page_size=200,  # Reasonable page size
+                        max_items=2000,  # Reasonable limit to prevent UI freezing
+                        status_callback=status_updater
                     )
 
 
@@ -1349,8 +1360,22 @@ class SearchWindow(Container):
             try:
                 if selection_mode == "all":
                     await update_status(
-                        f"⏳ Loading ALL conversations from Chat DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)})...")
-                    raw_conv_data = await asyncio.to_thread(chat_db.list_all_active_conversations, limit=10000)
+                        f"⏳ Loading conversations from Chat DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)}) with pagination...")
+                    
+                    # Create a wrapper function for pagination
+                    def fetch_conversations_page(limit: int, offset: int) -> List[Dict[str, Any]]:
+                        return chat_db.list_all_active_conversations(limit=limit, offset=offset)
+                    
+                    # Use paginated fetch
+                    async def status_updater(msg: str):
+                        await update_status(msg)
+                    
+                    raw_conv_data = await paginated_fetch(
+                        fetch_func=fetch_conversations_page,
+                        page_size=100,  # Reasonable page size for conversations
+                        max_items=1000,  # Reasonable limit to prevent UI freezing
+                        status_callback=status_updater
+                    )
 
                 elif selection_mode == "individual" and selected_item_db_ids:
                     await update_status(f"⏳ Loading {len(selected_item_db_ids)} selected conversation(s)...")
@@ -1366,6 +1391,18 @@ class SearchWindow(Container):
                     raw_conv_data = await asyncio.to_thread(chat_db.search_conversations_by_title, title_query=keyword,
                                                             limit=1000)
 
+                # Optimize: Batch fetch messages for all conversations to avoid N+1 queries
+                conversation_ids = [conv_item.get("id") for conv_item in raw_conv_data if conv_item.get("id")]
+                if conversation_ids:
+                    all_messages_by_conv = await asyncio.to_thread(
+                        chat_db.get_messages_for_conversations_batch, 
+                        conversation_ids=conversation_ids,
+                        limit_per_conversation=1000,
+                        order_by_timestamp="ASC"
+                    )
+                else:
+                    all_messages_by_conv = {}
+
                 for conv_item in raw_conv_data:
                     conv_id = conv_item.get("id")
                     if not conv_id:
@@ -1373,9 +1410,7 @@ class SearchWindow(Container):
                             f"Skipping conversation due to missing ID: {conv_item.get('title', 'Untitled Conversation')}")
                         continue
 
-                    messages = await asyncio.to_thread(chat_db.get_messages_for_conversation, conversation_id=conv_id,
-                                                       limit=1000,
-                                                       order_by_timestamp="ASC")  # Fetch a good number of messages
+                    messages = all_messages_by_conv.get(conv_id, [])
 
                     full_conv_content_parts = []
                     for msg in messages:
