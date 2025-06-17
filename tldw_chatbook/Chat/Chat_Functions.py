@@ -74,7 +74,6 @@ def approximate_token_count(history):
         logger.error(f"Error calculating token count: {str(e)}")
         return 0
 
-# FIXME - Validate below
 # 1. Dispatch table for handler functions
 API_CALL_HANDLERS = {
     'openai': chat_with_openai,

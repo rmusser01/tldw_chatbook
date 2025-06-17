@@ -1,6 +1,10 @@
 # Chroma_Lib.py
 #
 from __future__ import annotations
+
+from tldw_chatbook import config
+from tldw_chatbook.config import CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT
+
 """Light‑weight ChromaDB helper for single‑user, local‑first apps.
 
 Key simplifications vs. the original:
@@ -429,23 +433,21 @@ class ChromaDBManager:
 
     def situate_context(self, api_name_for_context: str, doc_content: str, chunk_content: str) -> str:
         prompt = self.situate_context_prompt_template.format(doc_content=doc_content, chunk_content=chunk_content)
+        system_message = CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT
         try:
-            # FIXME
             response = analyze(
                 api_name=api_name_for_context,
-                prompt=prompt,
-                user_embedding_config=self.raw_user_embedding_config  # Pass the main config
+                input_data=prompt,  # The fully formatted string from the template is the main input
+                custom_prompt_arg=None,  # Instructions are already included in the input_data
+                # system_message=None,  # Use the default system message from analyze
+                system_message=system_message,
+                # Override analyze's default system message
+                api_key=None,  # Let analyze handle API key resolution or use its defaults
+                temp=None,  # Let analyze use its default temperature or configured one
+                streaming=False,  # We expect a single string output, not a stream
+                recursive_summarization=False,  # Not applicable for this task
+                chunked_summarization=False  # Not applicable for this task
             )
-            # api_name: str,
-            # input_data: Any,
-            # custom_prompt_arg: Optional[str],
-            # api_key: Optional[str] = None,
-            # system_message: Optional[str] = None,
-            # temp: Optional[float] = None,
-            # streaming: bool = False,
-            # recursive_summarization: bool = False,
-            # chunked_summarization: bool = False,  # Summarize chunks separately & combine
-            # chunk_options: Optional[dict] = None
             return response.strip() if response else ""
         except Exception as e:
             logger.error(f"User '{self.user_id}': Error in situate_context with LLM '{api_name_for_context}': {e}",
@@ -525,7 +527,16 @@ class ChromaDBManager:
 
                 logger.debug(f"process_and_store_content: Preparing chunks for embedding, contextualized={create_contextualized}")
                 for i, chunk in enumerate(chunks):
-                    chunk_text = chunk['text']
+                    # Handle both 'text_for_embedding' (from chunk_for_embedding) and 'text' (from other chunking methods)
+                    if 'text_for_embedding' in chunk:
+                        chunk_text = chunk['text_for_embedding']
+                        logger.debug(f"process_and_store_content: Using 'text_for_embedding' field for chunk {i+1}")
+                    elif 'text' in chunk:
+                        chunk_text = chunk['text']
+                        logger.debug(f"process_and_store_content: Using 'text' field for chunk {i+1}")
+                    else:
+                        logger.error(f"process_and_store_content: Chunk {i+1} missing both 'text' and 'text_for_embedding' fields: {list(chunk.keys())}")
+                        raise ValueError(f"Chunk {i+1} missing text content field")
                     docs_for_chroma.append(chunk_text)
 
                     if create_contextualized:
@@ -557,11 +568,21 @@ class ChromaDBManager:
                 ids = [f"{media_id}_chunk_{i}" for i in range(len(chunks))]
                 metadatas = []
                 for i, chunk_info in enumerate(chunks):
+                    # Handle both 'original_chunk_text' (from chunk_for_embedding) and 'text' (from other chunking methods)
+                    if 'original_chunk_text' in chunk_info:
+                        original_text = chunk_info['original_chunk_text']
+                        logger.debug(f"process_and_store_content: Using 'original_chunk_text' field for metadata in chunk {i+1}")
+                    elif 'text' in chunk_info:
+                        original_text = chunk_info['text']
+                        logger.debug(f"process_and_store_content: Using 'text' field for metadata in chunk {i+1}")
+                    else:
+                        logger.error(f"process_and_store_content: Chunk {i+1} missing both 'text' and 'original_chunk_text' fields for metadata: {list(chunk_info.keys())}")
+                        original_text = "Text content unavailable"
+                    
                     meta = {
                         "media_id": str(media_id), "chunk_index": i, "total_chunks": len(chunks),
                         "file_name": str(file_name), "contextualized": create_contextualized,
-                        "original_chunk_text_ref": chunk_info['text'][:200] + "..." if len(
-                            chunk_info['text']) > 200 else chunk_info['text']
+                        "original_chunk_text_ref": original_text[:200] + "..." if len(original_text) > 200 else original_text
                     }
                     meta.update(chunk_info.get('metadata', {}))
                     if create_contextualized:

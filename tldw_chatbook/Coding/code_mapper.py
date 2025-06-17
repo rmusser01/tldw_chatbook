@@ -8,7 +8,9 @@ from pathlib import Path
 from collections import defaultdict
 #
 # Third-Party Imports
-from aider.repo_map import RepoMap, find_src_files  # Import necessary components
+#
+# Local Imports
+from tldw_chatbook.Third_Party.aider.repomap import RepoMap
 #
 ########################################################################################################################
 #

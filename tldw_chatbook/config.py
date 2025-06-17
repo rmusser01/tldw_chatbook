@@ -624,7 +624,7 @@ def load_settings() -> Dict:
         },
         "embedding_config": {
             'embedding_provider': _get_typed_value(embeddings_section, 'embedding_provider', 'openai'),
-            'embedding_model': _get_typed_value(embeddings_section, 'embedding_model', 'text-embedding-3-small'),
+            'embedding_model': _get_typed_value(embeddings_section, 'embedding_model', 'text-embedding-3-large'),
             'onnx_model_path': _get_typed_value(embeddings_section, 'onnx_model_path', "./Models/onnx_models/text-embedding-3-small.onnx", Path),
             'model_dir': _get_typed_value(embeddings_section, 'model_dir', "./Models", Path),
             'embedding_api_url': _get_typed_value(embeddings_section, 'embedding_api_url', "http://localhost:8080/v1/embeddings"),
@@ -1327,6 +1327,16 @@ min_p = 0.0 # Check if API supports this
 top_k = 100 # Check if API supports this
 
 
+# ==========================================================
+# Default/Template Prompts
+# ==========================================================
+[Prompts]
+# Default prompts used by various functions. These can be overridden by user settings.
+sub_question_generation_prompt = "Based on the user query and chat history, generate up to 3 sub-questions to gather more specific information. Format as a numbered list."
+search_result_relevance_eval_prompt = "Evaluate the relevance of the following search result snippet to the query. Score from 1 (not relevant) to 5 (highly relevant)."
+analyze_search_results_prompt = "Analyze the provided search results and synthesize a comprehensive answer to the original query."
+situate_chunk_context_prompt = "You are an AI assistant. Please follow the instructions provided in the input text carefully and accurately."
+
 
 # ==========================================================
 # Embedding Configuration
@@ -1360,6 +1370,12 @@ default_llm_for_contextualization = "gpt-3.5-turbo"
     [embedding_config.models.openai-text-embedding-3-small]
     provider = "openai"
     model_name_or_path = "text-embedding-3-small" # Common model name
+    dimension = 3072 # Or 256,, 1536, 2048 3072 depending on how you use it
+    api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
+
+    [embedding_config.models.openai-text-embedding-3-large]
+    provider = "openai"
+    model_name_or_path = "text-embedding-3-large" # Common model name
     dimension = 1536 # Or 512, 1536 depending on how you use it
     api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
 
@@ -1702,6 +1718,8 @@ APP_CONFIG = settings.get("APP_TTS_CONFIG", DEFAULT_APP_TTS_CONFIG) # Fallback i
 DATABASE_CONFIG = settings.get("APP_DATABASE_CONFIG", DEFAULT_DATABASE_CONFIG)
 RAG_SEARCH_CONFIG = settings.get("APP_RAG_SEARCH_CONFIG", DEFAULT_RAG_SEARCH_CONFIG)
 
+# --- Default Prompts ---
+CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT = settings.get("prompts_strings", {}).get("situate_chunk_context_prompt", "You are an AI assistant. Please follow the instructions provided in the input text carefully and accurately.")
 
 # --- Load CLI Config and Initialize Databases on module import ---
 # The `settings` global variable is now the result of the unified load_settings()

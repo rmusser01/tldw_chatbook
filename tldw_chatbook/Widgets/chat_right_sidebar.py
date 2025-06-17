@@ -280,7 +280,7 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
         # This part would be more relevant if the chat tab directly supported switching active characters
         # for the ongoing conversation, rather than just for filtering searches.
         # For now, keeping it minimal.
-        with Collapsible(title="Active Character Info", collapsed=False, id=f"{id_prefix}-active-character-info-collapsible"): # Changed collapsed to False
+        with Collapsible(title="Active Character Info", collapsed=True, id=f"{id_prefix}-active-character-info-collapsible"): # Changed to collapsed=True to start collapsed
             if id_prefix == "chat":
                 yield Input(
                     id="chat-character-search-input",

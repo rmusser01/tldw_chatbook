@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 import logging
 
 # 3rd-party Libraries
-from loguru import logger as loguru_logger
+from loguru import logger as loguru_logger, logger
 from textual.widgets import ListItem, Input, ListView, TextArea, Button, Label
 from textual.css.query import QueryError
 from textual.app import App
@@ -322,10 +322,17 @@ async def handle_media_item_selected(app: 'TldwCli', list_item: ListItem) -> Non
     loguru_logger.info(f"Loaded media ID {media_id} into sidebar for review.")
 
     try:
-        title = full_media_data.get('title', '')
-        content = full_media_data.get('content', '')
-        author = full_media_data.get('author', '')
-        url = full_media_data.get('url', '')
+        # Ensure all values are strings, handling None values properly
+        title = full_media_data.get('title') or ''
+        content = full_media_data.get('content') or ''
+        author = full_media_data.get('author') or ''
+        url = full_media_data.get('url') or ''
+        
+        # Convert to strings to be absolutely sure
+        title = str(title) if title else ''
+        content = str(content) if content else ''
+        author = str(author) if author else ''
+        url = str(url) if url else ''
 
         app.query_one("#chat-media-title-display", TextArea).load_text(title)
         app.query_one("#chat-media-content-display", TextArea).load_text(content)

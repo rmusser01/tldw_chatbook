@@ -835,22 +835,22 @@ def get_supported_languages_md():
     return res
 
 
-if __name__ == "__main__":
-    fnames = sys.argv[1:]
-
-    chat_fnames = []
-    other_fnames = []
-    for fname in sys.argv[1:]:
-        if Path(fname).is_dir():
-            chat_fnames += find_src_files(fname)
-        else:
-            chat_fnames.append(fname)
-
-    rm = RepoMap(root=".")
-    repo_map = rm.get_ranked_tags_map(chat_fnames, other_fnames)
-
-    dump(len(repo_map))
-    print(repo_map)
+# if __name__ == "__main__":
+#     fnames = sys.argv[1:]
+#
+#     chat_fnames = []
+#     other_fnames = []
+#     for fname in sys.argv[1:]:
+#         if Path(fname).is_dir():
+#             chat_fnames += find_src_files(fname)
+#         else:
+#             chat_fnames.append(fname)
+#
+#     rm = RepoMap(root=".")
+#     repo_map = rm.get_ranked_tags_map(chat_fnames, other_fnames)
+#
+#     dump(len(repo_map))
+#     print(repo_map)
 
 #
 # End of repomap.py
