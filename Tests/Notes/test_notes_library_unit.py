@@ -8,14 +8,15 @@ import logging
 import sqlite3
 from typing import Any, Optional, Dict
 
-from tldw_Server_API.app.core.Notes.Notes_Library import NotesInteropService, logger as notes_library_logger_actual
-from tldw_Server_API.app.core.DB_Management.ChaChaNotes_DB import CharactersRAGDB
-from tldw_Server_API.app.core.DB_Management.ChaChaNotes_DB import (
+from loguru import logger
+
+from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDBError as Actual_CharactersRAGDBError,
     SchemaError as Actual_SchemaError,
     InputError as Actual_InputError,
-    ConflictError as Actual_ConflictError
+    ConflictError as Actual_ConflictError, CharactersRAGDB
 )
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 
 MODULE_PATH_PREFIX_CHACHA_DB = "tldw_Server_API.app.core.DB_Management.ChaChaNotes_DB"
 NOTES_LIBRARY_MODULE_PATH = "tldw_Server_API.app.core.Notes.Notes_Library"
@@ -49,7 +50,7 @@ class TestNotesInteropService(unittest.TestCase):
             try:
                 self.service.close_all_user_connections()
             except Exception as e:
-                notes_library_logger_actual.error(f"Error during service.close_all_user_connections() in tearDown: {e}",
+                logger.error(f"Error during service.close_all_user_connections() in tearDown: {e}",
                                                   exc_info=True)
 
     def test_initialization(self):
