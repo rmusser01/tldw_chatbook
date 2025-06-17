@@ -329,7 +329,9 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
             list_view = app.query_one(f"#{list_view_id}", ListView)
             await list_view.clear()
             await list_view.append(ListItem(Label(f"Error loading: {str(e)[:50]}")))
-        except: #pylint: disable=bare-except
+        except (QueryError, AttributeError):
+            # QueryError if list_view is not properly mounted/accessible
+            # AttributeError if list_view is None or invalid
             pass
 
 

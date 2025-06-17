@@ -35,14 +35,48 @@ from typing import (Any, Annotated, Callable, Dict, List, Literal, Optional,
                     Protocol, TypedDict, Union)
 #
 # Third-Party Libraries
-import numpy as np
 import requests
-import torch
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl, ValidationError
-from torch import Tensor
-from torch.nn.functional import normalize
-from transformers import AutoModel, AutoTokenizer
+
+# Optional dependencies with fallbacks
+from ..Utils.optional_deps import (
+    check_dependency, require_dependency, get_safe_import, 
+    DEPENDENCIES_AVAILABLE, create_unavailable_feature_handler
+)
+
+# Import optional dependencies safely
+numpy = get_safe_import('numpy')
+torch = get_safe_import('torch')
+transformers = get_safe_import('transformers')
+
+# Create type aliases that work with or without dependencies
+if torch is not None:
+    Tensor = torch.Tensor
+    normalize = torch.nn.functional.normalize
+    AutoModel = transformers.AutoModel
+    AutoTokenizer = transformers.AutoTokenizer
+else:
+    # Create placeholder types
+    Tensor = Any
+    normalize = create_unavailable_feature_handler('torch', 'pip install tldw_chatbook[embeddings_rag]')
+    AutoModel = create_unavailable_feature_handler('transformers', 'pip install tldw_chatbook[embeddings_rag]')
+    AutoTokenizer = create_unavailable_feature_handler('transformers', 'pip install tldw_chatbook[embeddings_rag]')
+
+if numpy is not None:
+    np = numpy
+else:
+    # Create a basic np-like object for type annotations
+    class _NumpyPlaceholder:
+        @staticmethod
+        def asarray(*args, **kwargs):
+            raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
+        
+        @staticmethod  
+        def empty(*args, **kwargs):
+            raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
+    
+    np = _NumpyPlaceholder()
 #
 # Local Imports
 #
@@ -274,6 +308,12 @@ class EmbeddingFactory:
             idle_seconds: int = 900,
             allow_dynamic_hf: bool = True,
     ) -> None:
+        # Check if embeddings/RAG dependencies are available
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            raise ImportError(
+                "EmbeddingFactory requires embeddings/RAG dependencies. "
+                "Install with: pip install tldw_chatbook[embeddings_rag]"
+            )
         try:
             self._cfg = cfg if isinstance(cfg, EmbeddingConfigSchema) else EmbeddingConfigSchema(**cfg)
         except ValidationError as e_pydantic:  # Catch Pydantic validation errors

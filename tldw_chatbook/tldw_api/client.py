@@ -18,7 +18,7 @@ from .schemas import (
     ProcessXMLResponseItem,  # Add specific XML/MediaWiki later if needed
 )
 from .exceptions import APIConnectionError, APIRequestError, APIResponseError, AuthenticationError
-from .utils import model_to_form_data, prepare_files_for_httpx
+from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
 #
 ########################################################################################################################
 #
@@ -135,64 +135,82 @@ class TLDWAPIClient:
     async def process_video(self, request_data: ProcessVideoRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)
         httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
-        response_dict = await self._request("POST", "/api/v1/media/process-videos", data=form_data, files=httpx_files)
-        return BatchMediaProcessResponse(**response_dict)
+        try:
+            response_dict = await self._request("POST", "/api/v1/media/process-videos", data=form_data, files=httpx_files)
+            return BatchMediaProcessResponse(**response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
 
     async def process_audio(self, request_data: ProcessAudioRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)
         httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
-        response_dict = await self._request("POST", "/api/v1/media/process-audios", data=form_data, files=httpx_files)
-        return BatchMediaProcessResponse(**response_dict)
+        try:
+            response_dict = await self._request("POST", "/api/v1/media/process-audios", data=form_data, files=httpx_files)
+            return BatchMediaProcessResponse(**response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
 
     async def process_pdf(self, request_data: ProcessPDFRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)
         httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
-        response_dict = await self._request("POST", "/api/v1/media/process-pdfs", data=form_data, files=httpx_files)
-        return BatchMediaProcessResponse(**response_dict)
+        try:
+            response_dict = await self._request("POST", "/api/v1/media/process-pdfs", data=form_data, files=httpx_files)
+            return BatchMediaProcessResponse(**response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
 
     async def process_ebook(self, request_data: ProcessEbookRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)
         httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
-        response_dict = await self._request("POST", "/api/v1/media/process-ebooks", data=form_data, files=httpx_files)
-        return BatchMediaProcessResponse(**response_dict)
+        try:
+            response_dict = await self._request("POST", "/api/v1/media/process-ebooks", data=form_data, files=httpx_files)
+            return BatchMediaProcessResponse(**response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
 
     async def process_document(self, request_data: ProcessDocumentRequest, file_paths: Optional[List[str]] = None) -> BatchMediaProcessResponse:
         form_data = model_to_form_data(request_data)
         httpx_files = prepare_files_for_httpx(file_paths, upload_field_name="files")
-        response_dict = await self._request("POST", "/api/v1/media/process-documents", data=form_data, files=httpx_files)
-        return BatchMediaProcessResponse(**response_dict)
+        try:
+            response_dict = await self._request("POST", "/api/v1/media/process-documents", data=form_data, files=httpx_files)
+            return BatchMediaProcessResponse(**response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
 
     async def process_xml(self, request_data: ProcessXMLRequest, file_path: str) -> BatchProcessXMLResponse: # XML expects single file
         form_data = model_to_form_data(request_data) # XMLIngestRequest becomes form data for 'payload'
         httpx_files = prepare_files_for_httpx([file_path], upload_field_name="file")
-        # The XML endpoint expects 'payload' as a form field for the JSON data and 'file' for the file.
-        # This might require custom request construction if httpx doesn't handle nested form data well.
-        # Let's assume server expects payload fields flat, or adjust server.
-        # For now, sending request_data fields as top-level form data alongside the file.
-        response_dict = await self._request("POST", "/api/v1/media/process-xml", data=form_data, files=httpx_files) # Assuming route from Gradio
-        # The actual response from /process-xml is a single item, not batch. Adjusting.
-        # This is a placeholder, actual response structure for XML needs to be confirmed and modeled in schemas.py.
-        # The Gradio endpoint returns a dict like {"status": "...", "media_id": "...", "title": "..."}.
-        # For consistency, wrap it in BatchProcessXMLResponse structure.
-        if response_dict and "status" in response_dict:
-             single_item_result = ProcessXMLResponseItem(
-                status=response_dict.get("status", "Error"),
-                input_ref=Path(file_path).name, # Use filename as input_ref
-                title=response_dict.get("title"),
-                # Populate other fields if process_xml_task returns them and they are in ProcessXMLResponseItem
-                author=request_data.author, # from input
-                keywords=request_data.keywords, # from input
-                content=response_dict.get("content"), # Assuming these might come from a more detailed response
-                summary=response_dict.get("summary"),
-                segments=response_dict.get("segments")
-            )
-             return BatchProcessXMLResponse(
-                processed_count=1 if single_item_result.status not in ["Error"] else 0,
-                errors_count=1 if single_item_result.status == "Error" or single_item_result.error else 0,
-                errors=[single_item_result.error] if single_item_result.error else [],
-                results=[single_item_result]
-            )
-        raise APIResponseError(500, "Invalid response structure from XML processing", response_data=response_dict)
+        try:
+            # The XML endpoint expects 'payload' as a form field for the JSON data and 'file' for the file.
+            # This might require custom request construction if httpx doesn't handle nested form data well.
+            # Let's assume server expects payload fields flat, or adjust server.
+            # For now, sending request_data fields as top-level form data alongside the file.
+            response_dict = await self._request("POST", "/api/v1/media/process-xml", data=form_data, files=httpx_files) # Assuming route from Gradio
+            # The actual response from /process-xml is a single item, not batch. Adjusting.
+            # This is a placeholder, actual response structure for XML needs to be confirmed and modeled in schemas.py.
+            # The Gradio endpoint returns a dict like {"status": "...", "media_id": "...", "title": "..."}.
+            # For consistency, wrap it in BatchProcessXMLResponse structure.
+            if response_dict and "status" in response_dict:
+                 single_item_result = ProcessXMLResponseItem(
+                    status=response_dict.get("status", "Error"),
+                    input_ref=Path(file_path).name, # Use filename as input_ref
+                    title=response_dict.get("title"),
+                    # Populate other fields if process_xml_task returns them and they are in ProcessXMLResponseItem
+                    author=request_data.author, # from input
+                    keywords=request_data.keywords, # from input
+                    content=response_dict.get("content"), # Assuming these might come from a more detailed response
+                    summary=response_dict.get("summary"),
+                    segments=response_dict.get("segments")
+                )
+                 return BatchProcessXMLResponse(
+                    processed_count=1 if single_item_result.status not in ["Error"] else 0,
+                    errors_count=1 if single_item_result.status == "Error" or single_item_result.error else 0,
+                    errors=[single_item_result.error] if single_item_result.error else [],
+                    results=[single_item_result]
+                )
+            raise APIResponseError(500, "Invalid response structure from XML processing", response_data=response_dict)
+        finally:
+            cleanup_file_objects(httpx_files)
 
 
     async def process_mediawiki_dump(
@@ -203,35 +221,38 @@ class TLDWAPIClient:
         form_data = model_to_form_data(request_data) # Handles wiki_name, namespaces_str etc.
         httpx_files = prepare_files_for_httpx([dump_file_path], upload_field_name="dump_file")
 
-        async for item_dict in self._stream_request(
-            "POST", "/api/v1/mediawiki/process-dump", data=form_data, files=httpx_files
-        ):
-            # Assuming each yielded item from the stream is a dict that can be parsed
-            # into ProcessedMediaWikiPage or an error/progress event.
-            # The client should decide how to handle non-page events (e.g. "summary", "error")
-            if item_dict.get("type") == "item_result" and "data" in item_dict:
-                page_data = item_dict["data"]
-                page_data["input_ref"] = Path(dump_file_path).name # Add input_ref for client tracking
-                yield ProcessedMediaWikiPage(**page_data)
-            elif item_dict.get("type") == "validation_error":
-                # Yield a ProcessedMediaWikiPage with error status for validation errors
-                yield ProcessedMediaWikiPage(
-                    title=item_dict.get("title", "Unknown Page - Validation Error"),
-                    content="", # No content on validation error
-                    status="Error",
-                    error_message=f"Validation Error: {item_dict.get('detail')}",
-                    input_ref=Path(dump_file_path).name
-                )
-            elif item_dict.get("type") == "error":
-                 yield ProcessedMediaWikiPage(
-                    title=item_dict.get("title", "Unknown Page - Processing Error"),
-                    content="",
-                    status="Error",
-                    error_message=item_dict.get("message", "Unknown processing error"),
-                    input_ref=Path(dump_file_path).name
-                )
-            # Can add handling for "progress_total" and "summary" if needed by UI
-            # For now, only yield processed pages or page-level errors
+        try:
+            async for item_dict in self._stream_request(
+                "POST", "/api/v1/mediawiki/process-dump", data=form_data, files=httpx_files
+            ):
+                # Assuming each yielded item from the stream is a dict that can be parsed
+                # into ProcessedMediaWikiPage or an error/progress event.
+                # The client should decide how to handle non-page events (e.g. "summary", "error")
+                if item_dict.get("type") == "item_result" and "data" in item_dict:
+                    page_data = item_dict["data"]
+                    page_data["input_ref"] = Path(dump_file_path).name # Add input_ref for client tracking
+                    yield ProcessedMediaWikiPage(**page_data)
+                elif item_dict.get("type") == "validation_error":
+                    # Yield a ProcessedMediaWikiPage with error status for validation errors
+                    yield ProcessedMediaWikiPage(
+                        title=item_dict.get("title", "Unknown Page - Validation Error"),
+                        content="", # No content on validation error
+                        status="Error",
+                        error_message=f"Validation Error: {item_dict.get('detail')}",
+                        input_ref=Path(dump_file_path).name
+                    )
+                elif item_dict.get("type") == "error":
+                     yield ProcessedMediaWikiPage(
+                        title=item_dict.get("title", "Unknown Page - Processing Error"),
+                        content="",
+                        status="Error",
+                        error_message=item_dict.get("message", "Unknown processing error"),
+                        input_ref=Path(dump_file_path).name
+                    )
+                # Can add handling for "progress_total" and "summary" if needed by UI
+                # For now, only yield processed pages or page-level errors
+        finally:
+            cleanup_file_objects(httpx_files)
 
 #
 # End of client.py

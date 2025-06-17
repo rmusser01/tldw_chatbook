@@ -24,6 +24,7 @@ logger = logger.bind(module="Character_Chat_Lib")
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, ConflictError, InputError
+from tldw_chatbook.Utils.path_validation import validate_path
 #
 ###############################################
 #
@@ -509,6 +510,8 @@ def load_character_and_image(
               An empty list if no character or first message, or on error.
             - Optional[Image.Image]: The character's image as a PIL Image object.
               None if no image is associated or an error occurs.
+              IMPORTANT: Callers must call .close() on this Image object when done
+              to prevent memory leaks.
     """
     logger.debug(f"Loading character and image for ID: {character_id}, User: {user_name}")
     try:
@@ -844,7 +847,7 @@ def parse_character_book(book_data: Dict[str, Any]) -> Dict[str, Any]:
 #
 
 # FIXME
-def extract_json_from_image_file(image_file_input: Union[str, bytes, io.BytesIO]) -> Optional[str]:
+def extract_json_from_image_file(image_file_input: Union[str, bytes, io.BytesIO], base_directory: Optional[str] = None) -> Optional[str]:
     """Extracts 'chara' metadata (Base64 encoded JSON) from an image file.
 
     Typically used for PNG character cards (e.g., TavernAI format) that embed
@@ -853,6 +856,8 @@ def extract_json_from_image_file(image_file_input: Union[str, bytes, io.BytesIO]
     Args:
         image_file_input (Union[str, bytes, io.BytesIO]): The image data,
             which can be a file path (str), raw image bytes, or a BytesIO stream.
+        base_directory: Optional base directory to restrict file access to. If None,
+                       uses a safe default directory.
 
     Returns:
         Optional[str]: The decoded JSON string from the 'chara' metadata if
@@ -866,8 +871,20 @@ def extract_json_from_image_file(image_file_input: Union[str, bytes, io.BytesIO]
 
     try:
         if isinstance(image_file_input, str) and os.path.exists(image_file_input):
-            file_name_for_log = image_file_input
-            with open(image_file_input, 'rb') as f_bytes:
+            # Validate the file path to prevent directory traversal
+            if base_directory is None:
+                # Default to user data directory for character cards
+                base_directory = os.path.expanduser("~/.local/share/tldw_cli/")
+            
+            try:
+                validated_path = validate_path(image_file_input, base_directory)
+                file_name_for_log = str(validated_path)
+                logger.debug(f"Validated image file path: {validated_path}")
+            except ValueError as e:
+                logger.error(f"Invalid image file path '{image_file_input}': {e}")
+                return None
+                
+            with open(validated_path, 'rb') as f_bytes:
                 image_source_to_use = io.BytesIO(f_bytes.read())
         elif isinstance(image_file_input, bytes):
             image_source_to_use = io.BytesIO(image_file_input)
@@ -1755,7 +1772,8 @@ def load_chat_history_from_file_and_save_to_db(
         db: CharactersRAGDB,
         file_path_or_obj: Union[str, io.BytesIO],
         user_name_for_placeholders: Optional[str] = "User",
-        default_user_sender_in_db: str = "User"
+        default_user_sender_in_db: str = "User",
+        base_directory: Optional[str] = None
 ) -> Tuple[Optional[str], Optional[int]]:
     """Loads chat history from a JSON file and saves it to the database.
 
@@ -1798,6 +1816,8 @@ def load_chat_history_from_file_and_save_to_db(
             Defaults to "User".
         default_user_sender_in_db (str): The identifier to use for the 'sender'
             field when saving user messages to the database. Defaults to "User".
+        base_directory: Optional base directory to restrict file access to. If None,
+                       uses a safe default directory.
 
     Returns:
         Tuple[Optional[str], Optional[int]]: A tuple containing:
@@ -1812,8 +1832,20 @@ def load_chat_history_from_file_and_save_to_db(
     try:
         content_str: str
         if isinstance(file_path_or_obj, str):
-            filename_for_log = file_path_or_obj
-            with open(file_path_or_obj, 'r', encoding='utf-8') as f:
+            # Validate the file path to prevent directory traversal
+            if base_directory is None:
+                # Default to user data directory for chat history files
+                base_directory = os.path.expanduser("~/.local/share/tldw_cli/")
+            
+            try:
+                validated_path = validate_path(file_path_or_obj, base_directory)
+                filename_for_log = str(validated_path)
+                logger.debug(f"Validated chat history file path: {validated_path}")
+            except ValueError as e:
+                logger.error(f"Invalid chat history file path '{file_path_or_obj}': {e}")
+                return None, None
+                
+            with open(validated_path, 'r', encoding='utf-8') as f:
                 content_str = f.read()
         elif hasattr(file_path_or_obj, 'read'):  # File-like object
             if hasattr(file_path_or_obj, 'name') and file_path_or_obj.name:

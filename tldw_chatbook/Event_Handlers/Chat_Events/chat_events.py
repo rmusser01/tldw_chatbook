@@ -1154,21 +1154,27 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             try:
                 await results_list_view.append(ListItem(Label("Error: UI component missing.")))
-            except:
+            except (QueryError, AttributeError):
+                # QueryError if results_list_view is not properly mounted/accessible
+                # AttributeError if results_list_view is None or invalid
                 pass
     except CharactersRAGDBError as e_db:
         loguru_logger.error(f"Database error during conversation search: {e_db}", exc_info=True)
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             try:
                 await results_list_view.append(ListItem(Label("Error: Database search failed.")))
-            except:
+            except (QueryError, AttributeError):
+                # QueryError if results_list_view is not properly mounted/accessible
+                # AttributeError if results_list_view is None or invalid
                 pass
     except Exception as e_unexp:
         loguru_logger.error(f"Unexpected error during conversation search: {e_unexp}", exc_info=True)
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             try:
                 await results_list_view.append(ListItem(Label("Error: Unexpected search failure.")))
-            except:
+            except (QueryError, AttributeError):
+                # QueryError if results_list_view is not properly mounted/accessible
+                # AttributeError if results_list_view is None or invalid
                 pass
 
 

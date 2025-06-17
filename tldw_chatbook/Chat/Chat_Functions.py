@@ -46,6 +46,7 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_aphrodite, cha
     chat_with_kobold, chat_with_llama, chat_with_oobabooga, chat_with_tabbyapi, chat_with_vllm, chat_with_custom_openai, \
     chat_with_custom_openai_2, chat_with_mlx_lm
 from tldw_chatbook.Utils.Utils import generate_unique_filename, logging
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.config import load_settings
 #
@@ -863,8 +864,11 @@ def chat(
                         elif image_history_mode == "tag_past":
                             mime_type_part = "image"
                             if image_url_data.startswith("data:image/") and ";base64," in image_url_data:
-                                try: mime_type_part = image_url_data.split(';base64,')[0].split('/')[-1]
-                                except: pass
+                                try: 
+                                    mime_type_part = image_url_data.split(';base64,')[0].split('/')[-1]
+                                except (IndexError, ValueError) as e:
+                                    logger.debug(f"Failed to parse image MIME type from data URL: {e}")
+                                    # mime_type_part remains "image"
                             processed_hist_content_parts.append({"type": "text", "text": f"<image: prior_history.{mime_type_part}>"})
                         # "ignore_past": do nothing, image part is skipped
 
@@ -1704,7 +1708,7 @@ def update_chat_content(
 #
 # Chat Dictionary Functions
 
-def parse_user_dict_markdown_file(file_path: str) -> Dict[str, str]:
+def parse_user_dict_markdown_file(file_path: str, base_directory: Optional[str] = None) -> Dict[str, str]:
     """
     Parses a user-defined dictionary from a markdown-like file.
 
@@ -1724,6 +1728,8 @@ def parse_user_dict_markdown_file(file_path: str) -> Dict[str, str]:
 
     Args:
         file_path: The path to the markdown dictionary file.
+        base_directory: Optional base directory to restrict file access to. If None, 
+                       uses the config directory or current working directory.
 
     Returns:
         A dictionary where keys are strings and values are the corresponding
@@ -1731,6 +1737,19 @@ def parse_user_dict_markdown_file(file_path: str) -> Dict[str, str]:
         or an error occurs during parsing.
     """
     logger.debug(f"Parsing user dictionary file: {file_path}")
+    
+    # Validate the file path to prevent directory traversal
+    if base_directory is None:
+        # Default to a safe base directory - typically config or user data directory
+        base_directory = os.path.expanduser("~/.config/tldw_cli/")
+    
+    try:
+        validated_path = validate_path(file_path, base_directory)
+        logger.debug(f"Validated file path: {validated_path}")
+    except ValueError as e:
+        logger.error(f"Invalid file path '{file_path}': {e}")
+        return {}
+    
     replacement_dict: Dict[str, str] = {}
     current_key: Optional[str] = None
     current_value_lines: List[str] = []
@@ -1739,7 +1758,7 @@ def parse_user_dict_markdown_file(file_path: str) -> Dict[str, str]:
     termination_pattern = re.compile(r'^\s*---@@@---\s*$')
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as file:
+        with open(validated_path, 'r', encoding='utf-8') as file:
             for line_number, line_content_original in enumerate(file, 1):
                 line_for_logic = line_content_original.strip()  # Use for terminator/blank checks
 

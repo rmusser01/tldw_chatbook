@@ -7,6 +7,7 @@ import inspect
 import logging
 import logging.handlers
 import subprocess
+import threading
 import traceback
 from typing import Union, Optional, Any, Dict, List, Callable
 #
@@ -182,6 +183,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     ccp_active_view: reactive[str] = reactive("conversation_details_view")
 
     # Add state to hold the currently streaming AI message widget
+    # Use a lock to prevent race conditions when modifying shared state
+    _chat_state_lock = threading.Lock()
     current_ai_message_widget: Optional[ChatMessage] = None
     current_chat_worker: Optional[Worker] = None
     current_chat_is_streaming: bool = False
@@ -879,6 +882,38 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             loguru_logger.debug("Cleared prompt editor fields in center pane.")
         except QueryError as e:
             loguru_logger.error(f"Error clearing prompt editor fields in center pane: {e}")
+
+    # --- Thread-safe chat state helpers ---
+    
+    def set_current_ai_message_widget(self, widget: Optional[ChatMessage]) -> None:
+        """Thread-safely set the current AI message widget."""
+        with self._chat_state_lock:
+            self.current_ai_message_widget = widget
+    
+    def get_current_ai_message_widget(self) -> Optional[ChatMessage]:
+        """Thread-safely get the current AI message widget."""
+        with self._chat_state_lock:
+            return self.current_ai_message_widget
+    
+    def set_current_chat_worker(self, worker: Optional[Worker]) -> None:
+        """Thread-safely set the current chat worker."""
+        with self._chat_state_lock:
+            self.current_chat_worker = worker
+    
+    def get_current_chat_worker(self) -> Optional[Worker]:
+        """Thread-safely get the current chat worker."""
+        with self._chat_state_lock:
+            return self.current_chat_worker
+    
+    def set_current_chat_is_streaming(self, is_streaming: bool) -> None:
+        """Thread-safely set the streaming state."""
+        with self._chat_state_lock:
+            self.current_chat_is_streaming = is_streaming
+    
+    def get_current_chat_is_streaming(self) -> bool:
+        """Thread-safely get the streaming state."""
+        with self._chat_state_lock:
+            return self.current_chat_is_streaming
 
     async def _load_prompt_for_editing(self, prompt_id: Optional[int], prompt_uuid: Optional[str] = None) -> None:
         if not self.prompts_service_initialized:

@@ -26,13 +26,41 @@ import hashlib
 import re
 #
 # Third-Party Libraries
-import numpy as np
-import chromadb
-from chromadb import Settings
-from chromadb.errors import ChromaError, InvalidDimensionException
-from chromadb.api.models import Collection
-from chromadb.api.types import QueryResult
 from loguru import logger
+
+# Optional dependencies with fallbacks
+from ..Utils.optional_deps import (
+    check_dependency, require_dependency, get_safe_import, 
+    DEPENDENCIES_AVAILABLE, create_unavailable_feature_handler
+)
+
+# Import optional dependencies safely
+numpy = get_safe_import('numpy')
+chromadb = get_safe_import('chromadb')
+
+# Create safe imports with fallbacks
+if numpy is not None:
+    np = numpy
+else:
+    # Create a basic np-like object for type annotations
+    class _NumpyPlaceholder:
+        @staticmethod
+        def asarray(*args, **kwargs):
+            raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
+    np = _NumpyPlaceholder()
+
+if chromadb is not None:
+    from chromadb import Settings
+    from chromadb.errors import ChromaError, InvalidDimensionException
+    from chromadb.api.models import Collection
+    from chromadb.api.types import QueryResult
+else:
+    # Create placeholder classes
+    Settings = create_unavailable_feature_handler('chromadb', 'pip install tldw_chatbook[embeddings_rag]')
+    ChromaError = Exception
+    InvalidDimensionException = Exception
+    Collection = Any
+    QueryResult = Any
 
 # Configure logger with context
 logger = logger.bind(module="Chroma_Lib")
@@ -67,6 +95,13 @@ class ChromaDBManager:
                 ))
 
     def __init__(self, user_id: str, user_embedding_config: Dict[str, Any]):
+        # Check if embeddings/RAG dependencies are available
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            raise ImportError(
+                "ChromaDBManager requires embeddings/RAG dependencies. "
+                "Install with: pip install tldw_chatbook[embeddings_rag]"
+            )
+            
         if not user_id:
             logger.error("Initialization failed: user_id cannot be empty for ChromaDBManager.")
             raise ValueError("user_id cannot be empty for ChromaDBManager.")
