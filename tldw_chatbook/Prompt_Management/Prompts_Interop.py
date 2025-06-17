@@ -62,6 +62,7 @@ from tldw_chatbook.DB.Prompts_DB import (
     view_prompt_keywords_markdown as db_view_prompt_keywords_markdown,
     export_prompts_formatted as db_export_prompts_formatted
 )
+from tldw_chatbook.Utils.path_validation import validate_path
 #
 #######################################################################################################################
 #
@@ -474,7 +475,8 @@ def _get_file_type(file_path: Path) -> Optional[str]:
     return None
 
 def import_prompts_from_files(
-    file_paths: Union[str, Path, List[Union[str, Path]]]
+    file_paths: Union[str, Path, List[Union[str, Path]]],
+    base_directory: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     Imports prompts from one or more files (JSON, YAML, Markdown, TXT).
@@ -484,6 +486,8 @@ def import_prompts_from_files(
 
     Args:
         file_paths: A single file path (str or Path) or a list of file paths.
+        base_directory: Optional base directory to restrict file access to. If None,
+                       uses a safe default directory.
 
     Returns:
         A list of dictionaries, where each dictionary represents the result of
@@ -507,6 +511,10 @@ def import_prompts_from_files(
     else:
         file_paths = [Path(fp) for fp in file_paths]
 
+    # Set default base directory for prompt files
+    if base_directory is None:
+        base_directory = os.path.expanduser("~/.config/tldw_cli/prompts/")
+
     results: List[Dict[str, Any]] = []
     parser_map: Dict[str, Callable[[str], List[Dict[str, Any]]]] = {
         "json": parse_json_prompts_from_content,
@@ -518,28 +526,39 @@ def import_prompts_from_files(
     for file_path in file_paths:
         file_path_str = str(file_path)
         logger.info(f"Processing import file: {file_path_str}")
-        if not file_path.exists() or not file_path.is_file():
-            msg = f"File not found or is not a regular file: {file_path_str}"
+        
+        # Validate the file path to prevent directory traversal
+        try:
+            validated_path = validate_path(file_path_str, base_directory)
+            logger.debug(f"Validated prompt file path: {validated_path}")
+        except ValueError as e:
+            msg = f"Invalid file path '{file_path_str}': {e}"
+            logger.error(msg)
+            results.append({"file_path": file_path_str, "status": "failure", "message": msg})
+            continue
+        
+        if not validated_path.exists() or not validated_path.is_file():
+            msg = f"File not found or is not a regular file: {validated_path}"
             logger.error(msg)
             results.append({"file_path": file_path_str, "status": "failure", "message": msg})
             continue
 
-        file_type = _get_file_type(file_path)
+        file_type = _get_file_type(validated_path)
         if not file_type:
-            msg = f"Unsupported file type or unknown extension: {file_path_str}"
+            msg = f"Unsupported file type or unknown extension: {validated_path}"
             logger.warning(msg)
             results.append({"file_path": file_path_str, "status": "failure", "message": msg})
             continue
 
         parser = parser_map.get(file_type)
         if not parser: # Should not happen if _get_file_type returns a valid key
-            msg = f"No parser available for file type '{file_type}': {file_path_str}"
+            msg = f"No parser available for file type '{file_type}': {validated_path}"
             logger.error(msg) # This would be an internal logic error
             results.append({"file_path": file_path_str, "status": "failure", "message": msg})
             continue
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(validated_path, "r", encoding="utf-8") as f:
                 content = f.read()
             parsed_prompts = parser(content)
         except RuntimeError as e: # For unavailable parsers (PyYAML/python-frontmatter not installed)

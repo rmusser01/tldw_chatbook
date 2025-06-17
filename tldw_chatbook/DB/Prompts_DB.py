@@ -44,6 +44,7 @@ from loguru import logger
 from loguru import logger as logging
 #
 # Local Imports
+from .sql_validation import validate_table_name, validate_column_name
 #
 ########################################################################################################################
 #
@@ -557,6 +558,12 @@ class PromptsDatabase:
 
     def _get_next_version(self, conn: sqlite3.Connection, table: str, id_col: str, id_val: Any) -> Optional[
         Tuple[int, int]]:
+        # Validate SQL identifiers to prevent injection
+        if not validate_table_name(table, 'prompts'):
+            raise InputError(f"Invalid table name: {table}")
+        if not validate_column_name(id_col, table):
+            raise InputError(f"Invalid column name: {id_col}")
+            
         try:
             cursor = conn.execute(f"SELECT version FROM {table} WHERE {id_col} = ? AND deleted = 0", (id_val,))
             result = cursor.fetchone()
@@ -1006,6 +1013,10 @@ class PromptsDatabase:
                 col_name = "uuid"
             except ValueError:
                 col_name = "name" # Assume it's a name if not a UUID
+
+        # Validate column name to prevent SQL injection
+        if not validate_column_name(col_name, 'Prompts'):
+            raise InputError(f"Invalid column name: {col_name}")
 
         try:
             with self.transaction() as conn:

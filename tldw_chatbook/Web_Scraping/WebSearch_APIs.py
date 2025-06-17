@@ -1539,7 +1539,11 @@ def extract_domain(url: str) -> str:
         parsed_uri = urlparse(url)
         domain = parsed_uri.netloc
         return domain.replace('www.', '')
-    except:
+    except (ImportError, ValueError, AttributeError) as e:
+        # ImportError if urllib.parse not available (very unlikely)
+        # ValueError if URL is malformed
+        # AttributeError if parsed_uri doesn't have expected attributes
+        logger.debug(f"Failed to parse domain from URL '{url}': {e}")
         return url
 
 

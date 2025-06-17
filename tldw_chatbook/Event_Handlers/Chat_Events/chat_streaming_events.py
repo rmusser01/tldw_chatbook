@@ -3,6 +3,7 @@
 # Imports
 import logging
 import re
+import threading
 #
 # Third-party Imports
 from rich.text import Text
@@ -24,18 +25,23 @@ from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
     """Handles incoming chunks of text during streaming."""
     logger = getattr(self, 'loguru_logger', logging)
-    if self.current_ai_message_widget and self.current_ai_message_widget.is_mounted:
+    
+    # Get current widget using thread-safe method
+    current_widget = self.get_current_ai_message_widget()
+    if current_widget and current_widget.is_mounted:
         try:
             # The thinking placeholder should have been cleared when the worker started.
             # The role and header should also have been set at the start of the AI turn.
-            static_text_widget = self.current_ai_message_widget.query_one(".message-text", Static)
+            static_text_widget = current_widget.query_one(".message-text", Static)
 
-            # Append the clean text chunk
-            self.current_ai_message_widget.message_text += event.text_chunk
+            # Atomically append the clean text chunk and update display
+            # This prevents race conditions during concurrent text updates
+            new_text = current_widget.message_text + event.text_chunk
+            current_widget.message_text = new_text
 
             # --- Update the display by wrapping the text in a Text object ---
             # This is safer than escape_markup for arbitrary streaming content.
-            static_text_widget.update(Text(self.current_ai_message_widget.message_text))
+            static_text_widget.update(Text(new_text))
 
             # Scroll the chat log to the end, conditionally
             chat_log_id_to_query = None
@@ -71,14 +77,15 @@ async def handle_stream_done(self, event: StreamDone) -> None:
     logger = getattr(self, 'loguru_logger', logging)
     logger.info(f"StreamDone received. Final text length: {len(event.full_text)}. Error: '{event.error}'")
 
-    ai_widget = self.current_ai_message_widget  # Use a local variable for clarity
+    # Get current widget using thread-safe method
+    ai_widget = self.get_current_ai_message_widget()
 
     if not ai_widget or not ai_widget.is_mounted:
         logger.warning("Received StreamDone but current_ai_message_widget is missing or not mounted.")
         if event.error:  # If there was an error, at least notify the user
             self.notify(f"Stream error (display widget missing): {event.error}", severity="error", timeout=10)
-        # Ensure current_ai_message_widget is None even if it was already None or unmounted
-        self.current_ai_message_widget = None
+        # Clear current widget using thread-safe method
+        self.set_current_ai_message_widget(None)
         # Attempt to focus input if possible as a fallback
         try:
             if self.current_tab == TAB_CHAT:

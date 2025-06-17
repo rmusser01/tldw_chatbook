@@ -22,38 +22,63 @@ from ..Notes.Notes_Library import NotesInteropService
 logger = logger.bind(module="SearchWindow")
 #
 # Local Imports
-from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
 from tldw_chatbook.config import get_cli_setting
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError
-from ..Embeddings.Embeddings_Lib import ModelCfg
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError as MediaDatabaseError
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
+
 if TYPE_CHECKING:
     from ..app import TldwCli
-try:
-    from ..Embeddings.Embeddings_Lib import *
-    EMBEDDINGS_GENERATION_AVAILABLE = True
-    logger.info("✅ Embeddings Generation dependencies found. Feature is enabled.")
-except (ImportError, ModuleNotFoundError) as e:
-    EMBEDDINGS_GENERATION_AVAILABLE = False
-    logger.warning(f"Embeddings Generation depenedencies not found, features related will be disabled. Reason: {e}")
-try:
-    from ..Embeddings.Chroma_Lib import *
-    VECTORDB_AVAILABLE = True
-    logger.info("✅ Vector Database dependencies found. Feature is enabled.")
-except (ImportError, ModuleNotFoundError) as e:
-    VECTORDB_AVAILABLE = False
-    logger.warning(f"Vector Database depenedencies not found, features related will be disabled. Reason: {e}")
-try:
-    from ..Web_Scraping.WebSearch_APIs import generate_and_search, analyze_and_aggregate
 
-    WEB_SEARCH_AVAILABLE = True
-    logger.info("✅ Web Search dependencies found. Feature is enabled.")
-except (ImportError, ModuleNotFoundError) as e:
-    WEB_SEARCH_AVAILABLE = False
-    # Use a warning here, as this is an expected condition, not a critical error.
-    logger.warning(f"⚠️ Web Search dependencies not found, feature will be disabled. Reason: {e}")
+# Import dependency checking system
+from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+# Conditional imports for embeddings functionality
+if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+    try:
+        from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
+        from ..Embeddings.Embeddings_Lib import ModelCfg
+    except ImportError:
+        ChromaDBManager = None
+        ModelCfg = None
+else:
+    ChromaDBManager = None
+    ModelCfg = None
+
+# Set availability flags based on centralized dependency checking
+EMBEDDINGS_GENERATION_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+VECTORDB_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+WEB_SEARCH_AVAILABLE = DEPENDENCIES_AVAILABLE.get('websearch', False)
+
+# Import modules conditionally
+if EMBEDDINGS_GENERATION_AVAILABLE:
+    try:
+        from ..Embeddings.Embeddings_Lib import *
+        logger.info("✅ Embeddings Generation dependencies found. Feature is enabled.")
+    except (ImportError, ModuleNotFoundError) as e:
+        EMBEDDINGS_GENERATION_AVAILABLE = False
+        logger.warning(f"Embeddings Generation dependencies not found, features related will be disabled. Reason: {e}")
+
+if VECTORDB_AVAILABLE:
+    try:
+        from ..Embeddings.Chroma_Lib import *
+        logger.info("✅ Vector Database dependencies found. Feature is enabled.")
+    except (ImportError, ModuleNotFoundError) as e:
+        VECTORDB_AVAILABLE = False
+        logger.warning(f"Vector Database dependencies not found, features related will be disabled. Reason: {e}")
+
+if WEB_SEARCH_AVAILABLE:
+    try:
+        from ..Web_Scraping.WebSearch_APIs import generate_and_search, analyze_and_aggregate
+        logger.info("✅ Web Search dependencies found. Feature is enabled.")
+    except (ImportError, ModuleNotFoundError) as e:
+        WEB_SEARCH_AVAILABLE = False
+        logger.warning(f"⚠️ Web Search dependencies not found, feature will be disabled. Reason: {e}")
+        # Define placeholders so the rest of the file doesn't crash if they are referenced.
+        generate_and_search = None
+        analyze_and_aggregate = None
+else:
     # Define placeholders so the rest of the file doesn't crash if they are referenced.
     generate_and_search = None
     analyze_and_aggregate = None
@@ -120,7 +145,14 @@ class SearchWindow(Container):
             view.display = False
             logger.debug(f"SearchWindow.on_mount: Setting view {view.id} display to False")
 
-        initial_sub_tab = self.app_instance.search_active_sub_tab or SEARCH_VIEW_EMBEDDINGS_CREATION
+        # Default to a view based on available dependencies
+        default_view = SEARCH_VIEW_RAG_QA
+        if EMBEDDINGS_GENERATION_AVAILABLE and VECTORDB_AVAILABLE:
+            default_view = SEARCH_VIEW_EMBEDDINGS_CREATION
+        elif WEB_SEARCH_AVAILABLE:
+            default_view = SEARCH_VIEW_WEB_SEARCH
+        
+        initial_sub_tab = self.app_instance.search_active_sub_tab or default_view
         self.app_instance.search_active_sub_tab = initial_sub_tab  # Ensure it's set
         logger.debug(f"SearchWindow.on_mount: Initial active sub-tab set to {initial_sub_tab}")
 
@@ -352,8 +384,8 @@ class SearchWindow(Container):
 
     async def _get_chroma_manager(self) -> "ChromaDBManager":
         """Get or create a ChromaDBManager instance using the app's configuration."""
-        if not VECTORDB_AVAILABLE:
-            raise RuntimeError("Vector-database functionality is disabled in this environment.")
+        if not VECTORDB_AVAILABLE or ChromaDBManager is None:
+            raise RuntimeError("Vector-database functionality is disabled due to missing dependencies. Install with: pip install tldw_chatbook[embeddings_rag]")
         if self._chroma_manager is None:
             logger.info("ChromaDBManager instance not found, creating a new one.")
             try:
@@ -762,7 +794,16 @@ class SearchWindow(Container):
         """Populates dropdowns and sets defaults for the Creation view."""
         logger.info("Initializing Embeddings Creation view.")
 
-        db_select = self.query_one("#creation-db-select", Select)
+        # Check if embeddings dependencies are available before accessing elements
+        if not (EMBEDDINGS_GENERATION_AVAILABLE and VECTORDB_AVAILABLE):
+            logger.warning("Embeddings dependencies not available, skipping initialization")
+            return
+
+        try:
+            db_select = self.query_one("#creation-db-select", Select)
+        except QueryError:
+            logger.error("creation-db-select element not found, dependencies may not be available")
+            return
         # Trigger its changed event handler to set dependent fields
         self.on_creation_db_select_changed(Select.Changed(db_select, str(db_select.value)))  # type: ignore
 
@@ -876,14 +917,24 @@ class SearchWindow(Container):
     async def _initialize_embeddings_management_view(self) -> None:
         """Populates dropdowns and sets defaults for the Management view."""
         logger.info("Initializing Embeddings Management view.")
-        # DB Source Select is static.
-        # Collection Select needs to be populated based on ChromaDB.
-        await self._refresh_mgmt_collections_list()
-        # Item select will be populated when a collection is chosen.
-        self.query_one("#mgmt-item-select", Select).set_options([])
-        self.query_one("#mgmt-item-select", Select).prompt = "Select Collection First"
-        await self.query_one("#mgmt-embedding-details-md", Markdown).update("Select a database source and collection.")
-        await self.query_one("#mgmt-status-output", Markdown).update("Ready for management tasks.")
+        
+        # Check if vector database dependencies are available before accessing elements
+        if not VECTORDB_AVAILABLE:
+            logger.warning("Vector database dependencies not available, skipping initialization")
+            return
+
+        try:
+            # DB Source Select is static.
+            # Collection Select needs to be populated based on ChromaDB.
+            await self._refresh_mgmt_collections_list()
+            # Item select will be populated when a collection is chosen.
+            self.query_one("#mgmt-item-select", Select).set_options([])
+            self.query_one("#mgmt-item-select", Select).prompt = "Select Collection First"
+            await self.query_one("#mgmt-embedding-details-md", Markdown).update("Select a database source and collection.")
+            await self.query_one("#mgmt-status-output", Markdown).update("Ready for management tasks.")
+        except QueryError as e:
+            logger.error(f"Management view elements not found, dependencies may not be available: {e}")
+            return
 
     async def _refresh_collections_list(self) -> None:
         """Alias for _refresh_mgmt_collections_list for compatibility with main app."""

@@ -50,6 +50,7 @@ from loguru import logger
 # Third-Party Libraries
 #
 # Local Imports
+from .sql_validation import validate_table_name, validate_column_name  
 #
 ########################################################################################################################
 #
@@ -956,7 +957,8 @@ UPDATE db_schema_version
                     f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
                 try:
                     conn.close()
-                except Exception:
+                except sqlite3.Error:
+                    # Ignore connection close errors - connection may already be closed
                     pass
                 conn = None
 
@@ -1373,6 +1375,12 @@ UPDATE db_schema_version
             ConflictError: If the record is not found (with `entity` and `entity_id` attributes
                            set in the exception) or if the record is found but is soft-deleted.
         """
+        # Validate SQL identifiers to prevent injection
+        if not validate_table_name(table_name, 'chachanotes'):
+            raise ValueError(f"Invalid table name: {table_name}")
+        if not validate_column_name(pk_col_name, table_name):
+            raise ValueError(f"Invalid column name: {pk_col_name}")
+            
         cursor = conn.execute(f"SELECT version, deleted FROM {table_name} WHERE {pk_col_name} = ?", (pk_value,))
         row = cursor.fetchone()
 
