@@ -4,7 +4,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from textual.widgets import Button, TextArea
-from textual.app import App, AppTest
+from textual.app import App
+try:
+    from textual.app import AppTest
+except ImportError:
+    # AppTest not available in Textual 3.3.0, create a mock
+    AppTest = None
 
 from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
 # Import DEFAULT_CONFIG_PATH to be monkeypatched, and the function that uses it
@@ -66,6 +71,9 @@ async def settings_window(mock_app_instance, temp_config_path: Path) -> ToolsSet
     window = ToolsSettingsWindow(app_instance=mock_app_instance)
 
     # Mount the window in a test app environment
+    if AppTest is None:
+        pytest.skip("AppTest not available in this version of Textual")
+        
     async with AppTest(app=mock_app_instance, driver_class=None) as pilot:  # Using AppTest for proper mounting
         mock_app_instance.mount(window)  # Mount the window onto our mock app
         await pilot.pause()  # Allow compose to run

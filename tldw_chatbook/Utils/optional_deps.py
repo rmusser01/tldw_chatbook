@@ -17,6 +17,10 @@ DEPENDENCIES_AVAILABLE = {
     'fugashi': False,
     'flashrank': False,
     'sentence_transformers': False,
+    'chunker': False,
+    'chinese_chunking': False,
+    'japanese_chunking': False,
+    'token_chunking': False,
 }
 
 # Store actual modules for conditional use
@@ -85,6 +89,41 @@ def check_websearch_deps() -> bool:
     
     DEPENDENCIES_AVAILABLE['websearch'] = essential_available
     return essential_available
+
+def check_chunker_deps() -> bool:
+    """Check dependencies needed for enhanced chunking functionality."""
+    # Core chunking deps that are always useful
+    core_deps = ['langdetect', 'nltk']
+    sklearn_available = check_dependency('sklearn', 'scikit-learn')
+    all_core_available = all(check_dependency(dep) for dep in core_deps) and sklearn_available
+    
+    # Language-specific deps
+    chinese_available = check_dependency('jieba', 'chinese_chunking')
+    japanese_available = check_dependency('fugashi', 'japanese_chunking')
+    token_available = check_dependency('transformers', 'token_chunking')
+    
+    # Overall chunker feature available if core deps are present
+    chunker_available = all_core_available
+    DEPENDENCIES_AVAILABLE['chunker'] = chunker_available
+    DEPENDENCIES_AVAILABLE['chinese_chunking'] = chinese_available
+    DEPENDENCIES_AVAILABLE['japanese_chunking'] = japanese_available
+    DEPENDENCIES_AVAILABLE['token_chunking'] = token_available
+    
+    if chunker_available:
+        logger.info("✅ Core chunking dependencies found.")
+        enhanced_features = []
+        if chinese_available:
+            enhanced_features.append("Chinese")
+        if japanese_available:
+            enhanced_features.append("Japanese")
+        if token_available:
+            enhanced_features.append("Token-based")
+        if enhanced_features:
+            logger.info(f"✅ Enhanced chunking available for: {', '.join(enhanced_features)}")
+    else:
+        logger.warning("⚠️ Some core chunking dependencies missing.")
+    
+    return chunker_available
 
 def get_safe_import(module_name: str, feature_name: Optional[str] = None):
     """
@@ -164,6 +203,7 @@ def initialize_dependency_checks():
     # Check grouped features
     check_embeddings_rag_deps()
     check_websearch_deps()
+    check_chunker_deps()
     
     # Log summary
     enabled_features = [name for name, available in DEPENDENCIES_AVAILABLE.items() if available]

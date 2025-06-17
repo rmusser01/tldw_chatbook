@@ -15,8 +15,8 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase  # For type hintin
 
 # Event handlers to be tested (or called directly in tests)
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
+    _clear_and_disable_media_display,
     perform_media_sidebar_search,
-    handle_chat_media_load_selected_button_pressed,
     handle_chat_media_copy_title_button_pressed,
     handle_chat_media_copy_content_button_pressed,
     handle_chat_media_copy_author_button_pressed,

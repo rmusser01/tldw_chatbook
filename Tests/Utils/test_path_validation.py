@@ -25,11 +25,11 @@ class TestValidatePath:
             
             # Test absolute path
             result = validate_path(str(sub_dir), base_dir)
-            assert result == sub_dir
+            assert result.resolve() == sub_dir.resolve()
             
             # Test relative path
             result = validate_path("subdir", base_dir)
-            assert result == sub_dir
+            assert result.resolve() == sub_dir.resolve()
     
     def test_path_traversal_attempt_raises_error(self):
         """Test that path traversal attempts are blocked."""
@@ -70,7 +70,7 @@ class TestValidatePath:
             
             # This should be allowed
             result = validate_path(str(link), base_dir)
-            assert result == safe_file  # Should resolve to the actual file
+            assert result.resolve() == safe_file.resolve()  # Should resolve to the actual file
             
             # Create a file outside base directory
             with tempfile.NamedTemporaryFile(delete=False) as outside_file:
@@ -152,12 +152,12 @@ class TestSafeJoinPath:
             # Simple join
             result = safe_join_path(base_dir, "subdir", "file.txt")
             expected = base_path / "subdir" / "file.txt"
-            assert result == expected
+            assert result.resolve() == expected.resolve()
             
             # Validate each component
             result = safe_join_path(base_dir, "dir1", "dir2", "file.txt")
             expected = base_path / "dir1" / "dir2" / "file.txt"
-            assert result == expected
+            assert result.resolve() == expected.resolve()
     
     def test_unsafe_components_rejected(self):
         """Test that unsafe path components are rejected."""

@@ -65,7 +65,7 @@ async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -
 # Specific overrides (like for Ollama) will be done in app.py's map.
 LLM_NAV_BUTTON_HANDLERS = {
     "llm-nav-llamafile": handle_llm_nav_button_pressed,
-    "llm-nav-llamacpp": handle_llm_nav_button_pressed,
+    "llm-nav-llama-cpp": handle_llm_nav_button_pressed,  # Fixed: added hyphen to match button ID
     "llm-nav-ollama": handle_llm_nav_button_pressed,
     "llm-nav-vllm": handle_llm_nav_button_pressed,
     "llm-nav-transformers": handle_llm_nav_button_pressed,

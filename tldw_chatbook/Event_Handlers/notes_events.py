@@ -16,13 +16,12 @@ import yaml
 #
 # Local Imports
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
-from ..app import TldwCli
 from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
 from ..Third_Party.textual_fspicker import FileOpen, Filters
 #
 if TYPE_CHECKING:
-    pass # app.TldwCli is already imported above
+    from ..app import TldwCli
 #
 ########################################################################################################################
 #

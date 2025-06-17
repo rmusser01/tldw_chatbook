@@ -66,7 +66,8 @@ class TestPathValidationProperties:
             # Should validate successfully
             try:
                 result = validate_path(str(full_path), base_dir)
-                assert str(result).startswith(base_dir)
+                # Use resolve() to handle path resolution differences on macOS
+                assert str(result.resolve()).startswith(str(Path(base_dir).resolve()))
             except ValueError as e:
                 # If it fails, it should only be due to hidden files
                 assert "hidden files" in str(e)
@@ -131,6 +132,14 @@ class TestFilenameValidationProperties:
     @given(st.text(alphabet=string.ascii_letters + string.digits, min_size=1, max_size=50))
     def test_alphanumeric_always_safe(self, filename):
         """Property: Pure alphanumeric filenames are always safe."""
+        # Skip reserved Windows filenames
+        reserved_names = {
+            'CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4',
+            'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 
+            'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+        }
+        assume(filename.upper() not in reserved_names)
+        
         result = validate_filename(filename)
         assert result == filename
     
@@ -154,14 +163,18 @@ class TestSafeJoinPathProperties:
         """Property: Safe components should join without errors."""
         with tempfile.TemporaryDirectory() as base_dir:
             # Filter out hidden files and reserved names
+            reserved_names = {
+                'CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4',
+                'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 
+                'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+            }
             components = [c for c in components if not c.startswith('.')]
-            components = [c for c in components if c.split('.')[0].upper() not in {
-                'CON', 'PRN', 'AUX', 'NUL', 'COM1', 'LPT1'
-            }]
+            components = [c for c in components if c.split('.')[0].upper() not in reserved_names]
             
             if components:  # Only test if we have valid components
                 result = safe_join_path(base_dir, *components)
-                assert str(result).startswith(base_dir)
+                # Use resolve() to handle path resolution differences on macOS
+                assert str(result.resolve()).startswith(str(Path(base_dir).resolve()))
                 
                 # Verify all components are in the result
                 for component in components:
@@ -192,7 +205,8 @@ class TestPathValidationInvariants:
             try:
                 result = validate_path(user_input, base_dir)
                 # If validation succeeds, path must be within base
-                assert str(result).startswith(base_dir)
+                # Use resolve() to handle path resolution differences on macOS
+                assert str(result.resolve()).startswith(str(Path(base_dir).resolve()))
                 assert result.resolve().is_relative_to(Path(base_dir).resolve())
             except ValueError:
                 # Validation can fail, that's expected

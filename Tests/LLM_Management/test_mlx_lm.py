@@ -53,8 +53,7 @@ def mock_mlx_settings():
                                                                                                  v) if k in def_mlx_settings else v
 
                 mock_api_settings_dict = MagicMock()
-                mock_api_settings_dict.get.side_effect = lambda k,
-                                                                v=None: mock_mlx_lm_config_dict if k == 'mlx_lm' else (
+                mock_api_settings_dict.get.side_effect = lambda k, v=None: mock_mlx_lm_config_dict if k == 'mlx_lm' else (
                     original_api_settings.get(k, v) if original_api_settings else v)
 
                 return mock_api_settings_dict

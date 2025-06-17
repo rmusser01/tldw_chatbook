@@ -8,10 +8,9 @@ from textual.css.query import QueryError
 
 # Functions to test
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
-    _disable_media_copy_buttons,
+    _clear_and_disable_media_display,
     perform_media_sidebar_search,
-    handle_chat_media_search_input_changed,
-    handle_chat_media_load_selected_button_pressed,
+    handle_chat_media_sidebar_input_changed,
     handle_chat_media_copy_title_button_pressed,
     handle_chat_media_copy_content_button_pressed,
     handle_chat_media_copy_author_button_pressed,

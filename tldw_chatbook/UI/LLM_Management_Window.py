@@ -65,20 +65,22 @@ class LLMManagementWindow(Container):
 
         with Container(id="llm-content-pane", classes="llm-content-pane"):
             with Container(id="llm-view-llama-cpp", classes="llm-view-area"):
-                yield Label("Executable Path:", classes="label")
+                yield Label("🦙 Llama.cpp Configuration", classes="section-title")
+                yield Label("Launch a llama.cpp server instance with a GGUF model", classes="description")
+                yield Label("Llama.cpp Server Executable Path:", classes="label")
                 with Container(classes="input_container"):
-                    yield Input(id="llamacpp-exec-path", placeholder="/path/to/llama.cpp/server")
+                    yield Input(id="llamacpp-exec-path", placeholder="/path/to/llama.cpp/build/bin/server")
                     yield Button("Browse", id="llamacpp-browse-exec-button", classes="browse_button")
-                yield Label("Model Path:", classes="label")
+                yield Label("GGUF Model File Path:", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="llamacpp-model-path", placeholder="/path/to/model.gguf")
                     yield Button("Browse", id="llamacpp-browse-model-button", classes="browse_button")
                 yield Label("Host:", classes="label")
                 yield Input(id="llamacpp-host", value="127.0.0.1")
-                yield Label("Port:", classes="label")
+                yield Label("Port (default 8001):", classes="label")
                 yield Input(id="llamacpp-port", value="8001")
-                yield Label("Additional Arguments:", classes="label")
-                yield Input(id="llamacpp-additional-args", placeholder="e.g., --n-gpu-layers 1")
+                yield Label("Additional Arguments (single line):", classes="label")
+                yield Input(id="llamacpp-additional-args", placeholder="e.g., --n-gpu-layers 1 --threads 4")
                 with Collapsible(title="Common Llama.cpp Server Arguments", collapsed=True,
                                  id="llamacpp-args-help-collapsible"):
                     # RichLog for scrollable, formatted help text
@@ -93,19 +95,21 @@ class LLMManagementWindow(Container):
                     yield Button("Stop Server", id="llamacpp-stop-server-button", classes="action_button")
                 yield RichLog(id="llamacpp-log-output", classes="log_output", wrap=True, highlight=True)
             with Container(id="llm-view-llamafile", classes="llm-view-area"):
-                yield Label("Llamafile Executable Path:", classes="label")
+                yield Label("📁 Llamafile Configuration", classes="section-title")
+                yield Label("Run a self-contained llamafile executable (model included)", classes="description")
+                yield Label("Llamafile Executable (.llamafile):", classes="label")
                 with Container(classes="input_container"):
-                    yield Input(id="llamafile-exec-path", placeholder="/path/to/llamafile_executable")
+                    yield Input(id="llamafile-exec-path", placeholder="/path/to/model.llamafile")
                     yield Button("Browse", id="llamafile-browse-exec-button", classes="browse_button")
-                yield Label("Llamafile Model Path:", classes="label")
+                yield Label("Optional External Model (GGUF):", classes="label")
                 with Container(classes="input_container"):
-                    yield Input(id="llamafile-model-path", placeholder="/path/to/model.gguf")
+                    yield Input(id="llamafile-model-path", placeholder="/path/to/external-model.gguf (optional)")
                     yield Button("Browse", id="llamafile-browse-model-button", classes="browse_button")
                 yield Label("Host:", classes="label")
                 yield Input(id="llamafile-host", value="127.0.0.1")
-                yield Label("Port:", classes="label")
+                yield Label("Port (default 8000):", classes="label")
                 yield Input(id="llamafile-port", value="8000")
-                yield Label("Additional Arguments:", classes="label")
+                yield Label("Additional Arguments (multi-line):", classes="label")
                 yield TextArea(id="llamafile-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark") # Ensure TextArea is imported
                 with Collapsible(title="Common Llamafile Arguments", collapsed=True,
                                  id="llamafile-args-help-collapsible"):
