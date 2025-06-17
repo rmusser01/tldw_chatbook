@@ -2084,8 +2084,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 # Check if the window has an on_button_pressed method
                 if hasattr(window, "on_button_pressed") and callable(window.on_button_pressed):
                     window.on_button_pressed(event)
-                    # If the event was stopped by the window, return
-                    if event.is_stopped:
+                    # Check if event has been stopped (some event types don't have is_stopped)
+                    if hasattr(event, 'is_stopped') and event.is_stopped:
                         return
 
         except QueryError:

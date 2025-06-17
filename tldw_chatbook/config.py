@@ -624,7 +624,7 @@ def load_settings() -> Dict:
         },
         "embedding_config": {
             'embedding_provider': _get_typed_value(embeddings_section, 'embedding_provider', 'openai'),
-            'embedding_model': _get_typed_value(embeddings_section, 'embedding_model', 'text-embedding-3-small'),
+            'embedding_model': _get_typed_value(embeddings_section, 'embedding_model', 'text-embedding-3-large'),
             'onnx_model_path': _get_typed_value(embeddings_section, 'onnx_model_path', "./Models/onnx_models/text-embedding-3-small.onnx", Path),
             'model_dir': _get_typed_value(embeddings_section, 'model_dir', "./Models", Path),
             'embedding_api_url': _get_typed_value(embeddings_section, 'embedding_api_url', "http://localhost:8080/v1/embeddings"),
@@ -1370,6 +1370,12 @@ default_llm_for_contextualization = "gpt-3.5-turbo"
     [embedding_config.models.openai-text-embedding-3-small]
     provider = "openai"
     model_name_or_path = "text-embedding-3-small" # Common model name
+    dimension = 3072 # Or 256,, 1536, 2048 3072 depending on how you use it
+    api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
+
+    [embedding_config.models.openai-text-embedding-3-large]
+    provider = "openai"
+    model_name_or_path = "text-embedding-3-large" # Common model name
     dimension = 1536 # Or 512, 1536 depending on how you use it
     api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
 

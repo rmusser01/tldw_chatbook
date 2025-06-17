@@ -11,9 +11,10 @@ from textual.css.query import QueryError
 from textual.widgets import Static, Button, Input, Markdown, Select, Checkbox
 #
 # Third-Party Libraries
-from typing import TYPE_CHECKING,Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple, List, Union, Dict, Any
 import asyncio
 from loguru import logger
+from pathlib import Path
 
 from ..Notes.Notes_Library import NotesInteropService
 
@@ -107,6 +108,9 @@ class SearchWindow(Container):
         self._mgmt_item_mapping: dict[str, str] = {}  # For management view items
         self._creation_item_mapping: dict[str, str] = {}  # For creation view items
         self._selected_item_display_name: Optional[str] = None  # For management view display name
+        
+        # Status history for embedding creation
+        self._status_history: List[str] = []
 
     async def on_mount(self) -> None:
         """Called when the window is first mounted."""
@@ -263,64 +267,58 @@ class SearchWindow(Container):
                         yield Markdown(
                             "### Embeddings Creation Is Not Currently Available\n\nThe required dependencies for embeddings creation are not installed. Please install the necessary packages to use this feature.")
 
-            # --- Embeddings Management View (Two-Pane layout, enhanced for better UX) ---
+            # --- Embeddings Management View (Single Scrollable Pane) ---
             if VECTORDB_AVAILABLE:
                 with Container(id=SEARCH_VIEW_EMBEDDINGS_MANAGEMENT, classes="search-view-area"):
-                    with Horizontal():
-                        # Left Pane - Selection and Status
-                        with Vertical(classes="search-management-left-pane"):
-                            with VerticalScroll():
-                                yield Static("Manage Embeddings", classes="search-view-title")
-                                yield Markdown(
-                                    "Select a database, collection, and item to view, or delete its embeddings.",
-                                    id="mgmt-help-text")
+                    with VerticalScroll(classes="search-form-container"):
+                        yield Static("Manage Embeddings", classes="search-view-title")
+                        yield Markdown(
+                            "Select a database, collection, and item to view, or delete its embeddings.",
+                            id="mgmt-help-text")
 
-                                yield Static("Database & Collection", classes="search-section-title")
-                                with Horizontal(classes="search-form-row"):
-                                    yield Static("DB Source:", classes="search-form-label")
-                                    yield Select(
-                                        [("Media DB", "media_db"), ("RAG Chat DB", "rag_chat_db"),
-                                         ("Character Chat DB", "char_chat_db")],  # These are conceptual sources
-                                        id="mgmt-db-source-select",  # New ID for DB source
-                                        prompt="Select Content Source...",
-                                        value="media_db"
-                                    )
-                                with Horizontal(classes="search-form-row"):
-                                    yield Static("Collection:", classes="search-form-label")
-                                    yield Select([], id="mgmt-collection-select",
-                                                 prompt="Select Collection...")  # For actual Chroma collections
+                        yield Static("Database & Collection", classes="search-section-title")
+                        with Horizontal(classes="search-form-row"):
+                            yield Static("DB Source:", classes="search-form-label")
+                            yield Select(
+                                [("Media DB", "media_db"), ("RAG Chat DB", "rag_chat_db"),
+                                 ("Character Chat DB", "char_chat_db")],  # These are conceptual sources
+                                id="mgmt-db-source-select",  # New ID for DB source
+                                prompt="Select Content Source...",
+                                value="media_db"
+                            )
+                        with Horizontal(classes="search-form-row"):
+                            yield Static("Collection:", classes="search-form-label")
+                            yield Select([], id="mgmt-collection-select",
+                                         prompt="Select Collection...")  # For actual Chroma collections
 
-                                yield Static("Item Selection", classes="search-section-title")
-                                with Horizontal(classes="search-form-row"):
-                                    yield Static("", classes="search-form-label")  # Spacer
-                                    yield Button("Refresh Item List", id="mgmt-refresh-list-button", variant="primary")
-                                with Horizontal(classes="search-form-row"):
-                                    yield Static("Item:", classes="search-form-label")
-                                    yield Select([], id="mgmt-item-select",
-                                                 prompt="Select an item...")  # Items from the selected Chroma collection
+                        yield Static("Item Selection", classes="search-section-title")
+                        with Horizontal(classes="search-form-row"):
+                            yield Static("", classes="search-form-label")  # Spacer
+                            yield Button("Refresh Item List", id="mgmt-refresh-list-button", variant="primary")
+                        with Horizontal(classes="search-form-row"):
+                            yield Static("Item:", classes="search-form-label")
+                            yield Select([], id="mgmt-item-select",
+                                         prompt="Select an item...")  # Items from the selected Chroma collection
 
-                                yield Static("Embedding Status & Metadata", classes="search-section-title")
-                                yield Markdown("Select an item above to see its embedding status and metadata.",
-                                               id="mgmt-embedding-details-md")  # Combined status & metadata
+                        yield Static("Embedding Status & Metadata", classes="search-section-title")
+                        yield Markdown("Select an item above to see its embedding status and metadata.",
+                                       id="mgmt-embedding-details-md")  # Combined status & metadata
 
-                        # Right Pane - Actions (Simplified for now, update/re-embed can be complex)
-                        with Vertical(classes="search-management-right-pane"):
-                            with VerticalScroll():
-                                yield Static("Actions", classes="search-view-title")
-                                yield Markdown("Actions for the selected item or collection.",
-                                               id="mgmt-actions-help-text")
+                        yield Static("Actions", classes="search-section-title")
+                        yield Markdown("Actions for the selected item or collection.",
+                                       id="mgmt-actions-help-text")
 
-                                yield Static("Selected Item Actions", classes="search-section-title")
-                                # yield Button("Re-Embed Item (Future)", id="mgmt-reembed-item-button", variant="warning", disabled=True)
-                                yield Button("Delete Item Embeddings", id="mgmt-delete-item-embeddings-button",
-                                             variant="error")
+                        yield Static("Selected Item Actions", classes="search-section-title")
+                        # yield Button("Re-Embed Item (Future)", id="mgmt-reembed-item-button", variant="warning", disabled=True)
+                        yield Button("Delete Item Embeddings", id="mgmt-delete-item-embeddings-button",
+                                     variant="error")
 
-                                yield Static("Selected Collection Actions", classes="search-section-title")
-                                yield Button("Delete Entire Collection", id="mgmt-delete-collection-button",
-                                             variant="error")
+                        yield Static("Selected Collection Actions", classes="search-section-title")
+                        yield Button("Delete Entire Collection", id="mgmt-delete-collection-button",
+                                     variant="error")
 
-                                yield Markdown("Status: Select an item or collection to perform actions.",
-                                               id="mgmt-status-output")
+                        yield Markdown("Status: Select an item or collection to perform actions.",
+                                       id="mgmt-status-output")
             else:  # VectorDB not available
                 with Container(id=SEARCH_VIEW_EMBEDDINGS_MANAGEMENT, classes="search-view-area"):
                     with VerticalScroll():
@@ -339,6 +337,18 @@ class SearchWindow(Container):
                         yield Markdown("### Web Search/Scraping Is Not Currently Installed\n\n...")
 
     # --- HELPER METHODS ---
+    
+    async def _append_status(self, message: str) -> None:
+        """Append a message to the status output, keeping history."""
+        status_output = self.query_one("#creation-status-output", Markdown)
+        
+        # Add message to history
+        self._status_history.append(message)
+        
+        # Join all messages with double newlines for separation
+        new_content = "\n\n".join(self._status_history)
+        
+        await status_output.update(new_content)
 
     async def _get_chroma_manager(self) -> "ChromaDBManager":
         """Get or create a ChromaDBManager instance using the app's configuration."""
@@ -375,6 +385,23 @@ class SearchWindow(Container):
         return "Unknown DB Type"
 
     # --- EVENT HANDLERS (New and Refactored) ---
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button press events delegated from the main app."""
+        button_id = event.button.id
+        if not button_id:
+            return
+            
+        # Handle the Create Embeddings button specifically
+        if button_id == "creation-create-embeddings-button":
+            # Create an async task to handle the button press
+            import asyncio
+            asyncio.create_task(self.on_creation_create_button_pressed(event))
+            event.stop()
+            return
+            
+        # Let other events propagate to @on handlers
+        # Event will be handled by the appropriate @on decorator if it matches
 
     @on(Button.Pressed, ".search-nav-button")
     async def handle_search_nav_button_pressed(self, event: Button.Pressed) -> None:
@@ -495,13 +522,28 @@ class SearchWindow(Container):
     @on(Button.Pressed, "#creation-create-embeddings-button")  # Matched new ID
     async def on_creation_create_button_pressed(self, event: Button.Pressed) -> None:
         """Handle the Create Embeddings button press."""
+        # Disable the button immediately to prevent multiple clicks
+        create_button = self.query_one("#creation-create-embeddings-button", Button)
+        create_button.disabled = True
+        
+        try:
+            await self._handle_create_embeddings_process()
+        finally:
+            # Re-enable the button when done (whether successful or failed)
+            create_button.disabled = False
+
+    async def _handle_create_embeddings_process(self) -> None:
+        """Handle the actual embedding creation process."""
+        # Clear status history for a fresh start
+        self._status_history = []
+        
         db_type = str(self.query_one("#creation-db-select", Select).value)
         db_path = self._get_db_path(db_type)  # This remains a conceptual path for now
 
         collection_name_input = self.query_one("#creation-collection-name-input", Input)
         collection_name = collection_name_input.value.strip()
         if not collection_name:
-            await self.query_one("#creation-status-output", Markdown).update("❌ Collection name cannot be empty.")
+            await self._append_status("❌ Collection name cannot be empty.")
             collection_name_input.focus()
             return
 
@@ -512,19 +554,19 @@ class SearchWindow(Container):
         if selection_mode == "keyword":
             keyword = self.query_one("#creation-keyword-input", Input).value.strip()
             if not keyword:
-                await self.query_one("#creation-status-output", Markdown).update("❌ Keyword cannot be empty for keyword filter mode.")
+                await self._append_status("❌ Keyword cannot be empty for keyword filter mode.")
                 self.query_one("#creation-keyword-input", Input).focus()
                 return
         elif selection_mode == "individual":
             selected_display_name = str(self.query_one("#creation-item-select", Select).value)
             if not selected_display_name or selected_display_name == Select.BLANK:
-                await self.query_one("#creation-status-output", Markdown).update("❌ Please select an item for individual mode.")
+                await self._append_status("❌ Please select an item for individual mode.")
                 self.query_one("#creation-item-select", Select).focus()
                 return
             # Map display name back to actual item ID
             item_id = self._creation_item_mapping.get(selected_display_name)
             if not item_id:
-                await self.query_one("#creation-status-output", Markdown).update("❌ Error resolving selected item ID.")
+                await self._append_status("❌ Error resolving selected item ID.")
                 return
             selected_item_db_ids = [item_id]
 
@@ -593,7 +635,7 @@ class SearchWindow(Container):
         else: status_msg_prefix = "items (unexpected selection)"
 
 
-        await status_output.update(f"⏳ Preparing to create embeddings for {status_msg_prefix} into collection '{collection_name}' using model ID '{embedding_model_id_override}'. This may take some time...")
+        await self._append_status(f"⏳ Preparing to create embeddings for {status_msg_prefix} into collection '{collection_name}' using model ID '{embedding_model_id_override}'. This may take some time...")
 
         try:
             await self._create_embeddings( # Pass db_path as None or remove if not used by _load_items
@@ -606,13 +648,13 @@ class SearchWindow(Container):
                 keyword=keyword,
                 selected_item_ids=selected_item_db_ids # Pass actual DB item IDs
             )
-            await status_output.update(f"✅ Successfully created embeddings for {status_msg_prefix} in collection '{collection_name}'.")
+            await self._append_status(f"✅ Successfully created embeddings for {status_msg_prefix} in collection '{collection_name}'.")
             if self.app_instance.search_active_sub_tab == SEARCH_VIEW_EMBEDDINGS_MANAGEMENT:
                  await self._refresh_mgmt_collections_list()
 
         except Exception as e:
             logger.error(f"Error creating embeddings: {e}", exc_info=True)
-            await status_output.update(f"❌ Error creating embeddings: {escape(str(e))}")
+            await self._append_status(f"❌ Error creating embeddings: {escape(str(e))}")
             self.app_instance.notify(f"Error creating embeddings: {escape(str(e))}", severity="error", timeout=10)
 
     # --- Management View Handlers ---
@@ -842,6 +884,10 @@ class SearchWindow(Container):
         self.query_one("#mgmt-item-select", Select).prompt = "Select Collection First"
         await self.query_one("#mgmt-embedding-details-md", Markdown).update("Select a database source and collection.")
         await self.query_one("#mgmt-status-output", Markdown).update("Ready for management tasks.")
+
+    async def _refresh_collections_list(self) -> None:
+        """Alias for _refresh_mgmt_collections_list for compatibility with main app."""
+        await self._refresh_mgmt_collections_list()
 
     async def _refresh_mgmt_collections_list(self) -> None:
         """Refreshes the list of ChromaDB collections in the management view."""
@@ -1119,23 +1165,11 @@ class SearchWindow(Container):
                 if selection_mode == "all":
                     await update_status(
                         f"⏳ Loading ALL items from Media DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)})...")
-                    # Assuming a method like 'get_all_media_for_embedding' exists in MediaDatabase.
-                    # This method should return a list of dictionaries, each representing a media item
-                    # and containing at least 'id', 'content', and 'title'.
-                    # The limit is arbitrary here; adjust as necessary or make it configurable.
+                    # Use get_all_active_media_for_embedding to get items with content
                     raw_media_items = await asyncio.to_thread(
-                        media_db_instance.search_media_db,  # Using search_media_db as a generic fetcher
-                        search_query=None,  # No specific query for "all"
-                        media_types=None,  # All types
-                        search_fields=['id', 'title', 'content'],  # Ensure these are fetched
-                        sort_by="id_asc",  # Or any consistent sort
-                        page=1,
-                        results_per_page=10000,  # Large number to fetch "all" (consider pagination for very large DBs)
-                        include_trash=False,
-                        include_deleted=False
+                        media_db_instance.get_all_active_media_for_embedding,
+                        limit=10000  # Large number to fetch "all"
                     )
-                    if isinstance(raw_media_items, tuple):  # search_media_db returns (results, total_matches)
-                        raw_media_items = raw_media_items[0]
 
 
                 elif selection_mode == "individual" and selected_item_db_ids:
@@ -1181,7 +1215,7 @@ class SearchWindow(Container):
                     if item_id is not None and item_content:  # Ensure both ID and content are present
                         items_to_embed.append({
                             "id": str(item_id),  # Ensure ID is string
-                            "content": item_content,
+                            "text": item_content,  # Changed from "content" to "text" for ChromaDBManager
                             "filename": item.get("title", f"media_item_{item_id}")
                         })
                     else:
@@ -1236,7 +1270,7 @@ class SearchWindow(Container):
                     if note_id and note_content:  # Ensure both ID (already string) and content
                         items_to_embed.append({
                             "id": note_id,
-                            "content": note_content,
+                            "text": note_content,  # Changed from "content" to "text" for ChromaDBManager
                             "filename": note_item.get("title", f"note_{note_id}")
                         })
                     else:
@@ -1303,7 +1337,7 @@ class SearchWindow(Container):
                         concatenated_content = "\n\n".join(full_conv_content_parts)  # Separate messages clearly
                         items_to_embed.append({
                             "id": conv_id,
-                            "content": concatenated_content,
+                            "text": concatenated_content,  # Changed from "content" to "text" for ChromaDBManager
                             "filename": conv_item.get("title", f"conversation_{conv_id}")
                         })
                     else:
@@ -1365,12 +1399,12 @@ class SearchWindow(Container):
         )
 
         if not items_to_embed:
-            await status_output.update(f"ℹ️ No items found in {self.DB_DISPLAY_NAMES.get(db_type, db_type)} matching selection criteria. Nothing to embed.")
+            await self._append_status(f"ℹ️ No items found in {self.DB_DISPLAY_NAMES.get(db_type, db_type)} matching selection criteria. Nothing to embed.")
             logger.warning(f"_create_embeddings: No items to embed for {db_type} with mode {selection_mode}")
             return
 
         logger.info(f"_create_embeddings: Found {len(items_to_embed)} items to embed")
-        await status_output.update(f"⏳ Found {len(items_to_embed)} items. Processing embeddings with model '{embedding_model_id_override}'...")
+        await self._append_status(f"⏳ Found {len(items_to_embed)} items. Processing embeddings with model '{embedding_model_id_override}'...")
 
         # ---- Step 2: Process each item with ChromaDBManager ----
         logger.debug("_create_embeddings: Getting ChromaDB manager")
@@ -1386,7 +1420,7 @@ class SearchWindow(Container):
         logger.info(f"_create_embeddings: Beginning to process {len(items_to_embed)} items for embedding")
         for idx, item_data in enumerate(items_to_embed):
             item_id = item_data.get("id") # This is the original item's ID (e.g., Media.id, Note.id)
-            item_content = item_data.get("content")
+            item_content = item_data.get("text")  # Changed from "content" to "text" to match the data structure
             item_filename = item_data.get("filename", str(item_id))
 
             if not item_id or not item_content:
@@ -1397,7 +1431,7 @@ class SearchWindow(Container):
             try:
                 # Update UI before blocking call
                 current_status_msg = f"⏳ Embedding '{item_filename}' (ID: {item_id}). Processed: {successful_embeds+failed_embeds}/{len(items_to_embed)}"
-                await status_output.update(current_status_msg)
+                await self._append_status(current_status_msg)
                 logger.info(f"_create_embeddings: {current_status_msg}")
                 logger.debug(f"_create_embeddings: Processing item {idx+1}/{len(items_to_embed)}, ID={item_id}, filename={item_filename}")
 
@@ -1421,14 +1455,16 @@ class SearchWindow(Container):
             except Exception as e_process:
                 failed_embeds += 1
                 logger.error(f"_create_embeddings: Failed to process item ID '{item_id}': {e_process}", exc_info=True)
-                await status_output.update(f"⚠️ Error embedding '{item_filename}': {escape(str(e_process))[:100]}...")
+                await self._append_status(f"⚠️ Error embedding '{item_filename}': {escape(str(e_process))[:100]}...")
                 await asyncio.sleep(0.2) # Brief pause for UI update
 
-        final_status_message = f"✅ Embedding process complete for collection '{collection_name}'. Successful: {successful_embeds}, Failed: {failed_embeds}."
         if failed_embeds > 0:
-            final_status_message += " Check logs for details on failures."
+            final_status_message = f"⚠️ Embedding Creation was partially successful. Please see log for more details. Collection: '{collection_name}'. Successful: {successful_embeds}, Failed: {failed_embeds}."
+        else:
+            final_status_message = f"✅ Embedding process complete for collection '{collection_name}'. Successful: {successful_embeds}, Failed: {failed_embeds}."
+        
         logger.info(f"_create_embeddings: {final_status_message}")
-        await status_output.update(final_status_message)
+        await self._append_status(final_status_message)
 
 
     async def _check_and_display_embedding_status(self) -> None:

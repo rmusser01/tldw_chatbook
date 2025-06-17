@@ -527,7 +527,16 @@ class ChromaDBManager:
 
                 logger.debug(f"process_and_store_content: Preparing chunks for embedding, contextualized={create_contextualized}")
                 for i, chunk in enumerate(chunks):
-                    chunk_text = chunk['text']
+                    # Handle both 'text_for_embedding' (from chunk_for_embedding) and 'text' (from other chunking methods)
+                    if 'text_for_embedding' in chunk:
+                        chunk_text = chunk['text_for_embedding']
+                        logger.debug(f"process_and_store_content: Using 'text_for_embedding' field for chunk {i+1}")
+                    elif 'text' in chunk:
+                        chunk_text = chunk['text']
+                        logger.debug(f"process_and_store_content: Using 'text' field for chunk {i+1}")
+                    else:
+                        logger.error(f"process_and_store_content: Chunk {i+1} missing both 'text' and 'text_for_embedding' fields: {list(chunk.keys())}")
+                        raise ValueError(f"Chunk {i+1} missing text content field")
                     docs_for_chroma.append(chunk_text)
 
                     if create_contextualized:
@@ -559,11 +568,21 @@ class ChromaDBManager:
                 ids = [f"{media_id}_chunk_{i}" for i in range(len(chunks))]
                 metadatas = []
                 for i, chunk_info in enumerate(chunks):
+                    # Handle both 'original_chunk_text' (from chunk_for_embedding) and 'text' (from other chunking methods)
+                    if 'original_chunk_text' in chunk_info:
+                        original_text = chunk_info['original_chunk_text']
+                        logger.debug(f"process_and_store_content: Using 'original_chunk_text' field for metadata in chunk {i+1}")
+                    elif 'text' in chunk_info:
+                        original_text = chunk_info['text']
+                        logger.debug(f"process_and_store_content: Using 'text' field for metadata in chunk {i+1}")
+                    else:
+                        logger.error(f"process_and_store_content: Chunk {i+1} missing both 'text' and 'original_chunk_text' fields for metadata: {list(chunk_info.keys())}")
+                        original_text = "Text content unavailable"
+                    
                     meta = {
                         "media_id": str(media_id), "chunk_index": i, "total_chunks": len(chunks),
                         "file_name": str(file_name), "contextualized": create_contextualized,
-                        "original_chunk_text_ref": chunk_info['text'][:200] + "..." if len(
-                            chunk_info['text']) > 200 else chunk_info['text']
+                        "original_chunk_text_ref": original_text[:200] + "..." if len(original_text) > 200 else original_text
                     }
                     meta.update(chunk_info.get('metadata', {}))
                     if create_contextualized:

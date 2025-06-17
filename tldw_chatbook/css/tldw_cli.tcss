@@ -1731,8 +1731,8 @@ AppFooterStatus {
 }
 .detail-field-container .detail-label { width: 1fr; }
 .detail-field-container .copy-button { width: auto; height: 1; border: none; }
-.detail-textarea { height: auto; min-height: 4; max-height: 18; margin-bottom: 1; }
-.detail-textarea.content-display { height: auto; min-height: 10; max-height: 30; margin-bottom: 1; }
+.detail-textarea { height: auto; min-height: 4; max-height: 25; margin-bottom: 1; }
+.detail-textarea.content-display { height: auto; min-height: 10; max-height: 40; margin-bottom: 1; }
 
 
 /* ----------------------------- ************************* ----------------------------- */
