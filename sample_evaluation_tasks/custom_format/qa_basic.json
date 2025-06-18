@@ -1,0 +1,119 @@
+{
+  "name": "Basic Question Answering",
+  "description": "Simple question-answer pairs testing factual knowledge and comprehension",
+  "task_type": "question_answer",
+  "dataset_name": "basic_qa_sample",
+  "split": "test",
+  "metric": "exact_match",
+  "num_fewshot": 0,
+  "generation_kwargs": {
+    "temperature": 0.0,
+    "max_tokens": 100,
+    "top_p": 1.0,
+    "stop": ["\n", "Question:", "Q:"]
+  },
+  "metadata": {
+    "category": "general_knowledge",
+    "difficulty": "easy",
+    "language": "en",
+    "domain": "mixed",
+    "evaluation_time": "fast",
+    "answer_type": "short_text",
+    "requires_reasoning": false
+  },
+  "prompt_template": "Question: {question}\nAnswer:",
+  "response_processing": {
+    "trim_whitespace": true,
+    "lowercase": false,
+    "remove_punctuation": false
+  },
+  "secondary_metrics": [
+    "contains_answer",
+    "response_length",
+    "confidence_score"
+  ],
+  "sample_data": [
+    {
+      "id": "qa_basic_001",
+      "question": "What is the capital of France?",
+      "answer": "Paris",
+      "category": "geography",
+      "difficulty": "easy"
+    },
+    {
+      "id": "qa_basic_002",
+      "question": "Who wrote Romeo and Juliet?",
+      "answer": "Shakespeare",
+      "category": "literature",
+      "difficulty": "easy"
+    },
+    {
+      "id": "qa_basic_003",
+      "question": "What is H2O commonly known as?",
+      "answer": "water",
+      "category": "science",
+      "difficulty": "easy"
+    },
+    {
+      "id": "qa_basic_004",
+      "question": "How many days are in a leap year?",
+      "answer": "366",
+      "category": "general",
+      "difficulty": "easy"
+    },
+    {
+      "id": "qa_basic_005",
+      "question": "What is the largest planet in our solar system?",
+      "answer": "Jupiter",
+      "category": "astronomy",
+      "difficulty": "medium"
+    },
+    {
+      "id": "qa_basic_006",
+      "question": "Who painted the Mona Lisa?",
+      "answer": "Leonardo da Vinci",
+      "category": "art",
+      "difficulty": "medium"
+    },
+    {
+      "id": "qa_basic_007",
+      "question": "What is the chemical symbol for gold?",
+      "answer": "Au",
+      "category": "chemistry",
+      "difficulty": "medium"
+    },
+    {
+      "id": "qa_basic_008",
+      "question": "In what year did World War II end?",
+      "answer": "1945",
+      "category": "history",
+      "difficulty": "medium"
+    },
+    {
+      "id": "qa_basic_009",
+      "question": "What is the square root of 144?",
+      "answer": "12",
+      "category": "mathematics",
+      "difficulty": "easy"
+    },
+    {
+      "id": "qa_basic_010",
+      "question": "Which programming language is known for its use in data science?",
+      "answer": "Python",
+      "category": "technology",
+      "difficulty": "medium"
+    }
+  ],
+  "evaluation_settings": {
+    "batch_size": 32,
+    "max_samples": null,
+    "shuffle_samples": true,
+    "case_sensitive": false,
+    "allow_partial_credit": false
+  },
+  "model_requirements": {
+    "min_context_length": 512,
+    "supports_stop_sequences": true,
+    "required_capabilities": ["text_generation"]
+  }
+}

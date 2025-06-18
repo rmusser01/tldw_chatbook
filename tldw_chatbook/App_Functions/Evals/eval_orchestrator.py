@@ -17,7 +17,7 @@ This is the main entry point for running evaluations.
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Tuple
 from pathlib import Path
 
 from loguru import logger

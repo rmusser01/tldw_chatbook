@@ -1,0 +1,243 @@
+{
+  "name": "Multilingual Question Answering",
+  "description": "Evaluate cross-lingual capabilities with questions in multiple languages",
+  "task_type": "question_answer",
+  "dataset_name": "multilingual_qa_suite", 
+  "split": "test",
+  "metric": "exact_match",
+  "num_fewshot": 0,
+  "generation_kwargs": {
+    "temperature": 0.0,
+    "max_tokens": 150,
+    "top_p": 1.0
+  },
+  "metadata": {
+    "category": "multilingual",
+    "difficulty": "medium",
+    "languages": ["en", "es", "fr", "de", "it", "pt", "zh", "ja"],
+    "domain": "cross_lingual",
+    "evaluation_time": "medium",
+    "requires_cultural_knowledge": true
+  },
+  "prompt_template": "Question: {question}\nAnswer:",
+  "response_processing": {
+    "preserve_language": true,
+    "normalize_unicode": true,
+    "trim_whitespace": true
+  },
+  "primary_metrics": [
+    "exact_match",
+    "language_preservation",
+    "cultural_accuracy"
+  ],
+  "secondary_metrics": [
+    "response_fluency",
+    "grammatical_correctness",
+    "semantic_accuracy"
+  ],
+  "language_settings": {
+    "response_language": "match_question",
+    "allow_code_switching": false,
+    "prefer_native_script": true
+  },
+  "sample_data": [
+    {
+      "id": "ml_qa_001",
+      "question": "What is the capital of France?",
+      "answer": "Paris",
+      "language": "en",
+      "country_context": "France",
+      "category": "geography"
+    },
+    {
+      "id": "ml_qa_002", 
+      "question": "¿Cuál es la capital de España?",
+      "answer": "Madrid",
+      "language": "es",
+      "country_context": "Spain",
+      "category": "geography"
+    },
+    {
+      "id": "ml_qa_003",
+      "question": "Quelle est la capitale de l'Allemagne?",
+      "answer": "Berlin",
+      "language": "fr", 
+      "country_context": "Germany",
+      "category": "geography"
+    },
+    {
+      "id": "ml_qa_004",
+      "question": "Was ist die Hauptstadt von Italien?",
+      "answer": "Rom",
+      "language": "de",
+      "country_context": "Italy", 
+      "category": "geography"
+    },
+    {
+      "id": "ml_qa_005",
+      "question": "Qual è la capitale del Brasile?",
+      "answer": "Brasília",
+      "language": "it",
+      "country_context": "Brazil",
+      "category": "geography"
+    },
+    {
+      "id": "ml_qa_006",
+      "question": "Qual é a capital do Japão?",
+      "answer": "Tóquio",
+      "language": "pt",
+      "country_context": "Japan",
+      "category": "geography"
+    },
+    {
+      "id": "ml_qa_007",
+      "question": "中国的首都是什么？",
+      "answer": "北京",
+      "language": "zh",
+      "country_context": "China",
+      "category": "geography"
+    },
+    {
+      "id": "ml_qa_008",
+      "question": "日本の首都はどこですか？",
+      "answer": "東京",
+      "language": "ja",
+      "country_context": "Japan",
+      "category": "geography"
+    },
+    {
+      "id": "ml_qa_009",
+      "question": "Who wrote Don Quixote?",
+      "answer": "Miguel de Cervantes",
+      "language": "en",
+      "country_context": "Spain",
+      "category": "literature"
+    },
+    {
+      "id": "ml_qa_010",
+      "question": "¿Quién escribió Cien años de soledad?",
+      "answer": "Gabriel García Márquez",
+      "language": "es",
+      "country_context": "Colombia",
+      "category": "literature"
+    },
+    {
+      "id": "ml_qa_011",
+      "question": "Qui a écrit Les Misérables?",
+      "answer": "Victor Hugo",
+      "language": "fr",
+      "country_context": "France",
+      "category": "literature"
+    },
+    {
+      "id": "ml_qa_012",
+      "question": "Wer schrieb 'Die Verwandlung'?",
+      "answer": "Franz Kafka",
+      "language": "de",
+      "country_context": "Czech Republic",
+      "category": "literature"
+    },
+    {
+      "id": "ml_qa_013",
+      "question": "What is 2 + 2?",
+      "answer": "4",
+      "language": "en",
+      "country_context": "universal",
+      "category": "mathematics"
+    },
+    {
+      "id": "ml_qa_014",
+      "question": "¿Cuánto es 5 + 3?",
+      "answer": "8",
+      "language": "es",
+      "country_context": "universal",
+      "category": "mathematics"
+    },
+    {
+      "id": "ml_qa_015",
+      "question": "Combien font 7 + 6?",
+      "answer": "13",
+      "language": "fr",
+      "country_context": "universal",
+      "category": "mathematics"
+    },
+    {
+      "id": "ml_qa_016",
+      "question": "Was ist 9 + 4?",
+      "answer": "13",
+      "language": "de",
+      "country_context": "universal",
+      "category": "mathematics"
+    },
+    {
+      "id": "ml_qa_017",
+      "question": "What traditional food is associated with Thanksgiving in the US?",
+      "answer": "Turkey",
+      "language": "en",
+      "country_context": "United States",
+      "category": "culture"
+    },
+    {
+      "id": "ml_qa_018",
+      "question": "¿Cuál es el plato tradicional de Navidad en España?",
+      "answer": "Cordero",
+      "language": "es",
+      "country_context": "Spain",
+      "category": "culture"
+    },
+    {
+      "id": "ml_qa_019",
+      "question": "Quel fromage est originaire de Roquefort?",
+      "answer": "Roquefort",
+      "language": "fr",
+      "country_context": "France",
+      "category": "culture"
+    },
+    {
+      "id": "ml_qa_020",
+      "question": "Was ist das traditionelle Getränk zum Oktoberfest?",
+      "answer": "Bier",
+      "language": "de",
+      "country_context": "Germany",
+      "category": "culture"
+    }
+  ],
+  "cultural_contexts": {
+    "France": {
+      "languages": ["fr", "en"],
+      "cultural_notes": "Consider French cultural references and customs"
+    },
+    "Spain": {
+      "languages": ["es", "en"],
+      "cultural_notes": "Consider Spanish cultural references and regional variations"
+    },
+    "Germany": {
+      "languages": ["de", "en"],
+      "cultural_notes": "Consider German cultural references and regional dialects"
+    },
+    "universal": {
+      "languages": ["all"],
+      "cultural_notes": "Universal concepts that apply across cultures"
+    }
+  },
+  "evaluation_settings": {
+    "batch_size": 16,
+    "max_samples": null,
+    "shuffle_samples": true,
+    "case_sensitive": false,
+    "accent_sensitive": true,
+    "script_preservation": true
+  },
+  "model_requirements": {
+    "min_context_length": 1024,
+    "supports_unicode": true,
+    "multilingual_capability": "required",
+    "supported_languages": ["en", "es", "fr", "de", "it", "pt", "zh", "ja"]
+  },
+  "language_analysis": {
+    "detect_response_language": true,
+    "measure_fluency": true,
+    "check_grammar": true,
+    "validate_cultural_appropriateness": true
+  }
+}

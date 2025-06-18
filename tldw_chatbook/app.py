@@ -2902,19 +2902,36 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def action_quit(self) -> None:
         """Handle application quit - save persistent caches before exiting."""
-        loguru_logger.info("Application quit initiated - saving persistent caches...")
+        loguru_logger.info("Application quit initiated")
         
+        # Try to save caches but don't let it block quitting
         try:
-            # Save embedding cache to disk
-            from .RAG_Search.Services.cache_service import get_cache_service
-            cache_service = get_cache_service()
-            cache_service.save_persistent_caches()
-            loguru_logger.info("Persistent caches saved successfully")
+            # Import with timeout protection
+            import signal
+            import threading
+            
+            def save_caches_with_timeout():
+                try:
+                    from .RAG_Search.Services.cache_service import get_cache_service
+                    cache_service = get_cache_service()
+                    cache_service.save_persistent_caches()
+                    loguru_logger.info("Persistent caches saved successfully")
+                except Exception as e:
+                    loguru_logger.error(f"Error saving persistent caches: {e}")
+            
+            # Run cache saving in a separate thread with timeout
+            save_thread = threading.Thread(target=save_caches_with_timeout)
+            save_thread.daemon = True  # Don't let this thread prevent app exit
+            save_thread.start()
+            save_thread.join(timeout=2.0)  # Wait max 2 seconds
+            
+            if save_thread.is_alive():
+                loguru_logger.warning("Cache save timed out - proceeding with quit")
         except Exception as e:
-            loguru_logger.error(f"Error saving persistent caches: {e}")
+            loguru_logger.error(f"Error in quit handler: {e}")
         
-        # Call the parent quit method
-        super().action_quit()
+        # Always call the parent quit method
+        self.exit()
 
     ########################################################
     # --- End of Watchers and Helper Methods ---

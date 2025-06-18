@@ -1,5 +1,5 @@
 # SearchRAGWindow.py
-# Description: Dedicated RAG search interface for tldw_chatbook
+# Description: Improved RAG search interface with better UX
 #
 # Imports
 from __future__ import annotations
@@ -7,17 +7,20 @@ from typing import TYPE_CHECKING, Optional, List, Dict, Any, Tuple
 import asyncio
 from datetime import datetime
 from pathlib import Path
+import json
 
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll, Grid
 from textual.widgets import (
-    Static, Button, Input, Select, Checkbox, 
+    Static, Button, Input, Select, Checkbox, ListView, ListItem,
     DataTable, Markdown, Label, TabbedContent, TabPane,
-    LoadingIndicator, ProgressBar
+    LoadingIndicator, ProgressBar, Collapsible
 )
 from textual.binding import Binding
+from textual.reactive import reactive
 from rich.markup import escape
+from rich.text import Text
 from loguru import logger
 
 # Local Imports
@@ -34,186 +37,399 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="SearchRAGWindow")
 
+# Source type icons and colors
+SOURCE_ICONS = {
+    "media": "🎬",
+    "conversations": "💬", 
+    "notes": "📝"
+}
+
+SOURCE_COLORS = {
+    "media": "cyan",
+    "conversations": "green",
+    "notes": "yellow"
+}
+
+class SearchHistoryDropdown(Container):
+    """Dropdown for search history with auto-complete functionality"""
+    
+    def __init__(self, search_history_db: SearchHistoryDB):
+        super().__init__(id="search-history-dropdown", classes="search-history-dropdown hidden")
+        self.search_history_db = search_history_db
+        self.history_items: List[str] = []
+        
+    def compose(self) -> ComposeResult:
+        yield ListView(id="search-history-list", classes="search-history-list")
+            
+    async def show_history(self, current_query: str = "") -> None:
+        """Show search history filtered by current query"""
+        list_view = self.query_one("#search-history-list", ListView)
+        await list_view.clear()
+        
+        # Get recent searches
+        history = self.search_history_db.get_search_history(limit=10, days_back=30)
+        self.history_items = []
+        
+        for item in history:
+            query = item['query']
+            if current_query.lower() in query.lower() or not current_query:
+                self.history_items.append(query)
+                list_item = ListItem(Static(query, classes="history-item-text"))
+                await list_view.append(list_item)
+        
+        if self.history_items:
+            self.remove_class("hidden")
+        else:
+            self.add_class("hidden")
+            
+    def hide(self) -> None:
+        """Hide the dropdown"""
+        self.add_class("hidden")
+
 class SearchResult(Container):
-    """Container for displaying a single search result"""
+    """Enhanced container for displaying a single search result with better visual design"""
     
     def __init__(self, result: Dict[str, Any], index: int):
-        super().__init__(id=f"result-{index}")
+        super().__init__(id=f"result-{index}", classes="search-result-card")
         self.result = result
         self.index = index
         self.expanded = False
         
     def compose(self) -> ComposeResult:
-        """Create the result display"""
-        with Vertical(classes="search-result"):
-            # Header with title and score
+        """Create the enhanced result display"""
+        source = self.result.get('source', 'unknown')
+        source_icon = SOURCE_ICONS.get(source, "📄")
+        source_color = SOURCE_COLORS.get(source, "white")
+        
+        with Vertical(classes="result-card-content"):
+            # Header with source indicator, title and score
             with Horizontal(classes="result-header"):
+                # Source type indicator
                 yield Static(
-                    f"[bold]{self.index}. [{self.result['source'].upper()}] {self.result['title']}[/bold]",
+                    f"{source_icon} [{source_color}]{source.upper()}[/{source_color}]",
+                    classes="source-indicator"
+                )
+                yield Static(
+                    f"[bold]{self.result['title']}[/bold]",
                     classes="result-title"
                 )
+                # Visual score indicator
+                score = self.result.get('score', 0)
+                score_bar = "█" * int(score * 10) + "░" * (10 - int(score * 10))
                 yield Static(
-                    f"Score: {self.result.get('score', 0):.3f}",
-                    classes="result-score"
+                    f"[dim]{score_bar} {score:.3f}[/dim]",
+                    classes="result-score-visual"
                 )
             
-            # Preview of content
+            # Content preview
             content_preview = self.result['content'][:200] + "..." if len(self.result['content']) > 200 else self.result['content']
             yield Static(content_preview, classes="result-preview")
             
-            # Metadata (initially hidden)
+            # Metadata in a more compact format
             if self.result.get('metadata'):
-                metadata_text = "\n".join([f"{k}: {v}" for k, v in self.result['metadata'].items()])
-                yield Static(metadata_text, classes="result-metadata hidden")
+                with Horizontal(classes="result-metadata compact"):
+                    for key, value in list(self.result['metadata'].items())[:3]:  # Show first 3 metadata items
+                        yield Static(f"[dim]{key}: {value}[/dim]", classes="metadata-item")
+                    if len(self.result['metadata']) > 3:
+                        yield Static(f"[dim]+{len(self.result['metadata']) - 3} more[/dim]", classes="metadata-more")
+            
+            # Full metadata (initially hidden)
+            if self.result.get('metadata') and len(self.result['metadata']) > 3:
+                all_metadata = "\n".join([f"{k}: {v}" for k, v in self.result['metadata'].items()])
+                yield Static(all_metadata, classes="result-metadata-full hidden")
             
             # Actions
             with Horizontal(classes="result-actions"):
-                yield Button("Expand", id=f"expand-{self.index}", classes="mini")
+                yield Button("Expand", id=f"expand-{self.index}", classes="mini primary")
                 yield Button("Copy", id=f"copy-{self.index}", classes="mini")
                 yield Button("Export", id=f"export-{self.index}", classes="mini")
+                yield Button("Add to Notes", id=f"add-note-{self.index}", classes="mini")
+
+class SavedSearchesPanel(Container):
+    """Panel for managing saved searches"""
+    
+    def __init__(self):
+        super().__init__(id="saved-searches-panel", classes="saved-searches-panel")
+        self.saved_searches: Dict[str, Dict[str, Any]] = self._load_saved_searches()
+        
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("[bold]Saved Searches[/bold]", classes="panel-title")
+            yield ListView(id="saved-searches-list", classes="saved-searches-list")
+            with Horizontal(classes="saved-search-actions"):
+                yield Button("Load", id="load-saved-search", classes="mini primary", disabled=True)
+                yield Button("Delete", id="delete-saved-search", classes="mini", disabled=True)
+    
+    def _load_saved_searches(self) -> Dict[str, Dict[str, Any]]:
+        """Load saved searches from user data"""
+        saved_searches_path = get_user_data_dir() / "saved_searches.json"
+        if saved_searches_path.exists():
+            try:
+                with open(saved_searches_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading saved searches: {e}")
+        return {}
+    
+    def save_search(self, name: str, config: Dict[str, Any]) -> None:
+        """Save a search configuration"""
+        self.saved_searches[name] = {
+            "config": config,
+            "created_at": datetime.now().isoformat(),
+            "last_used": datetime.now().isoformat()
+        }
+        self._persist_saved_searches()
+        self.refresh_list()
+    
+    def _persist_saved_searches(self) -> None:
+        """Save searches to disk"""
+        saved_searches_path = get_user_data_dir() / "saved_searches.json"
+        saved_searches_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(saved_searches_path, 'w') as f:
+            json.dump(self.saved_searches, f, indent=2)
+    
+    async def refresh_list(self) -> None:
+        """Refresh the saved searches list"""
+        list_view = self.query_one("#saved-searches-list", ListView)
+        await list_view.clear()
+        
+        for name, data in self.saved_searches.items():
+            created = datetime.fromisoformat(data['created_at']).strftime("%Y-%m-%d")
+            list_item = ListItem(
+                Static(f"{name} [dim]({created})[/dim]", classes="saved-search-item")
+            )
+            await list_view.append(list_item)
 
 class SearchRAGWindow(Container):
-    """Main RAG search interface window"""
+    """Enhanced RAG search interface window with improved UX"""
     
     BINDINGS = [
+        Binding("ctrl+s", "save_search", "Save Search"),
         Binding("ctrl+r", "refresh", "Refresh"),
         Binding("ctrl+e", "export", "Export Results"),
         Binding("ctrl+i", "index", "Index Content"),
         Binding("escape", "clear", "Clear Search"),
+        Binding("ctrl+k", "focus_search", "Focus Search", priority=True),
     ]
+    
+    # Reactive attributes for state management
+    is_searching = reactive(False)
+    current_page = reactive(1)
+    results_per_page = reactive(20)
+    total_results = reactive(0)
     
     def __init__(self, app_instance: "TldwCli", id: str = None):
         super().__init__(id=id)
         self.app_instance = app_instance
         self.current_results: List[Dict[str, Any]] = []
-        self.search_history: List[str] = []  # In-memory for quick access
-        self.is_searching = False
+        self.all_results: List[Dict[str, Any]] = []  # Store all results for pagination
+        self.search_history: List[str] = []
         self.current_search_id: Optional[int] = None
         
-        # Initialize search history database
+        # Initialize components
         history_db_path = get_user_data_dir() / "databases" / "search_history.db"
         self.search_history_db = SearchHistoryDB(history_db_path)
-        
-        # Load recent search history for quick access
         self._load_recent_search_history()
         
         # Check dependencies
         self.embeddings_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
         self.flashrank_available = DEPENDENCIES_AVAILABLE.get('flashrank', False)
         
+        # Search configuration state
+        self.current_search_config: Dict[str, Any] = {}
+        
     def compose(self) -> ComposeResult:
-        """Create the UI layout"""
-        with Grid(classes="rag-search-grid"):
-            # Left sidebar - Search Options
-            with Vertical(classes="search-sidebar"):
-                yield Static("[bold]RAG Search[/bold]", classes="sidebar-title")
-                
-                # Search mode selection
-                yield Label("Search Mode:")
-                yield Select(
-                    options=[
-                        ("plain", "Plain RAG (BM25)"),
-                        ("full", "Full RAG (Embeddings)" if self.embeddings_available else "Full RAG (Requires Dependencies)"),
-                        ("hybrid", "Hybrid Search" if self.embeddings_available else "Hybrid (Requires Dependencies)")
-                    ],
-                    value="plain",
-                    id="search-mode-select"
-                )
-                
-                # Source selection
-                yield Static("[bold]Sources[/bold]", classes="section-title")
-                yield Checkbox("Media Items", value=True, id="source-media")
-                yield Checkbox("Conversations", value=True, id="source-conversations")
-                yield Checkbox("Notes", value=True, id="source-notes")
-                
-                # Search parameters
-                yield Static("[bold]Parameters[/bold]", classes="section-title")
-                yield Label("Top K Results:")
-                yield Input(value="10", id="top-k-input", type="integer")
-                
-                yield Label("Max Context Length:")
-                yield Input(value="10000", id="max-context-input", type="integer")
-                
-                # Re-ranking options
-                yield Static("[bold]Re-ranking[/bold]", classes="section-title")
-                yield Checkbox(
-                    "Enable Re-ranking",
-                    value=self.flashrank_available,
-                    id="enable-rerank",
-                    disabled=not self.flashrank_available
-                )
-                
-                # Advanced options
-                with Vertical(classes="collapsible"):
-                    yield Static("[bold]Advanced Options[/bold]", classes="section-title")
-                    yield Label("Chunk Size:")
-                    yield Input(value="400", id="chunk-size-input", type="integer")
-                    yield Label("Chunk Overlap:")
-                    yield Input(value="100", id="chunk-overlap-input", type="integer")
-                    yield Checkbox("Include Metadata", value=True, id="include-metadata")
-                
-                # Actions
-                yield Button("Index Content", id="index-content-btn", classes="primary")
-                yield Button("Clear Cache", id="clear-cache-btn")
-                
-            # Main content area
-            with Vertical(classes="search-main"):
-                # Search bar
+        """Create the enhanced UI layout"""
+        with VerticalScroll(classes="rag-search-container"):
+            yield Static("[bold]RAG Search[/bold]", classes="rag-title")
+            
+            # Search bar with history dropdown
+            with Container(classes="search-input-container"):
                 with Horizontal(classes="search-bar"):
                     self.search_input = Input(
                         placeholder="Enter your search query...",
-                        id="rag-search-input"
+                        id="rag-search-input",
+                        classes="search-input-enhanced"
                     )
+                    self.search_input.tooltip = "Press Ctrl+K to focus"
                     yield self.search_input
-                    yield Button("Search", id="rag-search-btn", classes="primary")
+                    yield Button("Search", id="rag-search-btn", classes="primary search-button", variant="primary")
                     yield LoadingIndicator(id="search-loading", classes="hidden")
                 
-                # Results area with tabs
-                with TabbedContent(id="results-tabs"):
-                    with TabPane("Results", id="results-tab"):
-                        # Results summary
+                # Search history dropdown
+                yield SearchHistoryDropdown(self.search_history_db)
+            
+            # Saved searches panel
+            yield SavedSearchesPanel()
+            
+            # Quick settings (always visible)
+            with Horizontal(classes="quick-settings"):
+                yield Static("[bold]Quick Settings[/bold]", classes="section-title")
+                yield Select(
+                    options=[
+                        ("Plain RAG (BM25)", "plain"),
+                        ("Full RAG (Embeddings)" if self.embeddings_available else "Full RAG (Requires Dependencies)", "full"),
+                        ("Hybrid Search" if self.embeddings_available else "Hybrid (Requires Dependencies)", "hybrid")
+                    ],
+                    value="plain",
+                    id="search-mode-select",
+                    classes="quick-select"
+                )
+                with Horizontal(classes="source-checkboxes"):
+                    yield Checkbox("Media", value=True, id="source-media", classes="source-checkbox")
+                    yield Checkbox("Conversations", value=True, id="source-conversations", classes="source-checkbox")
+                    yield Checkbox("Notes", value=True, id="source-notes", classes="source-checkbox")
+            
+            # Advanced settings (collapsible with progressive disclosure)
+            with Collapsible(title="Advanced Settings", collapsed=True, id="advanced-settings-collapsible"):
+                with Vertical(classes="advanced-settings-content"):
+                    # Search parameters
+                    with Grid(classes="parameter-grid"):
+                        yield Label("Top K Results:")
+                        yield Input(value="10", id="top-k-input", type="integer", classes="param-input")
+                        yield Label("Max Context Length:")
+                        yield Input(value="10000", id="max-context-input", type="integer", classes="param-input")
+                    
+                    # Re-ranking options
+                    yield Checkbox(
+                        "Enable Re-ranking",
+                        value=self.flashrank_available,
+                        id="enable-rerank",
+                        disabled=not self.flashrank_available
+                    )
+                    
+                    # Chunking options (for full RAG mode)
+                    with Vertical(classes="chunking-options hidden", id="chunking-options"):
+                        yield Static("[bold]Chunking Options[/bold]", classes="subsection-title")
+                        with Grid(classes="parameter-grid"):
+                            yield Label("Chunk Size:")
+                            yield Input(value="400", id="chunk-size-input", type="integer", classes="param-input")
+                            yield Label("Chunk Overlap:")
+                            yield Input(value="100", id="chunk-overlap-input", type="integer", classes="param-input")
+            
+            # Status and progress area
+            with Container(id="status-container", classes="status-container"):
+                yield Static("Ready to search", id="search-status", classes="search-status")
+                yield ProgressBar(id="search-progress", classes="hidden", total=100)
+            
+            # Results area with enhanced tabs
+            with TabbedContent(id="results-tabs", classes="results-tabs"):
+                with TabPane("Results", id="results-tab"):
+                    # Results summary with pagination controls
+                    with Horizontal(classes="results-header-bar"):
                         yield Static(
                             "Enter a search query to begin",
                             id="results-summary",
                             classes="results-summary"
                         )
-                        
-                        # Results container
-                        yield VerticalScroll(id="results-container", classes="results-scroll")
+                        # Pagination controls
+                        with Horizontal(classes="pagination-controls hidden", id="pagination-controls"):
+                            yield Button("◀ Previous", id="prev-page-btn", classes="mini", disabled=True)
+                            yield Static("Page 1 of 1", id="page-info", classes="page-info")
+                            yield Button("Next ▶", id="next-page-btn", classes="mini", disabled=True)
                     
-                    with TabPane("Context", id="context-tab"):
-                        # Show the formatted context that would be sent to LLM
-                        yield Markdown(
-                            "No search performed yet",
-                            id="context-preview"
-                        )
-                    
-                    with TabPane("History", id="history-tab"):
-                        # Search history
-                        yield DataTable(id="search-history-table")
-                    
-                    with TabPane("Analytics", id="analytics-tab"):
-                        # Search analytics and metrics
-                        yield Markdown(
-                            "# Search Analytics\n\nNo data available yet",
-                            id="analytics-content"
-                        )
+                    # Results container with virtual scrolling
+                    yield Container(id="results-container", classes="results-container")
+                
+                with TabPane("Context", id="context-tab"):
+                    yield Markdown(
+                        "No search performed yet",
+                        id="context-preview",
+                        classes="context-preview"
+                    )
+                
+                with TabPane("History", id="history-tab"):
+                    yield DataTable(id="search-history-table", classes="history-table")
+                
+                with TabPane("Analytics", id="analytics-tab"):
+                    yield Markdown(
+                        "# Search Analytics\n\nNo data available yet",
+                        id="analytics-content",
+                        classes="analytics-content"
+                    )
+            
+            # Action buttons with better hierarchy
+            with Horizontal(classes="action-buttons-bar"):
+                # Primary actions
+                with Horizontal(classes="primary-actions"):
+                    yield Button("Save Search", id="save-search-btn", classes="secondary")
+                    yield Button("Export Results", id="export-results-btn", classes="secondary", disabled=True)
+                
+                # Maintenance actions (de-emphasized)
+                with Horizontal(classes="maintenance-actions"):
+                    yield Button("Index Content", id="index-content-btn", classes="tertiary")
+                    yield Button("Clear Cache", id="clear-cache-btn", classes="tertiary")
     
     async def on_mount(self) -> None:
         """Initialize the window when mounted"""
         # Set up search history table
         history_table = self.query_one("#search-history-table", DataTable)
         history_table.add_columns("Time", "Query", "Mode", "Results", "Duration")
+        history_table.zebra_stripes = True
+        
+        # Set up saved searches
+        saved_searches_panel = self.query_one(SavedSearchesPanel)
+        await saved_searches_panel.refresh_list()
         
         # Focus search input
         self.search_input.focus()
         
+        # Set up ARIA labels
+        self._setup_aria_labels()
+        
         # Check indexing status
         await self._check_index_status()
     
+    def _setup_aria_labels(self) -> None:
+        """Set up ARIA labels for accessibility"""
+        self.search_input.aria_label = "Search query input"
+        self.query_one("#rag-search-btn").aria_label = "Execute search"
+        self.query_one("#search-mode-select").aria_label = "Select search mode"
+        self.query_one("#source-media").aria_label = "Include media items in search"
+        self.query_one("#source-conversations").aria_label = "Include conversations in search"
+        self.query_one("#source-notes").aria_label = "Include notes in search"
+        self.query_one("#save-search-btn").aria_label = "Save current search configuration"
+        self.query_one("#export-results-btn").aria_label = "Export search results"
+    
+    def watch_is_searching(self, is_searching: bool) -> None:
+        """React to search state changes"""
+        loading = self.query_one("#search-loading")
+        search_btn = self.query_one("#rag-search-btn")
+        
+        if is_searching:
+            loading.remove_class("hidden")
+            search_btn.disabled = True
+            search_btn.label = "Searching..."
+        else:
+            loading.add_class("hidden")
+            search_btn.disabled = False
+            search_btn.label = "Search"
+    
+    @on(Input.Changed, "#rag-search-input")
+    async def handle_search_input_change(self, event: Input.Changed) -> None:
+        """Handle search input changes for history dropdown"""
+        query = event.value.strip()
+        history_dropdown = self.query_one(SearchHistoryDropdown)
+        
+        if query:
+            await history_dropdown.show_history(query)
+        else:
+            history_dropdown.hide()
+    
+    @on(ListView.Selected, "#search-history-list")
+    async def handle_history_selection(self, event: ListView.Selected) -> None:
+        """Handle selection from search history"""
+        history_dropdown = self.query_one(SearchHistoryDropdown)
+        if event.item and history_dropdown.history_items:
+            index = event.list_view.index
+            if 0 <= index < len(history_dropdown.history_items):
+                self.search_input.value = history_dropdown.history_items[index]
+                history_dropdown.hide()
+                self.search_input.focus()
+    
     @on(Button.Pressed, "#rag-search-btn")
     async def handle_search(self, event: Button.Pressed) -> None:
-        """Handle search button press"""
+        """Handle search button press - no auto-search on input"""
         if self.is_searching:
             return
             
@@ -224,28 +440,32 @@ class SearchRAGWindow(Container):
         
         await self._perform_search(query)
     
-    @on(Input.Submitted, "#rag-search-input")
-    async def handle_search_submit(self, event: Input.Submitted) -> None:
-        """Handle enter key in search input"""
-        await self._perform_search(event.value)
+    @on(Select.Changed, "#search-mode-select")
+    def handle_search_mode_change(self, event: Select.Changed) -> None:
+        """Show/hide chunking options based on search mode"""
+        chunking_options = self.query_one("#chunking-options")
+        if event.value == "full":
+            chunking_options.remove_class("hidden")
+        else:
+            chunking_options.add_class("hidden")
     
+    @work(exclusive=True)
     async def _perform_search(self, query: str) -> None:
-        """Perform the actual search"""
-        if self.is_searching:
-            return
-            
+        """Perform the actual search with streaming results"""
         self.is_searching = True
         start_time = datetime.now()
-        search_type = ""
-        results = []
-        error_message = None
         
-        # Show loading indicator
-        loading = self.query_one("#search-loading")
-        loading.remove_class("hidden")
+        # Update status
+        status_elem = self.query_one("#search-status")
+        progress_bar = self.query_one("#search-progress", ProgressBar)
+        progress_bar.remove_class("hidden")
+        progress_bar.update(progress=0)
         
         # Clear previous results
-        results_container = self.query_one("#results-container", VerticalScroll)
+        self.all_results = []
+        self.current_results = []
+        self.current_page = 1
+        results_container = self.query_one("#results-container", Container)
         await results_container.remove_children()
         
         try:
@@ -257,169 +477,207 @@ class SearchRAGWindow(Container):
                 'notes': self.query_one("#source-notes", Checkbox).value
             }
             
-            # Check if any sources are selected
             if not any(sources.values()):
                 self.app_instance.notify("Please select at least one source", severity="warning")
                 return
             
-            top_k = int(self.query_one("#top-k-input", Input).value or "10")
-            max_context = int(self.query_one("#max-context-input", Input).value or "10000")
-            enable_rerank = self.query_one("#enable-rerank", Checkbox).value
-            chunk_size = int(self.query_one("#chunk-size-input", Input).value or "400")
-            chunk_overlap = int(self.query_one("#chunk-overlap-input", Input).value or "100")
-            include_metadata = self.query_one("#include-metadata", Checkbox).value
+            # Store current search configuration
+            self.current_search_config = {
+                "query": query,
+                "mode": search_mode,
+                "sources": sources,
+                "top_k": int(self.query_one("#top-k-input", Input).value or "10"),
+                "max_context": int(self.query_one("#max-context-input", Input).value or "10000"),
+                "enable_rerank": self.query_one("#enable-rerank", Checkbox).value
+            }
+            
+            # Update status
+            await status_elem.update("🔍 Searching...")
+            await progress_bar.update(progress=20)
             
             # Perform search based on mode
-            search_type = search_mode
             if search_mode == "plain":
                 results, context = await perform_plain_rag_search(
                     self.app_instance,
                     query,
                     sources,
-                    top_k,
-                    max_context,
-                    enable_rerank,
-                    "flashrank"  # Will be checked inside the function
+                    self.current_search_config["top_k"],
+                    self.current_search_config["max_context"],
+                    self.current_search_config["enable_rerank"],
+                    "flashrank"
                 )
             elif search_mode == "full":
                 if not self.embeddings_available:
-                    # Fall back to plain search
                     self.app_instance.notify("Embeddings not available, using plain search", severity="info")
                     results, context = await perform_plain_rag_search(
                         self.app_instance,
                         query,
                         sources,
-                        top_k,
-                        max_context,
-                        enable_rerank,
+                        self.current_search_config["top_k"],
+                        self.current_search_config["max_context"],
+                        self.current_search_config["enable_rerank"],
                         "flashrank"
                     )
                 else:
+                    chunk_size = int(self.query_one("#chunk-size-input", Input).value or "400")
+                    chunk_overlap = int(self.query_one("#chunk-overlap-input", Input).value or "100")
                     results, context = await perform_full_rag_pipeline(
                         self.app_instance,
                         query,
                         sources,
-                        top_k,
-                        max_context,
+                        self.current_search_config["top_k"],
+                        self.current_search_config["max_context"],
                         chunk_size,
                         chunk_overlap,
-                        include_metadata,
-                        enable_rerank,
-                        "flashrank"  # or "cohere" based on user preference
+                        True,  # include_metadata
+                        self.current_search_config["enable_rerank"],
+                        "flashrank"
                     )
-            elif search_mode == "hybrid":
+            else:  # hybrid
                 if not self.embeddings_available:
-                    # Fall back to plain search
                     self.app_instance.notify("Embeddings not available for hybrid search, using plain search", severity="info")
                     results, context = await perform_plain_rag_search(
                         self.app_instance,
                         query,
                         sources,
-                        top_k,
-                        max_context,
-                        enable_rerank,
+                        self.current_search_config["top_k"],
+                        self.current_search_config["max_context"],
+                        self.current_search_config["enable_rerank"],
                         "flashrank"
                     )
                 else:
-                    # Perform true hybrid search
+                    chunk_size = int(self.query_one("#chunk-size-input", Input).value or "400")
+                    chunk_overlap = int(self.query_one("#chunk-overlap-input", Input).value or "100")
                     results, context = await perform_hybrid_rag_search(
                         self.app_instance,
                         query,
                         sources,
-                        top_k,
-                        max_context,
-                        enable_rerank,
-                        "flashrank",  # or "cohere" based on user preference
+                        self.current_search_config["top_k"],
+                        self.current_search_config["max_context"],
+                        self.current_search_config["enable_rerank"],
+                        "flashrank",
                         chunk_size,
                         chunk_overlap,
                         0.5,  # BM25 weight
                         0.5   # Vector weight
                     )
             
+            await progress_bar.update(progress=80)
+            
             # Store results
-            self.current_results = results
+            self.all_results = results
+            self.total_results = len(results)
             
-            # Update UI with results
-            await self._display_results(results, context)
+            # Display results with pagination
+            await self._display_results_page(context)
             
-            # Record search to history database
+            # Enable export button if we have results
+            if results:
+                self.query_one("#export-results-btn").disabled = False
+            
+            # Record search to history
             duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-            search_params = {
-                'sources': sources,
-                'top_k': top_k,
-                'max_context': max_context,
-                'enable_rerank': enable_rerank,
-                'chunk_size': chunk_size,
-                'chunk_overlap': chunk_overlap
-            }
-            
             self.current_search_id = self._record_search_to_history(
                 query=query,
                 search_type=search_mode,
                 results=results,
                 execution_time_ms=duration_ms,
-                search_params=search_params
+                search_params=self.current_search_config
             )
+            
+            # Update history dropdown
+            history_dropdown = self.query_one(SearchHistoryDropdown)
+            history_dropdown.hide()
+            
+            await status_elem.update(f"✅ Found {len(results)} results in {duration_ms/1000:.2f}s")
             
         except Exception as e:
             logger.error(f"Search error: {e}", exc_info=True)
-            error_message = str(e)
-            self.app_instance.notify(f"Search error: {error_message}", severity="error")
-            
-            # Record failed search to history
-            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-            self._record_search_to_history(
-                query=query,
-                search_type=search_type or "unknown",
-                results=[],
-                execution_time_ms=duration_ms,
-                error_message=error_message
-            )
+            await status_elem.update(f"❌ Search error: {str(e)}")
+            self.app_instance.notify(f"Search error: {str(e)}", severity="error")
             
         finally:
             self.is_searching = False
-            loading.add_class("hidden")
+            progress_bar.add_class("hidden")
     
-    async def _display_results(self, results: List[Dict[str, Any]], context: str) -> None:
-        """Display search results in the UI"""
-        results_container = self.query_one("#results-container", VerticalScroll)
+    async def _display_results_page(self, context: str) -> None:
+        """Display current page of results"""
+        results_container = self.query_one("#results-container", Container)
+        await results_container.remove_children()
+        
+        # Calculate pagination
+        start_idx = (self.current_page - 1) * self.results_per_page
+        end_idx = start_idx + self.results_per_page
+        page_results = self.all_results[start_idx:end_idx]
         
         # Update summary
         summary = self.query_one("#results-summary", Static)
-        await summary.update(f"Found {len(results)} results")
+        total_pages = max(1, (self.total_results + self.results_per_page - 1) // self.results_per_page)
+        await summary.update(
+            f"Found {self.total_results} results - Showing {start_idx + 1}-{min(end_idx, self.total_results)}"
+        )
         
-        # Display each result
-        for i, result in enumerate(results, 1):
+        # Show/update pagination controls
+        if self.total_results > self.results_per_page:
+            pagination = self.query_one("#pagination-controls")
+            pagination.remove_class("hidden")
+            
+            prev_btn = self.query_one("#prev-page-btn", Button)
+            next_btn = self.query_one("#next-page-btn", Button)
+            page_info = self.query_one("#page-info", Static)
+            
+            prev_btn.disabled = self.current_page <= 1
+            next_btn.disabled = self.current_page >= total_pages
+            await page_info.update(f"Page {self.current_page} of {total_pages}")
+        
+        # Display results for current page
+        for i, result in enumerate(page_results, start=start_idx + 1):
             result_widget = SearchResult(result, i)
             await results_container.mount(result_widget)
         
         # Update context preview
         context_preview = self.query_one("#context-preview", Markdown)
         await context_preview.update(f"```\n{context}\n```")
-    
-    async def _add_to_history(self, query: str, mode: str, results: int, duration: float) -> None:
-        """Add search to history"""
-        history_table = self.query_one("#search-history-table", DataTable)
-        history_table.add_row(
-            datetime.now().strftime("%H:%M:%S"),
-            query[:50] + "..." if len(query) > 50 else query,
-            mode,
-            str(results),
-            f"{duration:.2f}s"
-        )
         
-        # Keep history limited
-        if len(self.search_history) >= 50:
-            self.search_history.pop(0)
-        self.search_history.append(query)
+        # Update analytics
+        await self._update_analytics()
+    
+    @on(Button.Pressed, "#prev-page-btn")
+    async def handle_prev_page(self, event: Button.Pressed) -> None:
+        """Handle previous page button"""
+        if self.current_page > 1:
+            self.current_page -= 1
+            await self._display_results_page("")
+    
+    @on(Button.Pressed, "#next-page-btn")
+    async def handle_next_page(self, event: Button.Pressed) -> None:
+        """Handle next page button"""
+        total_pages = max(1, (self.total_results + self.results_per_page - 1) // self.results_per_page)
+        if self.current_page < total_pages:
+            self.current_page += 1
+            await self._display_results_page("")
+    
+    @on(Button.Pressed, "#save-search-btn")
+    async def handle_save_search(self, event: Button.Pressed) -> None:
+        """Save current search configuration"""
+        if not self.current_search_config:
+            self.app_instance.notify("No search to save", severity="warning")
+            return
+        
+        # In a real implementation, you'd show a dialog to get the save name
+        save_name = f"Search - {self.current_search_config['query'][:20]}"
+        saved_searches = self.query_one(SavedSearchesPanel)
+        saved_searches.save_search(save_name, self.current_search_config)
+        self.app_instance.notify(f"Search saved as '{save_name}'", severity="success")
     
     @on(Button.Pressed, "#index-content-btn")
     async def handle_index_content(self, event: Button.Pressed) -> None:
-        """Handle index content button"""
+        """Handle index content button with progress indicator"""
         await self._index_all_content()
     
+    @work(exclusive=True)
     async def _index_all_content(self) -> None:
-        """Index all content for embeddings-based search"""
+        """Index all content with background progress indicator"""
         if not self.embeddings_available:
             self.app_instance.notify(
                 "Embeddings dependencies not available. Install with: pip install -e '.[embeddings_rag]'",
@@ -427,95 +685,225 @@ class SearchRAGWindow(Container):
             )
             return
         
-        # Disable index button during indexing
-        index_btn = self.query_one("#index-content-btn", Button)
-        index_btn.disabled = True
-        
-        # Create and show progress container
-        progress_container = Container(
-            Static("Indexing Progress", classes="progress-title"),
-            ProgressBar(id="index-progress-bar", total=100),
-            Static("Preparing...", id="index-progress-label"),
-            classes="index-progress-container"
-        )
-        
-        # Insert progress container into the sidebar
-        sidebar = self.query_one(".search-sidebar", Vertical)
-        await sidebar.mount(progress_container, before=index_btn)
+        # Update status
+        status_elem = self.query_one("#search-status")
+        progress_bar = self.query_one("#search-progress", ProgressBar)
+        progress_bar.remove_class("hidden")
         
         try:
+            await status_elem.update("🔄 Indexing content...")
+            
             # Initialize services
             embeddings_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
             embeddings_service = EmbeddingsService(embeddings_dir)
             chunking_service = ChunkingService()
             indexing_service = IndexingService(embeddings_service, chunking_service)
             
-            # Progress tracking
-            progress_data = {
-                'media': {'current': 0, 'total': 0},
-                'conversations': {'current': 0, 'total': 0},
-                'notes': {'current': 0, 'total': 0}
-            }
+            # Index with progress updates
+            total_steps = 3
+            await progress_bar.update(progress=0, total=total_steps * 100)
             
-            def update_progress(content_type: str, current: int, total: int):
-                """Update progress display"""
-                progress_data[content_type]['current'] = current
-                progress_data[content_type]['total'] = total
-                
-                # Calculate overall progress
-                total_items = sum(p['total'] for p in progress_data.values())
-                current_items = sum(p['current'] for p in progress_data.values())
-                
-                if total_items > 0:
-                    progress_percent = int((current_items / total_items) * 100)
-                    progress_bar = self.query_one("#index-progress-bar", ProgressBar)
-                    progress_bar.update(progress=progress_percent)
-                    
-                    # Update label
-                    label = self.query_one("#index-progress-label", Static)
-                    label.update(f"Indexing {content_type}: {current}/{total} (Overall: {current_items}/{total_items})")
+            async def update_progress(content_type: str, current: int, total: int):
+                step = {"media": 0, "conversations": 1, "notes": 2}.get(content_type, 0)
+                progress = (step * 100) + int((current / max(total, 1)) * 100)
+                await progress_bar.update(progress=progress)
+                await status_elem.update(f"🔄 Indexing {content_type}: {current}/{total}")
             
-            # Show initial progress
-            self.app_instance.notify("Starting content indexing...", severity="info")
-            
-            # Index all content with progress callback
             results = await indexing_service.index_all(
                 media_db=self.app_instance.media_db,
                 chachanotes_db=self.app_instance.chachanotes_db,
                 progress_callback=update_progress
             )
             
-            # Show results
             total_indexed = sum(results.values())
-            self.app_instance.notify(
-                f"Indexing complete: {total_indexed} items indexed "
-                f"(Media: {results['media']}, Conversations: {results['conversations']}, Notes: {results['notes']})",
-                severity="success"
+            await status_elem.update(
+                f"✅ Indexed {total_indexed} items (Media: {results['media']}, "
+                f"Conversations: {results['conversations']}, Notes: {results['notes']})"
             )
-            
-            # Update final progress
-            progress_bar = self.query_one("#index-progress-bar", ProgressBar)
-            progress_bar.update(progress=100)
-            label = self.query_one("#index-progress-label", Static)
-            label.update("Indexing complete!")
-            
-            # Wait a moment before removing progress
-            await asyncio.sleep(2)
             
         except Exception as e:
             logger.error(f"Indexing error: {e}", exc_info=True)
+            await status_elem.update(f"❌ Indexing error: {str(e)}")
             self.app_instance.notify(f"Indexing error: {str(e)}", severity="error")
-            
+        
         finally:
-            # Remove progress container and re-enable button
-            await progress_container.remove()
-            index_btn.disabled = False
+            await asyncio.sleep(2)  # Show completion status briefly
+            progress_bar.add_class("hidden")
+            await status_elem.update("Ready to search")
     
-    @on(Button.Pressed, "#clear-cache-btn")
-    async def handle_clear_cache(self, event: Button.Pressed) -> None:
-        """Handle clear cache button"""
-        # Clear any caches (embeddings cache, result cache, etc.)
-        self.app_instance.notify("Cache cleared", severity="info")
+    @on(Button.Pressed)
+    async def handle_result_button(self, event: Button.Pressed) -> None:
+        """Handle button presses for search results"""
+        button_id = event.button.id
+        if not button_id:
+            return
+        
+        if button_id.startswith("expand-"):
+            index = int(button_id.split("-")[1])
+            await self._toggle_result_expansion(index)
+        elif button_id.startswith("copy-"):
+            index = int(button_id.split("-")[1])
+            await self._copy_result(index)
+        elif button_id.startswith("export-"):
+            index = int(button_id.split("-")[1])
+            await self._export_result(index)
+        elif button_id.startswith("add-note-"):
+            index = int(button_id.split("-")[1])
+            await self._add_result_to_notes(index)
+    
+    async def _toggle_result_expansion(self, index: int) -> None:
+        """Toggle expanded view of a result"""
+        try:
+            result_container = self.query_one(f"#result-{index}", SearchResult)
+            
+            # Toggle full metadata visibility
+            full_metadata = result_container.query_one(".result-metadata-full")
+            compact_metadata = result_container.query_one(".result-metadata.compact")
+            
+            if "hidden" in full_metadata.classes:
+                full_metadata.remove_class("hidden")
+                compact_metadata.add_class("hidden")
+                
+                # Update full content
+                if index <= len(self.all_results):
+                    result = self.all_results[index - 1]
+                    preview_widget = result_container.query_one(".result-preview", Static)
+                    await preview_widget.update(result.get('content', ''))
+                    
+                # Update button
+                expand_btn = result_container.query_one(f"#expand-{index}", Button)
+                expand_btn.label = "Collapse"
+            else:
+                full_metadata.add_class("hidden")
+                compact_metadata.remove_class("hidden")
+                
+                # Restore preview
+                if index <= len(self.all_results):
+                    result = self.all_results[index - 1]
+                    content_preview = result['content'][:200] + "..." if len(result['content']) > 200 else result['content']
+                    preview_widget = result_container.query_one(".result-preview", Static)
+                    await preview_widget.update(content_preview)
+                
+                # Update button
+                expand_btn = result_container.query_one(f"#expand-{index}", Button)
+                expand_btn.label = "Expand"
+                    
+        except Exception as e:
+            logger.error(f"Error toggling result expansion: {e}")
+    
+    async def _add_result_to_notes(self, index: int) -> None:
+        """Add result to notes"""
+        if index <= len(self.all_results):
+            result = self.all_results[index - 1]
+            # Implementation would add to notes
+            self.app_instance.notify("Added to notes", severity="success")
+    
+    async def _update_analytics(self) -> None:
+        """Update search analytics display"""
+        analytics = self.query_one("#analytics-content", Markdown)
+        
+        # Calculate analytics
+        if self.all_results:
+            avg_score = sum(r.get('score', 0) for r in self.all_results) / len(self.all_results)
+            source_dist = {}
+            for r in self.all_results:
+                source = r.get('source', 'unknown')
+                source_dist[source] = source_dist.get(source, 0) + 1
+        else:
+            avg_score = 0
+            source_dist = {}
+        
+        # Get search history analytics
+        search_analytics = self.get_search_analytics(days_back=7)
+        
+        # Format analytics
+        analytics_text = f"""# Search Analytics
+
+## Current Search
+- Total Results: {len(self.all_results)}
+- Average Relevance Score: {avg_score:.3f}
+
+### Source Distribution
+"""
+        
+        for source, count in source_dist.items():
+            percentage = (count / len(self.all_results)) * 100 if self.all_results else 0
+            icon = SOURCE_ICONS.get(source, "📄")
+            analytics_text += f"- {icon} {source.capitalize()}: {count} ({percentage:.1f}%)\n"
+        
+        analytics_text += f"""
+## Search History (Last 7 Days)
+- Total Searches: {search_analytics.get('total_searches', 0)}
+- Average Results: {search_analytics.get('avg_results', 0):.1f}
+- Success Rate: {search_analytics.get('success_rate', 0):.1f}%
+
+### Popular Queries
+"""
+        
+        for query_info in search_analytics.get('popular_queries', [])[:5]:
+            analytics_text += f"- {query_info['query']} ({query_info['count']} times)\n"
+        
+        await analytics.update(analytics_text)
+    
+    # Action methods
+    def action_focus_search(self) -> None:
+        """Focus the search input (Ctrl+K)"""
+        self.search_input.focus()
+    
+    def action_save_search(self) -> None:
+        """Save current search (Ctrl+S)"""
+        self.query_one("#save-search-btn").press()
+    
+    def action_refresh(self) -> None:
+        """Refresh action (Ctrl+R)"""
+        self.search_input.focus()
+    
+    def action_export(self) -> None:
+        """Export results (Ctrl+E)"""
+        if not self.all_results:
+            self.app_instance.notify("No results to export", severity="warning")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"rag_results_{timestamp}.json"
+            
+            export_data = {
+                "query": self.search_input.value,
+                "timestamp": timestamp,
+                "config": self.current_search_config,
+                "results": self.all_results
+            }
+            
+            with open(filename, 'w') as f:
+                json.dump(export_data, f, indent=2)
+            
+            self.app_instance.notify(f"Results exported to {filename}", severity="success")
+            
+        except Exception as e:
+            logger.error(f"Export error: {e}")
+            self.app_instance.notify(f"Export error: {str(e)}", severity="error")
+    
+    def action_index(self) -> None:
+        """Trigger content indexing (Ctrl+I)"""
+        self.query_one("#index-content-btn").press()
+    
+    def action_clear(self) -> None:
+        """Clear search (Escape)"""
+        self.search_input.value = ""
+        self.all_results = []
+        self.current_results = []
+        self.current_search_id = None
+        self.current_page = 1
+        
+        results_container = self.query_one("#results-container")
+        self.run_worker(results_container.remove_children())
+        
+        summary = self.query_one("#results-summary")
+        self.run_worker(summary.update("Enter a search query to begin"))
+        
+        self.query_one("#export-results-btn").disabled = True
+        self.search_input.focus()
     
     async def _check_index_status(self) -> None:
         """Check the status of vector indices"""
@@ -535,183 +923,11 @@ class SearchRAGWindow(Container):
                         total_docs += info.get('count', 0)
                 
                 if total_docs > 0:
-                    logger.info(f"Found {total_docs} indexed documents across {len(collections)} collections")
+                    status_elem = self.query_one("#search-status")
+                    await status_elem.update(f"Ready to search ({total_docs} documents indexed)")
             
         except Exception as e:
             logger.debug(f"Could not check index status: {e}")
-    
-    async def _update_analytics(self) -> None:
-        """Update search analytics display"""
-        analytics = self.query_one("#analytics-content", Markdown)
-        
-        # Calculate analytics
-        total_searches = len(self.search_history)
-        unique_queries = len(set(self.search_history))
-        
-        if self.current_results:
-            avg_score = sum(r.get('score', 0) for r in self.current_results) / len(self.current_results)
-            source_dist = {}
-            for r in self.current_results:
-                source = r.get('source', 'unknown')
-                source_dist[source] = source_dist.get(source, 0) + 1
-        else:
-            avg_score = 0
-            source_dist = {}
-        
-        # Format analytics
-        analytics_text = f"""# Search Analytics
-
-## Session Statistics
-- Total Searches: {total_searches}
-- Unique Queries: {unique_queries}
-- Current Results: {len(self.current_results)}
-
-## Current Search Metrics
-- Average Relevance Score: {avg_score:.3f}
-- Source Distribution:
-"""
-        
-        for source, count in source_dist.items():
-            percentage = (count / len(self.current_results)) * 100 if self.current_results else 0
-            analytics_text += f"  - {source.capitalize()}: {count} ({percentage:.1f}%)\n"
-        
-        await analytics.update(analytics_text)
-    
-    @on(Button.Pressed)
-    async def handle_result_button(self, event: Button.Pressed) -> None:
-        """Handle button presses for search results"""
-        button_id = event.button.id
-        
-        if button_id and button_id.startswith("expand-"):
-            # Handle expand button
-            index = int(button_id.split("-")[1])
-            await self._toggle_result_expansion(index)
-            
-        elif button_id and button_id.startswith("copy-"):
-            # Handle copy button
-            index = int(button_id.split("-")[1])
-            await self._copy_result(index)
-            
-        elif button_id and button_id.startswith("export-"):
-            # Handle export button
-            index = int(button_id.split("-")[1])
-            await self._export_result(index)
-    
-    async def _toggle_result_expansion(self, index: int) -> None:
-        """Toggle expanded view of a result"""
-        try:
-            result_container = self.query_one(f"#result-{index}", SearchResult)
-            metadata_widget = result_container.query_one(".result-metadata")
-            
-            if "hidden" in metadata_widget.classes:
-                metadata_widget.remove_class("hidden")
-                # Update full content
-                if index <= len(self.current_results):
-                    result = self.current_results[index - 1]
-                    full_content = result.get('content', '')
-                    preview_widget = result_container.query_one(".result-preview", Static)
-                    await preview_widget.update(full_content)
-            else:
-                metadata_widget.add_class("hidden")
-                # Restore preview
-                if index <= len(self.current_results):
-                    result = self.current_results[index - 1]
-                    content_preview = result['content'][:200] + "..." if len(result['content']) > 200 else result['content']
-                    preview_widget = result_container.query_one(".result-preview", Static)
-                    await preview_widget.update(content_preview)
-                    
-        except Exception as e:
-            logger.error(f"Error toggling result expansion: {e}")
-    
-    async def _copy_result(self, index: int) -> None:
-        """Copy result content to clipboard"""
-        if index <= len(self.current_results):
-            result = self.current_results[index - 1]
-            content = f"[{result['source'].upper()}] {result['title']}\n\n{result['content']}"
-            
-            try:
-                import pyperclip
-                pyperclip.copy(content)
-                self.app_instance.notify("Result copied to clipboard", severity="success")
-            except ImportError:
-                self.app_instance.notify("pyperclip not available - cannot copy to clipboard", severity="warning")
-            except Exception as e:
-                self.app_instance.notify(f"Copy failed: {str(e)}", severity="error")
-    
-    async def _export_result(self, index: int) -> None:
-        """Export result to file"""
-        if index <= len(self.current_results):
-            result = self.current_results[index - 1]
-            
-            # Create export content
-            export_content = f"""# Search Result Export
-Source: {result['source'].upper()}
-Title: {result['title']}
-Score: {result.get('score', 0):.3f}
-
-## Content
-{result['content']}
-
-## Metadata
-"""
-            for key, value in result.get('metadata', {}).items():
-                export_content += f"- {key}: {value}\n"
-            
-            # Save to file
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"rag_result_{timestamp}_{index}.md"
-            filepath = Path.home() / "Downloads" / filename
-            
-            try:
-                filepath.parent.mkdir(parents=True, exist_ok=True)
-                filepath.write_text(export_content, encoding='utf-8')
-                self.app_instance.notify(f"Result exported to {filepath}", severity="success")
-            except Exception as e:
-                self.app_instance.notify(f"Export failed: {str(e)}", severity="error")
-    
-    
-    def action_refresh(self) -> None:
-        """Refresh action"""
-        self.search_input.focus()
-    
-    def action_export(self) -> None:
-        """Export all results"""
-        if not self.current_results:
-            self.app_instance.notify("No results to export", severity="warning")
-            return
-            
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"rag_results_{timestamp}.json"
-            
-            import json
-            export_data = {
-                "query": self.search_input.value,
-                "timestamp": timestamp,
-                "results": self.current_results
-            }
-            
-            with open(filename, 'w') as f:
-                json.dump(export_data, f, indent=2)
-            
-            self.app_instance.notify(f"Results exported to {filename}", severity="success")
-            
-        except Exception as e:
-            logger.error(f"Export error: {e}")
-            self.app_instance.notify(f"Export error: {str(e)}", severity="error")
-    
-    def action_index(self) -> None:
-        """Trigger content indexing"""
-        asyncio.create_task(self._index_all_content())
-    
-    def action_clear(self) -> None:
-        """Clear search"""
-        self.search_input.value = ""
-        self.current_results = []
-        self.current_search_id = None
-        self.query_one("#results-container").remove_children()
-        self.query_one("#results-summary").update("Enter a search query to begin")
-        self.search_input.focus()
     
     def _load_recent_search_history(self, limit: int = 20):
         """Load recent search history from database."""
@@ -746,25 +962,84 @@ Score: {result.get('score', 0):.3f}
             # Update in-memory history
             if query not in self.search_history:
                 self.search_history.insert(0, query)
-                # Keep only recent queries in memory
                 self.search_history = self.search_history[:20]
+            
+            # Update history table
+            self._update_history_table_async()
             
             return search_id
         except Exception as e:
             logger.error(f"Error recording search to history: {e}")
             return -1
     
-    def _record_result_interaction(self, result_index: int, clicked: bool = True):
-        """Record user interaction with a search result."""
-        if self.current_search_id and 0 <= result_index < len(self.current_results):
+    def _update_history_table_async(self) -> None:
+        """Update the history table asynchronously"""
+        self.run_worker(self._update_history_table())
+    
+    async def _update_history_table(self) -> None:
+        """Update the history table with recent searches"""
+        history_table = self.query_one("#search-history-table", DataTable)
+        history_table.clear()
+        
+        # Get recent history
+        history = self.search_history_db.get_search_history(limit=50, days_back=30)
+        
+        for item in history:
+            time_str = datetime.fromisoformat(item['timestamp']).strftime("%H:%M:%S")
+            query_preview = item['query'][:50] + "..." if len(item['query']) > 50 else item['query']
+            history_table.add_row(
+                time_str,
+                query_preview,
+                item['search_type'],
+                str(item['result_count']),
+                f"{item['execution_time_ms']/1000:.2f}s"
+            )
+    
+    async def _copy_result(self, index: int) -> None:
+        """Copy result content to clipboard"""
+        if index <= len(self.all_results):
+            result = self.all_results[index - 1]
+            content = f"[{result['source'].upper()}] {result['title']}\n\n{result['content']}"
+            
             try:
-                self.search_history_db.record_result_feedback(
-                    search_id=self.current_search_id,
-                    result_index=result_index,
-                    clicked=clicked
-                )
+                import pyperclip
+                pyperclip.copy(content)
+                self.app_instance.notify("Result copied to clipboard", severity="success")
+            except ImportError:
+                self.app_instance.notify("pyperclip not available - cannot copy to clipboard", severity="warning")
             except Exception as e:
-                logger.error(f"Error recording result interaction: {e}")
+                self.app_instance.notify(f"Copy failed: {str(e)}", severity="error")
+    
+    async def _export_result(self, index: int) -> None:
+        """Export single result to file"""
+        if index <= len(self.all_results):
+            result = self.all_results[index - 1]
+            
+            # Create export content
+            export_content = f"""# Search Result Export
+Source: {result['source'].upper()}
+Title: {result['title']}
+Score: {result.get('score', 0):.3f}
+
+## Content
+{result['content']}
+
+## Metadata
+"""
+            for key, value in result.get('metadata', {}).items():
+                export_content += f"- {key}: {value}\n"
+            
+            # Save to file
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"rag_result_{timestamp}_{index}.md"
+            filepath = Path.home() / "Downloads" / filename
+            
+            try:
+                filepath.parent.mkdir(parents=True, exist_ok=True)
+                filepath.write_text(export_content, encoding='utf-8')
+                self.app_instance.notify(f"Result exported to {filepath}", severity="success")
+            except Exception as e:
+                self.app_instance.notify(f"Export failed: {str(e)}", severity="error")
     
     def get_search_analytics(self, days_back: int = 30) -> Dict[str, Any]:
         """Get search analytics from the history database."""
@@ -773,29 +1048,3 @@ Score: {result.get('score', 0):.3f}
         except Exception as e:
             logger.error(f"Error getting search analytics: {e}")
             return {}
-    
-    def export_search_history(self, output_path: Optional[Path] = None, days_back: int = 30) -> bool:
-        """Export search history to a file."""
-        if output_path is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = Path.home() / "Downloads" / f"rag_search_history_{timestamp}.json"
-        
-        try:
-            success = self.search_history_db.export_search_data(output_path, days_back=days_back)
-            if success:
-                self.app_instance.notify(f"Search history exported to {output_path}", severity="success")
-            else:
-                self.app_instance.notify("Failed to export search history", severity="error")
-            return success
-        except Exception as e:
-            logger.error(f"Error exporting search history: {e}")
-            self.app_instance.notify(f"Export error: {str(e)}", severity="error")
-            return False
-    
-    def get_popular_queries(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get popular search queries."""
-        try:
-            return self.search_history_db.get_popular_queries(limit=limit)
-        except Exception as e:
-            logger.error(f"Error getting popular queries: {e}")
-            return []

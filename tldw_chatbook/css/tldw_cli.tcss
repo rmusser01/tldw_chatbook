@@ -984,6 +984,19 @@ MetricsScreen Label.-info-message {
     /* height: auto; */
 }
 
+/* Log output styles for Llama.cpp and Llamafile views */
+#llm-view-llama-cpp .log_output,
+#llm-view-llamafile .log_output {
+    width: 100%;
+    height: 15; /* Fixed height to ensure scrolling works */
+    min-height: 10;
+    max-height: 20;
+    border: panel $primary-darken-2;
+    background: $background-darken-1;
+    margin-top: 1;
+    overflow-y: auto;
+}
+
 /* Optional: Style for the input_container if needed */
 .input_container {
     layout: horizontal;
@@ -1883,48 +1896,24 @@ AppFooterStatus {
 /* ----------------------------- ************************* ----------------------------- */
 
 /* SearchRAGWindow Styles */
-.rag-search-grid {
-    layout: grid;
-    grid-size: 4 1;
-    grid-columns: 1fr 3fr;
-    grid-rows: 1fr;
-}
-
-.search-sidebar {
+.rag-search-container {
+    height: 100%;
+    width: 100%;
     padding: 1 2;
-    background: $surface;
-    border-right: tall $primary;
-    overflow-y: auto;
 }
 
-.search-sidebar .sidebar-title {
+.rag-title {
     text-align: center;
-    margin-bottom: 1;
+    margin-bottom: 2;
+    padding: 1;
+    background: $boost;
     color: $primary;
-}
-
-.search-sidebar .section-title {
-    margin-top: 1;
-    margin-bottom: 1;
-    color: $secondary;
-}
-
-.search-sidebar Input {
-    margin-bottom: 1;
-}
-
-.search-sidebar Checkbox {
-    margin-bottom: 1;
-}
-
-.search-main {
-    padding: 1 2;
 }
 
 .search-bar {
     layout: horizontal;
     height: 3;
-    margin-bottom: 1;
+    margin-bottom: 2;
 }
 
 .search-bar Input {
@@ -1937,15 +1926,84 @@ AppFooterStatus {
     height: 3;
 }
 
+.search-options {
+    margin-bottom: 2;
+    padding: 1;
+    background: $surface;
+    border: round $primary-background;
+}
+
+.option-section {
+    margin-bottom: 1;
+    padding: 1;
+}
+
+.option-section.collapsible {
+    border-top: dashed $primary-background;
+    padding-top: 1;
+    margin-top: 1;
+}
+
+.section-title {
+    margin-bottom: 1;
+    color: $secondary;
+}
+
+.source-checkboxes {
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.source-checkboxes Checkbox {
+    margin-right: 2;
+}
+
+.parameter-inputs {
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.parameter-group {
+    width: 1fr;
+    margin-right: 2;
+}
+
+.parameter-group:last-child {
+    margin-right: 0;
+}
+
+.parameter-group Label {
+    margin-bottom: 0;
+}
+
+.parameter-group Input {
+    margin-bottom: 1;
+}
+
+.action-buttons {
+    layout: horizontal;
+    margin-top: 1;
+}
+
+.action-buttons Button {
+    margin-right: 1;
+}
+
+.results-tabs {
+    height: 1fr;
+    margin-top: 2;
+}
+
 .results-summary {
     padding: 1;
     background: $boost;
     margin-bottom: 1;
 }
 
-.results-scroll {
+.results-container {
     height: 100%;
     background: $surface;
+    overflow-y: auto;
 }
 
 .search-result {
@@ -2011,8 +2069,722 @@ Button.mini {
     height: 100%;
 }
 
-.collapsible {
+.index-progress-container {
+    margin: 1 0;
+    padding: 1;
+    background: $boost;
+    border: round $primary;
+}
+
+.progress-title {
+    text-align: center;
+    margin-bottom: 1;
+    text-style: bold;
+}
+
+/* Ensure SearchRAGWindow fills its container */
+#search-view-rag-qa {
+    height: 100%;
+    width: 100%;
+    display: block;
+}
+
+/* --- Enhanced Evaluation System Styles --- */
+
+/* Evaluation main container */
+.evals-nav-pane {
+    width: 25%;
+    background: $surface;
+    border-right: solid $primary;
+    padding: 1;
+}
+
+.evals-nav-pane.collapsed {
+    width: 5%;
+}
+
+.evals-content-pane {
+    width: 1fr;
+    padding: 1 2;
+    background: $background;
+}
+
+.evals-view-area {
+    height: 100%;
+    overflow-y: auto;
+}
+
+/* Section containers */
+.section-container {
+    margin-bottom: 2;
+    padding: 1;
+    background: $surface;
+    border: round $primary-background;
+}
+
+.section-title {
+    text-style: bold;
+    color: $secondary;
+    margin-bottom: 1;
+}
+
+.subsection-title {
+    color: $text-muted;
+    margin-bottom: 1;
+    margin-top: 1;
+    text-style: italic;
+}
+
+/* Button styles */
+.action-button {
+    margin-right: 1;
+    margin-bottom: 1;
+}
+
+.action-button.primary {
+    background: $primary;
+    color: $text;
+}
+
+.template-button {
+    margin-right: 1;
+    margin-bottom: 1;
+    min-width: 12;
+}
+
+.provider-button {
+    margin-right: 1;
+    margin-bottom: 1;
+    min-width: 10;
+}
+
+/* Status and display styles */
+.status-text {
+    color: $text-muted;
+    margin-top: 1;
+    text-style: italic;
+}
+
+.results-container {
+    background: $panel;
+    padding: 1;
+    border: round $primary-background;
+    min-height: 5;
+    overflow-y: auto;
+}
+
+.models-container {
+    background: $panel;
+    padding: 1;
+    border: round $primary-background;
+    min-height: 5;
+    overflow-y: auto;
+}
+
+.datasets-container {
+    background: $panel;
+    padding: 1;
+    border: round $primary-background;
+    min-height: 5;
+    overflow-y: auto;
+}
+
+/* Progress tracker styles */
+.progress-status {
+    text-align: center;
+    margin-bottom: 1;
+    color: $secondary;
+}
+
+.progress-details {
+    layout: horizontal;
+    margin: 1 0;
+}
+
+.progress-detail {
+    width: 1fr;
+    text-align: center;
+    color: $text-muted;
+}
+
+.progress-actions {
+    layout: horizontal;
+    margin-top: 1;
+}
+
+.progress-actions Button {
+    margin-right: 1;
+}
+
+/* Metrics display styles */
+.metrics-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.metrics-content {
+    background: $panel;
+    padding: 1;
+    border: round $primary-background;
+    min-height: 8;
+    overflow-y: auto;
+    /* font-family: monospace; - not supported in TCSS */
+}
+
+/* Dialog styles */
+.config-dialog {
+    background: $surface;
+    border: thick $primary;
+    padding: 2;
+    width: 80%;
+    max-width: 60;
+    height: auto;
+    max-height: 80%;
+}
+
+.config-dialog.large {
+    width: 90%;
+    max-width: 80;
+}
+
+.dialog-title {
+    text-style: bold;
+    color: $primary;
+    text-align: center;
+    margin-bottom: 2;
+}
+
+.config-grid {
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1 2;
+    margin-bottom: 2;
+}
+
+.advanced-grid {
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1 2;
+    margin: 1 0;
+}
+
+.dialog-buttons {
+    layout: horizontal;
+    margin-top: 2;
+}
+
+.dialog-buttons Button {
+    margin-right: 1;
+}
+
+/* File picker styles */
+.file-picker-dialog {
+    background: $surface;
+    border: thick $primary;
+    padding: 2;
+    width: 90%;
+    height: 80%;
+}
+
+.quick-picker {
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.picker-label {
+    width: 20%;
+    margin-right: 1;
+}
+
+.file-display {
+    width: 1fr;
+    background: $panel;
+    padding: 0 1;
+    margin-right: 1;
+    color: $text-muted;
+}
+
+.file-display.file-selected {
+    color: $text;
+    background: $boost;
+}
+
+.browse-button {
+    min-width: 10;
+}
+
+/* Template selector styles */
+.template-selector-dialog {
+    background: $surface;
+    border: thick $primary;
+    padding: 2;
+    width: 95%;
+    height: 90%;
+}
+
+.template-content {
+    layout: horizontal;
+    height: 1fr;
+    margin: 1 0;
+}
+
+.template-list-container {
+    width: 60%;
+    margin-right: 2;
+}
+
+.template-preview-container {
+    width: 40%;
+}
+
+.template-description {
+    background: $panel;
+    padding: 1;
+    border: round $primary-background;
+    min-height: 10;
+    overflow-y: auto;
+}
+
+.config-display {
+    background: $panel;
+    padding: 1;
+    border: round $primary-background;
+    min-height: 5;
+    overflow-y: auto;
+    /* font-family: monospace; - not supported in TCSS */
+}
+
+.preview-actions {
+    layout: horizontal;
+    margin-top: 1;
+}
+
+.preview-actions Button {
+    margin-right: 1;
+}
+
+/* Quick template selector */
+.quick-template-buttons {
+    layout: horizontal;
+    /* flex-wrap: wrap; - not supported in TCSS */
+}
+
+.template-quick-button {
+    margin-right: 1;
+    margin-bottom: 1;
+    min-width: 12;
+}
+
+.more-templates-button {
+    margin-right: 1;
+    margin-bottom: 1;
+    min-width: 15;
+    background: $boost;
+}
+
+/* Results table styles */
+.table-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.table-controls {
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.table-control {
+    margin-right: 1;
+}
+
+/* Summary styles */
+.summary-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.summary-grid {
+    layout: grid;
+    grid-size: 2;
+    grid-gutter: 1 2;
+    margin-bottom: 1;
+}
+
+.summary-value {
+    color: $text;
+    background: $panel;
+    padding: 0 1;
+}
+
+/* Comparison styles */
+.comparison-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.comparison-controls {
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.comparison-content {
+    background: $panel;
+    padding: 1;
+    border: round $primary-background;
+    min-height: 10;
+    overflow-y: auto;
+    /* font-family: monospace; - not supported in TCSS */
+}
+
+/* --- End Enhanced Evaluation System Styles ---*/
+
+/* --- Enhanced RAG Search UI Styles --- */
+
+/* Search History Dropdown */
+.search-history-dropdown {
+    /* position: absolute; - not supported in TCSS */
+    /* top: 100%; - not supported in TCSS */
+    /* left: 0; - not supported in TCSS */
+    /* right: 0; - not supported in TCSS */
+    max-height: 15;
+    background: $surface;
+    border: solid $primary;
+    /* border-top: none; - use full border instead */
+    /* z-index: 100; - not supported in TCSS */
+}
+
+.search-history-dropdown.hidden {
+    display: none;
+}
+
+.search-history-list {
+    max-height: 15;
+    overflow-y: auto;
+}
+
+.history-item-text {
+    padding: 1;
+}
+
+.history-item-text:hover {
+    background: $boost;
+}
+
+/* Enhanced Search UI */
+.search-input-container {
+    position: relative;
+    margin-bottom: 2;
+}
+
+.search-input-enhanced {
+    width: 1fr;
+}
+
+.search-button {
+    min-width: 10;
+}
+
+/* Quick Settings */
+.quick-settings {
+    background: $surface;
+    padding: 1;
+    margin-bottom: 1;
+    border: round $primary-background;
+}
+
+.quick-select {
+    margin: 0 1;
+}
+
+.source-checkboxes {
+    layout: horizontal;
+}
+
+.source-checkbox {
+    margin: 0 1;
+}
+
+/* Status Container */
+.status-container {
+    margin: 1 0;
+    padding: 1;
+    background: $boost;
+    border: round $primary;
+}
+
+.search-status {
+    text-align: center;
+    margin-bottom: 1;
+}
+
+/* Result Cards */
+.search-result-card {
+    margin-bottom: 1;
+    background: $panel;
+    border: solid $primary-background;
+    padding: 1;
+}
+
+.search-result-card:hover {
+    background: $panel-lighten-1;
+    /* border-color: $primary; - not supported, use full border */
+    border: solid $primary;
+}
+
+.result-card-content {
+    width: 100%;
+}
+
+.source-indicator {
+    min-width: 12;
+}
+
+.result-title {
+    width: 1fr;
+    margin: 0 1;
+}
+
+.result-score-visual {
+    min-width: 15;
+    text-align: right;
+}
+
+.result-preview {
+    margin: 1 0;
+    color: $text-muted;
+}
+
+.result-metadata.compact {
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.metadata-item {
+    margin-right: 2;
+}
+
+.metadata-more {
+    color: $primary;
+}
+
+.result-metadata-full {
+    margin: 1 0;
+    padding: 1;
+    background: $surface;
+    border: round $primary-background;
+}
+
+.result-actions Button {
+    margin-right: 1;
+}
+
+Button.mini {
+    min-width: 8;
+    height: 3;
+}
+
+Button.primary {
+    background: $primary;
+    color: $text;
+}
+
+Button.secondary {
+    background: $secondary;
+    color: $text;
+}
+
+Button.tertiary {
+    background: $surface;
+    color: $text-muted;
+}
+
+/* Pagination */
+.results-header-bar {
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.results-summary {
+    width: 1fr;
+}
+
+.pagination-controls {
+    layout: horizontal;
+}
+
+.page-info {
+    margin: 0 1;
+    min-width: 10;
+    text-align: center;
+}
+
+/* Saved Searches */
+.saved-searches-panel {
+    background: $surface;
+    padding: 1;
+    margin-bottom: 1;
+    border: round $primary-background;
+}
+
+.panel-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.saved-searches-list {
+    height: 5;
+    border: round $primary;
+    margin: 1 0;
+}
+
+.saved-search-actions {
+    layout: horizontal;
+}
+
+.saved-search-actions Button {
+    margin-right: 1;
+}
+
+/* Action Buttons Bar */
+.action-buttons-bar {
+    layout: horizontal;
+    margin-top: 2;
+    padding-top: 1;
+    border-top: solid $primary-background;
+}
+
+.primary-actions {
+    layout: horizontal;
+    width: 1fr;
+}
+
+.maintenance-actions {
+    layout: horizontal;
+}
+
+.primary-actions Button,
+.maintenance-actions Button {
+    margin-right: 1;
+}
+
+/* Parameter Grid */
+.parameter-grid {
+    layout: grid;
+    grid-size: 2;
+    grid-columns: auto 1fr;
+    grid-gutter: 1 2;
+    margin: 1 0;
+}
+
+.param-input {
+    width: 100%;
+}
+
+/* Advanced Settings */
+#advanced-settings-collapsible {
+    margin: 1 0;
+}
+
+.advanced-settings-content {
+    padding: 1;
+    background: $surface;
+    border: round $primary-background;
+}
+
+.subsection-title {
+    margin: 1 0;
+    color: $secondary;
+}
+
+.chunking-options {
     margin-top: 1;
     padding-top: 1;
     border-top: dashed $primary-background;
 }
+
+/* Context Preview */
+.context-preview {
+    padding: 1;
+    background: $surface;
+    border: round $primary-background;
+}
+
+/* Analytics Content */
+.analytics-content {
+    padding: 1;
+}
+
+/* History Table */
+.history-table {
+    width: 100%;
+}
+
+/* --- End Enhanced RAG Search UI Styles ---*/
+
+/* --- Core Settings Styles --- */
+.core-settings-container {
+    padding: 1 2;
+    width: 100%;
+    height: 100%;
+}
+
+.section-title {
+    text-style: bold;
+    text-align: center;
+    margin-bottom: 2;
+    color: $primary;
+}
+
+.subsection-title {
+    text-style: bold;
+    margin: 2 0 1 0;
+    color: $secondary;
+}
+
+.settings-group {
+    background: $surface;
+    padding: 1;
+    margin-bottom: 2;
+    border: round $primary-background;
+}
+
+.settings-label {
+    margin: 1 0 0 0;
+    color: $text-muted;
+}
+
+.settings-input {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+.settings-select {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+.checkbox-group {
+    layout: horizontal;
+    margin: 0 0 1 0;
+}
+
+.checkbox-group Checkbox {
+    margin-right: 2;
+}
+
+.settings-actions {
+    layout: horizontal;
+    margin-top: 2;
+    align: center middle;
+}
+
+.settings-actions Button {
+    margin: 0 1;
+    min-width: 15;
+}
+
+/* --- End Core Settings Styles ---*/

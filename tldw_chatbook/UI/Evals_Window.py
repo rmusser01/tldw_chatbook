@@ -90,96 +90,109 @@ class EvalsWindow(Container):
     def handle_upload_task(self, event: Button.Pressed) -> None:
         """Handle task file upload."""
         logger.info("Upload task button pressed")
-        self._update_status("task-status", "Task upload not yet implemented")
+        from ..Event_Handlers.eval_events import handle_upload_task
+        self.app.call_from_thread(handle_upload_task, self.app_instance, event)
     
     @on(Button.Pressed, "#create-task-btn")
     def handle_create_task(self, event: Button.Pressed) -> None:
         """Handle new task creation."""
         logger.info("Create task button pressed")
-        self._update_status("task-status", "Task creation not yet implemented")
+        from ..Event_Handlers.eval_events import handle_create_task
+        self.app.call_from_thread(handle_create_task, self.app_instance, event)
     
     @on(Button.Pressed, "#add-model-btn")
     def handle_add_model(self, event: Button.Pressed) -> None:
         """Handle adding model configuration."""
         logger.info("Add model button pressed")
-        self._update_status("model-status", "Model configuration not yet implemented")
+        from ..Event_Handlers.eval_events import handle_add_model
+        self.app.call_from_thread(handle_add_model, self.app_instance, event)
     
     @on(Button.Pressed, "#start-eval-btn")
     def handle_start_evaluation(self, event: Button.Pressed) -> None:
         """Handle starting evaluation run."""
         logger.info("Start evaluation button pressed")
-        self._update_status("run-status", "Evaluation execution not yet implemented")
+        from ..Event_Handlers.eval_events import handle_start_evaluation
+        self.app.call_from_thread(handle_start_evaluation, self.app_instance, event)
     
     # --- Results Dashboard Handlers ---
     @on(Button.Pressed, "#refresh-results-btn")
     def handle_refresh_results(self, event: Button.Pressed) -> None:
         """Handle refreshing results list."""
         logger.info("Refresh results button pressed")
-        self._update_results_list()
+        from ..Event_Handlers.eval_events import handle_refresh_results
+        self.app.call_from_thread(handle_refresh_results, self.app_instance, event)
     
     @on(Button.Pressed, "#compare-runs-btn")
     def handle_compare_runs(self, event: Button.Pressed) -> None:
         """Handle comparing evaluation runs."""
         logger.info("Compare runs button pressed")
-        self._update_status("comparison-results", "Run comparison not yet implemented")
+        from ..Event_Handlers.eval_events import handle_compare_runs
+        self.app.call_from_thread(handle_compare_runs, self.app_instance, event)
     
     @on(Button.Pressed, "#export-csv-btn")
     def handle_export_csv(self, event: Button.Pressed) -> None:
         """Handle CSV export."""
         logger.info("Export CSV button pressed")
-        # Export functionality would go here
+        from ..Event_Handlers.eval_events import handle_export_results
+        self.app.call_from_thread(handle_export_results, self.app_instance, 'csv')
     
     @on(Button.Pressed, "#export-json-btn")
     def handle_export_json(self, event: Button.Pressed) -> None:
         """Handle JSON export."""
         logger.info("Export JSON button pressed")
-        # Export functionality would go here
+        from ..Event_Handlers.eval_events import handle_export_results
+        self.app.call_from_thread(handle_export_results, self.app_instance, 'json')
     
     # --- Model Management Handlers ---
     @on(Button.Pressed, "#add-new-model-btn")
     def handle_add_new_model(self, event: Button.Pressed) -> None:
         """Handle adding new model configuration."""
         logger.info("Add new model button pressed")
-        self._update_models_list()
+        from ..Event_Handlers.eval_events import handle_add_model
+        self.app.call_from_thread(handle_add_model, self.app_instance, event)
     
     @on(Button.Pressed, ".provider-button")
     def handle_provider_setup(self, event: Button.Pressed) -> None:
         """Handle provider quick setup."""
         provider = event.button.label.plain.lower()
         logger.info(f"Setting up {provider} provider")
-        # Provider setup would go here
+        from ..Event_Handlers.eval_events import handle_provider_setup
+        self.app.call_from_thread(handle_provider_setup, self.app_instance, provider)
     
     # --- Dataset Management Handlers ---
     @on(Button.Pressed, "#upload-csv-btn")
     def handle_upload_csv(self, event: Button.Pressed) -> None:
         """Handle CSV dataset upload."""
         logger.info("Upload CSV button pressed")
-        self._update_status("dataset-upload-status", "CSV upload not yet implemented")
+        from ..Event_Handlers.eval_events import handle_upload_dataset
+        self.app.call_from_thread(handle_upload_dataset, self.app_instance, event)
     
     @on(Button.Pressed, "#upload-json-btn")
     def handle_upload_json(self, event: Button.Pressed) -> None:
         """Handle JSON dataset upload."""
         logger.info("Upload JSON button pressed")
-        self._update_status("dataset-upload-status", "JSON upload not yet implemented")
+        from ..Event_Handlers.eval_events import handle_upload_dataset
+        self.app.call_from_thread(handle_upload_dataset, self.app_instance, event)
     
     @on(Button.Pressed, "#add-hf-dataset-btn")
     def handle_add_hf_dataset(self, event: Button.Pressed) -> None:
         """Handle HuggingFace dataset addition."""
         logger.info("Add HF dataset button pressed")
-        self._update_status("dataset-upload-status", "HuggingFace dataset integration not yet implemented")
+        self._update_status("dataset-upload-status", "HuggingFace dataset integration coming soon")
     
     @on(Button.Pressed, "#refresh-datasets-btn")
     def handle_refresh_datasets(self, event: Button.Pressed) -> None:
         """Handle refreshing datasets list."""
         logger.info("Refresh datasets button pressed")
-        self._update_datasets_list()
+        from ..Event_Handlers.eval_events import handle_refresh_datasets
+        self.app.call_from_thread(handle_refresh_datasets, self.app_instance, event)
     
     @on(Button.Pressed, ".template-button")
     def handle_template_button(self, event: Button.Pressed) -> None:
         """Handle template button press."""
-        template_type = event.button.label.plain
-        logger.info(f"Template button pressed: {template_type}")
-        # Template creation would go here
+        logger.info(f"Template button pressed: {event.button.id}")
+        from ..Event_Handlers.eval_events import handle_template_button
+        self.app.call_from_thread(handle_template_button, self.app_instance, event)
     
     # --- Helper Methods ---
     def _update_status(self, status_id: str, message: str) -> None:
@@ -193,29 +206,26 @@ class EvalsWindow(Container):
     def _update_results_list(self) -> None:
         """Update the results list display."""
         try:
-            results_element = self.query_one("#results-list")
-            # This would be replaced with actual database query
-            results_element.update("Loading evaluation results...")
-        except QueryError:
-            logger.warning("Results list element not found")
+            from ..Event_Handlers.eval_events import refresh_results_list
+            self.app.call_from_thread(refresh_results_list, self.app_instance)
+        except Exception as e:
+            logger.warning(f"Error refreshing results list: {e}")
     
     def _update_models_list(self) -> None:
         """Update the models list display."""
         try:
-            models_element = self.query_one("#models-list")
-            # This would be replaced with actual database query
-            models_element.update("Loading model configurations...")
-        except QueryError:
-            logger.warning("Models list element not found")
+            from ..Event_Handlers.eval_events import refresh_models_list
+            self.app.call_from_thread(refresh_models_list, self.app_instance)
+        except Exception as e:
+            logger.warning(f"Error refreshing models list: {e}")
     
     def _update_datasets_list(self) -> None:
         """Update the datasets list display."""
         try:
-            datasets_element = self.query_one("#datasets-list")
-            # This would be replaced with actual database query
-            datasets_element.update("Loading available datasets...")
-        except QueryError:
-            logger.warning("Datasets list element not found")
+            from ..Event_Handlers.eval_events import refresh_datasets_list
+            self.app.call_from_thread(refresh_datasets_list, self.app_instance)
+        except Exception as e:
+            logger.warning(f"Error refreshing datasets list: {e}")
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
@@ -223,6 +233,13 @@ class EvalsWindow(Container):
         # Set initial active view
         if not self.evals_active_view:
             self.evals_active_view = EVALS_VIEW_SETUP
+        
+        # Initialize evaluation system
+        try:
+            from ..Event_Handlers.eval_events import initialize_evals_system
+            self.app.call_from_thread(initialize_evals_system, self.app_instance)
+        except Exception as e:
+            logger.error(f"Error initializing evaluation system: {e}")
 
     def compose(self) -> ComposeResult:
         # Left Navigation Pane
@@ -263,6 +280,12 @@ class EvalsWindow(Container):
                     yield Static("Run Configuration", classes="section-title")
                     yield Button("Start Evaluation", id="start-eval-btn", classes="action-button primary")
                     yield Static("", id="run-status", classes="status-text")
+                
+                # Progress Tracking Section
+                with Container(classes="section-container", id="progress-section"):
+                    yield Static("Evaluation Progress", classes="section-title")
+                    from ..Widgets.eval_results_widgets import ProgressTracker
+                    yield ProgressTracker(id="progress-tracker")
 
             # Create a view for Results Dashboard
             with Container(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
@@ -273,6 +296,12 @@ class EvalsWindow(Container):
                     yield Static("Recent Evaluations", classes="section-title")
                     yield Button("Refresh Results", id="refresh-results-btn", classes="action-button")
                     yield Static("No evaluations found", id="results-list", classes="results-container")
+                
+                # Metrics Display Section
+                with Container(classes="section-container"):
+                    yield Static("Latest Run Metrics", classes="section-title")
+                    from ..Widgets.eval_results_widgets import MetricsDisplay
+                    yield MetricsDisplay(id="metrics-display")
                 
                 # Comparison Section
                 with Container(classes="section-container"):

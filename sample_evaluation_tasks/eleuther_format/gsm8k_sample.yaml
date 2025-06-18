@@ -1,0 +1,82 @@
+# GSM8K Sample Task - Eleuther AI Format
+# Grade School Math 8K - Math word problems requiring multi-step reasoning
+# Format: https://github.com/EleutherAI/lm-evaluation-harness
+
+task: gsm8k_sample
+dataset_name: gsm8k
+dataset_config_name: main
+test_split: test
+fewshot_split: train
+num_fewshot: 5
+output_type: generate_until
+until:
+  - "Q:"
+  - "\n\n"
+  - "<|endoftext|>"
+
+# Template for formatting math problems
+doc_to_text: |
+  Q: {{question}}
+  A: Let me work through this step by step.
+
+doc_to_target: "{{answer}}"
+
+# Few-shot formatting
+fewshot_delimiter: "\n\n"
+
+# Generation parameters for reasoning
+generation_kwargs:
+  temperature: 0.0
+  max_tokens: 256
+  top_p: 1.0
+  stop:
+    - "Q:"
+    - "\n\n"
+
+# Extract numerical answer from response
+filter_list:
+  - filter: "regex"
+    regex_pattern: "####\\s*([0-9,]+)"
+    group: 1
+  - filter: "regex"
+    regex_pattern: "([0-9,]+)"
+    group: 1
+
+# Primary metric
+metric_list:
+  - exact_match
+
+# Additional metrics for analysis
+secondary_metrics:
+  - numeric_match
+  - contains_calculation
+  - reasoning_steps
+
+# Task metadata
+metadata:
+  description: "Grade school math word problems requiring arithmetic reasoning"
+  category: "mathematics"
+  difficulty: "elementary"
+  language: "en"
+  domain: "education"
+  task_type: "mathematical_reasoning"
+  evaluation_time: "medium"
+  requires_reasoning: true
+  answer_type: "numeric"
+  
+# Evaluation settings
+batch_size: 16
+limit: 100  # Limit for demonstration
+bootstrap_iters: 10000
+
+# Model requirements
+model_requirements:
+  min_context_length: 1024
+  supports_reasoning: true
+  supports_math: true
+
+# Example few-shot samples (for reference)
+example_samples:
+  - question: "Janet's ducks lay 16 eggs per day. She eats 3 for breakfast every morning and bakes 4 into muffins for her friends every day. She sells the remainder at the farmers' market for $2 per fresh duck egg. How much does she make every day?"
+    answer: "18"
+    solution: "Janet's ducks lay 16 eggs per day. She eats 3 for breakfast and uses 4 for muffins, so she uses 3 + 4 = 7 eggs. This leaves 16 - 7 = 9 eggs to sell. At $2 per egg, she makes 9 × $2 = $18 per day. #### 18"
