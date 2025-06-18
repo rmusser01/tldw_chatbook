@@ -322,12 +322,39 @@ class EvalsWindow(Container):
                     yield Button("Refresh List", id="refresh-datasets-btn", classes="action-button")
                     yield Static("No datasets found", id="datasets-list", classes="datasets-container")
                 
-                # Dataset Templates Section
+                # Evaluation Templates Section
                 with Container(classes="section-container"):
-                    yield Static("Sample Tasks", classes="section-title")
-                    yield Button("MMLU Sample", id="sample-mmlu-btn", classes="template-button")
-                    yield Button("Q&A Template", id="sample-qa-btn", classes="template-button")
-                    yield Button("Classification Template", id="sample-classification-btn", classes="template-button")
+                    yield Static("Evaluation Templates", classes="section-title")
+                    
+                    # Reasoning & Math
+                    yield Static("Reasoning & Mathematics", classes="subsection-title")
+                    yield Button("GSM8K Math", id="template-gsm8k-btn", classes="template-button")
+                    yield Button("Logical Reasoning", id="template-logic-btn", classes="template-button")
+                    yield Button("Chain of Thought", id="template-cot-btn", classes="template-button")
+                    
+                    # Safety & Alignment
+                    yield Static("Safety & Alignment", classes="subsection-title")
+                    yield Button("Harmfulness Detection", id="template-harm-btn", classes="template-button")
+                    yield Button("Bias Evaluation", id="template-bias-btn", classes="template-button")
+                    yield Button("Truthfulness QA", id="template-truth-btn", classes="template-button")
+                    
+                    # Code & Programming
+                    yield Static("Code & Programming", classes="subsection-title")
+                    yield Button("HumanEval Coding", id="template-humaneval-btn", classes="template-button")
+                    yield Button("Bug Detection", id="template-bugs-btn", classes="template-button")
+                    yield Button("SQL Generation", id="template-sql-btn", classes="template-button")
+                    
+                    # Domain Knowledge
+                    yield Static("Domain Knowledge", classes="subsection-title")
+                    yield Button("Medical QA", id="template-medical-btn", classes="template-button")
+                    yield Button("Legal Reasoning", id="template-legal-btn", classes="template-button")
+                    yield Button("Scientific Reasoning", id="template-science-btn", classes="template-button")
+                    
+                    # Creative & Open-ended
+                    yield Static("Creative & Open-ended", classes="subsection-title")
+                    yield Button("Creative Writing", id="template-creative-btn", classes="template-button")
+                    yield Button("Story Completion", id="template-story-btn", classes="template-button")
+                    yield Button("Summarization", id="template-summary-btn", classes="template-button")
 
             # Hide all views by default; on_mount will manage visibility
             for view_area in self.query(".evals-view-area"):

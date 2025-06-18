@@ -317,3 +317,54 @@ class RAGIndexingDB:
             conn.execute("DELETE FROM collection_state")
             conn.commit()
             logger.warning("Cleared all RAG indexing tracking data")
+    
+    def is_item_indexed(self, item_id: str, item_type: str) -> bool:
+        """
+        Check if an item is indexed.
+        
+        Args:
+            item_id: Item identifier
+            item_type: Type of item
+            
+        Returns:
+            True if item is indexed, False otherwise
+        """
+        info = self.get_indexed_item_info(item_id, item_type)
+        return info is not None
+    
+    def needs_reindexing(self, item_id: str, item_type: str, current_modified: datetime) -> bool:
+        """
+        Check if an item needs reindexing based on modification time.
+        
+        Args:
+            item_id: Item identifier
+            item_type: Type of item
+            current_modified: Current modification timestamp of the item
+            
+        Returns:
+            True if item needs reindexing, False otherwise
+        """
+        info = self.get_indexed_item_info(item_id, item_type)
+        if not info:
+            return True  # Not indexed yet
+            
+        # Compare timestamps
+        last_modified = datetime.fromisoformat(info['last_modified'])
+        return current_modified > last_modified
+    
+    def remove_item(self, item_id: str, item_type: str) -> bool:
+        """
+        Remove an item from indexing tracking.
+        
+        Args:
+            item_id: Item identifier
+            item_type: Type of item
+            
+        Returns:
+            True if item was removed, False if it didn't exist
+        """
+        if not self.is_item_indexed(item_id, item_type):
+            return False
+        
+        self.remove_indexed_item(item_id, item_type)
+        return True

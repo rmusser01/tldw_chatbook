@@ -10,9 +10,18 @@ from typing import Union, AnyStr
 # 3rd-party Libraries
 #
 # Local Imports
-from tldw_Server_API.app.core.Utils.Utils import load_comprehensive_config, get_user_database_path
-from ..Utils.Utils import PROJECT_DATABASES_DIR, log, PROJECT_ROOT_DIR, CONFIG_FILE_PATH, USER_DB_PATH, \
-    USER_DB_DIR
+# Remove non-existent imports
+try:
+    from ..Utils.Utils import PROJECT_DATABASES_DIR, log, PROJECT_ROOT_DIR, CONFIG_FILE_PATH, USER_DB_PATH, \
+        USER_DB_DIR
+except ImportError:
+    # Set defaults if imports fail
+    PROJECT_DATABASES_DIR = None
+    log = logging
+    PROJECT_ROOT_DIR = None
+    CONFIG_FILE_PATH = None 
+    USER_DB_PATH = None
+    USER_DB_DIR = None
 #
 #######################################################################################################################
 #
@@ -88,6 +97,30 @@ def get_project_relative_path(relative_path_str: Union[str, os.PathLike[AnyStr]]
     absolute_path = (PROJECT_ROOT_DIR / relative_path_str).resolve()
     log.debug(f"Resolved project relative path for '{relative_path_str}': {absolute_path}")
     return absolute_path
+
+def get_user_data_dir() -> Path:
+    """
+    Get the user data directory for the application.
+    Creates the directory if it doesn't exist.
+    
+    Returns:
+        Path to the user data directory
+    """
+    # Try to use XDG_DATA_HOME on Linux/Mac
+    if os.name != 'nt':  # Unix-like systems
+        xdg_data_home = os.environ.get('XDG_DATA_HOME')
+        if xdg_data_home:
+            data_dir = Path(xdg_data_home) / 'tldw_cli'
+        else:
+            data_dir = Path.home() / '.local' / 'share' / 'tldw_cli'
+    else:  # Windows
+        data_dir = Path(os.environ.get('APPDATA', Path.home())) / 'tldw_cli'
+    
+    # Create directory if it doesn't exist
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    return data_dir
+
 
 # --- Example Usage within Utils.py (for testing) ---
 if __name__ == '__main__':

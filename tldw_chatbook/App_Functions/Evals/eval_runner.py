@@ -732,15 +732,45 @@ class EvalRunner:
         self.task_config = task_config
         self.model_config = model_config
         
-        # Create appropriate runner based on task type
+        # Import specialized runners here to avoid circular imports
+        try:
+            from .specialized_runners import (
+                CodeExecutionRunner, SafetyEvaluationRunner, 
+                MultilingualEvaluationRunner, CreativeEvaluationRunner
+            )
+            specialized_available = True
+        except ImportError:
+            specialized_available = False
+        
+        # Determine runner based on task metadata and type
+        category = task_config.metadata.get('category', '')
+        subcategory = task_config.metadata.get('subcategory', '')
+        
+        # Use specialized runners when available and appropriate
+        if specialized_available:
+            if category == 'coding' or subcategory in ['function_implementation', 'algorithms', 'code_completion']:
+                self.runner = CodeExecutionRunner(task_config, model_config)
+            elif category == 'safety' or subcategory in ['harmfulness', 'bias', 'truthfulness']:
+                self.runner = SafetyEvaluationRunner(task_config, model_config)
+            elif subcategory in ['translation', 'cross_lingual_qa', 'multilingual']:
+                self.runner = MultilingualEvaluationRunner(task_config, model_config)
+            elif category == 'creative' or subcategory in ['creative_writing', 'story_completion', 'dialogue_generation']:
+                self.runner = CreativeEvaluationRunner(task_config, model_config)
+            else:
+                self.runner = self._create_basic_runner(task_config, model_config)
+        else:
+            self.runner = self._create_basic_runner(task_config, model_config)
+    
+    def _create_basic_runner(self, task_config: TaskConfig, model_config: Dict[str, Any]):
+        """Create basic runner based on task type."""
         if task_config.task_type == 'question_answer':
-            self.runner = QuestionAnswerRunner(task_config, model_config)
+            return QuestionAnswerRunner(task_config, model_config)
         elif task_config.task_type == 'classification':
-            self.runner = ClassificationRunner(task_config, model_config)
+            return ClassificationRunner(task_config, model_config)
         elif task_config.task_type == 'logprob':
-            self.runner = LogProbRunner(task_config, model_config)
+            return LogProbRunner(task_config, model_config)
         elif task_config.task_type == 'generation':
-            self.runner = GenerationRunner(task_config, model_config)
+            return GenerationRunner(task_config, model_config)
         else:
             raise ValueError(f"Unsupported task type: {task_config.task_type}")
     

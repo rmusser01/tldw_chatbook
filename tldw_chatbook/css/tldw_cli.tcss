@@ -1982,7 +1982,7 @@ AppFooterStatus {
     padding: 1;
     background: $panel;
     color: $text-muted;
-    font-size: 90%;
+    /* Smaller text styling */
 }
 
 .result-metadata.hidden {

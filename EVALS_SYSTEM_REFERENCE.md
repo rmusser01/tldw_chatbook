@@ -36,6 +36,8 @@ The evaluation system consists of several key components organized in a modular 
 - **`tldw_chatbook/App_Functions/Evals/eval_runner.py`** - Evaluation execution engine
 - **`tldw_chatbook/App_Functions/Evals/llm_interface.py`** - Unified LLM provider interface
 - **`tldw_chatbook/App_Functions/Evals/eval_orchestrator.py`** - High-level orchestration layer
+- **`tldw_chatbook/App_Functions/Evals/eval_templates.py`** - Comprehensive evaluation template library
+- **`tldw_chatbook/App_Functions/Evals/specialized_runners.py`** - Specialized evaluation runners for advanced tasks
 
 ## Key Features Implemented
 
@@ -64,35 +66,94 @@ The system supports multiple evaluation task formats:
 - Automatic column mapping detection
 - Support for both delimited formats
 
-### 2. Evaluation Task Types
+### 2. Comprehensive Evaluation Task Types
 
-The system supports four primary evaluation types:
+The system now supports **27+ specialized evaluation types** across **7 major categories**:
 
-#### Question-Answer Tasks
-- Traditional Q&A evaluation
-- Few-shot prompting support
-- Exact match and F1 scoring
-- Custom prompt templates
+#### 🧠 Reasoning & Mathematical Evaluations
+- **GSM8K Math Problems**: Grade school math word problems requiring multi-step reasoning
+- **Logical Reasoning**: Syllogisms, deduction, and formal reasoning tasks
+- **Arithmetic Reasoning**: Multi-step arithmetic problems with reasoning components
+- **Chain of Thought**: Step-by-step reasoning evaluation with process assessment
+- **Analogy Reasoning**: Pattern recognition and analogical reasoning tasks
+- **Math Word Problems**: Custom mathematical problems of varying difficulty
 
-#### Log Probability Tasks
-- Token-level probability evaluation
-- Multiple choice via logprob comparison
-- Bias detection capabilities
-- Pattern analysis support
+#### 🛡️ Safety & Alignment Evaluations  
+- **Harmfulness Detection**: Identify and refuse harmful requests appropriately
+- **Bias Evaluation**: Test for demographic, gender, racial, and social biases
+- **Truthfulness QA**: Evaluate factual accuracy and resistance to misinformation
+- **Jailbreak Resistance**: Test resistance to prompt injection and safety bypasses
+- **Privacy Leakage Detection**: Identify potential privacy violations and data leakage
+- **Ethical Reasoning**: Evaluate ethical reasoning and moral judgment capabilities
 
-#### Text Generation Tasks
-- Open-ended text generation
-- BLEU score calculation
-- Stop sequence handling
-- Custom generation parameters
+#### 💻 Code Generation & Programming
+- **HumanEval Coding**: Python function implementation with execution testing
+- **Code Completion**: Complete partially written code snippets
+- **Bug Detection**: Identify bugs and issues in code snippets
+- **Algorithm Implementation**: Implement standard algorithms and data structures
+- **Code Explanation**: Explain what code snippets do and how they work
+- **SQL Generation**: Generate SQL queries from natural language descriptions
 
-#### Classification Tasks
-- Multiple choice questions
-- Answer extraction from model output
-- Accuracy metrics
-- Choice formatting support
+#### 🌍 Multilingual & Translation
+- **Translation Quality**: Evaluate translation accuracy across language pairs
+- **Cross-lingual QA**: Question answering in different languages
+- **Multilingual Sentiment**: Sentiment analysis across multiple languages
+- **Code Switching**: Handle mixed-language inputs and responses
 
-### 3. LLM Provider Integration
+#### 🎓 Domain-Specific Knowledge
+- **Medical QA**: Medical knowledge and reasoning evaluation
+- **Legal Reasoning**: Legal concepts, case analysis, and jurisprudence
+- **Scientific Reasoning**: Scientific knowledge and methodology evaluation
+- **Financial Analysis**: Financial concepts and market analysis
+- **Historical Knowledge**: Historical facts, timelines, and causation
+
+#### 🎯 Robustness & Adversarial Testing
+- **Adversarial QA**: Challenging questions designed to test robustness
+- **Input Perturbation**: Response consistency under input variations
+- **Context Length Stress**: Performance with very long contexts
+- **Instruction Following**: Adherence to complex, multi-step instructions
+- **Format Robustness**: Consistent performance across different input formats
+
+#### 🎨 Creative & Open-ended Tasks
+- **Creative Writing**: Original story and content generation
+- **Story Completion**: Continue and complete narrative pieces
+- **Dialogue Generation**: Generate realistic conversations and interactions
+- **Summarization Quality**: Extract key information and create summaries
+- **Open-ended QA**: Handle questions without definitive answers
+
+### 3. Specialized Evaluation Capabilities
+
+#### 🔧 Code Execution & Testing
+- **Real Python Execution**: Code is actually executed in sandboxed environment
+- **Test Case Validation**: Automated test running with pass/fail metrics
+- **Syntax Checking**: AST parsing for syntax validation
+- **Performance Metrics**: Execution time and efficiency measurement
+- **Error Analysis**: Detailed error reporting and debugging information
+- **Security**: Timeout protection and safe execution environment
+
+#### 🛡️ Advanced Safety Analysis
+- **Keyword-based Detection**: Multi-category harmful content identification
+- **Pattern Recognition**: Regex-based detection of sensitive information (emails, phones, SSNs)
+- **Refusal Assessment**: Evaluation of appropriate response refusal
+- **Bias Quantification**: Systematic bias measurement across demographics
+- **Privacy Protection**: Detection of potential personal information leakage
+- **Ethical Reasoning**: Complex moral scenario evaluation
+
+#### 🌐 Multilingual Assessment
+- **Language Detection**: Automatic identification of response languages
+- **Script Analysis**: Support for Latin, Chinese, Japanese, Arabic scripts
+- **Fluency Metrics**: Word count, sentence structure, punctuation analysis
+- **Cross-lingual Consistency**: Response quality across language boundaries
+- **Translation Evaluation**: BLEU-like scoring for translation tasks
+
+#### 🎨 Creative Content Analysis
+- **Vocabulary Diversity**: Unique word ratio and lexical richness
+- **Narrative Structure**: Story elements, dialogue detection, narrative flow
+- **Coherence Metrics**: Sentence and paragraph structure analysis
+- **Creativity Indicators**: Descriptive language, emotional content, originality markers
+- **Quality Assessment**: Multi-dimensional scoring for creative output
+
+### 4. LLM Provider Integration
 
 Unified interface supporting:
 - **OpenAI** (GPT models)

@@ -356,6 +356,81 @@ class EvaluationOrchestrator:
         logger.info(f"Created dataset: {name} ({dataset_id})")
         return dataset_id
     
+    def create_task_from_template(self, template_name: str, 
+                                output_dir: str = None, **kwargs) -> Tuple[str, str]:
+        """
+        Create a task and sample dataset from a template.
+        
+        Args:
+            template_name: Name of the evaluation template
+            output_dir: Directory to save template files (optional)
+            **kwargs: Override parameters for the template
+            
+        Returns:
+            Tuple of (task_id, dataset_id)
+        """
+        logger.info(f"Creating task from template: {template_name}")
+        
+        # Load template and create task config
+        task_config = self.task_loader.create_task_from_template(template_name, **kwargs)
+        
+        # Create task in database
+        task_id = self.db.create_task(
+            name=task_config.name,
+            description=task_config.description,
+            task_type=task_config.task_type,
+            config_format='template',
+            config_data=task_config.__dict__
+        )
+        
+        # Create sample dataset if template has sample problems
+        dataset_id = None
+        try:
+            from .eval_templates import get_eval_templates
+            template_manager = get_eval_templates()
+            
+            if output_dir:
+                output_dir = Path(output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Export sample dataset
+                dataset_path = output_dir / f"{template_name}_samples.json"
+                num_samples = template_manager.create_sample_dataset(
+                    template_name, str(dataset_path), num_samples=20
+                )
+                
+                # Create dataset record
+                dataset_id = self.create_dataset_from_file(
+                    name=f"{task_config.name} Samples",
+                    file_path=str(dataset_path),
+                    description=f"Sample dataset for {task_config.name} with {num_samples} examples"
+                )
+                
+                logger.info(f"Created sample dataset with {num_samples} examples: {dataset_path}")
+            
+        except Exception as e:
+            logger.warning(f"Could not create sample dataset for template {template_name}: {e}")
+        
+        logger.info(f"Created task from template: {task_config.name} ({task_id})")
+        return task_id, dataset_id
+    
+    def list_available_templates(self) -> List[Dict[str, Any]]:
+        """List all available evaluation templates."""
+        return self.task_loader.list_available_templates()
+    
+    def get_templates_by_category(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Get evaluation templates organized by category."""
+        templates = self.list_available_templates()
+        categories = {}
+        
+        for template in templates:
+            category = template.get('category', 'general')
+            if category not in categories:
+                categories[category] = []
+            categories[category].append(template)
+        
+        return categories
+    
     def close(self):
         """Close database connections."""
         self.db.close()

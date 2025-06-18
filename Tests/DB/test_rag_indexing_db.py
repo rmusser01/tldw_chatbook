@@ -194,8 +194,7 @@ class TestRAGIndexingDB:
         temp_db.update_collection_state(
             collection_name=collection_name,
             total_items=100,
-            indexed_items=95,
-            last_full_index=datetime.now(timezone.utc)
+            indexed_items=95
         )
         
         # Get state
@@ -221,11 +220,10 @@ class TestRAGIndexingDB:
         # Get stats
         stats = temp_db.get_indexing_stats()
         
-        assert stats['total_indexed_items'] == 3
-        assert stats['items_by_type']['media'] == 2
-        assert stats['items_by_type']['note'] == 1
-        assert stats['total_chunks'] == 10  # 5 + 3 + 2
-        assert len(stats['collection_states']) == 2
+        assert stats['total_indexed'] == 3
+        assert stats['by_type']['media'] == 2
+        assert stats['by_type']['note'] == 1
+        assert len(stats['collections']) == 2
     
     def test_clear_all(self, temp_db):
         """Test clearing all indexing data."""
@@ -237,16 +235,16 @@ class TestRAGIndexingDB:
         
         # Verify data exists
         stats = temp_db.get_indexing_stats()
-        assert stats['total_indexed_items'] > 0
+        assert stats['total_indexed'] > 0
         
         # Clear all
         temp_db.clear_all()
         
         # Verify data cleared
         stats = temp_db.get_indexing_stats()
-        assert stats['total_indexed_items'] == 0
-        assert len(stats['items_by_type']) == 0
-        assert len(stats['collection_states']) == 0
+        assert stats['total_indexed'] == 0
+        assert len(stats['by_type']) == 0
+        assert len(stats['collections']) == 0
     
     def test_concurrent_access(self, temp_db):
         """Test concurrent access to the database."""

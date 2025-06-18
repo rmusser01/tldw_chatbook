@@ -414,7 +414,19 @@ class TaskLoader:
     
     def create_task_from_template(self, template_name: str, **kwargs) -> TaskConfig:
         """Create a task from a built-in template."""
-        templates = {
+        # Import here to avoid circular imports
+        from .eval_templates import get_eval_templates
+        
+        template_manager = get_eval_templates()
+        
+        # Try to get from extended templates first
+        try:
+            return template_manager.create_task_config(template_name, **kwargs)
+        except ValueError:
+            pass
+        
+        # Fallback to basic templates
+        basic_templates = {
             'simple_qa': {
                 'name': 'Simple Q&A',
                 'description': 'Simple question answering task',
@@ -439,13 +451,20 @@ class TaskLoader:
             }
         }
         
-        if template_name not in templates:
+        if template_name not in basic_templates:
             raise TaskLoadError(f"Unknown template: {template_name}")
         
-        template = templates[template_name].copy()
+        template = basic_templates[template_name].copy()
         template.update(kwargs)
         
         return TaskConfig(**template)
+    
+    def list_available_templates(self) -> List[Dict[str, Any]]:
+        """List all available evaluation templates."""
+        from .eval_templates import get_eval_templates
+        
+        template_manager = get_eval_templates()
+        return template_manager.list_templates()
     
     def export_task(self, task_config: TaskConfig, output_path: Union[str, Path], 
                    format_type: str = 'custom') -> None:
