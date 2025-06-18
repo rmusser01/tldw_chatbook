@@ -8,6 +8,8 @@ from pathlib import Path
 from loguru import logger
 import uuid
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 #
 # Local Imports
 from ...DB.Client_Media_DB_v2 import MediaDatabase
@@ -36,6 +38,12 @@ class IndexingService:
         # Initialize indexing tracking database
         db_path = get_user_data_dir() / "databases" / "rag_indexing.db"
         self.indexing_db = RAGIndexingDB(db_path)
+        
+        # Performance settings
+        self.max_workers = 4
+        self.enable_parallel_indexing = True
+        self._executor = None
+        self._executor_lock = threading.Lock()
         
     async def index_media_items(
         self,
@@ -652,3 +660,72 @@ class IndexingService:
         # Clear indexing tracking
         self.indexing_db.clear_all()
         logger.info("All RAG indexes cleared")
+    
+    def configure_performance(
+        self,
+        max_workers: Optional[int] = None,
+        enable_parallel: Optional[bool] = None
+    ):
+        """
+        Configure performance settings.
+        
+        Args:
+            max_workers: Number of worker threads for parallel processing
+            enable_parallel: Enable/disable parallel processing
+        """
+        if max_workers is not None:
+            self.max_workers = max_workers
+            # Close existing executor to recreate with new worker count
+            self._close_executor()
+            
+        if enable_parallel is not None:
+            self.enable_parallel_indexing = enable_parallel
+            
+        # Also configure the embeddings service
+        if hasattr(self.embeddings_service, 'configure_performance'):
+            self.embeddings_service.configure_performance(
+                max_workers=max_workers,
+                enable_parallel=enable_parallel
+            )
+            
+        logger.info(f"Indexing performance configured: workers={self.max_workers}, parallel={self.enable_parallel_indexing}")
+    
+    def _get_executor(self) -> ThreadPoolExecutor:
+        """Get or create the thread pool executor."""
+        with self._executor_lock:
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(
+                    max_workers=self.max_workers,
+                    thread_name_prefix="indexing"
+                )
+            return self._executor
+    
+    def _close_executor(self):
+        """Close the thread pool executor with timeout."""
+        with self._executor_lock:
+            if self._executor:
+                try:
+                    # Try to shutdown gracefully with timeout
+                    self._executor.shutdown(wait=True, timeout=5.0)
+                except Exception as e:
+                    logger.warning(f"Error during executor shutdown: {e}")
+                    # Force shutdown if graceful shutdown fails
+                    try:
+                        self._executor.shutdown(wait=False)
+                    except:
+                        pass
+                finally:
+                    self._executor = None
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - cleanup resources."""
+        self._close_executor()
+        return False
+    
+    def __del__(self):
+        """Cleanup on destruction."""
+        self._close_executor()

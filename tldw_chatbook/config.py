@@ -58,11 +58,69 @@ DEFAULT_APP_TTS_CONFIG = {
 DEFAULT_DATABASE_CONFIG = {} # Example, can be populated if needed
 
 DEFAULT_RAG_SEARCH_CONFIG = {
+    # Legacy settings for backwards compatibility
     "fts_top_k": 10,
     "vector_top_k": 10,
     "web_vector_top_k": 10,
     "llm_context_document_limit": 10,
     "chat_context_limit": 10,
+    
+    # New comprehensive RAG settings
+    "retriever": {
+        "fts_top_k": 10,
+        "vector_top_k": 10,
+        "hybrid_alpha": 0.5,
+        "chunk_size": 512,
+        "chunk_overlap": 128,
+        "media_collection": "media_embeddings",
+        "chat_collection": "chat_embeddings",
+        "notes_collection": "notes_embeddings",
+        "character_collection": "character_embeddings"
+    },
+    "processor": {
+        "enable_reranking": True,
+        "reranker_model": None,
+        "reranker_top_k": 5,
+        "deduplication_threshold": 0.85,
+        "max_context_length": 4096,
+        "combination_method": "weighted"
+    },
+    "generator": {
+        "default_model": None,
+        "default_temperature": 0.7,
+        "max_tokens": 1024,
+        "enable_streaming": True,
+        "stream_chunk_size": 10
+    },
+    "chroma": {
+        "persist_directory": None,
+        "collection_prefix": "tldw_rag",
+        "embedding_model": "all-MiniLM-L6-v2",
+        "embedding_dimension": 384,
+        "distance_metric": "cosine"
+    },
+    "cache": {
+        "enable_cache": True,
+        "cache_ttl": 3600,
+        "max_cache_size": 1000,
+        "cache_embedding_results": True,
+        "cache_search_results": True,
+        "cache_llm_responses": False
+    },
+    "memory_management": {
+        "max_total_size_mb": 1024.0,
+        "max_collection_size_mb": 512.0,
+        "max_documents_per_collection": 100000,
+        "max_age_days": 90,
+        "inactive_collection_days": 30,
+        "enable_automatic_cleanup": True,
+        "cleanup_interval_hours": 24,
+        "cleanup_batch_size": 1000,
+        "enable_lru_cache": True,
+        "memory_limit_bytes": 2147483648,
+        "min_documents_to_keep": 100,
+        "cleanup_confirmation_required": False
+    }
 }
 
 def load_openai_mappings() -> Dict:
@@ -1403,8 +1461,82 @@ default_llm_for_contextualization = "gpt-3.5-turbo"
 # The key part is `provider = "openai"` and providing the correct `base_url` and `dimension`.
 
 
+# ==========================================================
+# RAG (Retrieval-Augmented Generation) Configuration
+# ==========================================================
+[rag]
+# Comprehensive configuration for the RAG system
 
+    # --- Retrieval Settings ---
+    [rag.retriever]
+    fts_top_k = 10              # Number of results from full-text search
+    vector_top_k = 10           # Number of results from vector search
+    hybrid_alpha = 0.5          # Weight for hybrid search (0=FTS only, 1=vector only)
+    chunk_size = 512            # Size of text chunks for indexing
+    chunk_overlap = 128         # Overlap between chunks
+    
+    # Collection names for different data types
+    media_collection = "media_embeddings"
+    chat_collection = "chat_embeddings"
+    notes_collection = "notes_embeddings"
+    character_collection = "character_embeddings"
+    
+    # --- Processing Settings ---
+    [rag.processor]
+    enable_reranking = true         # Enable result reranking
+    reranker_model = "cohere"       # Reranker model: "cohere", "flashrank", or null
+    reranker_top_k = 5             # Number of results to rerank
+    deduplication_threshold = 0.85  # Similarity threshold for deduplication
+    max_context_length = 4096      # Maximum context length for LLM
+    combination_method = "weighted" # "weighted", "round_robin", "score_based"
+    
+    # --- Generation Settings ---
+    [rag.generator]
+    default_model = ""             # Default LLM model (empty = use chat defaults)
+    default_temperature = 0.7      # Default temperature for RAG responses
+    max_tokens = 1024              # Maximum tokens for RAG responses
+    enable_streaming = true        # Enable streaming responses
+    stream_chunk_size = 10         # Tokens per stream chunk
+    
+    # --- ChromaDB Settings ---
+    [rag.chroma]
+    persist_directory = ""         # Directory for ChromaDB (empty = auto)
+    collection_prefix = "tldw_rag" # Prefix for collection names
+    embedding_model = "all-MiniLM-L6-v2"  # Default embedding model
+    embedding_dimension = 384      # Embedding dimension
+    distance_metric = "cosine"     # "cosine", "euclidean", "ip"
+    
+    # --- Caching Settings ---
+    [rag.cache]
+    enable_cache = true            # Enable result caching
+    cache_ttl = 3600              # Cache TTL in seconds (1 hour)
+    max_cache_size = 1000         # Maximum cached items
+    cache_embedding_results = true # Cache embedding results
+    cache_search_results = true   # Cache search results
+    cache_llm_responses = false   # Cache LLM responses (usually want fresh)
+    
+    # --- Memory Management Settings ---
+    [rag.memory_management]
+    max_total_size_mb = 1024.0         # Maximum total ChromaDB size (MB)
+    max_collection_size_mb = 512.0     # Maximum size per collection (MB)
+    max_documents_per_collection = 100000  # Maximum documents per collection
+    max_age_days = 90                  # Maximum age of documents (days)
+    inactive_collection_days = 30      # Days before cleaning inactive collections
+    enable_automatic_cleanup = true    # Enable automatic cleanup
+    cleanup_interval_hours = 24        # Hours between cleanup runs
+    cleanup_batch_size = 1000         # Documents to delete per batch
+    enable_lru_cache = true           # Enable ChromaDB LRU cache
+    memory_limit_bytes = 2147483648   # Memory limit for ChromaDB (2GB)
+    min_documents_to_keep = 100       # Minimum documents to always keep
+    cleanup_confirmation_required = false  # Require confirmation for cleanup
 
+# Legacy RAG settings (for backwards compatibility)
+[rag_search]
+fts_top_k = 10
+vector_top_k = 10
+web_vector_top_k = 10
+llm_context_document_limit = 10
+chat_context_limit = 10
 
 
 # --- Sections below are placeholders based on config.txt, integrate as needed ---

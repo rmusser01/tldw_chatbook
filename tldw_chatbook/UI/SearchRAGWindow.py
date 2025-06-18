@@ -26,6 +26,8 @@ from ..Event_Handlers.Chat_Events.chat_rag_events import (
 )
 from ..RAG_Search.Services import EmbeddingsService, ChunkingService, IndexingService
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from ..DB.search_history_db import SearchHistoryDB
+from ..Utils.paths import get_user_data_dir
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -84,8 +86,16 @@ class SearchRAGWindow(Container):
         super().__init__(id=id)
         self.app_instance = app_instance
         self.current_results: List[Dict[str, Any]] = []
-        self.search_history: List[str] = []
+        self.search_history: List[str] = []  # In-memory for quick access
         self.is_searching = False
+        self.current_search_id: Optional[int] = None
+        
+        # Initialize search history database
+        history_db_path = get_user_data_dir() / "databases" / "search_history.db"
+        self.search_history_db = SearchHistoryDB(history_db_path)
+        
+        # Load recent search history for quick access
+        self._load_recent_search_history()
         
         # Check dependencies
         self.embeddings_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
@@ -226,6 +236,9 @@ class SearchRAGWindow(Container):
             
         self.is_searching = True
         start_time = datetime.now()
+        search_type = ""
+        results = []
+        error_message = None
         
         # Show loading indicator
         loading = self.query_one("#search-loading")
@@ -257,6 +270,7 @@ class SearchRAGWindow(Container):
             include_metadata = self.query_one("#include-metadata", Checkbox).value
             
             # Perform search based on mode
+            search_type = search_mode
             if search_mode == "plain":
                 results, context = await perform_plain_rag_search(
                     self.app_instance,
@@ -328,16 +342,39 @@ class SearchRAGWindow(Container):
             # Update UI with results
             await self._display_results(results, context)
             
-            # Add to search history
-            duration = (datetime.now() - start_time).total_seconds()
-            await self._add_to_history(query, search_mode, len(results), duration)
+            # Record search to history database
+            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            search_params = {
+                'sources': sources,
+                'top_k': top_k,
+                'max_context': max_context,
+                'enable_rerank': enable_rerank,
+                'chunk_size': chunk_size,
+                'chunk_overlap': chunk_overlap
+            }
             
-            # Update analytics
-            await self._update_analytics()
+            self.current_search_id = self._record_search_to_history(
+                query=query,
+                search_type=search_mode,
+                results=results,
+                execution_time_ms=duration_ms,
+                search_params=search_params
+            )
             
         except Exception as e:
             logger.error(f"Search error: {e}", exc_info=True)
-            self.app_instance.notify(f"Search error: {str(e)}", severity="error")
+            error_message = str(e)
+            self.app_instance.notify(f"Search error: {error_message}", severity="error")
+            
+            # Record failed search to history
+            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            self._record_search_to_history(
+                query=query,
+                search_type=search_type or "unknown",
+                results=[],
+                execution_time_ms=duration_ms,
+                error_message=error_message
+            )
             
         finally:
             self.is_searching = False
@@ -671,6 +708,94 @@ Score: {result.get('score', 0):.3f}
         """Clear search"""
         self.search_input.value = ""
         self.current_results = []
+        self.current_search_id = None
         self.query_one("#results-container").remove_children()
         self.query_one("#results-summary").update("Enter a search query to begin")
         self.search_input.focus()
+    
+    def _load_recent_search_history(self, limit: int = 20):
+        """Load recent search history from database."""
+        try:
+            history = self.search_history_db.get_search_history(limit=limit, days_back=7)
+            self.search_history = [item['query'] for item in history if item['success']]
+            logger.debug(f"Loaded {len(self.search_history)} recent search queries")
+        except Exception as e:
+            logger.error(f"Error loading search history: {e}")
+            self.search_history = []
+    
+    def _record_search_to_history(
+        self,
+        query: str,
+        search_type: str,
+        results: List[Dict[str, Any]],
+        execution_time_ms: int,
+        search_params: Optional[Dict[str, Any]] = None,
+        error_message: Optional[str] = None
+    ) -> int:
+        """Record a search to the history database."""
+        try:
+            search_id = self.search_history_db.record_search(
+                query=query,
+                search_type=search_type,
+                results=results,
+                execution_time_ms=execution_time_ms,
+                search_params=search_params,
+                error_message=error_message
+            )
+            
+            # Update in-memory history
+            if query not in self.search_history:
+                self.search_history.insert(0, query)
+                # Keep only recent queries in memory
+                self.search_history = self.search_history[:20]
+            
+            return search_id
+        except Exception as e:
+            logger.error(f"Error recording search to history: {e}")
+            return -1
+    
+    def _record_result_interaction(self, result_index: int, clicked: bool = True):
+        """Record user interaction with a search result."""
+        if self.current_search_id and 0 <= result_index < len(self.current_results):
+            try:
+                self.search_history_db.record_result_feedback(
+                    search_id=self.current_search_id,
+                    result_index=result_index,
+                    clicked=clicked
+                )
+            except Exception as e:
+                logger.error(f"Error recording result interaction: {e}")
+    
+    def get_search_analytics(self, days_back: int = 30) -> Dict[str, Any]:
+        """Get search analytics from the history database."""
+        try:
+            return self.search_history_db.get_search_analytics(days_back=days_back)
+        except Exception as e:
+            logger.error(f"Error getting search analytics: {e}")
+            return {}
+    
+    def export_search_history(self, output_path: Optional[Path] = None, days_back: int = 30) -> bool:
+        """Export search history to a file."""
+        if output_path is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = Path.home() / "Downloads" / f"rag_search_history_{timestamp}.json"
+        
+        try:
+            success = self.search_history_db.export_search_data(output_path, days_back=days_back)
+            if success:
+                self.app_instance.notify(f"Search history exported to {output_path}", severity="success")
+            else:
+                self.app_instance.notify("Failed to export search history", severity="error")
+            return success
+        except Exception as e:
+            logger.error(f"Error exporting search history: {e}")
+            self.app_instance.notify(f"Export error: {str(e)}", severity="error")
+            return False
+    
+    def get_popular_queries(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get popular search queries."""
+        try:
+            return self.search_history_db.get_popular_queries(limit=limit)
+        except Exception as e:
+            logger.error(f"Error getting popular queries: {e}")
+            return []

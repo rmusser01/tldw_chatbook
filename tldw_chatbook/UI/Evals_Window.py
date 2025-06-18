@@ -84,6 +84,138 @@ class EvalsWindow(Container):
         if event.button.id:
             type_slug = event.button.id.replace("evals-nav-", "")
             self.evals_active_view = f"evals-view-{type_slug}"
+    
+    # --- Evaluation Setup Handlers ---
+    @on(Button.Pressed, "#upload-task-btn")
+    def handle_upload_task(self, event: Button.Pressed) -> None:
+        """Handle task file upload."""
+        logger.info("Upload task button pressed")
+        self._update_status("task-status", "Task upload not yet implemented")
+    
+    @on(Button.Pressed, "#create-task-btn")
+    def handle_create_task(self, event: Button.Pressed) -> None:
+        """Handle new task creation."""
+        logger.info("Create task button pressed")
+        self._update_status("task-status", "Task creation not yet implemented")
+    
+    @on(Button.Pressed, "#add-model-btn")
+    def handle_add_model(self, event: Button.Pressed) -> None:
+        """Handle adding model configuration."""
+        logger.info("Add model button pressed")
+        self._update_status("model-status", "Model configuration not yet implemented")
+    
+    @on(Button.Pressed, "#start-eval-btn")
+    def handle_start_evaluation(self, event: Button.Pressed) -> None:
+        """Handle starting evaluation run."""
+        logger.info("Start evaluation button pressed")
+        self._update_status("run-status", "Evaluation execution not yet implemented")
+    
+    # --- Results Dashboard Handlers ---
+    @on(Button.Pressed, "#refresh-results-btn")
+    def handle_refresh_results(self, event: Button.Pressed) -> None:
+        """Handle refreshing results list."""
+        logger.info("Refresh results button pressed")
+        self._update_results_list()
+    
+    @on(Button.Pressed, "#compare-runs-btn")
+    def handle_compare_runs(self, event: Button.Pressed) -> None:
+        """Handle comparing evaluation runs."""
+        logger.info("Compare runs button pressed")
+        self._update_status("comparison-results", "Run comparison not yet implemented")
+    
+    @on(Button.Pressed, "#export-csv-btn")
+    def handle_export_csv(self, event: Button.Pressed) -> None:
+        """Handle CSV export."""
+        logger.info("Export CSV button pressed")
+        # Export functionality would go here
+    
+    @on(Button.Pressed, "#export-json-btn")
+    def handle_export_json(self, event: Button.Pressed) -> None:
+        """Handle JSON export."""
+        logger.info("Export JSON button pressed")
+        # Export functionality would go here
+    
+    # --- Model Management Handlers ---
+    @on(Button.Pressed, "#add-new-model-btn")
+    def handle_add_new_model(self, event: Button.Pressed) -> None:
+        """Handle adding new model configuration."""
+        logger.info("Add new model button pressed")
+        self._update_models_list()
+    
+    @on(Button.Pressed, ".provider-button")
+    def handle_provider_setup(self, event: Button.Pressed) -> None:
+        """Handle provider quick setup."""
+        provider = event.button.label.plain.lower()
+        logger.info(f"Setting up {provider} provider")
+        # Provider setup would go here
+    
+    # --- Dataset Management Handlers ---
+    @on(Button.Pressed, "#upload-csv-btn")
+    def handle_upload_csv(self, event: Button.Pressed) -> None:
+        """Handle CSV dataset upload."""
+        logger.info("Upload CSV button pressed")
+        self._update_status("dataset-upload-status", "CSV upload not yet implemented")
+    
+    @on(Button.Pressed, "#upload-json-btn")
+    def handle_upload_json(self, event: Button.Pressed) -> None:
+        """Handle JSON dataset upload."""
+        logger.info("Upload JSON button pressed")
+        self._update_status("dataset-upload-status", "JSON upload not yet implemented")
+    
+    @on(Button.Pressed, "#add-hf-dataset-btn")
+    def handle_add_hf_dataset(self, event: Button.Pressed) -> None:
+        """Handle HuggingFace dataset addition."""
+        logger.info("Add HF dataset button pressed")
+        self._update_status("dataset-upload-status", "HuggingFace dataset integration not yet implemented")
+    
+    @on(Button.Pressed, "#refresh-datasets-btn")
+    def handle_refresh_datasets(self, event: Button.Pressed) -> None:
+        """Handle refreshing datasets list."""
+        logger.info("Refresh datasets button pressed")
+        self._update_datasets_list()
+    
+    @on(Button.Pressed, ".template-button")
+    def handle_template_button(self, event: Button.Pressed) -> None:
+        """Handle template button press."""
+        template_type = event.button.label.plain
+        logger.info(f"Template button pressed: {template_type}")
+        # Template creation would go here
+    
+    # --- Helper Methods ---
+    def _update_status(self, status_id: str, message: str) -> None:
+        """Update status text for a given element."""
+        try:
+            status_element = self.query_one(f"#{status_id}")
+            status_element.update(message)
+        except QueryError:
+            logger.warning(f"Status element not found: {status_id}")
+    
+    def _update_results_list(self) -> None:
+        """Update the results list display."""
+        try:
+            results_element = self.query_one("#results-list")
+            # This would be replaced with actual database query
+            results_element.update("Loading evaluation results...")
+        except QueryError:
+            logger.warning("Results list element not found")
+    
+    def _update_models_list(self) -> None:
+        """Update the models list display."""
+        try:
+            models_element = self.query_one("#models-list")
+            # This would be replaced with actual database query
+            models_element.update("Loading model configurations...")
+        except QueryError:
+            logger.warning("Models list element not found")
+    
+    def _update_datasets_list(self) -> None:
+        """Update the datasets list display."""
+        try:
+            datasets_element = self.query_one("#datasets-list")
+            # This would be replaced with actual database query
+            datasets_element.update("Loading available datasets...")
+        except QueryError:
+            logger.warning("Datasets list element not found")
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
@@ -112,22 +244,90 @@ class EvalsWindow(Container):
             # Create a view for Evaluation Setup
             with Container(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
                 yield Static("Evaluation Setup", classes="pane-title")
-                yield Label("Configure evaluation runs, datasets, models, etc.")
+                
+                # Task Upload Section
+                with Container(classes="section-container"):
+                    yield Static("Task Configuration", classes="section-title")
+                    yield Button("Upload Task File", id="upload-task-btn", classes="action-button")
+                    yield Button("Create New Task", id="create-task-btn", classes="action-button")
+                    yield Static("", id="task-status", classes="status-text")
+                
+                # Model Configuration Section
+                with Container(classes="section-container"):
+                    yield Static("Model Configuration", classes="section-title")
+                    yield Button("Add Model", id="add-model-btn", classes="action-button")
+                    yield Static("", id="model-status", classes="status-text")
+                
+                # Run Configuration Section
+                with Container(classes="section-container"):
+                    yield Static("Run Configuration", classes="section-title")
+                    yield Button("Start Evaluation", id="start-eval-btn", classes="action-button primary")
+                    yield Static("", id="run-status", classes="status-text")
 
             # Create a view for Results Dashboard
             with Container(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
                 yield Static("Results Dashboard", classes="pane-title")
-                yield Label("View evaluation metrics, comparisons, and reports.")
+                
+                # Results Overview Section
+                with Container(classes="section-container"):
+                    yield Static("Recent Evaluations", classes="section-title")
+                    yield Button("Refresh Results", id="refresh-results-btn", classes="action-button")
+                    yield Static("No evaluations found", id="results-list", classes="results-container")
+                
+                # Comparison Section
+                with Container(classes="section-container"):
+                    yield Static("Compare Runs", classes="section-title")
+                    yield Button("Compare Selected", id="compare-runs-btn", classes="action-button")
+                    yield Static("", id="comparison-results", classes="results-container")
+                
+                # Export Section
+                with Container(classes="section-container"):
+                    yield Static("Export Results", classes="section-title")
+                    yield Button("Export to CSV", id="export-csv-btn", classes="action-button")
+                    yield Button("Export to JSON", id="export-json-btn", classes="action-button")
 
             # Create a view for Model Management
             with Container(id=EVALS_VIEW_MODELS, classes="evals-view-area"):
                 yield Static("Model Management", classes="pane-title")
-                yield Label("Manage models under evaluation.")
+                
+                # Model List Section
+                with Container(classes="section-container"):
+                    yield Static("Available Models", classes="section-title")
+                    yield Button("Add Model Configuration", id="add-new-model-btn", classes="action-button")
+                    yield Static("No models configured", id="models-list", classes="models-container")
+                
+                # Provider Templates Section
+                with Container(classes="section-container"):
+                    yield Static("Quick Setup", classes="section-title")
+                    yield Button("OpenAI", id="setup-openai-btn", classes="provider-button")
+                    yield Button("Anthropic", id="setup-anthropic-btn", classes="provider-button")
+                    yield Button("Cohere", id="setup-cohere-btn", classes="provider-button")
+                    yield Button("Groq", id="setup-groq-btn", classes="provider-button")
 
             # Create a view for Dataset Management
             with Container(id=EVALS_VIEW_DATASETS, classes="evals-view-area"):
                 yield Static("Dataset Management", classes="pane-title")
-                yield Label("Manage datasets used for evaluations.")
+                
+                # Dataset Upload Section
+                with Container(classes="section-container"):
+                    yield Static("Upload Dataset", classes="section-title")
+                    yield Button("Upload CSV/TSV", id="upload-csv-btn", classes="action-button")
+                    yield Button("Upload JSON", id="upload-json-btn", classes="action-button")
+                    yield Button("Add HuggingFace Dataset", id="add-hf-dataset-btn", classes="action-button")
+                    yield Static("", id="dataset-upload-status", classes="status-text")
+                
+                # Available Datasets Section
+                with Container(classes="section-container"):
+                    yield Static("Available Datasets", classes="section-title")
+                    yield Button("Refresh List", id="refresh-datasets-btn", classes="action-button")
+                    yield Static("No datasets found", id="datasets-list", classes="datasets-container")
+                
+                # Dataset Templates Section
+                with Container(classes="section-container"):
+                    yield Static("Sample Tasks", classes="section-title")
+                    yield Button("MMLU Sample", id="sample-mmlu-btn", classes="template-button")
+                    yield Button("Q&A Template", id="sample-qa-btn", classes="template-button")
+                    yield Button("Classification Template", id="sample-classification-btn", classes="template-button")
 
             # Hide all views by default; on_mount will manage visibility
             for view_area in self.query(".evals-view-area"):
