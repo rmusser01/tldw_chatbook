@@ -985,6 +985,170 @@ async def handle_notes_export_text_button_pressed(app: 'TldwCli', event: Button.
 # Button Handler Map will be defined at the end of the file
 
 #
+# --- Template Definitions ---
+
+NOTE_TEMPLATES = {
+    "blank": {
+        "title": "New Note",
+        "content": "",
+        "keywords": ""
+    },
+    "meeting": {
+        "title": "Meeting Notes - {date}",
+        "content": """## Meeting Notes
+
+**Date:** {date}
+**Time:** {time}
+**Attendees:** 
+
+### Agenda
+- 
+
+### Discussion Points
+- 
+
+### Action Items
+- [ ] 
+- [ ] 
+
+### Next Steps
+- 
+
+### Notes
+""",
+        "keywords": "meeting, notes"
+    },
+    "daily": {
+        "title": "Daily Journal - {date}",
+        "content": """## Daily Journal - {date}
+
+### Today's Goals
+- [ ] 
+- [ ] 
+- [ ] 
+
+### Accomplishments
+- 
+
+### Challenges
+- 
+
+### Tomorrow's Priorities
+- 
+
+### Reflections
+""",
+        "keywords": "journal, daily"
+    },
+    "project": {
+        "title": "Project: ",
+        "content": """## Project Overview
+
+**Project Name:** 
+**Start Date:** {date}
+**Status:** Planning
+
+### Objectives
+- 
+
+### Scope
+- 
+
+### Timeline
+- 
+
+### Resources Needed
+- 
+
+### Risks
+- 
+
+### Notes
+""",
+        "keywords": "project, planning"
+    },
+    "todo": {
+        "title": "Todo List - {date}",
+        "content": """## Todo List
+
+### High Priority
+- [ ] 
+- [ ] 
+
+### Medium Priority
+- [ ] 
+- [ ] 
+
+### Low Priority
+- [ ] 
+- [ ] 
+
+### Completed
+- [x] 
+
+### Notes
+""",
+        "keywords": "todo, tasks"
+    },
+    "brainstorm": {
+        "title": "Brainstorming Session - {date}",
+        "content": """## Brainstorming Session
+
+**Topic:** 
+**Date:** {date}
+
+### Ideas
+- 
+- 
+- 
+
+### Concepts to Explore
+- 
+
+### Connections
+- 
+
+### Next Actions
+- 
+
+### Resources
+- 
+""",
+        "keywords": "brainstorming, ideas"
+    },
+    "research": {
+        "title": "Research Notes - ",
+        "content": """## Research Notes
+
+**Topic:** 
+**Date Started:** {date}
+
+### Research Question
+- 
+
+### Key Findings
+- 
+
+### Sources
+1. 
+2. 
+
+### Quotes
+> 
+
+### Analysis
+- 
+
+### Conclusions
+- 
+
+### Further Reading
+- 
+""",
+        "keywords": "research, notes"
+    }
+}
+
 # --- New UX Enhancement Handlers ---
 
 async def handle_notes_editor_changed(app: 'TldwCli', event) -> None:
@@ -1075,6 +1239,89 @@ async def handle_notes_sort_order_toggle(app: 'TldwCli', event: Button.Pressed) 
     await load_and_display_notes_handler(app)
 
 
+async def handle_notes_create_from_template(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Creates a new note from the selected template."""
+    logger = getattr(app, 'loguru_logger', logging)
+    
+    if not app.notes_service:
+        app.notify("Notes service is not available.", severity="error")
+        logger.error("Notes service not available in handle_notes_create_from_template.")
+        return
+    
+    try:
+        # Get selected template
+        template_select = app.query_one("#notes-template-select", Select)
+        template_key = template_select.value
+        
+        if not template_key or template_key not in NOTE_TEMPLATES:
+            app.notify("Please select a template.", severity="warning")
+            return
+        
+        template = NOTE_TEMPLATES[template_key]
+        
+        # Format template with current date/time
+        from datetime import datetime
+        now = datetime.now()
+        template_data = {
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M"),
+            "datetime": now.strftime("%Y-%m-%d %H:%M")
+        }
+        
+        title = template["title"].format(**template_data)
+        content = template["content"].format(**template_data)
+        keywords = template["keywords"]
+        
+        logger.info(f"Creating new note from template: {template_key}")
+        
+        # Create the note
+        new_note_id = app.notes_service.add_note(
+            user_id=app.notes_user_id,
+            title=title,
+            content=content
+        )
+        
+        if new_note_id:
+            # Store Note ID and Version
+            app.current_selected_note_id = new_note_id
+            app.current_selected_note_version = 1
+            app.current_selected_note_title = title
+            app.current_selected_note_content = content
+            
+            logger.info(f"New note created from template with ID: {new_note_id}")
+            
+            # Update UI
+            editor = app.query_one("#notes-editor-area", TextArea)
+            editor.load_text(content)
+            
+            title_input = app.query_one("#notes-title-input", Input)
+            title_input.value = title
+            
+            keywords_area = app.query_one("#notes-keywords-area", TextArea)
+            keywords_area.text = keywords
+            
+            # Reset unsaved changes since this is a new note
+            app.notes_unsaved_changes = False
+            
+            # Refresh the notes list
+            await load_and_display_notes_handler(app)
+            
+            # Focus the editor
+            editor.focus()
+            
+            app.notify(f"Note created from '{template_key}' template!", severity="information")
+        else:
+            app.notify("Failed to create note from template.", severity="error")
+            logger.error("notes_service.add_note returned None for template note.")
+            
+    except QueryError as e:
+        logger.error(f"UI component not found: {e}")
+        app.notify("UI error creating note from template.", severity="error")
+    except Exception as e:
+        logger.error(f"Unexpected error creating note from template: {e}", exc_info=True)
+        app.notify("Error creating note from template.", severity="error")
+
+
 # --- Button Handler Map ---
 # This must be defined after all handler functions
 NOTES_BUTTON_HANDLERS = {
@@ -1082,6 +1329,7 @@ NOTES_BUTTON_HANDLERS = {
     "toggle-notes-sidebar-right": handle_notes_tab_sidebar_toggle,
     "notes-import-button": handle_notes_import_button_pressed,
     "notes-create-new-button": handle_notes_create_new_button_pressed,
+    "notes-create-from-template-button": handle_notes_create_from_template,
     "notes-edit-selected-button": handle_notes_edit_selected_button_pressed,
     "notes-search-button": handle_notes_search_button_pressed,
     "notes-load-selected-button": handle_notes_load_selected_button_pressed,

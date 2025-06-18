@@ -28,6 +28,8 @@ from textual.binding import Binding
 from textual.dom import DOMNode  # For type hinting if needed
 from textual.timer import Timer
 from textual.css.query import QueryError
+from textual.command import Hit, Hits, Provider
+from functools import partial
 from pathlib import Path
 
 from tldw_chatbook.Utils.text import slugify
@@ -165,6 +167,57 @@ logging.basicConfig(level=_initial_log_level, format=_initial_log_format,
 logging.info("Initial basic logging configured.")
 
 
+class ThemeProvider(Provider):
+    """A command provider for theme switching."""
+    
+    async def search(self, query: str) -> Hits:
+        """Search for theme commands."""
+        matcher = self.matcher(query)
+        
+        # Get available theme names from registered themes
+        available_themes = ["textual-dark", "textual-light"]  # Built-in themes
+        # Add custom themes from ALL_THEMES
+        for theme in ALL_THEMES:
+            theme_name = theme.name if hasattr(theme, 'name') else str(theme)
+            available_themes.append(theme_name)
+        
+        for theme_name in available_themes:
+            command_text = f"Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}"
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.switch_theme, theme_name),
+                    help=f"Change theme to {theme_name}"
+                )
+    
+    async def discover(self) -> Hits:
+        """Show theme options when palette is first opened."""
+        # Show a few popular themes by default
+        popular_themes = ["textual-dark", "textual-light", "solarized_dark_inspired", "modern_dark_dracula", "gruvbox_dark"]
+        for theme_name in popular_themes:
+            yield Hit(
+                1.0,
+                f"Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}",
+                partial(self.switch_theme, theme_name),
+                help=f"Change theme to {theme_name}"
+            )
+    
+    def switch_theme(self, theme_name: str) -> None:
+        """Switch to the specified theme and save to config."""
+        try:
+            self.app.theme = theme_name
+            self.app.notify(f"Theme changed to {theme_name}", severity="information")
+            
+            # Save the theme preference to config
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("general", "default_theme", theme_name)
+            
+        except Exception as e:
+            self.app.notify(f"Failed to apply theme: {e}", severity="error")
+
+
 # --- Main App ---
 class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
@@ -172,7 +225,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     TITLE = f"{get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}{get_char(EMOJI_TITLE_NOTE, FALLBACK_TITLE_NOTE)}{get_char(EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH)}  tldw CLI"
     # Use forward slashes for paths, works cross-platform
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli.tcss")
-    BINDINGS = [Binding("ctrl+q", "quit", "Quit App", show=True)]
+    BINDINGS = [
+        Binding("ctrl+q", "quit", "Quit App", show=True),
+        Binding("ctrl+p", "command_palette", "Palette Menu", show=True)
+    ]
+    COMMANDS = App.COMMANDS | {ThemeProvider}
 
     ALL_INGEST_VIEW_IDS = [
         "ingest-view-prompts", "ingest-view-characters",
@@ -1276,6 +1333,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Load up dem themes
         for theme_name in ALL_THEMES:
             self.register_theme(theme_name)
+        
+        # Apply default theme from config
+        default_theme = get_cli_setting("general", "default_theme", "textual-dark")
+        try:
+            self.theme = default_theme
+            self.loguru_logger.debug(f"Applied default theme: {default_theme}")
+        except Exception as e:
+            self.loguru_logger.warning(f"Failed to apply default theme '{default_theme}', falling back to 'textual-dark': {e}")
+            self.theme = "textual-dark"
 
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""

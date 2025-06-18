@@ -56,7 +56,23 @@ class NotesSidebarLeft(VerticalScroll):
     def compose(self) -> ComposeResult:
         """Create child widgets for the notes sidebar."""
         yield Static("My Notes (0)", classes="sidebar-title", id="notes-sidebar-title-main")
-        yield Button("Create New Note", id="notes-create-new-button", variant="success")
+        
+        yield Static("Create from Template:", classes="sidebar-label")
+        yield Select(
+            options=[
+                ("blank", "Blank Note"),
+                ("meeting", "Meeting Notes"),
+                ("daily", "Daily Journal"),
+                ("project", "Project Notes"),
+                ("todo", "Todo List"),
+                ("brainstorm", "Brainstorming"),
+                ("research", "Research Notes")
+            ],
+            id="notes-template-select"
+        )
+        yield Button("Create from Template", id="notes-create-from-template-button", variant="success")
+        
+        yield Button("Create Blank Note", id="notes-create-new-button", variant="default")
         yield Button("Import Note", id="notes-import-button", variant="default")
 
         yield Static("Search & Filter:", classes="sidebar-label")

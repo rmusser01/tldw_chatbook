@@ -921,6 +921,7 @@ CONFIG_TOML_CONTENT = """
 # Located at: ~/.config/tldw_cli/config.toml
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
+default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "textual-light", or any theme name from themes.py)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
 

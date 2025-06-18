@@ -221,15 +221,24 @@ class SavedSearchesPanel(Container):
     
     async def refresh_list(self) -> None:
         """Refresh the saved searches list"""
-        list_view = self.query_one("#saved-searches-list", ListView)
-        await list_view.clear()
-        
-        for name, data in self.saved_searches.items():
-            created = datetime.fromisoformat(data['created_at']).strftime("%Y-%m-%d")
-            list_item = ListItem(
-                Static(f"{name} [dim]({created})[/dim]", classes="saved-search-item")
-            )
-            await list_view.append(list_item)
+        # Check if we have a list view or need to show empty state
+        try:
+            list_view = self.query_one("#saved-searches-list", ListView)
+            await list_view.clear()
+            
+            for name, data in self.saved_searches.items():
+                created = datetime.fromisoformat(data['created_at']).strftime("%Y-%m-%d %H:%M")
+                list_item = ListItem(
+                    Static(f"{name}\n[dim]{created}[/dim]", classes="saved-search-item")
+                )
+                await list_view.append(list_item)
+                
+            # Enable/disable action buttons based on selection
+            self.query_one("#load-saved-search").disabled = True
+            self.query_one("#delete-saved-search").disabled = True
+        except:
+            # List view doesn't exist, we're showing empty state
+            pass
 
 class SearchRAGWindow(Container):
     """Enhanced RAG search interface window with improved UX"""
@@ -476,14 +485,25 @@ class SearchRAGWindow(Container):
     
     @on(Input.Changed, "#rag-search-input")
     async def handle_search_input_change(self, event: Input.Changed) -> None:
-        """Handle search input changes for history dropdown"""
+        """Handle search input changes for history dropdown and clear button"""
         query = event.value.strip()
         history_dropdown = self.query_one(SearchHistoryDropdown)
+        clear_button = self.query_one("#clear-search-btn")
         
+        # Show/hide clear button
         if query:
+            clear_button.remove_class("hidden")
             await history_dropdown.show_history(query)
         else:
+            clear_button.add_class("hidden")
             history_dropdown.hide()
+    
+    @on(Button.Pressed, "#clear-search-btn")
+    def handle_clear_search(self, event: Button.Pressed) -> None:
+        """Clear the search input"""
+        self.search_input.value = ""
+        self.search_input.focus()
+        event.stop()
     
     @on(ListView.Selected, "#search-history-list")
     async def handle_history_selection(self, event: ListView.Selected) -> None:
@@ -498,25 +518,43 @@ class SearchRAGWindow(Container):
     
     @on(Button.Pressed, "#rag-search-btn")
     async def handle_search(self, event: Button.Pressed) -> None:
-        """Handle search button press - no auto-search on input"""
+        """Handle search button press"""
         if self.is_searching:
             return
             
         query = self.search_input.value.strip()
         if not query:
-            self.app_instance.notify("Please enter a search query", severity="warning")
+            self.app_instance.notify("🔍 Please enter a search query", severity="warning")
+            self.search_input.focus()
             return
         
         await self._perform_search(query)
+    
+    @on(Input.Submitted, "#rag-search-input")
+    async def handle_search_submit(self, event: Input.Submitted) -> None:
+        """Handle Enter key in search input"""
+        await self.handle_search(Button.Pressed(self.query_one("#rag-search-btn")))
     
     @on(Select.Changed, "#search-mode-select")
     def handle_search_mode_change(self, event: Select.Changed) -> None:
         """Show/hide chunking options based on search mode"""
         chunking_options = self.query_one("#chunking-options")
+        mode_name = "Semantic" if event.value == "full" else "Hybrid" if event.value == "hybrid" else "Plain"
+        
         if event.value == "full":
             chunking_options.remove_class("hidden")
+            if not self.embeddings_available:
+                self.app_instance.notify(
+                    "🔒 Semantic search requires embeddings dependencies",
+                    severity="warning",
+                    timeout=5
+                )
         else:
             chunking_options.add_class("hidden")
+        
+        # Update status to reflect mode change
+        status = self.query_one("#search-status")
+        status.update(f"🔄 Switched to {mode_name} search mode")
     
     @work(exclusive=True)
     async def _perform_search(self, query: str) -> None:
@@ -560,8 +598,13 @@ class SearchRAGWindow(Container):
                 "enable_rerank": self.query_one("#enable-rerank", Checkbox).value
             }
             
-            # Update status
-            await status_elem.update("🔍 Searching...")
+            # Update status with more descriptive message
+            mode_names = {"plain": "Plain", "full": "Semantic", "hybrid": "Hybrid"}
+            mode_display = mode_names.get(search_mode, search_mode)
+            active_sources = [k for k, v in sources.items() if v]
+            sources_display = ", ".join(s.capitalize() for s in active_sources)
+            
+            await status_elem.update(f"🔍 Searching {sources_display} using {mode_display} mode...")
             await progress_bar.update(progress=20)
             
             # Perform search based on mode
@@ -658,20 +701,38 @@ class SearchRAGWindow(Container):
             history_dropdown = self.query_one(SearchHistoryDropdown)
             history_dropdown.hide()
             
-            await status_elem.update(f"✅ Found {len(results)} results in {duration_ms/1000:.2f}s")
+            # Update final status
+            if len(results) > 0:
+                await status_elem.update(f"✅ Found {len(results)} results in {duration_ms/1000:.2f}s")
+            else:
+                await status_elem.update(f"🔍 No results found in {duration_ms/1000:.2f}s - try different keywords")
             
         except Exception as e:
             logger.error(f"Search error: {e}", exc_info=True)
-            await status_elem.update(f"❌ Search error: {str(e)}")
-            self.app_instance.notify(f"Search error: {str(e)}", severity="error")
+            error_msg = str(e)
+            if "embeddings" in error_msg.lower():
+                await status_elem.update("❌ Embeddings not available - using plain search instead")
+                # Fallback to plain search
+                if search_mode != "plain":
+                    self.query_one("#search-mode-select").value = "plain"
+                    await self._perform_search(query)
+                    return
+            else:
+                await status_elem.update(f"❌ Search error: {error_msg[:100]}...")
+            self.app_instance.notify(f"Search error: {error_msg[:100]}...", severity="error")
             
         finally:
             self.is_searching = False
             progress_bar.add_class("hidden")
+            # Ensure maintenance menu is hidden
+            try:
+                self.query_one("#maintenance-menu").add_class("hidden")
+            except:
+                pass
     
     async def _display_results_page(self, context: str) -> None:
         """Display current page of results"""
-        results_container = self.query_one("#results-container", Container)
+        results_container = self.query_one("#results-container", VerticalScroll)
         await results_container.remove_children()
         
         # Calculate pagination
@@ -682,9 +743,21 @@ class SearchRAGWindow(Container):
         # Update summary
         summary = self.query_one("#results-summary", Static)
         total_pages = max(1, (self.total_results + self.results_per_page - 1) // self.results_per_page)
-        await summary.update(
-            f"Found {self.total_results} results - Showing {start_idx + 1}-{min(end_idx, self.total_results)}"
-        )
+        
+        if self.total_results == 0:
+            await summary.update("💭 No results found. Try adjusting your search query or filters.")
+        else:
+            await summary.update(
+                f"🎯 Found {self.total_results} results • Showing {start_idx + 1}-{min(end_idx, self.total_results)}"
+            )
+        
+        # Update stats
+        stats = self.query_one("#search-stats", Static)
+        if self.total_results > 0:
+            avg_score = sum(r.get('score', 0) for r in self.all_results) / len(self.all_results)
+            await stats.update(f"Avg. relevance: {avg_score:.1%}")
+        else:
+            await stats.update("")
         
         # Show/update pagination controls
         if self.total_results > self.results_per_page:
@@ -698,15 +771,28 @@ class SearchRAGWindow(Container):
             prev_btn.disabled = self.current_page <= 1
             next_btn.disabled = self.current_page >= total_pages
             await page_info.update(f"Page {self.current_page} of {total_pages}")
+        else:
+            self.query_one("#pagination-controls").add_class("hidden")
         
         # Display results for current page
-        for i, result in enumerate(page_results, start=start_idx + 1):
-            result_widget = SearchResult(result, i)
-            await results_container.mount(result_widget)
+        if page_results:
+            for i, result in enumerate(page_results, start=start_idx):
+                result_widget = SearchResult(result, i)
+                await results_container.mount(result_widget)
+        else:
+            # Show empty state
+            empty_msg = Static(
+                "No results to display. Try a different search query or check your filters.",
+                classes="empty-results-message"
+            )
+            await results_container.mount(empty_msg)
         
         # Update context preview
         context_preview = self.query_one("#context-preview", Markdown)
-        await context_preview.update(f"```\n{context}\n```")
+        if context:
+            await context_preview.update(f"## 📝 Combined Context\n\n```\n{context}\n```")
+        else:
+            await context_preview.update("*No context available yet*\n\nContext will be generated from your search results.")
         
         # Update analytics
         await self._update_analytics()
@@ -730,19 +816,53 @@ class SearchRAGWindow(Container):
     async def handle_save_search(self, event: Button.Pressed) -> None:
         """Save current search configuration"""
         if not self.current_search_config:
-            self.app_instance.notify("No search to save", severity="warning")
+            self.app_instance.notify("⚠️ No search to save", severity="warning")
             return
         
-        # In a real implementation, you'd show a dialog to get the save name
-        save_name = f"Search - {self.current_search_config['query'][:20]}"
+        # Generate a more descriptive name
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        save_name = f"{self.current_search_config['query'][:30]} - {timestamp}"
+        
         saved_searches = self.query_one(SavedSearchesPanel)
         saved_searches.save_search(save_name, self.current_search_config)
-        self.app_instance.notify(f"Search saved as '{save_name}'", severity="success")
+        self.app_instance.notify(f"✅ Search saved successfully", severity="success")
+    
+    @on(Button.Pressed, "#new-saved-search")
+    async def handle_new_saved_search(self, event: Button.Pressed) -> None:
+        """Alias for save search from the saved searches panel"""
+        await self.handle_save_search(event)
+    
+    @on(Button.Pressed, "#maintenance-menu-btn")
+    def handle_maintenance_menu(self, event: Button.Pressed) -> None:
+        """Toggle maintenance menu dropdown"""
+        menu = self.query_one("#maintenance-menu")
+        if "hidden" in menu.classes:
+            menu.remove_class("hidden")
+        else:
+            menu.add_class("hidden")
+        event.stop()
     
     @on(Button.Pressed, "#index-content-btn")
     async def handle_index_content(self, event: Button.Pressed) -> None:
         """Handle index content button with progress indicator"""
+        # Hide the maintenance menu
+        self.query_one("#maintenance-menu").add_class("hidden")
         await self._index_all_content()
+    
+    @on(Button.Pressed, "#clear-cache-btn")
+    async def handle_clear_cache(self, event: Button.Pressed) -> None:
+        """Handle clear cache button"""
+        # Hide the maintenance menu
+        self.query_one("#maintenance-menu").add_class("hidden")
+        
+        try:
+            from ..RAG_Search.Services.cache_service import get_cache_service
+            cache_service = get_cache_service()
+            cache_service.clear_all_caches()
+            self.app_instance.notify("✅ Cache cleared successfully", severity="success")
+        except Exception as e:
+            logger.error(f"Error clearing cache: {e}")
+            self.app_instance.notify(f"❌ Error clearing cache: {str(e)}", severity="error")
     
     @work(exclusive=True)
     async def _index_all_content(self) -> None:
@@ -824,39 +944,21 @@ class SearchRAGWindow(Container):
         """Toggle expanded view of a result"""
         try:
             result_container = self.query_one(f"#result-{index}", SearchResult)
+            expanded_content = result_container.query_one(f"#expanded-{index}")
+            expand_btn = result_container.query_one(f"#expand-{index}", Button)
             
-            # Toggle full metadata visibility
-            full_metadata = result_container.query_one(".result-metadata-full")
-            compact_metadata = result_container.query_one(".result-metadata.compact")
-            
-            if "hidden" in full_metadata.classes:
-                full_metadata.remove_class("hidden")
-                compact_metadata.add_class("hidden")
-                
-                # Update full content
-                if index <= len(self.all_results):
-                    result = self.all_results[index - 1]
-                    preview_widget = result_container.query_one(".result-preview", Static)
-                    await preview_widget.update(result.get('content', ''))
-                    
-                # Update button
-                expand_btn = result_container.query_one(f"#expand-{index}", Button)
-                expand_btn.label = "Collapse"
+            # Toggle expansion
+            if "hidden" in expanded_content.classes:
+                expanded_content.remove_class("hidden")
+                expand_btn.label = "🔼 Hide"
+                result_container.expanded = True
+                result_container.add_class("expanded")
             else:
-                full_metadata.add_class("hidden")
-                compact_metadata.remove_class("hidden")
+                expanded_content.add_class("hidden")
+                expand_btn.label = "🔽 View"
+                result_container.expanded = False
+                result_container.remove_class("expanded")
                 
-                # Restore preview
-                if index <= len(self.all_results):
-                    result = self.all_results[index - 1]
-                    content_preview = result['content'][:200] + "..." if len(result['content']) > 200 else result['content']
-                    preview_widget = result_container.query_one(".result-preview", Static)
-                    await preview_widget.update(content_preview)
-                
-                # Update button
-                expand_btn = result_container.query_one(f"#expand-{index}", Button)
-                expand_btn.label = "Expand"
-                    
         except Exception as e:
             logger.error(f"Error toggling result expansion: {e}")
     
@@ -914,10 +1016,56 @@ class SearchRAGWindow(Container):
         
         await analytics.update(analytics_text)
     
+    @on(ListView.Selected, "#saved-searches-list")
+    async def handle_saved_search_selection(self, event: ListView.Selected) -> None:
+        """Handle selection of a saved search"""
+        if event.item:
+            index = event.list_view.index
+            saved_names = list(self.saved_searches.keys())
+            if 0 <= index < len(saved_names):
+                saved_searches = self.query_one(SavedSearchesPanel)
+                saved_searches.selected_search_name = saved_names[index]
+                self.query_one("#load-saved-search").disabled = False
+                self.query_one("#delete-saved-search").disabled = False
+    
+    @on(Button.Pressed, "#load-saved-search")
+    async def handle_load_saved_search(self, event: Button.Pressed) -> None:
+        """Load a saved search configuration"""
+        saved_searches = self.query_one(SavedSearchesPanel)
+        if saved_searches.selected_search_name and saved_searches.selected_search_name in saved_searches.saved_searches:
+            config = saved_searches.saved_searches[saved_searches.selected_search_name]['config']
+            
+            # Apply the saved configuration
+            self.search_input.value = config.get('query', '')
+            self.query_one("#search-mode-select").value = config.get('mode', 'plain')
+            
+            sources = config.get('sources', {})
+            self.query_one("#source-media").value = sources.get('media', True)
+            self.query_one("#source-conversations").value = sources.get('conversations', True)
+            self.query_one("#source-notes").value = sources.get('notes', True)
+            
+            self.query_one("#top-k-input").value = str(config.get('top_k', 10))
+            self.query_one("#max-context-input").value = str(config.get('max_context', 10000))
+            self.query_one("#enable-rerank").value = config.get('enable_rerank', False)
+            
+            self.app_instance.notify("📥 Loaded saved search configuration", severity="success")
+            self.search_input.focus()
+    
+    @on(Button.Pressed, "#delete-saved-search")
+    async def handle_delete_saved_search(self, event: Button.Pressed) -> None:
+        """Delete a saved search"""
+        saved_searches = self.query_one(SavedSearchesPanel)
+        if saved_searches.selected_search_name and saved_searches.selected_search_name in saved_searches.saved_searches:
+            del saved_searches.saved_searches[saved_searches.selected_search_name]
+            saved_searches._persist_saved_searches()
+            await saved_searches.refresh_list()
+            self.app_instance.notify("🗑️ Deleted saved search", severity="success")
+    
     # Action methods
     def action_focus_search(self) -> None:
         """Focus the search input (Ctrl+K)"""
         self.search_input.focus()
+        self.search_input.cursor_position = len(self.search_input.value)
     
     def action_save_search(self) -> None:
         """Save current search (Ctrl+S)"""
@@ -959,20 +1107,31 @@ class SearchRAGWindow(Container):
     
     def action_clear(self) -> None:
         """Clear search (Escape)"""
-        self.search_input.value = ""
-        self.all_results = []
-        self.current_results = []
-        self.current_search_id = None
-        self.current_page = 1
-        
-        results_container = self.query_one("#results-container")
-        self.run_worker(results_container.remove_children())
-        
-        summary = self.query_one("#results-summary")
-        self.run_worker(summary.update("Enter a search query to begin"))
-        
-        self.query_one("#export-results-btn").disabled = True
-        self.search_input.focus()
+        # Only clear if we're not in a dropdown or dialog
+        if self.search_input.has_focus:
+            self.search_input.value = ""
+            self.all_results = []
+            self.current_results = []
+            self.current_search_id = None
+            self.current_page = 1
+            
+            results_container = self.query_one("#results-container")
+            self.run_worker(results_container.remove_children())
+            
+            summary = self.query_one("#results-summary")
+            self.run_worker(summary.update("💡 Enter a search query to discover relevant content"))
+            
+            stats = self.query_one("#search-stats")
+            self.run_worker(stats.update(""))
+            
+            status = self.query_one("#search-status")
+            self.run_worker(status.update("🟢 Ready to search"))
+            
+            self.query_one("#export-results-btn").disabled = True
+            
+            # Hide search history dropdown
+            history_dropdown = self.query_one(SearchHistoryDropdown)
+            history_dropdown.hide()
     
     async def _check_index_status(self) -> None:
         """Check the status of vector indices"""
