@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, Union, Tuple, AsyncIterator
 from pathlib import Path
 import csv
+from contextlib import asynccontextmanager
 
 from loguru import logger
 
@@ -33,7 +34,7 @@ except ImportError:
     HF_DATASETS_AVAILABLE = False
 
 from .task_loader import TaskConfig
-from .llm_interface import LLMInterface
+from .llm_interface import LLMInterface, EvalProviderError, EvalAPIError, EvalAuthenticationError, EvalRateLimitError
 
 @dataclass
 class EvalSample:
@@ -59,12 +60,16 @@ class EvalResult:
     metrics: Dict[str, float] = None
     metadata: Dict[str, Any] = None
     processing_time: float = 0.0
+    error_info: Optional[Dict[str, Any]] = None
+    retry_count: int = 0
     
     def __post_init__(self):
         if self.metrics is None:
             self.metrics = {}
         if self.metadata is None:
             self.metadata = {}
+        if self.error_info is None:
+            self.error_info = {}
 
 class DatasetLoader:
     """Loads datasets from various sources."""
@@ -300,6 +305,140 @@ class MetricsCalculator:
         
         return matches / len(expected_tokens) if expected_tokens else 0.0
 
+class ErrorHandler:
+    """Handles retries and error classification for evaluation runs."""
+    
+    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0, backoff_factor: float = 2.0):
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.backoff_factor = backoff_factor
+        self.rate_limit_delays = {}  # Provider -> delay time
+    
+    async def with_retry(self, operation, sample_id: str, provider: str = None):
+        """Execute operation with retry logic and error handling."""
+        last_exception = None
+        retry_count = 0
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Check rate limiting
+                if provider and provider in self.rate_limit_delays:
+                    delay = self.rate_limit_delays[provider]
+                    if delay > 0:
+                        logger.info(f"Rate limited for {provider}, waiting {delay:.1f}s")
+                        await asyncio.sleep(delay)
+                        # Reduce delay for next attempt
+                        self.rate_limit_delays[provider] = max(0, delay - 1.0)
+                
+                # Execute operation
+                result = await operation()
+                
+                # Clear rate limit if successful
+                if provider and provider in self.rate_limit_delays:
+                    self.rate_limit_delays[provider] = 0
+                
+                return result, retry_count
+                
+            except EvalRateLimitError as e:
+                logger.warning(f"Rate limit hit for {provider}: {e}")
+                
+                # Set rate limit delay
+                if provider:
+                    self.rate_limit_delays[provider] = min(60.0, 5.0 * (attempt + 1))
+                
+                if attempt < self.max_retries:
+                    delay = self.retry_delay * (self.backoff_factor ** attempt)
+                    logger.info(f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries})")
+                    await asyncio.sleep(delay)
+                    retry_count += 1
+                    last_exception = e
+                else:
+                    raise
+                    
+            except EvalAuthenticationError as e:
+                logger.error(f"Authentication error for {provider}: {e}")
+                # Don't retry auth errors
+                raise
+                
+            except (EvalAPIError, EvalProviderError) as e:
+                logger.warning(f"API error for sample {sample_id}: {e}")
+                
+                if attempt < self.max_retries:
+                    delay = self.retry_delay * (self.backoff_factor ** attempt)
+                    logger.info(f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries})")
+                    await asyncio.sleep(delay)
+                    retry_count += 1
+                    last_exception = e
+                else:
+                    raise
+                    
+            except Exception as e:
+                logger.error(f"Unexpected error for sample {sample_id}: {e}")
+                
+                if attempt < self.max_retries:
+                    delay = self.retry_delay * (self.backoff_factor ** attempt)
+                    logger.info(f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries})")
+                    await asyncio.sleep(delay)
+                    retry_count += 1
+                    last_exception = e
+                else:
+                    raise
+        
+        # If we get here, all retries failed
+        if last_exception:
+            raise last_exception
+        else:
+            raise RuntimeError(f"All retries failed for sample {sample_id}")
+    
+    def classify_error(self, error: Exception) -> Dict[str, Any]:
+        """Classify error for better reporting."""
+        error_info = {
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'is_retryable': True,
+            'error_category': 'unknown'
+        }
+        
+        if isinstance(error, EvalAuthenticationError):
+            error_info.update({
+                'is_retryable': False,
+                'error_category': 'authentication',
+                'suggested_action': 'Check API keys and credentials'
+            })
+        elif isinstance(error, EvalRateLimitError):
+            error_info.update({
+                'error_category': 'rate_limit',
+                'suggested_action': 'Reduce request rate or wait'
+            })
+        elif isinstance(error, EvalAPIError):
+            error_info.update({
+                'error_category': 'api_error',
+                'suggested_action': 'Check API endpoint and parameters'
+            })
+        elif isinstance(error, EvalProviderError):
+            error_info.update({
+                'error_category': 'provider_error',
+                'suggested_action': 'Check provider configuration'
+            })
+        elif 'timeout' in str(error).lower():
+            error_info.update({
+                'error_category': 'timeout',
+                'suggested_action': 'Increase timeout or check network'
+            })
+        elif 'connection' in str(error).lower():
+            error_info.update({
+                'error_category': 'network',
+                'suggested_action': 'Check network connectivity'
+            })
+        else:
+            error_info.update({
+                'is_retryable': False,
+                'error_category': 'unknown',
+                'suggested_action': 'Review error details and task configuration'
+            })
+        
+        return error_info
+
 class BaseEvalRunner(ABC):
     """Base class for evaluation runners."""
     
@@ -310,6 +449,10 @@ class BaseEvalRunner(ABC):
             provider_name=model_config['provider'],
             model_id=model_config['model_id'],
             config=model_config
+        )
+        self.error_handler = ErrorHandler(
+            max_retries=task_config.metadata.get('max_retries', 3),
+            retry_delay=task_config.metadata.get('retry_delay', 1.0)
         )
         
     @abstractmethod
@@ -370,7 +513,7 @@ class QuestionAnswerRunner(BaseEvalRunner):
         """Run Q&A evaluation on a single sample."""
         start_time = time.time()
         
-        try:
+        async def _run_sample_operation():
             # Format the prompt
             prompt = sample.input_text
             
@@ -388,27 +531,53 @@ class QuestionAnswerRunner(BaseEvalRunner):
             # Calculate metrics
             metrics = self.calculate_metrics(filtered_response, sample.expected_output)
             
+            return {
+                'response': filtered_response,
+                'raw_output': response,
+                'prompt': prompt,
+                'metrics': metrics
+            }
+        
+        try:
+            # Use error handler with retry logic
+            result_data, retry_count = await self.error_handler.with_retry(
+                _run_sample_operation,
+                sample.id,
+                self.model_config.get('provider')
+            )
+            
             processing_time = time.time() - start_time
             
             return EvalResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
-                actual_output=filtered_response,
-                metrics=metrics,
-                metadata={'raw_output': response, 'prompt': prompt},
-                processing_time=processing_time
+                actual_output=result_data['response'],
+                metrics=result_data['metrics'],
+                metadata={
+                    'raw_output': result_data['raw_output'], 
+                    'prompt': result_data['prompt'],
+                    'provider': self.model_config.get('provider')
+                },
+                processing_time=processing_time,
+                retry_count=retry_count
             )
             
         except Exception as e:
-            logger.error(f"Error processing sample {sample.id}: {e}")
+            processing_time = time.time() - start_time
+            error_info = self.error_handler.classify_error(e)
+            
+            logger.error(f"Error processing sample {sample.id} after retries: {e}")
+            logger.error(f"Error classification: {error_info}")
+            
             return EvalResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time,
+                error_info=error_info
             )
     
     async def _generate_response(self, prompt: str) -> str:
@@ -466,7 +635,7 @@ class ClassificationRunner(BaseEvalRunner):
         """Run classification evaluation on a single sample."""
         start_time = time.time()
         
-        try:
+        async def _run_classification_operation():
             # Format multiple choice prompt
             prompt = self._format_classification_prompt(sample)
             
@@ -479,31 +648,54 @@ class ClassificationRunner(BaseEvalRunner):
             # Calculate metrics
             metrics = self.calculate_metrics(predicted_choice, sample.expected_output, sample.choices)
             
+            return {
+                'predicted_choice': predicted_choice,
+                'raw_output': response,
+                'prompt': prompt,
+                'metrics': metrics
+            }
+        
+        try:
+            # Use error handler with retry logic
+            result_data, retry_count = await self.error_handler.with_retry(
+                _run_classification_operation,
+                sample.id,
+                self.model_config.get('provider')
+            )
+            
             processing_time = time.time() - start_time
             
             return EvalResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
-                actual_output=predicted_choice,
-                metrics=metrics,
+                actual_output=result_data['predicted_choice'],
+                metrics=result_data['metrics'],
                 metadata={
-                    'raw_output': response, 
-                    'prompt': prompt,
-                    'choices': sample.choices
+                    'raw_output': result_data['raw_output'], 
+                    'prompt': result_data['prompt'],
+                    'choices': sample.choices,
+                    'provider': self.model_config.get('provider')
                 },
-                processing_time=processing_time
+                processing_time=processing_time,
+                retry_count=retry_count
             )
             
         except Exception as e:
-            logger.error(f"Error processing classification sample {sample.id}: {e}")
+            processing_time = time.time() - start_time
+            error_info = self.error_handler.classify_error(e)
+            
+            logger.error(f"Error processing classification sample {sample.id} after retries: {e}")
+            logger.error(f"Error classification: {error_info}")
+            
             return EvalResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time,
+                error_info=error_info
             )
     
     def _format_classification_prompt(self, sample: EvalSample) -> str:
@@ -584,7 +776,7 @@ class LogProbRunner(BaseEvalRunner):
         """Run log probability evaluation on a single sample."""
         start_time = time.time()
         
-        try:
+        async def _run_logprob_operation():
             # For logprob tasks, we typically evaluate the likelihood of different continuations
             prompt = sample.input_text
             
@@ -598,15 +790,11 @@ class LogProbRunner(BaseEvalRunner):
                 
                 metrics = self.calculate_metrics(predicted, sample.expected_output, sample.choices)
                 
-                return EvalResult(
-                    sample_id=sample.id,
-                    input_text=sample.input_text,
-                    expected_output=sample.expected_output,
-                    actual_output=predicted,
-                    logprobs={'choice_logprobs': logprobs, 'choice_names': sample.choices},
-                    metrics=metrics,
-                    processing_time=time.time() - start_time
-                )
+                return {
+                    'predicted': predicted,
+                    'logprobs': {'choice_logprobs': logprobs, 'choice_names': sample.choices},
+                    'metrics': metrics
+                }
             
             else:
                 # Single continuation logprob
@@ -615,25 +803,49 @@ class LogProbRunner(BaseEvalRunner):
                 
                 logprob = await self._get_continuation_logprob(prompt, sample.expected_output)
                 
-                return EvalResult(
-                    sample_id=sample.id,
-                    input_text=sample.input_text,
-                    expected_output=sample.expected_output,
-                    actual_output=sample.expected_output,
-                    logprobs={'continuation_logprob': logprob},
-                    metrics={'logprob': logprob},
-                    processing_time=time.time() - start_time
-                )
+                return {
+                    'predicted': sample.expected_output,
+                    'logprobs': {'continuation_logprob': logprob},
+                    'metrics': {'logprob': logprob}
+                }
+        
+        try:
+            # Use error handler with retry logic
+            result_data, retry_count = await self.error_handler.with_retry(
+                _run_logprob_operation,
+                sample.id,
+                self.model_config.get('provider')
+            )
+            
+            processing_time = time.time() - start_time
+            
+            return EvalResult(
+                sample_id=sample.id,
+                input_text=sample.input_text,
+                expected_output=sample.expected_output,
+                actual_output=result_data['predicted'],
+                logprobs=result_data['logprobs'],
+                metrics=result_data['metrics'],
+                metadata={'provider': self.model_config.get('provider')},
+                processing_time=processing_time,
+                retry_count=retry_count
+            )
         
         except Exception as e:
-            logger.error(f"Error processing logprob sample {sample.id}: {e}")
+            processing_time = time.time() - start_time
+            error_info = self.error_handler.classify_error(e)
+            
+            logger.error(f"Error processing logprob sample {sample.id} after retries: {e}")
+            logger.error(f"Error classification: {error_info}")
+            
             return EvalResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time,
+                error_info=error_info
             )
     
     async def _get_choice_logprobs(self, prompt: str, choices: List[str]) -> List[float]:
@@ -669,7 +881,7 @@ class GenerationRunner(BaseEvalRunner):
         """Run text generation evaluation on a single sample."""
         start_time = time.time()
         
-        try:
+        async def _run_generation_operation():
             prompt = sample.input_text
             
             # Generate response
@@ -681,27 +893,53 @@ class GenerationRunner(BaseEvalRunner):
             # Calculate metrics
             metrics = self.calculate_metrics(filtered_response, sample.expected_output)
             
+            return {
+                'response': filtered_response,
+                'raw_output': response,
+                'prompt': prompt,
+                'metrics': metrics
+            }
+        
+        try:
+            # Use error handler with retry logic
+            result_data, retry_count = await self.error_handler.with_retry(
+                _run_generation_operation,
+                sample.id,
+                self.model_config.get('provider')
+            )
+            
             processing_time = time.time() - start_time
             
             return EvalResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
-                actual_output=filtered_response,
-                metrics=metrics,
-                metadata={'raw_output': response, 'prompt': prompt},
-                processing_time=processing_time
+                actual_output=result_data['response'],
+                metrics=result_data['metrics'],
+                metadata={
+                    'raw_output': result_data['raw_output'], 
+                    'prompt': result_data['prompt'],
+                    'provider': self.model_config.get('provider')
+                },
+                processing_time=processing_time,
+                retry_count=retry_count
             )
             
         except Exception as e:
-            logger.error(f"Error processing generation sample {sample.id}: {e}")
+            processing_time = time.time() - start_time
+            error_info = self.error_handler.classify_error(e)
+            
+            logger.error(f"Error processing generation sample {sample.id} after retries: {e}")
+            logger.error(f"Error classification: {error_info}")
+            
             return EvalResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time,
+                error_info=error_info
             )
     
     async def _generate_response(self, prompt: str) -> str:
@@ -784,33 +1022,56 @@ class EvalRunner:
         logger.info(f"Loaded {len(samples)} samples")
         
         results = []
+        error_count = 0
+        retry_count = 0
         
         for i, sample in enumerate(samples):
             try:
                 result = await self.runner.run_sample(sample)
                 results.append(result)
                 
+                # Track retry statistics
+                if hasattr(result, 'retry_count'):
+                    retry_count += result.retry_count
+                
+                # Track error statistics
+                if result.error_info:
+                    error_count += 1
+                    logger.warning(f"Sample {sample.id} completed with errors: {result.error_info.get('error_category', 'unknown')}")
+                
                 if progress_callback:
                     progress_callback(i + 1, len(samples), result)
                 
-                # Log progress periodically
+                # Log progress periodically with enhanced info
                 if (i + 1) % 10 == 0:
-                    logger.info(f"Processed {i + 1}/{len(samples)} samples")
+                    success_rate = ((i + 1 - error_count) / (i + 1)) * 100
+                    logger.info(f"Processed {i + 1}/{len(samples)} samples | Success rate: {success_rate:.1f}% | Total retries: {retry_count}")
                     
             except Exception as e:
-                logger.error(f"Failed to process sample {sample.id}: {e}")
+                logger.error(f"Fatal error processing sample {sample.id}: {e}")
+                error_count += 1
                 
                 # Create error result
                 error_result = EvalResult(
                     sample_id=sample.id,
                     input_text=sample.input_text,
                     expected_output=sample.expected_output,
-                    actual_output=f"PROCESSING_ERROR: {str(e)}",
-                    metrics={'error': 1.0}
+                    actual_output=f"FATAL_ERROR: {str(e)}",
+                    metrics={'error': 1.0},
+                    error_info={
+                        'error_type': type(e).__name__,
+                        'error_message': str(e),
+                        'error_category': 'fatal',
+                        'is_retryable': False
+                    }
                 )
                 results.append(error_result)
         
+        # Log final statistics
+        success_rate = ((len(results) - error_count) / len(results)) * 100 if results else 0
         logger.info(f"Evaluation completed: {len(results)} results")
+        logger.info(f"Success rate: {success_rate:.1f}% | Errors: {error_count} | Total retries: {retry_count}")
+        
         return results
     
     def calculate_aggregate_metrics(self, results: List[EvalResult]) -> Dict[str, float]:

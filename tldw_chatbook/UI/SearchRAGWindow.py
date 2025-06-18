@@ -90,7 +90,7 @@ class SearchResult(Container):
     """Enhanced container for displaying a single search result with better visual design"""
     
     def __init__(self, result: Dict[str, Any], index: int):
-        super().__init__(id=f"result-{index}", classes="search-result-card")
+        super().__init__(id=f"result-{index}", classes="search-result-card-enhanced")
         self.result = result
         self.index = index
         self.expanded = False
@@ -101,64 +101,95 @@ class SearchResult(Container):
         source_icon = SOURCE_ICONS.get(source, "📄")
         source_color = SOURCE_COLORS.get(source, "white")
         
-        with Vertical(classes="result-card-content"):
-            # Header with source indicator, title and score
-            with Horizontal(classes="result-header"):
-                # Source type indicator
-                yield Static(
-                    f"{source_icon} [{source_color}]{source.upper()}[/{source_color}]",
-                    classes="source-indicator"
-                )
-                yield Static(
-                    f"[bold]{self.result['title']}[/bold]",
-                    classes="result-title"
-                )
-                # Visual score indicator
-                score = self.result.get('score', 0)
-                score_bar = "█" * int(score * 10) + "░" * (10 - int(score * 10))
-                yield Static(
-                    f"[dim]{score_bar} {score:.3f}[/dim]",
-                    classes="result-score-visual"
-                )
+        with Container(classes="result-card-wrapper"):
+            # Left side - Source indicator
+            with Vertical(classes="result-source-column"):
+                yield Static(source_icon, classes=f"source-icon source-{source}")
+                yield Static(source.upper(), classes=f"source-label source-{source}")
             
-            # Content preview
-            content_preview = self.result['content'][:200] + "..." if len(self.result['content']) > 200 else self.result['content']
-            yield Static(content_preview, classes="result-preview")
-            
-            # Metadata in a more compact format
-            if self.result.get('metadata'):
-                with Horizontal(classes="result-metadata compact"):
-                    for key, value in list(self.result['metadata'].items())[:3]:  # Show first 3 metadata items
-                        yield Static(f"[dim]{key}: {value}[/dim]", classes="metadata-item")
-                    if len(self.result['metadata']) > 3:
-                        yield Static(f"[dim]+{len(self.result['metadata']) - 3} more[/dim]", classes="metadata-more")
-            
-            # Full metadata (initially hidden)
-            if self.result.get('metadata') and len(self.result['metadata']) > 3:
-                all_metadata = "\n".join([f"{k}: {v}" for k, v in self.result['metadata'].items()])
-                yield Static(all_metadata, classes="result-metadata-full hidden")
-            
-            # Actions
-            with Horizontal(classes="result-actions"):
-                yield Button("Expand", id=f"expand-{self.index}", classes="mini primary")
-                yield Button("Copy", id=f"copy-{self.index}", classes="mini")
-                yield Button("Export", id=f"export-{self.index}", classes="mini")
-                yield Button("Add to Notes", id=f"add-note-{self.index}", classes="mini")
+            # Main content area
+            with Vertical(classes="result-content-column"):
+                # Header with title and score
+                with Horizontal(classes="result-header-enhanced"):
+                    yield Static(
+                        f"[bold]{self.result['title']}[/bold]",
+                        classes="result-title-enhanced"
+                    )
+                    # Score visualization
+                    score = self.result.get('score', 0)
+                    yield Container(
+                        Static(f"{score:.1%}", classes="score-text"),
+                        classes=f"score-indicator score-{'high' if score > 0.7 else 'medium' if score > 0.4 else 'low'}"
+                    )
+                
+                # Content preview with better formatting
+                content = self.result.get('content', '')
+                content_preview = content[:250] + "..." if len(content) > 250 else content
+                yield Static(content_preview, classes="result-preview-enhanced")
+                
+                # Metadata pills
+                if self.result.get('metadata'):
+                    with Horizontal(classes="metadata-pills"):
+                        for key, value in list(self.result['metadata'].items())[:3]:
+                            if value and str(value).strip():
+                                yield Static(
+                                    f"{key}: {str(value)[:30]}{'...' if len(str(value)) > 30 else ''}",
+                                    classes="metadata-pill"
+                                )
+                        if len(self.result['metadata']) > 3:
+                            yield Static(
+                                f"+{len(self.result['metadata']) - 3} more",
+                                classes="metadata-pill more"
+                            )
+                
+                # Expanded content (initially hidden)
+                with Container(id=f"expanded-{self.index}", classes="result-expanded-content hidden"):
+                    # Full content
+                    yield Static("[bold]Full Content:[/bold]", classes="expanded-section-title")
+                    yield Static(content, classes="result-full-content")
+                    
+                    # Full metadata
+                    if self.result.get('metadata'):
+                        yield Static("[bold]All Metadata:[/bold]", classes="expanded-section-title")
+                        for key, value in self.result['metadata'].items():
+                            yield Static(f"• {key}: {value}", classes="metadata-full-item")
+                
+                # Action bar
+                with Horizontal(classes="result-actions-enhanced"):
+                    yield Button(
+                        "🔽 View" if not self.expanded else "🔼 Hide",
+                        id=f"expand-{self.index}",
+                        classes="result-button view-button"
+                    )
+                    yield Button("📋 Copy", id=f"copy-{self.index}", classes="result-button")
+                    yield Button("📝 Note", id=f"add-note-{self.index}", classes="result-button")
+                    yield Button("📤 Export", id=f"export-{self.index}", classes="result-button")
 
 class SavedSearchesPanel(Container):
-    """Panel for managing saved searches"""
+    """Enhanced panel for managing saved searches"""
     
     def __init__(self):
-        super().__init__(id="saved-searches-panel", classes="saved-searches-panel")
+        super().__init__(id="saved-searches-panel", classes="saved-searches-panel-enhanced")
         self.saved_searches: Dict[str, Dict[str, Any]] = self._load_saved_searches()
+        self.selected_search_name: Optional[str] = None
         
     def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static("[bold]Saved Searches[/bold]", classes="panel-title")
-            yield ListView(id="saved-searches-list", classes="saved-searches-list")
-            with Horizontal(classes="saved-search-actions"):
-                yield Button("Load", id="load-saved-search", classes="mini primary", disabled=True)
-                yield Button("Delete", id="delete-saved-search", classes="mini", disabled=True)
+        with Container(classes="saved-searches-wrapper"):
+            with Horizontal(classes="saved-searches-header"):
+                yield Static("💾 Saved Searches", classes="saved-searches-title")
+                yield Button("+", id="new-saved-search", classes="new-search-button", tooltip="Save current search")
+            
+            if self.saved_searches:
+                yield ListView(id="saved-searches-list", classes="saved-searches-list-enhanced")
+            else:
+                yield Static(
+                    "No saved searches yet.\nPerform a search and click 'Save Search' to store it.",
+                    classes="empty-saved-searches"
+                )
+            
+            with Horizontal(classes="saved-search-actions-enhanced"):
+                yield Button("📥 Load", id="load-saved-search", classes="saved-action-button", disabled=True)
+                yield Button("🗑️ Delete", id="delete-saved-search", classes="saved-action-button danger", disabled=True)
     
     def _load_saved_searches(self) -> Dict[str, Dict[str, Any]]:
         """Load saved searches from user data"""
@@ -241,124 +272,162 @@ class SearchRAGWindow(Container):
     def compose(self) -> ComposeResult:
         """Create the enhanced UI layout"""
         with VerticalScroll(classes="rag-search-container"):
-            yield Static("[bold]RAG Search[/bold]", classes="rag-title")
+            # Header Section
+            with Container(classes="search-header-section"):
+                yield Static("🔍 RAG Search & Discovery", classes="rag-title-enhanced")
+                yield Static("Search across your media, conversations, and notes with semantic understanding", classes="rag-subtitle")
             
-            # Search bar with history dropdown
-            with Container(classes="search-input-container"):
-                with Horizontal(classes="search-bar"):
-                    self.search_input = Input(
-                        placeholder="Enter your search query...",
-                        id="rag-search-input",
-                        classes="search-input-enhanced"
-                    )
-                    self.search_input.tooltip = "Press Ctrl+K to focus"
-                    yield self.search_input
-                    yield Button("Search", id="rag-search-btn", classes="primary search-button", variant="primary")
-                    yield LoadingIndicator(id="search-loading", classes="hidden")
-                
-                # Search history dropdown
-                yield SearchHistoryDropdown(self.search_history_db)
-            
-            # Saved searches panel
-            yield SavedSearchesPanel()
-            
-            # Quick settings (always visible)
-            with Horizontal(classes="quick-settings"):
-                yield Static("[bold]Quick Settings[/bold]", classes="section-title")
-                yield Select(
-                    options=[
-                        ("Plain RAG (BM25)", "plain"),
-                        ("Full RAG (Embeddings)" if self.embeddings_available else "Full RAG (Requires Dependencies)", "full"),
-                        ("Hybrid Search" if self.embeddings_available else "Hybrid (Requires Dependencies)", "hybrid")
-                    ],
-                    value="plain",
-                    id="search-mode-select",
-                    classes="quick-select"
-                )
-                with Horizontal(classes="source-checkboxes"):
-                    yield Checkbox("Media", value=True, id="source-media", classes="source-checkbox")
-                    yield Checkbox("Conversations", value=True, id="source-conversations", classes="source-checkbox")
-                    yield Checkbox("Notes", value=True, id="source-notes", classes="source-checkbox")
-            
-            # Advanced settings (collapsible with progressive disclosure)
-            with Collapsible(title="Advanced Settings", collapsed=True, id="advanced-settings-collapsible"):
-                with Vertical(classes="advanced-settings-content"):
-                    # Search parameters
-                    with Grid(classes="parameter-grid"):
-                        yield Label("Top K Results:")
-                        yield Input(value="10", id="top-k-input", type="integer", classes="param-input")
-                        yield Label("Max Context Length:")
-                        yield Input(value="10000", id="max-context-input", type="integer", classes="param-input")
-                    
-                    # Re-ranking options
-                    yield Checkbox(
-                        "Enable Re-ranking",
-                        value=self.flashrank_available,
-                        id="enable-rerank",
-                        disabled=not self.flashrank_available
-                    )
-                    
-                    # Chunking options (for full RAG mode)
-                    with Vertical(classes="chunking-options hidden", id="chunking-options"):
-                        yield Static("[bold]Chunking Options[/bold]", classes="subsection-title")
-                        with Grid(classes="parameter-grid"):
-                            yield Label("Chunk Size:")
-                            yield Input(value="400", id="chunk-size-input", type="integer", classes="param-input")
-                            yield Label("Chunk Overlap:")
-                            yield Input(value="100", id="chunk-overlap-input", type="integer", classes="param-input")
-            
-            # Status and progress area
-            with Container(id="status-container", classes="status-container"):
-                yield Static("Ready to search", id="search-status", classes="search-status")
-                yield ProgressBar(id="search-progress", classes="hidden", total=100)
-            
-            # Results area with enhanced tabs
-            with TabbedContent(id="results-tabs", classes="results-tabs"):
-                with TabPane("Results", id="results-tab"):
-                    # Results summary with pagination controls
-                    with Horizontal(classes="results-header-bar"):
-                        yield Static(
-                            "Enter a search query to begin",
-                            id="results-summary",
-                            classes="results-summary"
+            # Search Section with visual prominence
+            with Container(classes="search-section"):
+                with Container(classes="search-input-wrapper"):
+                    with Horizontal(classes="search-bar-enhanced"):
+                        self.search_input = Input(
+                            placeholder="🔎 Enter your search query...",
+                            id="rag-search-input",
+                            classes="search-input-enhanced"
                         )
-                        # Pagination controls
-                        with Horizontal(classes="pagination-controls hidden", id="pagination-controls"):
-                            yield Button("◀ Previous", id="prev-page-btn", classes="mini", disabled=True)
-                            yield Static("Page 1 of 1", id="page-info", classes="page-info")
-                            yield Button("Next ▶", id="next-page-btn", classes="mini", disabled=True)
+                        self.search_input.tooltip = "Press Ctrl+K to focus • Esc to clear"
+                        yield self.search_input
+                        yield Button("×", id="clear-search-btn", classes="clear-button hidden", variant="default")
+                        yield Button("Search", id="rag-search-btn", classes="primary search-button-enhanced", variant="primary")
+                    yield LoadingIndicator(id="search-loading", classes="search-loading-indicator hidden")
                     
-                    # Results container with virtual scrolling
-                    yield Container(id="results-container", classes="results-container")
-                
-                with TabPane("Context", id="context-tab"):
-                    yield Markdown(
-                        "No search performed yet",
-                        id="context-preview",
-                        classes="context-preview"
-                    )
-                
-                with TabPane("History", id="history-tab"):
-                    yield DataTable(id="search-history-table", classes="history-table")
-                
-                with TabPane("Analytics", id="analytics-tab"):
-                    yield Markdown(
-                        "# Search Analytics\n\nNo data available yet",
-                        id="analytics-content",
-                        classes="analytics-content"
-                    )
+                    # Search history dropdown
+                    yield SearchHistoryDropdown(self.search_history_db)
             
-            # Action buttons with better hierarchy
-            with Horizontal(classes="action-buttons-bar"):
-                # Primary actions
-                with Horizontal(classes="primary-actions"):
-                    yield Button("Save Search", id="save-search-btn", classes="secondary")
-                    yield Button("Export Results", id="export-results-btn", classes="secondary", disabled=True)
+            # Settings Section with better organization
+            with Container(classes="settings-section"):
+                # Quick Settings Row
+                with Container(classes="quick-settings-container"):
+                    yield Static("⚙️ Search Configuration", classes="settings-title")
+                    
+                    with Horizontal(classes="settings-grid"):
+                        # Search Mode Selection
+                        with Vertical(classes="setting-group"):
+                            yield Label("Search Mode:", classes="setting-label")
+                            yield Select(
+                                options=[
+                                    ("📊 Plain RAG (Fast)", "plain"),
+                                    ("🧠 Semantic" if self.embeddings_available else "🧠 Semantic (Unavailable)", "full"),
+                                    ("🔀 Hybrid" if self.embeddings_available else "🔀 Hybrid (Unavailable)", "hybrid")
+                                ],
+                                value="plain",
+                                id="search-mode-select",
+                                classes="mode-select"
+                            )
+                        
+                        # Source Selection
+                        with Vertical(classes="setting-group"):
+                            yield Label("Search Sources:", classes="setting-label")
+                            with Horizontal(classes="source-checkboxes-enhanced"):
+                                yield Checkbox("🎬 Media", value=True, id="source-media", classes="source-checkbox")
+                                yield Checkbox("💬 Chats", value=True, id="source-conversations", classes="source-checkbox")
+                                yield Checkbox("📝 Notes", value=True, id="source-notes", classes="source-checkbox")
                 
-                # Maintenance actions (de-emphasized)
-                with Horizontal(classes="maintenance-actions"):
-                    yield Button("Index Content", id="index-content-btn", classes="tertiary")
-                    yield Button("Clear Cache", id="clear-cache-btn", classes="tertiary")
+                # Saved searches panel - moved here for better flow
+                yield SavedSearchesPanel()
+            
+                # Advanced settings with better organization
+                with Collapsible(title="🔧 Advanced Settings", collapsed=True, id="advanced-settings-collapsible", classes="advanced-collapsible"):
+                    with Container(classes="advanced-settings-wrapper"):
+                        # Search parameters section
+                        with Container(classes="advanced-section"):
+                            yield Static("📊 Result Parameters", classes="advanced-section-title")
+                            with Grid(classes="parameter-grid-enhanced"):
+                                with Vertical(classes="param-group"):
+                                    yield Label("Results to Return:", classes="param-label")
+                                    yield Input(value="10", id="top-k-input", type="integer", classes="param-input", tooltip="Number of top results to display")
+                                with Vertical(classes="param-group"):
+                                    yield Label("Context Length:", classes="param-label")
+                                    yield Input(value="10000", id="max-context-input", type="integer", classes="param-input", tooltip="Maximum characters for context window")
+                        
+                        # Re-ranking section
+                        with Container(classes="advanced-section"):
+                            yield Static("🎯 Result Optimization", classes="advanced-section-title")
+                            yield Checkbox(
+                                "Enable Smart Re-ranking" if self.flashrank_available else "Enable Smart Re-ranking (Not Available)",
+                                value=self.flashrank_available,
+                                id="enable-rerank",
+                                disabled=not self.flashrank_available,
+                                classes="rerank-checkbox"
+                            )
+                        
+                        # Chunking options (for semantic mode)
+                        with Container(classes="advanced-section chunking-section hidden", id="chunking-options"):
+                            yield Static("📄 Document Chunking", classes="advanced-section-title")
+                            with Grid(classes="parameter-grid-enhanced"):
+                                with Vertical(classes="param-group"):
+                                    yield Label("Chunk Size:", classes="param-label")
+                                    yield Input(value="400", id="chunk-size-input", type="integer", classes="param-input", tooltip="Size of text chunks for processing")
+                                with Vertical(classes="param-group"):
+                                    yield Label("Overlap:", classes="param-label")
+                                    yield Input(value="100", id="chunk-overlap-input", type="integer", classes="param-input", tooltip="Overlap between chunks")
+            
+            # Status and progress area with better visibility
+            with Container(id="status-container", classes="status-container-enhanced"):
+                with Horizontal(classes="status-bar"):
+                    yield Static("🟢 Ready to search", id="search-status", classes="search-status-enhanced")
+                    yield Static("", id="search-stats", classes="search-stats")
+                yield ProgressBar(id="search-progress", classes="search-progress-bar hidden", total=100)
+            
+            # Results area with enhanced tabs and better visual design
+            with Container(classes="results-section"):
+                yield Static("📋 Search Results", classes="results-title")
+                
+                with TabbedContent(id="results-tabs", classes="results-tabs-enhanced"):
+                    with TabPane("🔍 Results", id="results-tab"):
+                        # Results header with summary and controls
+                        with Container(classes="results-header"):
+                            with Horizontal(classes="results-header-bar"):
+                                yield Static(
+                                    "💡 Enter a search query to discover relevant content",
+                                    id="results-summary",
+                                    classes="results-summary-enhanced"
+                                )
+                                # Pagination controls
+                                with Horizontal(classes="pagination-controls-enhanced hidden", id="pagination-controls"):
+                                    yield Button("◀", id="prev-page-btn", classes="page-button", disabled=True, tooltip="Previous page")
+                                    yield Static("Page 1 of 1", id="page-info", classes="page-info-enhanced")
+                                    yield Button("▶", id="next-page-btn", classes="page-button", disabled=True, tooltip="Next page")
+                        
+                        # Results container with improved styling
+                        yield VerticalScroll(id="results-container", classes="results-container-enhanced")
+                
+                    with TabPane("📄 Context", id="context-tab"):
+                        yield Markdown(
+                            "*No search performed yet*\n\nThe combined context from your search results will appear here.",
+                            id="context-preview",
+                            classes="context-preview-enhanced"
+                        )
+                    
+                    with TabPane("🕒 History", id="history-tab"):
+                        yield DataTable(id="search-history-table", classes="history-table-enhanced")
+                    
+                    with TabPane("📊 Analytics", id="analytics-tab"):
+                        yield Markdown(
+                            "# 📊 Search Analytics\n\n*No analytics data available yet*\n\nPerform searches to see insights about your search patterns and results.",
+                            id="analytics-content",
+                            classes="analytics-content-enhanced"
+                        )
+            
+            # Action buttons with better organization
+            with Container(classes="actions-section"):
+                with Horizontal(classes="action-buttons-bar-enhanced"):
+                    # Primary actions
+                    with Horizontal(classes="primary-actions"):
+                        yield Button("💾 Save Search", id="save-search-btn", classes="action-button save-button")
+                        yield Button("📤 Export", id="export-results-btn", classes="action-button export-button", disabled=True)
+                    
+                    # Spacer
+                    yield Static("", classes="action-spacer")
+                    
+                    # Maintenance dropdown
+                    with Horizontal(classes="maintenance-actions"):
+                        yield Button("⚙️ Maintenance ▼", id="maintenance-menu-btn", classes="action-button maintenance-button")
+                        # Hidden menu items
+                        with Container(id="maintenance-menu", classes="maintenance-menu hidden"):
+                            yield Button("🔄 Index Content", id="index-content-btn", classes="menu-item")
+                            yield Button("🗑️ Clear Cache", id="clear-cache-btn", classes="menu-item")
     
     async def on_mount(self) -> None:
         """Initialize the window when mounted"""

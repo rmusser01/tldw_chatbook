@@ -432,7 +432,11 @@ class EvaluationOrchestrator:
         return categories
     
     def close(self):
-        """Close database connections."""
+        """Close database connections and cancel active runs."""
+        # Cancel all active runs
+        for run_id in list(self._active_tasks.keys()):
+            self.cancel_evaluation(run_id)
+        
         self.db.close()
 
 # Convenience functions for common operations

@@ -23,6 +23,7 @@ from textual.widgets import (
     DataTable, ProgressBar, Tabs, TabPane, Tree
 )
 from textual.reactive import reactive
+from textual.message import Message
 from loguru import logger
 
 class ProgressTracker(Container):
@@ -313,20 +314,48 @@ class ResultsTable(Container):
     @on(Button.Pressed, "#refresh-results")
     def handle_refresh(self):
         """Handle refresh button press."""
-        # This would reload results from database
-        self.app.notify("Refresh functionality not yet implemented", severity="information")
+        # Emit a custom event to request refresh
+        self.post_message(self.RefreshRequested())
+    
+    class RefreshRequested(Message):
+        """Message emitted when refresh is requested."""
+        pass
     
     @on(Button.Pressed, "#export-results")
-    def handle_export(self):
+    async def handle_export(self):
         """Handle export button press."""
-        # This would open export dialog
-        self.app.notify("Export functionality not yet implemented", severity="information")
+        from .eval_additional_dialogs import ExportDialog
+        
+        def on_export_config(config):
+            if config:
+                self.post_message(self.ExportRequested(config))
+        
+        dialog = ExportDialog(callback=on_export_config, data_type="results")
+        await self.app.push_screen(dialog)
+    
+    class ExportRequested(Message):
+        """Message emitted when export is requested."""
+        def __init__(self, config: Dict[str, Any]):
+            super().__init__()
+            self.config = config
     
     @on(Button.Pressed, "#filter-results")
-    def handle_filter(self):
+    async def handle_filter(self):
         """Handle filter button press."""
-        # This would open filter dialog
-        self.app.notify("Filter functionality not yet implemented", severity="information")
+        from .eval_additional_dialogs import FilterDialog
+        
+        def on_filter_config(config):
+            if config:
+                self.post_message(self.FilterRequested(config))
+        
+        dialog = FilterDialog(callback=on_filter_config)
+        await self.app.push_screen(dialog)
+    
+    class FilterRequested(Message):
+        """Message emitted when filter is requested."""
+        def __init__(self, config: Dict[str, Any]):
+            super().__init__()
+            self.config = config
 
 class RunSummaryWidget(Container):
     """Widget for displaying run summary information."""
@@ -466,19 +495,60 @@ class ComparisonView(Container):
         return "\n".join(lines)
     
     @on(Button.Pressed, "#add-run-btn")
-    def handle_add_run(self):
+    async def handle_add_run(self):
         """Handle add run button press."""
-        # This would open a run selection dialog
-        self.app.notify("Add run functionality not yet implemented", severity="information")
+        from .eval_additional_dialogs import RunSelectionDialog
+        
+        # Get available runs (placeholder - would come from database)
+        available_runs = []  # This would be populated from database
+        
+        def on_runs_selected(selected_run_ids):
+            if selected_run_ids:
+                for run_id in selected_run_ids:
+                    # Load run data and add to comparison
+                    # This would fetch from database
+                    run_data = {'id': run_id, 'name': f'Run {run_id}', 'metrics': {}}
+                    self.add_run(run_data)
+        
+        dialog = RunSelectionDialog(
+            callback=on_runs_selected,
+            available_runs=available_runs
+        )
+        await self.app.push_screen(dialog)
     
     @on(Button.Pressed, "#remove-run-btn")
     def handle_remove_run(self):
         """Handle remove run button press."""
-        # This would open a run removal dialog
-        self.app.notify("Remove run functionality not yet implemented", severity="information")
+        if not self.runs:
+            self.app.notify("No runs to remove", severity="information")
+            return
+        
+        # For simplicity, remove the last added run
+        # In a full implementation, this would show a selection dialog
+        if self.runs:
+            removed_run = self.runs.pop()
+            self._update_comparison_display()
+            self.app.notify(f"Removed run: {removed_run.get('name', 'Unknown')}", severity="information")
     
     @on(Button.Pressed, "#export-comparison-btn")
-    def handle_export_comparison(self):
+    async def handle_export_comparison(self):
         """Handle export comparison button press."""
-        # This would export the comparison data
-        self.app.notify("Export comparison functionality not yet implemented", severity="information")
+        if len(self.runs) < 2:
+            self.app.notify("Add at least 2 runs to export comparison", severity="error")
+            return
+        
+        from .eval_additional_dialogs import ExportDialog
+        
+        def on_export_config(config):
+            if config:
+                self.post_message(self.ComparisonExportRequested(config, self.runs))
+        
+        dialog = ExportDialog(callback=on_export_config, data_type="comparison")
+        await self.app.push_screen(dialog)
+    
+    class ComparisonExportRequested(Message):
+        """Message emitted when comparison export is requested."""
+        def __init__(self, config: Dict[str, Any], runs: List[Dict[str, Any]]):
+            super().__init__()
+            self.config = config
+            self.runs = runs

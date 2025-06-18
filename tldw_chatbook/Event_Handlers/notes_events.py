@@ -10,7 +10,7 @@ from typing import Any, Optional, Dict, Tuple, TYPE_CHECKING
 #
 # 3rd-Party Imports
 from loguru import logger
-from textual.widgets import Input, ListView, TextArea, Label, Button, ListItem
+from textual.widgets import Input, ListView, TextArea, Label, Button, ListItem, Select, Static
 from textual.css.query import QueryError  # For try-except
 import yaml
 #
@@ -18,7 +18,7 @@ import yaml
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
 from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
-from ..Third_Party.textual_fspicker import FileOpen, Filters
+from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -48,7 +48,7 @@ async def handle_notes_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed)
 ########################################################################################################################
 
 async def save_current_note_handler(app: 'TldwCli') -> bool:
-    """Saves the currently selected note's title and content to the database."""
+    """Saves the currently selected note's title, content, and keywords to the database."""
     logger = getattr(app, 'loguru_logger', logging) # Use app's logger or global
     if not app.notes_service:
         logger.error("Notes service not available. Cannot save note.")
@@ -61,6 +61,7 @@ async def save_current_note_handler(app: 'TldwCli') -> bool:
 
     try:
         editor = app.query_one("#notes-editor-area", TextArea)
+        keywords_area = app.query_one("#notes-keywords-area", TextArea)
 
         try:
             # Query for the NotesSidebarRight widget instance first
@@ -78,14 +79,52 @@ async def save_current_note_handler(app: 'TldwCli') -> bool:
         logger.info(
             f"Attempting to save note ID: {app.current_selected_note_id}, Version: {app.current_selected_note_version}")
 
+        # Save note content and title
         success = app.notes_service.update_note(
             user_id=app.notes_user_id,
             note_id=app.current_selected_note_id,
             update_data={'title': current_title_from_ui, 'content': current_content_from_ui},
             expected_version=app.current_selected_note_version
         )
+        
         if success:
             logger.info(f"Note {app.current_selected_note_id} saved successfully via notes_service.")
+            
+            # Now save keywords
+            input_keyword_texts = {kw.strip().lower() for kw in keywords_area.text.split(',') if kw.strip()}
+            logger.info(f"Saving keywords for note {app.current_selected_note_id}: {input_keyword_texts}")
+            
+            # Get existing keywords
+            existing_linked_keywords_data = app.notes_service.get_keywords_for_note(
+                user_id=app.notes_user_id, note_id=app.current_selected_note_id
+            )
+            existing_linked_keyword_map = {kw['keyword'].lower(): kw['id'] for kw in existing_linked_keywords_data}
+            
+            # Add/Link new keywords
+            for kw_text_to_add in input_keyword_texts:
+                if kw_text_to_add not in existing_linked_keyword_map:
+                    keyword_detail = app.notes_service.get_keyword_by_text(app.notes_user_id, kw_text_to_add)
+                    kw_id_to_link = None
+                    if not keyword_detail:
+                        new_kw_id = app.notes_service.add_keyword(app.notes_user_id, kw_text_to_add)
+                        if new_kw_id is not None: 
+                            kw_id_to_link = new_kw_id
+                    else:
+                        kw_id_to_link = keyword_detail['id']
+                    
+                    if kw_id_to_link:
+                        app.notes_service.link_note_to_keyword(
+                            user_id=app.notes_user_id, note_id=app.current_selected_note_id, keyword_id=kw_id_to_link
+                        )
+            
+            # Unlink removed keywords
+            for existing_kw_text, existing_kw_id in existing_linked_keyword_map.items():
+                if existing_kw_text not in input_keyword_texts:
+                    app.notes_service.unlink_note_from_keyword(
+                        user_id=app.notes_user_id, note_id=app.current_selected_note_id, keyword_id=existing_kw_id
+                    )
+            
+            # Get updated note details
             updated_note_details = app.notes_service.get_note_by_id(
                 user_id=app.notes_user_id,
                 note_id=app.current_selected_note_id
@@ -95,12 +134,20 @@ async def save_current_note_handler(app: 'TldwCli') -> bool:
                 app.current_selected_note_title = updated_note_details.get('title')
                 app.current_selected_note_content = updated_note_details.get('content')
                 title_input.value = app.current_selected_note_title or "" # Update UI from DB confirmed state
+                
+                # Refresh keywords display with canonical casing
+                refreshed_keywords_data = app.notes_service.get_keywords_for_note(
+                    user_id=app.notes_user_id, note_id=app.current_selected_note_id
+                )
+                keywords_area.text = ", ".join([kw['keyword'] for kw in refreshed_keywords_data]) if refreshed_keywords_data else ""
             else:
                 logger.warning(f"Note {app.current_selected_note_id} not found after presumably successful save.")
                 app.notify("Note saved, but failed to refresh details.", severity="warning")
 
             await load_and_display_notes_handler(app)  # Refresh list in left sidebar
-            app.notify("Note saved!", severity="information")
+            app.notify("Note and keywords saved!", severity="information")
+            # Reset unsaved changes flag
+            app.notes_unsaved_changes = False
             return True
         else:
             logger.warning(
@@ -149,6 +196,23 @@ async def load_and_display_notes_handler(app: 'TldwCli') -> None:
 
     try:
         notes_list_data = app.notes_service.list_notes(user_id=app.notes_user_id, limit=200)
+        
+        # Sort notes based on current settings
+        if hasattr(app, 'notes_sort_by') and hasattr(app, 'notes_sort_ascending'):
+            if app.notes_sort_by == "title":
+                notes_list_data.sort(key=lambda n: (n.get('title', '') or '').lower(), reverse=not app.notes_sort_ascending)
+            elif app.notes_sort_by == "date_modified":
+                notes_list_data.sort(key=lambda n: n.get('updated_at', ''), reverse=not app.notes_sort_ascending)
+            else:  # date_created (default)
+                notes_list_data.sort(key=lambda n: n.get('created_at', ''), reverse=not app.notes_sort_ascending)
+        
+        # Update note count in sidebar title
+        try:
+            sidebar_title = sidebar_left_instance.query_one("#notes-sidebar-title-main", Static)
+            sidebar_title.update(f"My Notes ({len(notes_list_data)})")
+        except QueryError:
+            pass
+        
         # Call the method on the sidebar instance, which handles its internal ListView
         await sidebar_left_instance.populate_notes_list(notes_list_data)
         logger.info(f"Loaded {len(notes_list_data)} notes into the sidebar.")
@@ -377,14 +441,22 @@ async def handle_notes_edit_selected_button_pressed(app: 'TldwCli', event: Butto
 
 
 async def handle_notes_search_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    """Focuses the notes search input field."""
-    logging.info("Notes 'Search Notes' button pressed.")
+    """Performs a combined search with both content and keyword filters."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Notes 'Search / Filter' button pressed.")
+    
     try:
-        app.query_one("#notes-search-input", Input).focus()
-        logging.info("Focused notes search input.")
+        search_input = app.query_one("#notes-search-input", Input)
+        keyword_filter_input = app.query_one("#notes-keyword-filter-input", Input)
+        
+        search_term = search_input.value.strip()
+        keyword_filter = keyword_filter_input.value.strip()
+        
+        await _perform_combined_search(app, search_term, keyword_filter)
+        
     except QueryError as e_query:
-        logging.error(f"UI component not found for 'notes-search-button': {e_query}", exc_info=True)
-        app.notify("UI error: Cannot focus search.", severity="error")
+        logger.error(f"UI component not found for 'notes-search-button': {e_query}", exc_info=True)
+        app.notify("UI error: Cannot perform search.", severity="error")
 
 
 async def handle_notes_load_selected_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -565,6 +637,81 @@ async def handle_notes_save_keywords_button_pressed(app: 'TldwCli', event: Butto
 # --- Input/List View Changed Handlers for Notes Tab ---
 
 
+async def _perform_combined_search(app: 'TldwCli', search_term: str, keyword_filter: str) -> None:
+    """Performs a combined search with content and keyword filtering."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.debug(f"Combined search - Content: '{search_term}', Keywords: '{keyword_filter}'")
+    
+    if not app.notes_service:
+        logger.error("Notes service not available for search.")
+        app.notify("Notes service unavailable.", severity="error")
+        return
+        
+    try:
+        sidebar_left: NotesSidebarLeft = app.query_one("#notes-sidebar-left", NotesSidebarLeft)
+        
+        # If both are empty, show all notes
+        if not search_term and not keyword_filter:
+            await load_and_display_notes_handler(app)
+            return
+        
+        # Get all notes first (we'll filter in memory for now)
+        all_notes = []
+        
+        # If there's a search term, search by content
+        if search_term:
+            all_notes = app.notes_service.search_notes(
+                user_id=app.notes_user_id, search_term=search_term, limit=500
+            )
+        else:
+            # If no search term, get all notes
+            all_notes = app.notes_service.list_notes(
+                user_id=app.notes_user_id, limit=500
+            )
+        
+        # Filter by keywords if specified
+        if keyword_filter:
+            # Parse keyword filter (comma-separated)
+            filter_keywords = {kw.strip().lower() for kw in keyword_filter.split(',') if kw.strip()}
+            
+            filtered_notes = []
+            for note in all_notes:
+                # Get keywords for this note
+                note_keywords_data = app.notes_service.get_keywords_for_note(
+                    user_id=app.notes_user_id, note_id=note['id']
+                )
+                note_keywords = {kw['keyword'].lower() for kw in note_keywords_data}
+                
+                # Check if any filter keyword matches
+                if any(fk in note_keywords for fk in filter_keywords):
+                    filtered_notes.append(note)
+            
+            all_notes = filtered_notes
+        
+        # Update the UI with results
+        await sidebar_left.populate_notes_list(all_notes)
+        
+        result_count = len(all_notes)
+        if search_term and keyword_filter:
+            logger.info(f"Combined search found {result_count} notes")
+            app.notify(f"Found {result_count} notes matching content and keywords", severity="information")
+        elif search_term:
+            logger.info(f"Content search found {result_count} notes for '{search_term}'")
+        elif keyword_filter:
+            logger.info(f"Keyword filter found {result_count} notes")
+            app.notify(f"Found {result_count} notes with specified keywords", severity="information")
+            
+    except CharactersRAGDBError as e_db:
+        logger.error(f"Database error during combined search: {e_db}", exc_info=True)
+        app.notify("Database error during search.", severity="error")
+    except QueryError as e_query:
+        logger.error(f"UI component not found during combined search: {e_query}", exc_info=True)
+        app.notify("UI error during search.", severity="error")
+    except Exception as e_unexp:
+        logger.error(f"Unexpected error during combined search: {e_unexp}", exc_info=True)
+        app.notify("Unexpected error during search.", severity="error")
+
+
 async def _actual_notes_search(app: 'TldwCli', search_term: str) -> None:
     """Performs the actual notes search and updates the UI."""
     logger = getattr(app, 'loguru_logger', logging)
@@ -622,6 +769,24 @@ async def handle_notes_search_input_changed(app: 'TldwCli', event_value: str) ->
     logger.debug(f"Notes search timer started for term '{search_term}'.")
 
 
+async def handle_notes_keyword_filter_input_changed(app: 'TldwCli', event_value: str) -> None:
+    """Handles input changes in the keyword filter field."""
+    logger = getattr(app, 'loguru_logger', logging)
+    keyword_filter = event_value.strip()
+    logger.debug(f"Notes keyword filter input changed to: '{keyword_filter}'")
+    
+    # Get current search term
+    try:
+        search_input = app.query_one("#notes-search-input", Input)
+        search_term = search_input.value.strip()
+    except QueryError:
+        search_term = ""
+    
+    # Perform combined search immediately for keyword filter changes
+    # (no debouncing for keyword filter to provide immediate feedback)
+    await _perform_combined_search(app, search_term, keyword_filter)
+
+
 async def handle_notes_list_view_selected(app: 'TldwCli', list_view_id: str, item: Any) -> None:
     """Handles selecting a note from the list in the notes left sidebar."""
     if not app.notes_service:
@@ -660,6 +825,9 @@ async def handle_notes_list_view_selected(app: 'TldwCli', list_view_id: str, ite
                 logger.info(
                     f"Loaded note '{app.current_selected_note_title}' (v{app.current_selected_note_version}) into editor.")
                 app.notify(f"Note '{app.current_selected_note_title}' loaded.", severity="information", timeout=2)
+                
+                # Reset unsaved changes flag when loading a note
+                app.notes_unsaved_changes = False
 
             else:
                 logger.warning(f"Could not retrieve details for note ID: {note_id_selected}. It may have been deleted.")
@@ -686,7 +854,229 @@ async def handle_notes_list_view_selected(app: 'TldwCli', list_view_id: str, ite
     else:
         logger.debug("Notes ListView selection was empty or item lacked note_id/note_version.")
 
+
+# --- Export Handlers ---
+
+async def _note_export_callback(app: 'TldwCli', selected_path: Optional[Path], export_format: str) -> None:
+    """Callback for exporting a note to a file."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    
+    if not selected_path:
+        logger_instance.info("Note export cancelled.")
+        app.notify("Note export cancelled.", severity="information", timeout=2)
+        return
+        
+    if not app.current_selected_note_id:
+        app.notify("No note selected to export.", severity="warning")
+        logger_instance.warning("Export attempted with no note selected.")
+        return
+    
+    try:
+        # Ensure we have the latest content from the editor
+        editor = app.query_one("#notes-editor-area", TextArea)
+        title_input = app.query_one("#notes-title-input", Input)
+        
+        current_title = title_input.value.strip() or "Untitled Note"
+        current_content = editor.text
+        
+        # Get keywords for the note
+        keywords_text = ""
+        if app.notes_service:
+            keywords_data = app.notes_service.get_keywords_for_note(
+                user_id=app.notes_user_id, 
+                note_id=app.current_selected_note_id
+            )
+            if keywords_data:
+                keywords_text = ", ".join([kw['keyword'] for kw in keywords_data])
+        
+        # Format content based on export type
+        if export_format == "markdown":
+            # Add metadata as YAML frontmatter for markdown
+            export_content = f"""---
+title: {current_title}
+date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+keywords: {keywords_text}
+note_id: {app.current_selected_note_id}
+---
+
+# {current_title}
+
+{current_content}"""
+        else:  # Plain text
+            export_content = f"""Title: {current_title}
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Keywords: {keywords_text}
+Note ID: {app.current_selected_note_id}
+
+{'=' * 50}
+
+{current_content}"""
+        
+        # Write to file
+        with open(selected_path, 'w', encoding='utf-8') as f:
+            f.write(export_content)
+        
+        app.notify(f"Note exported successfully to {selected_path.name}", severity="information")
+        logger_instance.info(f"Note '{current_title}' exported to {selected_path}")
+        
+    except Exception as e:
+        app.notify(f"Error exporting note: {type(e).__name__}", severity="error")
+        logger_instance.error(f"Error exporting note to '{selected_path}': {e}", exc_info=True)
+
+
+async def handle_notes_export_markdown_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the 'Export as Markdown' button press."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    logger_instance.info("Notes 'Export as Markdown' button pressed.")
+    
+    if not app.current_selected_note_id:
+        app.notify("No note selected to export.", severity="warning")
+        return
+    
+    # Get current title for default filename
+    try:
+        title_input = app.query_one("#notes-title-input", Input)
+        current_title = title_input.value.strip() or "Untitled Note"
+        # Sanitize title for filename
+        safe_title = "".join(c for c in current_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        default_filename = f"{safe_title}.md"
+    except QueryError:
+        default_filename = "note.md"
+    
+    await app.push_screen(
+        FileSave(
+            location=str(Path.home()),
+            filename=default_filename,
+            title="Export Note as Markdown"
+        ),
+        callback=lambda path: _note_export_callback(app, path, "markdown")
+    )
+
+
+async def handle_notes_export_text_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the 'Export as Text' button press."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    logger_instance.info("Notes 'Export as Text' button pressed.")
+    
+    if not app.current_selected_note_id:
+        app.notify("No note selected to export.", severity="warning")
+        return
+    
+    # Get current title for default filename
+    try:
+        title_input = app.query_one("#notes-title-input", Input)
+        current_title = title_input.value.strip() or "Untitled Note"
+        # Sanitize title for filename
+        safe_title = "".join(c for c in current_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        default_filename = f"{safe_title}.txt"
+    except QueryError:
+        default_filename = "note.txt"
+    
+    await app.push_screen(
+        FileSave(
+            location=str(Path.home()),
+            filename=default_filename,
+            title="Export Note as Text"
+        ),
+        callback=lambda path: _note_export_callback(app, path, "text")
+    )
+
+
+# Button Handler Map will be defined at the end of the file
+
+#
+# --- New UX Enhancement Handlers ---
+
+async def handle_notes_editor_changed(app: 'TldwCli', event) -> None:
+    """Handles text changes in the notes editor to track unsaved changes and word count."""
+    if hasattr(app, 'notes_unsaved_changes') and app.current_selected_note_id:
+        # Mark as having unsaved changes if content differs from original
+        current_content = event.text_area.text
+        if current_content != app.current_selected_note_content:
+            app.notes_unsaved_changes = True
+        else:
+            app.notes_unsaved_changes = False
+    
+    # Update word count
+    try:
+        word_count_label = app.query_one("#notes-word-count", Label)
+        text = event.text_area.text
+        word_count = len(text.split()) if text else 0
+        word_count_label.update(f"Words: {word_count}")
+    except QueryError:
+        pass
+
+
+async def handle_notes_title_changed(app: 'TldwCli', event) -> None:
+    """Handles title input changes to track unsaved changes."""
+    if hasattr(app, 'notes_unsaved_changes') and app.current_selected_note_id:
+        current_title = event.input.value
+        if current_title != app.current_selected_note_title:
+            app.notes_unsaved_changes = True
+        else:
+            app.notes_unsaved_changes = False
+
+
+async def handle_notes_preview_toggle(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Toggles between edit and preview mode for markdown notes."""
+    logger = getattr(app, 'loguru_logger', logging)
+    
+    try:
+        editor = app.query_one("#notes-editor-area", TextArea)
+        preview_button = app.query_one("#notes-preview-toggle", Button)
+        
+        if app.notes_preview_mode:
+            # Switch back to edit mode
+            app.notes_preview_mode = False
+            editor.read_only = False
+            preview_button.label = "Preview"
+            logger.debug("Switched to edit mode")
+        else:
+            # Switch to preview mode
+            app.notes_preview_mode = True
+            editor.read_only = True
+            preview_button.label = "Edit"
+            logger.debug("Switched to preview mode")
+            
+            # TODO: In the future, render markdown to rich text
+            # For now, just make it read-only
+            
+    except QueryError as e:
+        logger.error(f"UI component not found for preview toggle: {e}")
+
+
+async def handle_notes_sort_changed(app: 'TldwCli', event) -> None:
+    """Handles changes to the sort dropdown."""
+    logger = getattr(app, 'loguru_logger', logging)
+    
+    if hasattr(event, 'select'):
+        app.notes_sort_by = event.select.value
+        logger.debug(f"Sort by changed to: {app.notes_sort_by}")
+        await load_and_display_notes_handler(app)
+
+
+async def handle_notes_sort_order_toggle(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Toggles between ascending and descending sort order."""
+    logger = getattr(app, 'loguru_logger', logging)
+    
+    app.notes_sort_ascending = not app.notes_sort_ascending
+    
+    # Update button label
+    try:
+        sort_button = app.query_one("#notes-sort-order-button", Button)
+        if app.notes_sort_ascending:
+            sort_button.label = "↑ Oldest First"
+        else:
+            sort_button.label = "↓ Newest First"
+    except QueryError:
+        pass
+    
+    logger.debug(f"Sort order toggled to: {'ascending' if app.notes_sort_ascending else 'descending'}")
+    await load_and_display_notes_handler(app)
+
+
 # --- Button Handler Map ---
+# This must be defined after all handler functions
 NOTES_BUTTON_HANDLERS = {
     "toggle-notes-sidebar-left": handle_notes_tab_sidebar_toggle,
     "toggle-notes-sidebar-right": handle_notes_tab_sidebar_toggle,
@@ -696,11 +1086,13 @@ NOTES_BUTTON_HANDLERS = {
     "notes-search-button": handle_notes_search_button_pressed,
     "notes-load-selected-button": handle_notes_load_selected_button_pressed,
     "notes-save-current-button": handle_notes_save_current_button_pressed,
-    "notes-main-save-button": handle_notes_main_save_button_pressed,
+    "notes-save-button": handle_notes_main_save_button_pressed,  # Main save button in notes editor area
     "notes-delete-button": handle_notes_delete_button_pressed,
-    "notes-save-keywords-button": handle_notes_save_keywords_button_pressed,
+    "notes-export-markdown-button": handle_notes_export_markdown_button_pressed,
+    "notes-export-text-button": handle_notes_export_text_button_pressed,
+    "notes-preview-toggle": handle_notes_preview_toggle,
+    "notes-sort-order-button": handle_notes_sort_order_toggle,
 }
 
-#
 # End of notes_events.py
 ########################################################################################################################

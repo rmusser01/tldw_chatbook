@@ -1,6 +1,6 @@
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Static, Input, ListView, Button, ListItem, Label, Collapsible
+from textual.widgets import Static, Input, ListView, Button, ListItem, Label, Collapsible, Select
 
 class NotesSidebarLeft(VerticalScroll):
     """A sidebar for managing notes with collapsible action sections."""
@@ -16,6 +16,7 @@ class NotesSidebarLeft(VerticalScroll):
         border-right: thick $background-darken-1;
         overflow-y: auto;
         overflow-x: hidden;
+        layout: vertical;
     }
     NotesSidebarLeft > .sidebar-title {
         text-style: bold underline;
@@ -34,9 +35,15 @@ class NotesSidebarLeft(VerticalScroll):
         width: 100%;
         margin-bottom: 1;
     }
+    NotesSidebarLeft > Select {
+        width: 100%;
+        margin-bottom: 1;
+    }
     NotesSidebarLeft > ListView {
         width: 100%;
         height: 1fr;
+        min-height: 10;
+        max-height: 30;
         border: round $surface;
         margin-bottom: 1;
     }
@@ -48,7 +55,7 @@ class NotesSidebarLeft(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the notes sidebar."""
-        yield Static("My Notes", classes="sidebar-title", id="notes-sidebar-title-main")
+        yield Static("My Notes (0)", classes="sidebar-title", id="notes-sidebar-title-main")
         yield Button("Create New Note", id="notes-create-new-button", variant="success")
         yield Button("Import Note", id="notes-import-button", variant="default")
 
@@ -56,17 +63,23 @@ class NotesSidebarLeft(VerticalScroll):
         yield Input(placeholder="Search notes content...", id="notes-search-input")
         yield Input(placeholder="Keywords (e.g., projectA, urgent)", id="notes-keyword-filter-input")
         yield Button("Search / Filter", id="notes-search-button", variant="default") # Combined button
+        
+        yield Static("Sort by:", classes="sidebar-label")
+        yield Select(
+            options=[("date_created", "Date Created"), ("date_modified", "Date Modified"), ("title", "Title")],
+            id="notes-sort-select"
+        )
+        yield Button("↓ Newest First", id="notes-sort-order-button", variant="default")
 
         yield ListView(id="notes-list-view") # Ensure ListView is created
 
-        with Collapsible(title="Selected Note Actions", collapsed=False): # Start expanded
+        with Collapsible(title="Selected Note Actions", collapsed=True): # Start collapsed to save space
             yield Button("Load Selected Note", id="notes-load-selected-button", variant="default")
             yield Button("Edit Selected Note", id="notes-edit-selected-button", variant="primary")
             # "Save Current Note" (acting on the editor) is better in main controls or right sidebar.
             # If it's meant to be a quick save from here, ensure its action is clear.
 
-        with Collapsible(title="Advanced Actions", collapsed=True):
-            yield Button("Placeholder button")
+        # Removed placeholder button - Advanced Actions section can be added later when needed
 
     async def populate_notes_list(self, notes_data: list[dict]) -> None:
         """Clears and populates the notes list."""

@@ -605,3 +605,76 @@ async def initialize_evals_system(app: 'TldwCli') -> None:
     except Exception as e:
         logger.error(f"Error initializing evaluation system: {e}")
         app.notify(f"Failed to initialize evaluation system: {str(e)}", severity="error")
+
+# === HELPER FUNCTIONS FOR UX ENHANCEMENTS ===
+
+def get_recent_evaluations(app: 'TldwCli', limit: int = 10) -> List[Dict[str, Any]]:
+    """Get recent evaluation runs for dashboard display."""
+    try:
+        orchestrator = get_orchestrator()
+        runs = orchestrator.list_runs(limit=limit)
+        
+        # Enhance with metrics summary
+        enhanced_runs = []
+        for run in runs:
+            try:
+                summary = orchestrator.get_run_summary(run['id'])
+                run['metrics'] = summary.get('error_statistics', {})
+                enhanced_runs.append(run)
+            except Exception as e:
+                logger.warning(f"Could not get summary for run {run['id']}: {e}")
+                enhanced_runs.append(run)
+        
+        return enhanced_runs
+        
+    except Exception as e:
+        logger.error(f"Error getting recent evaluations: {e}")
+        return []
+
+def get_available_models(app: 'TldwCli', limit: int = 50) -> List[Dict[str, Any]]:
+    """Get available model configurations."""
+    try:
+        orchestrator = get_orchestrator()
+        return orchestrator.list_models(limit=limit)
+    except Exception as e:
+        logger.error(f"Error getting available models: {e}")
+        return []
+
+def get_available_tasks(app: 'TldwCli', limit: int = 50) -> List[Dict[str, Any]]:
+    """Get available task configurations."""
+    try:
+        orchestrator = get_orchestrator()
+        return orchestrator.list_tasks(limit=limit)
+    except Exception as e:
+        logger.error(f"Error getting available tasks: {e}")
+        return []
+
+def get_available_datasets(app: 'TldwCli', limit: int = 50) -> List[Dict[str, Any]]:
+    """Get available datasets."""
+    try:
+        orchestrator = get_orchestrator()
+        # This would need to be implemented in the orchestrator
+        # For now, return empty list
+        return []
+    except Exception as e:
+        logger.error(f"Error getting available datasets: {e}")
+        return []
+
+async def handle_cancel_evaluation(app: 'TldwCli', run_id: Optional[str]) -> None:
+    """Handle cancelling an active evaluation."""
+    if not run_id:
+        app.notify("No active evaluation to cancel", severity="warning")
+        return
+    
+    try:
+        orchestrator = get_orchestrator()
+        success = orchestrator.cancel_evaluation(run_id)
+        
+        if success:
+            app.notify(f"Evaluation {run_id} cancelled", severity="information")
+        else:
+            app.notify(f"Could not cancel evaluation {run_id}", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error cancelling evaluation: {e}")
+        app.notify(f"Error cancelling evaluation: {str(e)}", severity="error")

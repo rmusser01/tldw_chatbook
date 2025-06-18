@@ -229,6 +229,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     current_selected_note_version: reactive[Optional[int]] = reactive(None)
     current_selected_note_title: reactive[Optional[str]] = reactive(None)
     current_selected_note_content: reactive[Optional[str]] = reactive("")
+    
+    # Notes tab UI state
+    notes_unsaved_changes: reactive[bool] = reactive(False)
+    notes_sort_by: reactive[str] = reactive("date_created")  # date_created, date_modified, title
+    notes_sort_ascending: reactive[bool] = reactive(False)  # False = newest first
+    notes_preview_mode: reactive[bool] = reactive(False)  # False = edit mode, True = preview mode
 
     # --- Reactives for chat sidebar prompt display ---
     chat_sidebar_selected_prompt_id: reactive[Optional[int]] = reactive(None)
@@ -1613,6 +1619,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Optional: adjust layout of notes-main-content if needed
         except QueryError:
             logging.error("Notes right sidebar widget (#notes-sidebar-right) not found.")
+    
+    def watch_notes_unsaved_changes(self, has_unsaved: bool) -> None:
+        """Update the unsaved changes indicator."""
+        if not self._ui_ready:
+            return
+        try:
+            indicator = self.query_one("#notes-unsaved-indicator", Label)
+            if has_unsaved:
+                indicator.update("● Unsaved")
+                indicator.add_class("has-unsaved")
+            else:
+                indicator.update("")
+                indicator.remove_class("has-unsaved")
+        except QueryError:
+            pass  # Indicator might not exist yet
 
     def watch_conv_char_sidebar_left_collapsed(self, collapsed: bool) -> None:
         """Hide or show the Conversations, Characters & Prompts left sidebar pane."""
@@ -2177,6 +2198,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "chat-character-first-message-edit"
             ]:
                 await chat_handlers.handle_chat_character_attribute_changed(self, event)
+        elif current_active_tab == TAB_NOTES and control_id == "notes-editor-area":
+            # Handle notes editor changes
+            await notes_handlers.handle_notes_editor_changed(self, event)
 
     def _update_model_download_log(self, message: str) -> None:
         """Helper to write messages to the model download log widget."""
@@ -2205,6 +2229,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # --- Notes Search ---
         if input_id == "notes-search-input" and current_active_tab == TAB_NOTES: # Changed from elif to if
             await notes_handlers.handle_notes_search_input_changed(self, event.value)
+        elif input_id == "notes-keyword-filter-input" and current_active_tab == TAB_NOTES:
+            await notes_handlers.handle_notes_keyword_filter_input_changed(self, event.value)
+        elif input_id == "notes-title-input" and current_active_tab == TAB_NOTES:
+            await notes_handlers.handle_notes_title_changed(self, event)
         # --- Chat Sidebar Conversation Search ---
         elif input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
@@ -2290,6 +2318,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await ingest_events.handle_tldw_api_auth_method_changed(self, str(event.value))
         elif select_id == "tldw-api-media-type" and current_active_tab == TAB_INGEST:
             await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
+        elif select_id == "notes-sort-select" and current_active_tab == TAB_NOTES:
+            await notes_handlers.handle_notes_sort_changed(self, event)
 
     ##################################################################
     # --- Event Handlers for Streaming and Worker State Changes ---

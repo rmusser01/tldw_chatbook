@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional # Added Optional
 # 3rd-Party Imports
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.widgets import Button, TextArea, Static
+from textual.widgets import Button, TextArea, Static, Label
 #
 # Local Imports
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
@@ -27,6 +27,36 @@ class NotesWindow(Container):
     """
     Container for the Notes Tab's UI.
     """
+    
+    DEFAULT_CSS = """
+    NotesWindow {
+        height: 100%;
+    }
+    
+    #notes-controls-area {
+        height: 3;
+        align: center middle;
+    }
+    
+    .unsaved-indicator {
+        color: $warning;
+        text-style: bold;
+        margin: 0 1;
+    }
+    
+    .unsaved-indicator.has-unsaved {
+        color: $error;
+    }
+    
+    .word-count {
+        color: $text-muted;
+        margin: 0 1;
+    }
+    
+    #notes-preview-toggle {
+        margin: 0 1;
+    }
+    """
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance # Not strictly used in compose below, but good practice if needed later
@@ -41,8 +71,11 @@ class NotesWindow(Container):
                 yield Static()  # Spacer
                 # Temporarily simplified button for testing:
                 yield Button("E", id="open-emoji-picker-button")
-                yield Static() # Spacer, ensure it's between emoji and save
+                yield Static() # Spacer
+                yield Label("", id="notes-unsaved-indicator", classes="unsaved-indicator")
                 yield Button("Save Note", id="notes-save-button", variant="primary")
+                yield Button("Preview", id="notes-preview-toggle", variant="default")
+                yield Label("Words: 0", id="notes-word-count", classes="word-count")
                 yield Static()  # Spacer
                 yield Button("R ☰", id="toggle-notes-sidebar-right", classes="sidebar-toggle")
 

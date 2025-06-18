@@ -683,3 +683,7 @@ class LLMInterface:
     async def get_logprobs(self, text: str, **kwargs) -> Dict[str, Any]:
         """Get log probabilities."""
         return await self.provider.get_logprobs_async(text, **kwargs)
+    
+    async def get_completion_logprobs(self, prompt: str, completion: str, **kwargs) -> Dict[str, Any]:
+        """Get log probabilities for a specific completion given a prompt."""
+        return await self.provider.get_completion_logprobs_async(prompt, completion, **kwargs)

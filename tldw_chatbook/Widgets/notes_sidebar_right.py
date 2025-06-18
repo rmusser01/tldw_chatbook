@@ -57,9 +57,8 @@ class NotesSidebarRight(VerticalScroll):
 
         yield Static("Keywords:", classes="sidebar-label")
         yield TextArea("", id="notes-keywords-area", classes="notes-keywords-textarea")
-        yield Button("Save Note (from Editor)", id="notes-save-current-button",
-                     variant="success")  # Or "Save Active Note"
-        yield Button("Save Keywords", id="notes-save-keywords-button", variant="primary")
+        yield Button("Save All Changes", id="notes-save-current-button",
+                     variant="success")  # Saves both note content and keywords
 
         # New Collapsible for Emojis
         with Collapsible(title="Emojis", collapsed=True):
