@@ -67,6 +67,7 @@ from .Event_Handlers import (
     notes_events as notes_handlers,
     worker_events as worker_handlers, worker_events, ingest_events,
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
+    search_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -101,7 +102,13 @@ from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow import MediaWindow
 from .UI.SearchWindow import SearchWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
-    SEARCH_VIEW_RAG_QA
+    SEARCH_VIEW_RAG_QA,
+    SEARCH_NAV_RAG_QA,
+    SEARCH_NAV_RAG_CHAT,
+    SEARCH_NAV_EMBEDDINGS_CREATION,
+    SEARCH_NAV_RAG_MANAGEMENT,
+    SEARCH_NAV_EMBEDDINGS_MANAGEMENT,
+    SEARCH_NAV_WEB_SEARCH
 )
 API_IMPORTS_SUCCESSFUL = True
 #
@@ -546,17 +553,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             media_handlers_map[f"media-prev-page-button-{slug}"] = media_events.handle_media_page_change_button_pressed
             media_handlers_map[f"media-next-page-button-{slug}"] = media_events.handle_media_page_change_button_pressed
 
-        # # --- Search Handlers ---
-        # search_handlers = {
-        #     SEARCH_NAV_RAG_QA: functools.partial(_handle_nav, prefix="search", reactive_attr="search_active_sub_tab"),
-        #     SEARCH_NAV_RAG_CHAT: functools.partial(_handle_nav, prefix="search", reactive_attr="search_active_sub_tab"),
-        #     SEARCH_NAV_EMBEDDINGS_CREATION: functools.partial(_handle_nav, prefix="search",
-        #                                                       reactive_attr="search_active_sub_tab"),
-        #     SEARCH_NAV_RAG_MANAGEMENT: functools.partial(_handle_nav, prefix="search",
-        #                                                  reactive_attr="search_active_sub_tab"),
-        #     SEARCH_NAV_EMBEDDINGS_MANAGEMENT: functools.partial(_handle_nav, prefix="search",
-        #                                                         reactive_attr="search_active_sub_tab"),
-        # }
+        # --- Search Handlers ---
+        search_handlers = {
+            SEARCH_NAV_RAG_QA: functools.partial(_handle_nav, prefix="search", reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_RAG_CHAT: functools.partial(_handle_nav, prefix="search", reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_EMBEDDINGS_CREATION: functools.partial(_handle_nav, prefix="search",
+                                                              reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_RAG_MANAGEMENT: functools.partial(_handle_nav, prefix="search",
+                                                         reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_EMBEDDINGS_MANAGEMENT: functools.partial(_handle_nav, prefix="search",
+                                                                reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_WEB_SEARCH: functools.partial(_handle_nav, prefix="search",
+                                                     reactive_attr="search_active_sub_tab"),
+            **search_events.SEARCH_BUTTON_HANDLERS,
+        }
 
         # --- Ingest Handlers ---
         ingest_handlers_map = {
@@ -612,7 +622,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_LLM: llm_handlers_map,
             TAB_LOGS: app_lifecycle.APP_LIFECYCLE_BUTTON_HANDLERS,
             TAB_TOOLS_SETTINGS: tools_settings_handlers,
-            #TAB_SEARCH: search_handlers,
+            TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
         }
 
@@ -2889,6 +2899,22 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # All necessary parameters (message, history, api_endpoint, model, etc.)
         # are passed via kwargs from the calling event handler (e.g., handle_chat_send_button_pressed).
         return worker_events.chat_wrapper_function(self, strip_thinking_tags=strip_thinking_tags, **kwargs) # Pass self as 'app_instance'
+
+    def action_quit(self) -> None:
+        """Handle application quit - save persistent caches before exiting."""
+        loguru_logger.info("Application quit initiated - saving persistent caches...")
+        
+        try:
+            # Save embedding cache to disk
+            from .RAG_Search.Services.cache_service import get_cache_service
+            cache_service = get_cache_service()
+            cache_service.save_persistent_caches()
+            loguru_logger.info("Persistent caches saved successfully")
+        except Exception as e:
+            loguru_logger.error(f"Error saving persistent caches: {e}")
+        
+        # Call the parent quit method
+        super().action_quit()
 
     ########################################################
     # --- End of Watchers and Helper Methods ---

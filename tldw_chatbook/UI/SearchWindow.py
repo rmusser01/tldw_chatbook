@@ -200,7 +200,9 @@ class SearchWindow(Container):
                              classes="search-nav-button disabled")
 
         with Container(id="search-content-pane", classes="search-content-pane"):
-            yield Container(id=SEARCH_VIEW_RAG_QA, classes="search-view-area")
+            # Import and use the new SearchRAGWindow for RAG Q&A
+            from .SearchRAGWindow import SearchRAGWindow
+            yield SearchRAGWindow(app_instance=self.app_instance, id=SEARCH_VIEW_RAG_QA)
             yield Container(id=SEARCH_VIEW_RAG_CHAT, classes="search-view-area")
             yield Container(id=SEARCH_VIEW_RAG_MANAGEMENT, classes="search-view-area")
 
@@ -929,10 +931,13 @@ class SearchWindow(Container):
             # Collection Select needs to be populated based on ChromaDB.
             await self._refresh_mgmt_collections_list()
             # Item select will be populated when a collection is chosen.
-            self.query_one("#mgmt-item-select", Select).set_options([])
-            self.query_one("#mgmt-item-select", Select).prompt = "Select Collection First"
-            await self.query_one("#mgmt-embedding-details-md", Markdown).update("Select a database source and collection.")
-            await self.query_one("#mgmt-status-output", Markdown).update("Ready for management tasks.")
+            try:
+                self.query_one("#mgmt-item-select", Select).set_options([])
+                self.query_one("#mgmt-item-select", Select).prompt = "Select Collection First"
+                await self.query_one("#mgmt-embedding-details-md", Markdown).update("Select a database source and collection.")
+                await self.query_one("#mgmt-status-output", Markdown).update("Ready for management tasks.")
+            except QueryError:
+                logger.warning("Some management view elements not found, continuing anyway")
         except QueryError as e:
             logger.error(f"Management view elements not found, dependencies may not be available: {e}")
             return
@@ -943,8 +948,17 @@ class SearchWindow(Container):
 
     async def _refresh_mgmt_collections_list(self) -> None:
         """Refreshes the list of ChromaDB collections in the management view."""
-        collection_select = self.query_one("#mgmt-collection-select", Select)
-        status_output = self.query_one("#mgmt-status-output", Markdown)
+        # Check if vector database dependencies are available
+        if not VECTORDB_AVAILABLE:
+            logger.warning("Vector database dependencies not available, skipping collection refresh")
+            return
+            
+        try:
+            collection_select = self.query_one("#mgmt-collection-select", Select)
+            status_output = self.query_one("#mgmt-status-output", Markdown)
+        except QueryError:
+            logger.warning("Management view elements not found, skipping collection refresh")
+            return
 
         await status_output.update("⏳ Loading collections from ChromaDB...")
         try:

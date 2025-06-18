@@ -2376,6 +2376,56 @@ UPDATE db_schema_version
             logger.error(f"Error searching conversations for title '{safe_search_term}': {e}")
             raise
 
+    def search_conversations_by_content(self, search_query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Searches conversations by message content using FTS.
+        
+        Searches the messages table for content matching the query,
+        then returns the unique conversations containing those messages.
+        
+        Args:
+            search_query: The search term for content. Supports FTS query syntax.
+            limit: Maximum number of conversations to return. Defaults to 10.
+            
+        Returns:
+            A list of matching conversation dictionaries with relevance scores.
+            
+        Raises:
+            CharactersRAGDBError: For database search errors.
+        """
+        if not search_query.strip():
+            logger.warning("Empty search_query provided for conversation content search. Returning empty list.")
+            return []
+            
+        # Search for messages containing the query, then get their conversations
+        query = """
+            SELECT DISTINCT c.*, 
+                   COUNT(m.id) as message_count,
+                   MIN(rank) as best_rank
+            FROM messages_fts fts
+            JOIN messages m ON fts.rowid = m.rowid
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE fts.messages_fts MATCH ?
+              AND m.deleted = 0
+              AND c.deleted = 0
+            GROUP BY c.id
+            ORDER BY best_rank
+            LIMIT ?
+        """
+        
+        try:
+            cursor = self.execute_query(query, (search_query, limit))
+            results = []
+            for row in cursor.fetchall():
+                conv_dict = dict(row)
+                # Add a relevance score based on rank (lower rank = better match)
+                conv_dict['relevance_score'] = 1.0 / (1.0 + abs(conv_dict.get('best_rank', 0)))
+                results.append(conv_dict)
+            return results
+        except CharactersRAGDBError as e:
+            logger.error(f"Error searching conversations by content '{search_query}': {e}")
+            raise
+
     # --- Message Methods ---
     def add_message(self, msg_data: Dict[str, Any]) -> Optional[str]:
         """

@@ -446,8 +446,25 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     chat_container.scroll_end(animate=False) # Scroll after mounting placeholder
     app.current_ai_message_widget = ai_placeholder_widget
 
+    # --- 10.5. Apply RAG Context if enabled ---
+    from .chat_rag_events import get_rag_context_for_chat
+    
+    # Get RAG context for the message
+    rag_context = None
+    try:
+        rag_context = await get_rag_context_for_chat(app, message_text_from_input)
+        if rag_context:
+            loguru_logger.info(f"RAG context retrieved, length: {len(rag_context)} chars")
+            # Prepend RAG context to the user message
+            message_text_with_rag = rag_context + message_text_from_input
+        else:
+            message_text_with_rag = message_text_from_input
+    except Exception as e:
+        loguru_logger.error(f"Error getting RAG context: {e}", exc_info=True)
+        message_text_with_rag = message_text_from_input
+    
     # --- 11. Prepare and Dispatch API Call via Worker ---
-    loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_from_input[:50]}...', History items: {len(chat_history_for_api)}")
+    loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_with_rag[:50]}...', History items: {len(chat_history_for_api)}")
 
     # Log API parameters for debugging
     api_params = {
@@ -468,7 +485,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     loguru_logger.info(f"Set app.current_chat_is_streaming to: {should_stream}")
 
     worker_target = lambda: app.chat_wrapper(
-        message=message_text_from_input, # Current user utterance
+        message=message_text_with_rag, # Current user utterance with RAG context
         history=chat_history_for_api,    # History *before* current utterance
         api_endpoint=selected_provider,
         api_key=api_key_for_call,
@@ -853,6 +870,15 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         )
         app.run_worker(worker_target_regen, name=f"API_Call_{prefix}_regenerate", group="api_calls", thread=True,
                        description=f"Regenerating for {selected_provider_regen}")
+
+    elif "continue-button" in button_classes and message_role == "AI":
+        loguru_logger.info(
+            f"Action: Continue clicked for AI message ID: {getattr(action_widget, 'message_id_internal', 'N/A')}"
+        )
+        # Create a Button.Pressed event for the continue handler
+        button_event = Button.Pressed(button)
+        # Call the continue response handler
+        await handle_continue_response_button_pressed(app, button_event, action_widget)
 
 
 async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:

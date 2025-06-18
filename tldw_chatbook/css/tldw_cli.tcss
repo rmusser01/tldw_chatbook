@@ -1881,3 +1881,138 @@ AppFooterStatus {
 
 /* --- End of Search Tab --- */
 /* ----------------------------- ************************* ----------------------------- */
+
+/* SearchRAGWindow Styles */
+.rag-search-grid {
+    layout: grid;
+    grid-size: 4 1;
+    grid-columns: 1fr 3fr;
+    grid-rows: 1fr;
+}
+
+.search-sidebar {
+    padding: 1 2;
+    background: $surface;
+    border-right: tall $primary;
+    overflow-y: auto;
+}
+
+.search-sidebar .sidebar-title {
+    text-align: center;
+    margin-bottom: 1;
+    color: $primary;
+}
+
+.search-sidebar .section-title {
+    margin-top: 1;
+    margin-bottom: 1;
+    color: $secondary;
+}
+
+.search-sidebar Input {
+    margin-bottom: 1;
+}
+
+.search-sidebar Checkbox {
+    margin-bottom: 1;
+}
+
+.search-main {
+    padding: 1 2;
+}
+
+.search-bar {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+}
+
+.search-bar Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+.search-bar LoadingIndicator {
+    width: 3;
+    height: 3;
+}
+
+.results-summary {
+    padding: 1;
+    background: $boost;
+    margin-bottom: 1;
+}
+
+.results-scroll {
+    height: 100%;
+    background: $surface;
+}
+
+.search-result {
+    margin-bottom: 1;
+    padding: 1;
+    border: round $primary-background;
+}
+
+.search-result:hover {
+    background: $panel-lighten-1;
+}
+
+.result-header {
+    layout: horizontal;
+    margin-bottom: 1;
+}
+
+.result-title {
+    width: 1fr;
+}
+
+.result-score {
+    width: auto;
+    color: $secondary;
+}
+
+.result-preview {
+    margin-bottom: 1;
+    color: $text-muted;
+}
+
+.result-metadata {
+    margin-bottom: 1;
+    padding: 1;
+    background: $panel;
+    color: $text-muted;
+    font-size: 90%;
+}
+
+.result-metadata.hidden {
+    display: none;
+}
+
+.result-actions {
+    layout: horizontal;
+    height: 3;
+}
+
+.result-actions Button {
+    margin-right: 1;
+}
+
+Button.mini {
+    min-width: 8;
+    height: 3;
+}
+
+#results-tabs {
+    height: 100%;
+}
+
+#search-history-table {
+    height: 100%;
+}
+
+.collapsible {
+    margin-top: 1;
+    padding-top: 1;
+    border-top: dashed $primary-background;
+}

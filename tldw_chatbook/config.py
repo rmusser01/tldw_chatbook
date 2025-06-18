@@ -863,7 +863,7 @@ CONFIG_TOML_CONTENT = """
 # Located at: ~/.config/tldw_cli/config.toml
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
-log_level = "DEBUG" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
 
 [tldw_api]

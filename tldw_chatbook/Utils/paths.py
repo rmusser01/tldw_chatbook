@@ -155,21 +155,36 @@ def get_project_root() -> Path:
     return PROJECT_ROOT_DIR
 
 
-def get_user_database_path(username) -> Path:
+def get_user_database_path(username: str = None) -> Path:
     """
-    Returns the absolute path to the user's primary database file
-    (located in ~/.config/tldw_cli/). Ensures the directory exists.
+    Returns the absolute path to the user's primary database file.
+    If username is provided, it creates a user-specific database file.
+    Otherwise, it uses the default database path.
+    
+    Args:
+        username: Optional username for user-specific database paths.
+                 If None, uses the default database path.
 
     Returns:
         pathlib.Path: The absolute Path object for the user database file.
     """
     try:
-        # FIXME - handle username properly
         # Ensure the directory ~/.config/tldw_cli exists
         USER_DB_DIR.mkdir(parents=True, exist_ok=True)
         log.info(f"Ensured user database directory exists: {USER_DB_DIR}")
-        log.debug(f"Returning user database path: {USER_DB_PATH}")
-        return USER_DB_PATH
+        
+        if username:
+            # Create a sanitized filename for the user-specific database
+            safe_username = "".join(c for c in username if c.isalnum() or c in ('_', '-'))
+            if not safe_username:
+                safe_username = "default"
+            user_db_path = USER_DB_DIR / f"tldw_cli_{safe_username}.db"
+            log.debug(f"Returning user-specific database path for '{username}': {user_db_path}")
+            return user_db_path
+        else:
+            # Use the default database path
+            log.debug(f"Returning default user database path: {USER_DB_PATH}")
+            return USER_DB_PATH
     except OSError as e:
         log.error(f"Could not create or access user database directory {USER_DB_DIR}: {e}", exc_info=True)
         # Depending on requirements, you might want to raise an exception here

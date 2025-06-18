@@ -526,18 +526,24 @@ def extract_prompt(metaprompt_response):
 
 
 # Function to test the generated prompt with variable values
-# FIXME - variable replacement is not working
 def test_generated_prompt(api_endpoint, api_key, generated_prompt, variable_values_str, temperature):
-    # Prepare variable values dictionary
-    variable_values = dict(zip(
-        [f"{{$v.strip()}}" for v in re.findall(r'\{\$(.*?)\}', generated_prompt)],  # Extract variable names
-        [v.strip() for v in variable_values_str.split(',')]
-    ))
-
+    # Extract variable names from the prompt (they appear as {$variable_name})
+    variable_names = re.findall(r'\{\$([^}]+)\}', generated_prompt)
+    
+    # Parse the provided values
+    provided_values = [v.strip() for v in variable_values_str.split(',') if v.strip()]
+    
+    # Create a dictionary mapping variable placeholders to their values
+    if len(variable_names) != len(provided_values):
+        logging.warning(f"Number of variables ({len(variable_names)}) doesn't match number of values ({len(provided_values)})")
+    
     # Replace variables in the generated prompt with actual values
     prompt_with_values = generated_prompt
-    for var, value in variable_values.items():
-        prompt_with_values = prompt_with_values.replace(var, value)
+    for i, var_name in enumerate(variable_names):
+        if i < len(provided_values):
+            # Replace the full placeholder {$variable_name} with the value
+            placeholder = f"{{{${var_name}}}"
+            prompt_with_values = prompt_with_values.replace(placeholder, provided_values[i])
 
     # Send the filled-in prompt to the chat API
     response = chat_api_call(api_endpoint=api_endpoint, api_key=api_key, input_data="", prompt=prompt_with_values, temp=temperature, system_message=None, streaming=False, minp=None, maxp=None, model=None)

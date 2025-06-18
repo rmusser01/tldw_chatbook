@@ -66,6 +66,9 @@ else:
 try:
     GLOBAL_RANKER = Ranker()
     logging.info("FlashRank Ranker initialized globally.")
+except (ImportError, ModuleNotFoundError) as e:
+    logging.error(f"Failed to import FlashRank module: {e}", exc_info=True)
+    GLOBAL_RANKER = None
 except Exception as e:
     logging.error(f"Failed to initialize global FlashRank Ranker: {e}", exc_info=True)
     GLOBAL_RANKER = None
@@ -99,9 +102,13 @@ def save_chat_history(history: List[Tuple[str, str]]) -> str:
         log_histogram("save_chat_history_duration", save_duration)
         log_counter("save_chat_history_success")
         return temp_path
+    except (IOError, OSError) as e:
+        log_counter("save_chat_history_error", labels={"error": "io_error"})
+        logging.error(f"I/O error saving chat history: {str(e)}")
+        raise
     except Exception as e:
         log_counter("save_chat_history_error", labels={"error": str(e)})
-        logging.error(f"Error saving chat history: {str(e)}")
+        logging.error(f"Unexpected error saving chat history: {str(e)}")
         raise
 
 
@@ -116,9 +123,17 @@ def load_chat_history(file: IO[str]) -> List[Tuple[str, str]]:
         log_histogram("load_chat_history_duration", load_duration)
         log_counter("load_chat_history_success")
         return history
+    except json.JSONDecodeError as e:
+        log_counter("load_chat_history_error", labels={"error": "json_decode_error"})
+        logging.error(f"JSON decode error loading chat history: {str(e)}")
+        raise
+    except (IOError, OSError) as e:
+        log_counter("load_chat_history_error", labels={"error": "io_error"})
+        logging.error(f"I/O error loading chat history: {str(e)}")
+        raise
     except Exception as e:
         log_counter("load_chat_history_error", labels={"error": str(e)})
-        logging.error(f"Error loading chat history: {str(e)}")
+        logging.error(f"Unexpected error loading chat history: {str(e)}")
         raise
 
 ########################################################################################################################

@@ -41,6 +41,7 @@ dependencies = [
     "pydantic",
     "psutil",
     "toml",
+    "pyperclip",
 ]
 
 # --- Optional Dependencies ---

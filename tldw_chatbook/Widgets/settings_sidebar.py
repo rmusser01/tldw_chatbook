@@ -178,11 +178,6 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 yield Static("LLM Frequency Penalty", classes="sidebar-label")
                 yield Input(id=f"{id_prefix}-llm-frequency-penalty", value="0.0", placeholder="e.g., 0.0 to 2.0",
                             classes="sidebar-input")
-                yield Static("LLM Tools (JSON)", classes="sidebar-label")
-                yield TextArea(id=f"{id_prefix}-llm-tools", text="[]", classes="sidebar-textarea")
-                yield Static("LLM Tool Choice", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-tool-choice", placeholder="e.g., auto, none, or specific tool",
-                            classes="sidebar-input")
 
         # ===================================================================
         # 3. Search & Load Conversations
@@ -225,21 +220,105 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
 
 
         # ===================================================================
-        # 4. Media Settings – placeholders
+        # 4. RAG Settings
         # ===================================================================
-        with Collapsible(title="Media Settings", collapsed=True):
-            yield Static("Media settings will go here (placeholder)", classes="sidebar-placeholder")
+        with Collapsible(title="RAG Settings", collapsed=True):
+            # RAG Enable Options
+            yield Checkbox(
+                "Perform RAG",
+                id=f"{id_prefix}-rag-enable-checkbox",
+                value=False,
+                classes="sidebar-checkbox"
+            )
+            yield Checkbox(
+                "Perform Plain RAG (BM25 only)",
+                id=f"{id_prefix}-rag-plain-enable-checkbox",
+                value=False,
+                classes="sidebar-checkbox"
+            )
+            
+            # RAG Source Selection
+            yield Static("RAG Sources", classes="sidebar-label")
+            yield Checkbox("Search Media Items", id=f"{id_prefix}-rag-search-media-checkbox", value=True)
+            yield Checkbox("Search Conversations", id=f"{id_prefix}-rag-search-conversations-checkbox", value=False)
+            yield Checkbox("Search Notes", id=f"{id_prefix}-rag-search-notes-checkbox", value=False)
+            
+            # RAG Parameters
+            yield Static("Top K Results", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-top-k",
+                value="5",
+                placeholder="e.g., 5",
+                classes="sidebar-input"
+            )
+            
+            yield Static("Max Context Length (chars)", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-max-context-length",
+                value="10000",
+                placeholder="e.g., 10000",
+                classes="sidebar-input"
+            )
+            
+            # Re-ranking Options
+            yield Checkbox(
+                "Enable Re-ranking",
+                id=f"{id_prefix}-rag-rerank-enable-checkbox",
+                value=True,
+                classes="sidebar-checkbox"
+            )
+            
+            yield Static("Re-ranker Model", classes="sidebar-label")
+            yield Select(
+                [
+                    ("FlashRank (Local)", "flashrank"),
+                    ("Cohere Rerank", "cohere"),
+                    ("None", "none")
+                ],
+                id=f"{id_prefix}-rag-reranker-model",
+                value="flashrank",
+                prompt="Select Re-ranker...",
+                allow_blank=False
+            )
+            
+            # Advanced RAG Options
+            yield Static("Chunk Size (words)", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-chunk-size",
+                value="400",
+                placeholder="e.g., 400",
+                classes="sidebar-input"
+            )
+            
+            yield Static("Chunk Overlap (words)", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-chunk-overlap",
+                value="100",
+                placeholder="e.g., 100",
+                classes="sidebar-input"
+            )
+            
+            yield Checkbox(
+                "Include Context Metadata",
+                id=f"{id_prefix}-rag-include-metadata-checkbox",
+                value=True,
+                classes="sidebar-checkbox"
+            )
 
         # ===================================================================
-        # 5. Search & Tools Settings
+        # 5. Tool Settings
         # ===================================================================
-        with Collapsible(title="Search & Tools Settings", collapsed=True):
+        with Collapsible(title="Tool Settings", collapsed=True):
             yield Static("Tool Usage", classes="sidebar-label")
             yield TextArea(id=f"{id_prefix}-llm-tools", text="[]", classes="sidebar-textarea")
             yield Static("Tool Choice", classes="sidebar-label")
             yield Input(id=f"{id_prefix}-llm-tool-choice", placeholder="e.g., auto, none, or specific tool",
                         classes="sidebar-input")
 
+        # ===================================================================
+        # 6. Search & Templates
+        # ===================================================================
+        with Collapsible(title="Search & Templates", collapsed=True):
             yield Static("Chat Templates", classes="sidebar-label")
             yield Input(
                 id=f"{id_prefix}-template-search-input",
@@ -259,7 +338,7 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             )
 
         # ===================================================================
-        # 5. System Settings – placeholders
+        # 7. System Settings – placeholders
         # ===================================================================
         with Collapsible(title="Partial System Settings", collapsed=True):
             yield Static(

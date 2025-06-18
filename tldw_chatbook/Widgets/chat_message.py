@@ -162,8 +162,7 @@ class ChatMessage(Widget):
                     yield Button("👍", classes="action-button thumb-up-button", id="thumb-up")
                     yield Button("👎", classes="action-button thumb-down-button", id="thumb-down")
                     yield Button("🔄", classes="action-button regenerate-button", id="regenerate") # Emoji for regenerate
-                    # FIXME For some reason, the entire UI freezes when clicked...
-                    #yield Button("↪️", id="continue-response-button", classes="action-button continue-button")
+                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button")
 
                 # Add delete button for all messages at very end
                 yield Button("🗑️", classes="action-button delete-button")  # Emoji for delete ; Label: Delete, Class: delete-button

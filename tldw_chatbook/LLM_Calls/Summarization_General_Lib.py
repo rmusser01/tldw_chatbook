@@ -64,6 +64,17 @@ api_key = get_cli_setting('openai_api', 'api_key', "")
 # Helper Function Definitions
 #
 
+def log_debug_data(data: Any, source_name: str) -> None:
+    """
+    Helper function to log debug information about loaded data.
+    
+    Args:
+        data: The data to log information about
+        source_name: The name of the API/source (e.g., "AnthropicAI", "Cohere", etc.)
+    """
+    logging.debug(f"{source_name}: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)")
+    logging.debug(f"{source_name}: Type of data: {type(data)}")
+
 # --- Keep existing helper functions ---
 def extract_text_from_segments(segments: List[Dict]) -> str:
     # (Keep existing implementation)
@@ -705,8 +716,7 @@ def summarize_with_anthropic(api_key, input_data, custom_prompt_arg, temp=None, 
         data = input_data
 
         # DEBUG - Debug logging to identify sent data
-        logging.debug(f"AnthropicAI: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)")
-        logging.debug(f"AnthropicAI: Type of data: {type(data)}")
+        log_debug_data(data, "AnthropicAI")
 
         if isinstance(data, dict) and 'summary' in data:
             # If the loaded data is a dictionary and already contains a summary, return it
@@ -898,8 +908,7 @@ def summarize_with_cohere(api_key, input_data, custom_prompt_arg, temp=None, sys
         data = input_data
 
         # DEBUG - Debug logging to identify sent data
-        logging.debug(f"Cohere: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)")
-        logging.debug(f"Cohere: Type of data: {type(data)}")
+        log_debug_data(data, "Cohere")
 
         if isinstance(data, dict) and 'summary' in data:
             # If the loaded data is a dictionary and already contains a summary, return it
@@ -1261,8 +1270,7 @@ def summarize_with_openrouter(api_key, input_data, custom_prompt_arg, temp=None,
     data = input_data
 
     # DEBUG - Debug logging to identify sent data
-    logging.debug(f"OpenRouter: Loaded data: {data[:500]}...(snipped to first 500 chars)")
-    logging.debug(f"OpenRouter: Type of data: {type(data)}")
+    log_debug_data(data, "OpenRouter")
 
     if isinstance(data, dict) and 'summary' in data:
         # If the loaded data is a dictionary and already contains a summary, return it
@@ -1453,8 +1461,7 @@ def summarize_with_huggingface(api_key, input_data, custom_prompt_arg, temp=None
         data = input_data
 
         # DEBUG - Debug logging to identify sent data
-        logging.debug(f"HuggingFace: Loaded data: {data[:500]}...(snipped to first 500 chars)")
-        logging.debug(f"HuggingFace: Type of data: {type(data)}")
+        log_debug_data(data, "HuggingFace")
 
         if isinstance(data, dict) and 'summary' in data:
             # If the loaded data is a dictionary and already contains a summary, return it
@@ -1611,8 +1618,7 @@ def summarize_with_deepseek(api_key, input_data, custom_prompt_arg, temp=None, s
         data = input_data
 
         # DEBUG - Debug logging to identify sent data
-        logging.debug(f"DeepSeek: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)")
-        logging.debug(f"DeepSeek: Type of data: {type(data)}")
+        log_debug_data(data, "DeepSeek")
 
         if isinstance(data, dict) and 'summary' in data:
             logging.debug("DeepSeek: Summary already exists in the loaded data")
@@ -1778,8 +1784,7 @@ def summarize_with_mistral(api_key, input_data, custom_prompt_arg, temp=None, sy
         data = input_data
 
         # DEBUG - Debug logging to identify sent data
-        logging.debug(f"Mistral: Loaded data: {str(data)[:500]}...(snipped to first 500 chars)")
-        logging.debug(f"Mistral: Type of data: {type(data)}")
+        log_debug_data(data, "Mistral")
 
         if isinstance(data, dict) and 'summary' in data:
             logging.debug("Mistral: Summary already exists in the loaded data")

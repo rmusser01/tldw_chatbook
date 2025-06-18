@@ -21,6 +21,7 @@ DEPENDENCIES_AVAILABLE = {
     'chinese_chunking': False,
     'japanese_chunking': False,
     'token_chunking': False,
+    'cohere': False,
 }
 
 # Store actual modules for conditional use
@@ -199,6 +200,7 @@ def initialize_dependency_checks():
     check_dependency('jieba')
     check_dependency('fugashi')
     check_dependency('flashrank')
+    check_dependency('cohere')
     
     # Check grouped features
     check_embeddings_rag_deps()
