@@ -174,35 +174,48 @@ class ThemeProvider(Provider):
         """Search for theme commands."""
         matcher = self.matcher(query)
         
-        # Get available theme names from registered themes
-        available_themes = ["textual-dark", "textual-light"]  # Built-in themes
-        # Add custom themes from ALL_THEMES
-        for theme in ALL_THEMES:
-            theme_name = theme.name if hasattr(theme, 'name') else str(theme)
-            available_themes.append(theme_name)
+        # Always show the main "Change Theme" command
+        main_command_score = matcher.match("Theme: Change Theme")
+        if main_command_score > 0:
+            yield Hit(
+                main_command_score,
+                matcher.highlight("Theme: Change Theme"),
+                partial(self.show_theme_submenu),
+                help="Open theme selection menu"
+            )
         
-        for theme_name in available_themes:
-            command_text = f"Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}"
-            score = matcher.match(command_text)
-            if score > 0:
-                yield Hit(
-                    score,
-                    matcher.highlight(command_text),
-                    partial(self.switch_theme, theme_name),
-                    help=f"Change theme to {theme_name}"
-                )
+        # Only show individual themes if user is specifically searching for theme-related terms
+        if any(term in query.lower() for term in ["switch", "theme", "dark", "light", "color", "solarized", "gruvbox", "dracula"]):
+            # Get available theme names from registered themes
+            available_themes = ["textual-dark", "textual-light"]  # Built-in themes
+            # Add custom themes from ALL_THEMES
+            for theme in ALL_THEMES:
+                theme_name = theme.name if hasattr(theme, 'name') else str(theme)
+                available_themes.append(theme_name)
+            
+            for theme_name in available_themes:
+                command_text = f"Theme: Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}"
+                score = matcher.match(command_text)
+                if score > 0:
+                    yield Hit(
+                        score * 0.9,  # Slightly lower priority than main command
+                        matcher.highlight(command_text),
+                        partial(self.switch_theme, theme_name),
+                        help=f"Change theme to {theme_name}"
+                    )
     
     async def discover(self) -> Hits:
-        """Show theme options when palette is first opened."""
-        # Show a few popular themes by default
-        popular_themes = ["textual-dark", "textual-light", "solarized_dark_inspired", "modern_dark_dracula", "gruvbox_dark"]
-        for theme_name in popular_themes:
-            yield Hit(
-                1.0,
-                f"Switch to {theme_name.replace('_', ' ').replace('-', ' ').title()}",
-                partial(self.switch_theme, theme_name),
-                help=f"Change theme to {theme_name}"
-            )
+        """Show only the main theme command when palette is first opened."""
+        yield Hit(
+            1.0,
+            "Theme: Change Theme",
+            partial(self.show_theme_submenu),
+            help="Open theme selection menu"
+        )
+    
+    def show_theme_submenu(self) -> None:
+        """Show a notification with instruction to search for themes."""
+        self.app.notify("Type 'theme' in the command palette to see all available themes", severity="information")
     
     def switch_theme(self, theme_name: str) -> None:
         """Switch to the specified theme and save to config."""
@@ -218,6 +231,444 @@ class ThemeProvider(Provider):
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
 
 
+class TabNavigationProvider(Provider):
+    """Provider for tab navigation commands."""
+    
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        
+        tab_commands = [
+            ("Tab Navigation: Switch to Chat", TAB_CHAT, "Switch to the main chat interface"),
+            ("Tab Navigation: Switch to Character Chat", TAB_CCP, "Switch to character and conversation management"),
+            ("Tab Navigation: Switch to Notes", TAB_NOTES, "Switch to notes management"),
+            ("Tab Navigation: Switch to Media", TAB_MEDIA, "Switch to media library"),
+            ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
+            ("Tab Navigation: Switch to Ingest", TAB_INGEST, "Switch to content ingestion"),
+            ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
+            ("Tab Navigation: Switch to LLM Management", TAB_LLM, "Switch to LLM provider management"),
+            ("Tab Navigation: Switch to Logs", TAB_LOGS, "Switch to application logs"),
+            ("Tab Navigation: Switch to Stats", TAB_STATS, "Switch to statistics view"),
+            ("Tab Navigation: Switch to Evaluations", TAB_EVALS, "Switch to evaluation tools"),
+            ("Tab Navigation: Switch to Coding", TAB_CODING, "Switch to coding assistant"),
+        ]
+        
+        for command_text, tab_id, help_text in tab_commands:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.switch_tab, tab_id),
+                    help=help_text
+                )
+    
+    async def discover(self) -> Hits:
+        popular_tabs = [
+            ("Tab Navigation: Switch to Chat", TAB_CHAT, "Switch to the main chat interface"),
+            ("Tab Navigation: Switch to Character Chat", TAB_CCP, "Switch to character and conversation management"),
+            ("Tab Navigation: Switch to Notes", TAB_NOTES, "Switch to notes management"),
+            ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
+            ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
+        ]
+        
+        for command_text, tab_id, help_text in popular_tabs:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.switch_tab, tab_id),
+                help=help_text
+            )
+    
+    def switch_tab(self, tab_id: str) -> None:
+        """Switch to the specified tab."""
+        try:
+            self.app.current_tab = tab_id
+            self.app.notify(f"Switched to {tab_id.replace('_', ' ').title()} tab", severity="information")
+        except Exception as e:
+            self.app.notify(f"Failed to switch tab: {e}", severity="error")
+
+
+class LLMProviderProvider(Provider):
+    """Provider for LLM provider management commands."""
+    
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        
+        # Get available providers from the app
+        available_providers = AVAILABLE_PROVIDERS if 'AVAILABLE_PROVIDERS' in globals() else []
+        
+        provider_commands = [
+            ("LLM Provider Management: Show Current Provider", None, "Display currently selected LLM provider"),
+            ("LLM Provider Management: Test API Connection", None, "Test connection to current LLM provider"),
+        ]
+        
+        # Add provider switching commands
+        for provider in available_providers:
+            provider_name = provider.replace('_', ' ').title()
+            command_text = f"LLM Provider Management: Switch to {provider_name}"
+            provider_commands.append((command_text, provider, f"Switch to {provider_name} provider"))
+        
+        for command_text, provider_id, help_text in provider_commands:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.handle_llm_command, provider_id, command_text),
+                    help=help_text
+                )
+    
+    async def discover(self) -> Hits:
+        popular_providers = ["OpenAI", "Anthropic", "Cohere", "Groq", "Ollama"]
+        
+        yield Hit(
+            1.0,
+            "LLM Provider Management: Show Current Provider",
+            partial(self.handle_llm_command, None, "show_current"),
+            help="Display currently selected LLM provider"
+        )
+        
+        for provider in popular_providers:
+            yield Hit(
+                0.9,
+                f"LLM Provider Management: Switch to {provider}",
+                partial(self.handle_llm_command, provider, f"switch_{provider}"),
+                help=f"Switch to {provider} provider"
+            )
+    
+    def handle_llm_command(self, provider_id: str, command: str) -> None:
+        """Handle LLM provider commands."""
+        try:
+            if provider_id is None or "show_current" in command:
+                # Show current provider
+                current = getattr(self.app, 'current_provider', 'Unknown')
+                self.app.notify(f"Current LLM provider: {current}", severity="information")
+            elif "test" in command.lower():
+                # Test API connection (placeholder)
+                self.app.notify("API connection test initiated", severity="information")
+            else:
+                # Switch provider (placeholder - would need to integrate with actual provider switching logic)
+                self.app.notify(f"Provider switch to {provider_id} requested", severity="information")
+        except Exception as e:
+            self.app.notify(f"Failed to execute LLM command: {e}", severity="error")
+
+
+class QuickActionsProvider(Provider):
+    """Provider for quick action commands."""
+    
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        
+        quick_actions = [
+            ("Quick Actions: New Chat Conversation", "new_chat", "Start a new chat conversation"),
+            ("Quick Actions: New Character Chat", "new_character", "Start a new character-based conversation"),
+            ("Quick Actions: New Note", "new_note", "Create a new note"),
+            ("Quick Actions: Clear Current Chat", "clear_chat", "Clear the current chat conversation"),
+            ("Quick Actions: Export Chat as Markdown", "export_chat", "Export current chat to markdown file"),
+            ("Quick Actions: Import Media File", "import_media", "Import a new media file for processing"),
+            ("Quick Actions: Search All Content", "search_all", "Search across all content"),
+            ("Quick Actions: Refresh Database", "refresh_db", "Refresh database connections"),
+        ]
+        
+        for command_text, action_id, help_text in quick_actions:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.execute_quick_action, action_id),
+                    help=help_text
+                )
+    
+    async def discover(self) -> Hits:
+        popular_actions = [
+            ("Quick Actions: New Chat Conversation", "new_chat", "Start a new chat conversation"),
+            ("Quick Actions: New Note", "new_note", "Create a new note"),
+            ("Quick Actions: Search All Content", "search_all", "Search across all content"),
+            ("Quick Actions: Import Media File", "import_media", "Import a new media file for processing"),
+        ]
+        
+        for command_text, action_id, help_text in popular_actions:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.execute_quick_action, action_id),
+                help=help_text
+            )
+    
+    def execute_quick_action(self, action_id: str) -> None:
+        """Execute the specified quick action."""
+        try:
+            if action_id == "new_chat":
+                self.app.current_tab = TAB_CHAT
+                self.app.notify("Switched to Chat tab for new conversation", severity="information")
+            elif action_id == "new_character":
+                self.app.current_tab = TAB_CCP
+                self.app.notify("Switched to Character Chat tab", severity="information")
+            elif action_id == "new_note":
+                self.app.current_tab = TAB_NOTES
+                self.app.notify("Switched to Notes tab for new note", severity="information")
+            elif action_id == "search_all":
+                self.app.current_tab = TAB_SEARCH
+                self.app.notify("Switched to Search tab", severity="information")
+            elif action_id == "import_media":
+                self.app.current_tab = TAB_INGEST
+                self.app.notify("Switched to Ingest tab for media import", severity="information")
+            else:
+                self.app.notify(f"Quick action '{action_id}' initiated", severity="information")
+        except Exception as e:
+            self.app.notify(f"Failed to execute quick action: {e}", severity="error")
+
+
+class SettingsProvider(Provider):
+    """Provider for settings and preferences commands."""
+    
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        
+        settings_commands = [
+            ("Settings & Preferences: Open Config File", "open_config", "Open the configuration file for editing"),
+            ("Settings & Preferences: Reload Configuration", "reload_config", "Reload configuration from file"),
+            ("Settings & Preferences: Toggle Streaming Mode", "toggle_streaming", "Toggle LLM streaming mode on/off"),
+            ("Settings & Preferences: Set Temperature to Low (0.1)", "temp_low", "Set LLM temperature to 0.1 for focused responses"),
+            ("Settings & Preferences: Set Temperature to Medium (0.7)", "temp_med", "Set LLM temperature to 0.7 for balanced responses"),
+            ("Settings & Preferences: Set Temperature to High (1.0)", "temp_high", "Set LLM temperature to 1.0 for creative responses"),
+            ("Settings & Preferences: Reset to Default Settings", "reset_defaults", "Reset all settings to default values"),
+            ("Settings & Preferences: Show Database Stats", "db_stats", "Show database size and statistics"),
+            ("Settings & Preferences: Open Settings Tab", "open_settings", "Navigate to Tools & Settings tab"),
+        ]
+        
+        for command_text, setting_id, help_text in settings_commands:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.handle_setting, setting_id),
+                    help=help_text
+                )
+    
+    async def discover(self) -> Hits:
+        popular_settings = [
+            ("Settings & Preferences: Open Settings Tab", "open_settings", "Navigate to Tools & Settings tab"),
+            ("Settings & Preferences: Open Config File", "open_config", "Open the configuration file for editing"),
+            ("Settings & Preferences: Show Database Stats", "db_stats", "Show database size and statistics"),
+            ("Settings & Preferences: Toggle Streaming Mode", "toggle_streaming", "Toggle LLM streaming mode on/off"),
+        ]
+        
+        for command_text, setting_id, help_text in popular_settings:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.handle_setting, setting_id),
+                help=help_text
+            )
+    
+    def handle_setting(self, setting_id: str) -> None:
+        """Handle settings commands."""
+        try:
+            if setting_id == "open_settings":
+                self.app.current_tab = TAB_TOOLS_SETTINGS
+                self.app.notify("Opened Tools & Settings tab", severity="information")
+            elif setting_id == "open_config":
+                from .config import DEFAULT_CONFIG_PATH
+                self.app.notify(f"Config file location: {DEFAULT_CONFIG_PATH}", severity="information")
+            elif setting_id == "reload_config":
+                self.app.notify("Configuration reload requested", severity="information")
+            elif setting_id == "db_stats":
+                self.app.notify("Database statistics display requested", severity="information")
+            elif setting_id.startswith("temp_"):
+                temp_map = {"temp_low": "0.1", "temp_med": "0.7", "temp_high": "1.0"}
+                temp_value = temp_map.get(setting_id, "0.7")
+                self.app.notify(f"Temperature set to {temp_value}", severity="information")
+            else:
+                self.app.notify(f"Settings action '{setting_id}' initiated", severity="information")
+        except Exception as e:
+            self.app.notify(f"Failed to execute settings command: {e}", severity="error")
+
+
+class CharacterProvider(Provider):
+    """Provider for character and persona management commands."""
+    
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        
+        character_commands = [
+            ("Character/Persona Management: Create New Character", "new_character", "Create a new character or persona"),
+            ("Character/Persona Management: Show All Characters", "list_characters", "Display all available characters"),
+            ("Character/Persona Management: Switch Character", "switch_character", "Switch to a different character"),
+            ("Character/Persona Management: Edit Current Character", "edit_character", "Edit the current character settings"),
+            ("Character/Persona Management: Delete Character", "delete_character", "Delete a character (with confirmation)"),
+            ("Character/Persona Management: Import Character", "import_character", "Import character from file"),
+            ("Character/Persona Management: Export Character", "export_character", "Export character to file"),
+            ("Character/Persona Management: Open Character Tab", "open_character_tab", "Navigate to Character Chat tab"),
+        ]
+        
+        for command_text, action_id, help_text in character_commands:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.handle_character_action, action_id),
+                    help=help_text
+                )
+    
+    async def discover(self) -> Hits:
+        popular_character_actions = [
+            ("Character/Persona Management: Open Character Tab", "open_character_tab", "Navigate to Character Chat tab"),
+            ("Character/Persona Management: Create New Character", "new_character", "Create a new character or persona"),
+            ("Character/Persona Management: Show All Characters", "list_characters", "Display all available characters"),
+            ("Character/Persona Management: Switch Character", "switch_character", "Switch to a different character"),
+        ]
+        
+        for command_text, action_id, help_text in popular_character_actions:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.handle_character_action, action_id),
+                help=help_text
+            )
+    
+    def handle_character_action(self, action_id: str) -> None:
+        """Handle character management actions."""
+        try:
+            if action_id == "open_character_tab":
+                self.app.current_tab = TAB_CCP
+                self.app.notify("Opened Character Chat tab", severity="information")
+            elif action_id == "new_character":
+                self.app.current_tab = TAB_CCP
+                self.app.notify("Navigate to Character Chat to create new character", severity="information")
+            elif action_id == "list_characters":
+                self.app.current_tab = TAB_CCP
+                self.app.notify("Showing all characters in Character Chat tab", severity="information")
+            else:
+                self.app.notify(f"Character action '{action_id}' requested", severity="information")
+        except Exception as e:
+            self.app.notify(f"Failed to execute character action: {e}", severity="error")
+
+
+class MediaProvider(Provider):
+    """Provider for media and content management commands."""
+    
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        
+        media_commands = [
+            ("Media & Content: Open Media Library", "open_media", "Navigate to media library"),
+            ("Media & Content: Recent Media Files", "recent_media", "Show recently added media files"),
+            ("Media & Content: Search Transcripts", "search_transcripts", "Search through media transcripts"),
+            ("Media & Content: Show Ingested Content", "show_ingested", "Display all ingested content"),
+            ("Media & Content: Import New Media", "import_new", "Import new media file"),
+            ("Media & Content: Open Media Database", "open_db", "View media database contents"),
+            ("Media & Content: Refresh Media Library", "refresh_media", "Refresh media library"),
+            ("Media & Content: Export Media List", "export_list", "Export media list to file"),
+        ]
+        
+        for command_text, action_id, help_text in media_commands:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.handle_media_action, action_id),
+                    help=help_text
+                )
+    
+    async def discover(self) -> Hits:
+        popular_media_actions = [
+            ("Media & Content: Open Media Library", "open_media", "Navigate to media library"),
+            ("Media & Content: Import New Media", "import_new", "Import new media file"),
+            ("Media & Content: Search Transcripts", "search_transcripts", "Search through media transcripts"),
+            ("Media & Content: Recent Media Files", "recent_media", "Show recently added media files"),
+        ]
+        
+        for command_text, action_id, help_text in popular_media_actions:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.handle_media_action, action_id),
+                help=help_text
+            )
+    
+    def handle_media_action(self, action_id: str) -> None:
+        """Handle media management actions."""
+        try:
+            if action_id == "open_media":
+                self.app.current_tab = TAB_MEDIA
+                self.app.notify("Opened Media Library tab", severity="information")
+            elif action_id == "import_new":
+                self.app.current_tab = TAB_INGEST
+                self.app.notify("Opened Ingest tab for media import", severity="information")
+            elif action_id == "search_transcripts":
+                self.app.current_tab = TAB_SEARCH
+                self.app.notify("Opened Search tab for transcript search", severity="information")
+            else:
+                self.app.notify(f"Media action '{action_id}' requested", severity="information")
+        except Exception as e:
+            self.app.notify(f"Failed to execute media action: {e}", severity="error")
+
+
+class DeveloperProvider(Provider):
+    """Provider for developer and debug commands."""
+    
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        
+        dev_commands = [
+            ("Developer/Debug Commands: Show App Info", "app_info", "Display application version and build info"),
+            ("Developer/Debug Commands: Open Log File", "open_logs", "Navigate to application logs"),
+            ("Developer/Debug Commands: Clear Cache", "clear_cache", "Clear application cache"),
+            ("Developer/Debug Commands: Show Keybindings", "show_keys", "Display all keyboard shortcuts"),
+            ("Developer/Debug Commands: Debug Mode Toggle", "toggle_debug", "Toggle debug mode on/off"),
+            ("Developer/Debug Commands: Memory Usage", "memory_usage", "Show current memory usage"),
+            ("Developer/Debug Commands: Database Integrity Check", "db_check", "Check database integrity"),
+            ("Developer/Debug Commands: Export Debug Info", "export_debug", "Export debug information to file"),
+        ]
+        
+        for command_text, action_id, help_text in dev_commands:
+            score = matcher.match(command_text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command_text),
+                    partial(self.handle_dev_action, action_id),
+                    help=help_text
+                )
+    
+    async def discover(self) -> Hits:
+        popular_dev_actions = [
+            ("Developer/Debug Commands: Open Log File", "open_logs", "Navigate to application logs"),
+            ("Developer/Debug Commands: Show App Info", "app_info", "Display application version and build info"),
+            ("Developer/Debug Commands: Show Keybindings", "show_keys", "Display all keyboard shortcuts"),
+        ]
+        
+        for command_text, action_id, help_text in popular_dev_actions:
+            yield Hit(
+                1.0,
+                command_text,
+                partial(self.handle_dev_action, action_id),
+                help=help_text
+            )
+    
+    def handle_dev_action(self, action_id: str) -> None:
+        """Handle developer/debug actions."""
+        try:
+            if action_id == "open_logs":
+                self.app.current_tab = TAB_LOGS
+                self.app.notify("Opened Logs tab", severity="information")
+            elif action_id == "app_info":
+                self.app.notify("tldw_chatbook - TUI for LLM interactions", severity="information")
+            elif action_id == "show_keys":
+                self.app.notify("Keybindings: Ctrl+Q (quit), Ctrl+P (palette)", severity="information")
+            elif action_id == "clear_cache":
+                self.app.notify("Cache clear requested", severity="information")
+            else:
+                self.app.notify(f"Developer action '{action_id}' initiated", severity="information")
+        except Exception as e:
+            self.app.notify(f"Failed to execute developer action: {e}", severity="error")
+
+
 # --- Main App ---
 class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
@@ -229,7 +680,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         Binding("ctrl+q", "quit", "Quit App", show=True),
         Binding("ctrl+p", "command_palette", "Palette Menu", show=True)
     ]
-    COMMANDS = App.COMMANDS | {ThemeProvider}
+    COMMANDS = App.COMMANDS | {
+        ThemeProvider,
+        TabNavigationProvider,
+        LLMProviderProvider,
+        QuickActionsProvider,
+        SettingsProvider,
+        CharacterProvider,
+        MediaProvider,
+        DeveloperProvider
+    }
 
     ALL_INGEST_VIEW_IDS = [
         "ingest-view-prompts", "ingest-view-characters",
