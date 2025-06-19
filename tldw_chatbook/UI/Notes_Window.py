@@ -12,6 +12,7 @@ from textual.widgets import Button, TextArea, Static, Label
 # Local Imports
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
+from ..Widgets.notes_sync_widget import NotesSyncWidget
 # Import EmojiSelected and EmojiPickerScreen
 from ..Widgets.emoji_picker import EmojiSelected, EmojiPickerScreen
 # from ..Constants import TAB_NOTES # Not strictly needed if IDs are hardcoded here
@@ -74,6 +75,7 @@ class NotesWindow(Container):
                 yield Static() # Spacer
                 yield Label("", id="notes-unsaved-indicator", classes="unsaved-indicator")
                 yield Button("Save Note", id="notes-save-button", variant="primary")
+                yield Button("Sync 🔄", id="notes-sync-button", variant="default")
                 yield Button("Preview", id="notes-preview-toggle", variant="default")
                 yield Label("Words: 0", id="notes-word-count", classes="word-count")
                 yield Static()  # Spacer
@@ -93,6 +95,10 @@ class NotesWindow(Container):
         if event.button.id == "open-emoji-picker-button":
             # Use a unique ID for the picker if needed, e.g., "notes-modal-emoji-picker"
             self.app.push_screen(EmojiPickerScreen(id="notes_emoji_modal_picker"), self._handle_emoji_picker_result)
+            event.stop()
+        elif event.button.id == "notes-sync-button":
+            # Push the sync widget as a modal screen
+            self.app.push_screen(NotesSyncWidget(self.app_instance))
             event.stop()
         # Add other button ID checks here if necessary for this window's specific buttons.
         # For example, the sidebar toggles are often handled at the app level via actions,

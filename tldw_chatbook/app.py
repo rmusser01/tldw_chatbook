@@ -69,7 +69,7 @@ from .Event_Handlers import (
     notes_events as notes_handlers,
     worker_events as worker_handlers, worker_events, ingest_events,
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    search_events,
+    search_events, notes_sync_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events

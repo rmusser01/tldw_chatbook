@@ -149,6 +149,12 @@ class SyncProgressWidget(Container):
 class NotesSyncWidget(Container):
     """Main widget for note synchronization management."""
     
+    def __init__(self, app_instance, **kwargs):
+        """Initialize the sync widget with app instance."""
+        super().__init__(**kwargs)
+        self.app_instance = app_instance
+        self.sync_service = None  # Will be initialized on mount
+    
     DEFAULT_CSS = """
     NotesSyncWidget {
         layout: vertical;
@@ -280,6 +286,14 @@ class NotesSyncWidget(Container):
     
     def on_mount(self):
         """Initialize the widget when mounted."""
+        # Initialize sync service
+        from ..Notes.sync_service import NotesSyncService
+        if hasattr(self.app_instance, 'notes_service') and hasattr(self.app_instance, 'db'):
+            self.sync_service = NotesSyncService(
+                notes_service=self.app_instance.notes_service,
+                db=self.app_instance.db
+            )
+        
         self.load_sync_profiles()
         self.load_sync_history()
         self.refresh_notes_status()
@@ -343,24 +357,70 @@ class NotesSyncWidget(Container):
     async def start_sync(self, folder: Path, direction: SyncDirection, 
                         conflict_resolution: ConflictResolution):
         """Start a sync operation."""
+        if not self.sync_service:
+            from textual.widgets import MessageBox
+            await self.app.push_screen(
+                MessageBox("Sync service not initialized. Please try again.", title="Error")
+            )
+            return
+        
         progress_widget = self.query_one("#sync-progress-widget", SyncProgressWidget)
-        progress_widget.start_sync(100)  # Example total
+        progress_widget.start_sync(100)  # Will be updated with actual total
         
-        # Simulate sync progress (would be real sync in implementation)
-        for i in range(101):
-            progress_widget.update_progress(i, 100, f"Processing file {i}...")
-            await self.app.sleep(0.01)  # Simulate work
+        # Define progress callback
+        def progress_callback(progress: 'SyncProgress'):
+            progress_widget.update_progress(
+                progress.processed_files,
+                progress.total_files,
+                f"Processing: {progress.current_file or 'Scanning...'}"
+            )
         
-        progress_widget.complete_sync({
-            'created_notes': 5,
-            'updated_notes': 3,
-            'created_files': 2,
-            'conflicts': 1
-        })
+        try:
+            # Get current user ID from app
+            user_id = getattr(self.app_instance, 'current_user_id', 'default_user')
+            
+            # Start the actual sync
+            session_id = await self.sync_service.sync(
+                user_id=user_id,
+                sync_root=folder,
+                direction=direction,
+                conflict_resolution=conflict_resolution,
+                progress_callback=progress_callback
+            )
+            
+            # Get sync results
+            results = self.sync_service.get_session_results(session_id)
+            if results:
+                progress_widget.complete_sync({
+                    'created_notes': results.notes_created,
+                    'updated_notes': results.notes_updated,
+                    'created_files': results.files_created,
+                    'conflicts': len(results.conflicts_resolved)
+                })
+            else:
+                progress_widget.complete_sync({
+                    'created_notes': 0,
+                    'updated_notes': 0,
+                    'created_files': 0,
+                    'conflicts': 0
+                })
+                
+        except Exception as e:
+            logger.error(f"Sync failed: {e}")
+            progress_widget.hide_progress()
+            from textual.widgets import MessageBox
+            await self.app.push_screen(
+                MessageBox(f"Sync failed: {str(e)}", title="Sync Error")
+            )
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
-        if event.button.id == "sync-start-button":
+        if event.button.id == "sync-browse-button":
+            # Handle browse button
+            from ..Event_Handlers.notes_sync_events import handle_sync_browse_button
+            await handle_sync_browse_button(self.app_instance, event)
+            
+        elif event.button.id == "sync-start-button":
             # Get sync parameters
             folder_input = self.query_one("#sync-folder-input", Input)
             direction_select = self.query_one("#sync-direction-select", Select)

@@ -503,6 +503,85 @@ class NotesInteropService:
         }
         
         return self.update_note_sync_metadata(user_id, note_id, sync_metadata, note['version'])
+    
+    def get_sync_status(self, user_id: str, note_id: str) -> Dict[str, Any]:
+        """
+        Get the sync status for a specific note.
+        
+        Args:
+            user_id: User ID for database context
+            note_id: Note ID to check
+            
+        Returns:
+            Dictionary containing sync status information
+        """
+        db = self._get_db(user_id)
+        
+        try:
+            with db.transaction() as conn:
+                cursor = conn.execute("""
+                    SELECT id, title, version, file_path_on_disk,
+                           relative_file_path_on_disk, sync_root_folder,
+                           last_synced_disk_file_hash, last_synced_disk_file_mtime,
+                           is_externally_synced, sync_strategy, sync_excluded,
+                           file_extension, last_modified, created_at
+                    FROM notes
+                    WHERE id = ? AND deleted = 0
+                """, (note_id,))
+                
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                
+                return {
+                    'id': row[0],
+                    'title': row[1],
+                    'version': row[2],
+                    'file_path_on_disk': row[3],
+                    'relative_file_path_on_disk': row[4],
+                    'sync_root_folder': row[5],
+                    'last_synced_disk_file_hash': row[6],
+                    'last_synced_disk_file_mtime': row[7],
+                    'is_externally_synced': row[8],
+                    'sync_strategy': row[9],
+                    'sync_excluded': row[10],
+                    'file_extension': row[11],
+                    'last_modified': row[12],
+                    'created_at': row[13]
+                }
+                
+        except Exception as e:
+            logger.error(f"Error getting sync status for note {note_id}: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Failed to get sync status: {e}") from e
+    
+    def set_note_sync_enabled(self, user_id: str, note_id: str, enabled: bool,
+                             sync_strategy: str = 'bidirectional') -> bool:
+        """
+        Enable or disable sync for a specific note.
+        
+        Args:
+            user_id: User ID for database context
+            note_id: Note ID to update
+            enabled: Whether to enable or disable sync
+            sync_strategy: Sync strategy when enabling
+            
+        Returns:
+            True if updated successfully
+        """
+        # Get current note version
+        note = self.get_note_by_id(user_id, note_id)
+        if not note:
+            logger.error(f"Note {note_id} not found")
+            return False
+        
+        sync_metadata = {
+            'is_externally_synced': enabled
+        }
+        
+        if enabled:
+            sync_metadata['sync_strategy'] = sync_strategy
+        
+        return self.update_note_sync_metadata(user_id, note_id, sync_metadata, note['version'])
 
 #
 # End of Notes_Library.py
