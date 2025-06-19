@@ -262,19 +262,19 @@ class NotesSyncWidget(ModalScreen):
                 
                 with Horizontal(classes="sync-controls"):
                     yield Select(
-                    [("bidirectional", "Bidirectional"),
-                     ("disk_to_db", "Disk → Database"),
-                     ("db_to_disk", "Database → Disk")],
-                    id="sync-direction-select"
-                )
+                        [("bidirectional", "Bidirectional"),
+                         ("disk_to_db", "Disk → Database"),
+                         ("db_to_disk", "Database → Disk")],
+                        id="sync-direction-select"
+                    )
                     
                     yield Select(
-                    [("ask", "Ask on Conflict"),
-                     ("newer_wins", "Newer Wins"),
-                     ("db_wins", "Database Wins"),
-                     ("disk_wins", "Disk Wins")],
-                    id="sync-conflict-select"
-                )
+                        [("ask", "Ask on Conflict"),
+                         ("newer_wins", "Newer Wins"),
+                         ("db_wins", "Database Wins"),
+                         ("disk_wins", "Disk Wins")],
+                        id="sync-conflict-select"
+                    )
                 
                 with Horizontal(classes="sync-controls"):
                     yield Button("Start Sync", id="sync-start-button", variant="primary")
@@ -308,7 +308,7 @@ class NotesSyncWidget(ModalScreen):
                     )
                     yield Button("Refresh", id="sync-refresh-status-button")
                 
-                    yield ScrollableContainer(id="sync-notes-status-container")
+                yield ScrollableContainer(id="sync-notes-status-container")
             
             # Sync History Section
             with Container(classes="sync-section"):
