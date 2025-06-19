@@ -3504,6 +3504,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     cache_service = get_cache_service()
                     cache_service.save_persistent_caches()
                     loguru_logger.info("Persistent caches saved successfully")
+                except ImportError:
+                    loguru_logger.debug("Cache service not available - skipping cache save")
                 except Exception as e:
                     loguru_logger.error(f"Error saving persistent caches: {e}")
             

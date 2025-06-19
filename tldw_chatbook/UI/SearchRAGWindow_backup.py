@@ -21,11 +21,47 @@ from rich.markup import escape
 from loguru import logger
 
 # Local Imports
-from ..Event_Handlers.Chat_Events.chat_rag_events import (
-    perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
-)
-from ..RAG_Search.Services import EmbeddingsService, ChunkingService, IndexingService
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+# Conditional imports for RAG functionality
+try:
+    from ..Event_Handlers.Chat_Events.chat_rag_events import (
+        perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
+    )
+    RAG_EVENTS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"RAG event handlers not available: {e}")
+    RAG_EVENTS_AVAILABLE = False
+    
+    # Create placeholder functions
+    async def perform_plain_rag_search(*args, **kwargs):
+        raise ImportError("RAG search not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    
+    async def perform_full_rag_pipeline(*args, **kwargs):
+        raise ImportError("RAG pipeline not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    
+    async def perform_hybrid_rag_search(*args, **kwargs):
+        raise ImportError("Hybrid RAG search not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+
+try:
+    from ..RAG_Search.Services import EmbeddingsService, ChunkingService, IndexingService
+    RAG_SERVICES_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"RAG services not available: {e}")
+    RAG_SERVICES_AVAILABLE = False
+    
+    # Create placeholder classes
+    class EmbeddingsService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("EmbeddingsService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    
+    class ChunkingService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("ChunkingService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    
+    class IndexingService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("IndexingService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
 from ..DB.search_history_db import SearchHistoryDB
 from ..Utils.paths import get_user_data_dir
 

@@ -201,8 +201,19 @@ class SearchWindow(Container):
 
         with Container(id="search-content-pane", classes="search-content-pane"):
             # Import and use the new SearchRAGWindow for RAG Q&A
-            from .SearchRAGWindow import SearchRAGWindow
-            yield SearchRAGWindow(app_instance=self.app_instance, id=SEARCH_VIEW_RAG_QA)
+            try:
+                from .SearchRAGWindow import SearchRAGWindow
+                yield SearchRAGWindow(app_instance=self.app_instance, id=SEARCH_VIEW_RAG_QA)
+            except ImportError as e:
+                logger.warning(f"Could not import SearchRAGWindow: {e}")
+                # Create a placeholder container with a message
+                with Container(id=SEARCH_VIEW_RAG_QA, classes="search-view-area"):
+                    yield Static(
+                        "⚠️ RAG Search functionality is not available.\n\n"
+                        "To enable RAG search, install the required dependencies:\n"
+                        "pip install -e '.[embeddings_rag]'",
+                        classes="rag-unavailable-message"
+                    )
             yield Container(id=SEARCH_VIEW_RAG_CHAT, classes="search-view-area")
             yield Container(id=SEARCH_VIEW_RAG_MANAGEMENT, classes="search-view-area")
 

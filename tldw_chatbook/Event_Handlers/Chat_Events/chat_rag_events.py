@@ -12,9 +12,28 @@ import uuid
 from ...DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError
 from ...DB.ChaChaNotes_DB import CharactersRAGDB
 from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
-from ...RAG_Search.Services.embeddings_service import EmbeddingsService
-from ...RAG_Search.Services.chunking_service import ChunkingService
-from ...RAG_Search.Services.cache_service import get_cache_service
+
+# Conditional imports for RAG services
+try:
+    from ...RAG_Search.Services.embeddings_service import EmbeddingsService
+    from ...RAG_Search.Services.chunking_service import ChunkingService
+    from ...RAG_Search.Services.cache_service import get_cache_service
+    RAG_SERVICES_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"RAG services not available: {e}")
+    RAG_SERVICES_AVAILABLE = False
+    
+    # Create placeholder classes
+    class EmbeddingsService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("EmbeddingsService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    
+    class ChunkingService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("ChunkingService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    
+    def get_cache_service(*args, **kwargs):
+        raise ImportError("Cache service not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -23,7 +42,7 @@ if TYPE_CHECKING:
 logger = logger.bind(module="chat_rag_events")
 
 # Check if RAG dependencies are available
-RAG_AVAILABLE = DEPENDENCIES_AVAILABLE.get('chunker', False)
+RAG_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) and RAG_SERVICES_AVAILABLE
 RERANK_AVAILABLE = DEPENDENCIES_AVAILABLE.get('flashrank', False)
 COHERE_AVAILABLE = DEPENDENCIES_AVAILABLE.get('cohere', False)
 
@@ -53,19 +72,23 @@ async def perform_plain_rag_search(
     """
     logger.info(f"Performing plain RAG search for query: '{query}'")
     
-    # Check cache first
-    cache_service = get_cache_service()
-    cache_params = {
-        'sources': sources,
-        'top_k': top_k,
-        'max_context_length': max_context_length,
-        'enable_rerank': enable_rerank,
-        'reranker_model': reranker_model
-    }
-    cached_result = cache_service.get_query_result(query, cache_params)
-    if cached_result:
-        logger.info("Returning cached RAG search result")
-        return cached_result
+    # Check cache first if available
+    if RAG_AVAILABLE:
+        try:
+            cache_service = get_cache_service()
+            cache_params = {
+                'sources': sources,
+                'top_k': top_k,
+                'max_context_length': max_context_length,
+                'enable_rerank': enable_rerank,
+                'reranker_model': reranker_model
+            }
+            cached_result = cache_service.get_query_result(query, cache_params)
+            if cached_result:
+                logger.info("Returning cached RAG search result")
+                return cached_result
+        except Exception as e:
+            logger.debug(f"Cache service not available or error: {e}")
     
     all_results = []
     
@@ -279,8 +302,12 @@ async def perform_plain_rag_search(
     logger.info(f"Plain RAG search completed. Found {len(all_results)} results, "
                 f"context length: {len(context_string)} chars")
     
-    # Cache the results
-    cache_service.cache_query_result(query, cache_params, all_results, context_string)
+    # Cache the results if available
+    if RAG_AVAILABLE:
+        try:
+            cache_service.cache_query_result(query, cache_params, all_results, context_string)
+        except Exception as e:
+            logger.debug(f"Failed to cache results: {e}")
     
     return all_results, context_string
 
