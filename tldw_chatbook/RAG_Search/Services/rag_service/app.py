@@ -299,6 +299,7 @@ class RAGApplication:
         """Create a cache key from arguments."""
         import hashlib
         import json
+        from enum import Enum
         
         # Convert args to JSON-serializable format
         key_data = []

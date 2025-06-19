@@ -16,7 +16,7 @@ This module provides centralized service creation that ensures:
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 from loguru import logger
 
 from .embeddings_service import EmbeddingsService
@@ -27,6 +27,14 @@ from .config_integration import get_rag_config, get_memory_config
 from ...Utils.paths import get_user_data_dir
 
 logger = logger.bind(module="service_factory")
+
+# Try to import the new RAG service
+try:
+    from .rag_service.integration import RAGService
+    RAG_SERVICE_AVAILABLE = True
+except ImportError:
+    RAG_SERVICE_AVAILABLE = False
+    RAGService = None
 
 class RAGServiceFactory:
     """Factory for creating and configuring RAG services."""
@@ -170,6 +178,45 @@ class RAGServiceFactory:
         
         logger.info("Created complete RAG service stack with configuration integration")
         return services
+    
+    @staticmethod
+    def create_modular_rag_service(
+        media_db_path: Optional[Path] = None,
+        chachanotes_db_path: Optional[Path] = None,
+        chroma_path: Optional[Path] = None,
+        llm_handler: Optional[Any] = None,
+        config_path: Optional[Path] = None
+    ) -> Optional['RAGService']:
+        """
+        Create the new modular RAG service.
+        
+        Args:
+            media_db_path: Path to media database
+            chachanotes_db_path: Path to ChaChaNotes database
+            chroma_path: Path to ChromaDB storage
+            llm_handler: LLM handler for generation
+            config_path: Path to config file
+            
+        Returns:
+            Configured RAGService or None if not available
+        """
+        if not RAG_SERVICE_AVAILABLE:
+            logger.warning("Modular RAG service not available")
+            return None
+            
+        try:
+            service = RAGService(
+                config_path=config_path,
+                media_db_path=media_db_path,
+                chachanotes_db_path=chachanotes_db_path,
+                chroma_path=chroma_path,
+                llm_handler=llm_handler
+            )
+            logger.info("Created modular RAG service")
+            return service
+        except Exception as e:
+            logger.error(f"Failed to create modular RAG service: {e}")
+            return None
 
 # Convenience functions for backward compatibility
 def create_embeddings_service(**kwargs) -> EmbeddingsService:
@@ -183,3 +230,7 @@ def create_indexing_service(**kwargs) -> IndexingService:
 def create_rag_services(**kwargs) -> dict:
     """Create complete RAG services - convenience function."""
     return RAGServiceFactory.create_complete_rag_services(**kwargs)
+
+def create_modular_rag_service(**kwargs) -> Optional['RAGService']:
+    """Create modular RAG service - convenience function."""
+    return RAGServiceFactory.create_modular_rag_service(**kwargs)

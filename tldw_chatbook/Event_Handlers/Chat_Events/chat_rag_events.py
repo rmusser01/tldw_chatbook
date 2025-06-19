@@ -7,11 +7,29 @@ import asyncio
 from loguru import logger
 from pathlib import Path
 import uuid
+import os
 #
 # Local Imports
 from ...DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError
 from ...DB.ChaChaNotes_DB import CharactersRAGDB
 from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+# Try to import the new modular integration
+USE_MODULAR_RAG = os.environ.get('USE_MODULAR_RAG', 'false').lower() in ('true', '1', 'yes')
+if USE_MODULAR_RAG:
+    try:
+        from .chat_rag_integration import (
+            perform_modular_rag_search,
+            perform_modular_rag_pipeline,
+            index_documents_modular
+        )
+        MODULAR_RAG_AVAILABLE = True
+        logger.info("Using new modular RAG implementation")
+    except ImportError as e:
+        logger.warning(f"Modular RAG integration not available: {e}")
+        MODULAR_RAG_AVAILABLE = False
+else:
+    MODULAR_RAG_AVAILABLE = False
 
 # Conditional imports for RAG services
 try:
@@ -70,6 +88,14 @@ async def perform_plain_rag_search(
     Returns:
         Tuple of (results list, formatted context string)
     """
+    # Use modular implementation if available and enabled
+    if MODULAR_RAG_AVAILABLE:
+        logger.info(f"Using modular RAG search for query: '{query}'")
+        return await perform_modular_rag_search(
+            app, query, sources, top_k, max_context_length, 
+            enable_rerank, reranker_model
+        )
+    
     logger.info(f"Performing plain RAG search for query: '{query}'")
     
     # Check cache first if available
@@ -329,6 +355,20 @@ async def perform_full_rag_pipeline(
     
     Uses ChromaDB for vector storage and sentence-transformers for embeddings.
     """
+    # Use modular implementation if available and enabled
+    if MODULAR_RAG_AVAILABLE:
+        logger.info(f"Using modular RAG pipeline for query: '{query}'")
+        # The modular pipeline returns a dict, so we need to adapt it
+        result = await perform_modular_rag_pipeline(
+            app, query, sources, 
+            top_k=top_k,
+            max_context_length=max_context_length,
+            enable_rerank=enable_rerank,
+            reranker_model=reranker_model
+        )
+        # Extract results and context from the dict response
+        return result.get('sources', []), result.get('context', '')
+    
     logger.info(f"Performing full RAG pipeline for query: '{query}'")
     
     # Check if embeddings are available

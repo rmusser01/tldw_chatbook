@@ -267,6 +267,243 @@ class NotesInteropService:
             else:
                 logger.debug(f"No active DB instance found in cache for user context '{user_id}' to close.")
 
+    # --- Sync-Related Methods ---
+    
+    def get_notes_for_sync(self, user_id: str, sync_root_folder: Path = None) -> List[Dict[str, Any]]:
+        """
+        Get notes that are configured for external sync.
+        
+        Args:
+            user_id: User ID for database context
+            sync_root_folder: Optional filter by sync root folder
+            
+        Returns:
+            List of note dictionaries with sync metadata
+        """
+        db = self._get_db(user_id)
+        
+        try:
+            with db.transaction() as conn:
+                if sync_root_folder:
+                    cursor = conn.execute("""
+                        SELECT id, title, content, version, file_path_on_disk,
+                               relative_file_path_on_disk, sync_root_folder,
+                               last_synced_disk_file_hash, last_synced_disk_file_mtime,
+                               is_externally_synced, sync_strategy, sync_excluded,
+                               file_extension, last_modified, created_at
+                        FROM notes
+                        WHERE deleted = 0 AND sync_root_folder = ?
+                        ORDER BY last_modified DESC
+                    """, (str(sync_root_folder),))
+                else:
+                    cursor = conn.execute("""
+                        SELECT id, title, content, version, file_path_on_disk,
+                               relative_file_path_on_disk, sync_root_folder,
+                               last_synced_disk_file_hash, last_synced_disk_file_mtime,
+                               is_externally_synced, sync_strategy, sync_excluded,
+                               file_extension, last_modified, created_at
+                        FROM notes
+                        WHERE deleted = 0 AND is_externally_synced = 1
+                        ORDER BY last_modified DESC
+                    """)
+                
+                notes = []
+                for row in cursor:
+                    notes.append({
+                        'id': row[0],
+                        'title': row[1],
+                        'content': row[2],
+                        'version': row[3],
+                        'file_path_on_disk': row[4],
+                        'relative_file_path_on_disk': row[5],
+                        'sync_root_folder': row[6],
+                        'last_synced_disk_file_hash': row[7],
+                        'last_synced_disk_file_mtime': row[8],
+                        'is_externally_synced': row[9],
+                        'sync_strategy': row[10],
+                        'sync_excluded': row[11],
+                        'file_extension': row[12],
+                        'last_modified': row[13],
+                        'created_at': row[14]
+                    })
+                
+                return notes
+                
+        except Exception as e:
+            logger.error(f"Error getting notes for sync: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Failed to get notes for sync: {e}") from e
+    
+    def get_unsynced_notes(self, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get notes that are not currently synced to any external file.
+        
+        Args:
+            user_id: User ID for database context
+            limit: Maximum number of notes to return
+            
+        Returns:
+            List of note dictionaries
+        """
+        db = self._get_db(user_id)
+        
+        try:
+            with db.transaction() as conn:
+                cursor = conn.execute("""
+                    SELECT id, title, content, version, last_modified, created_at
+                    FROM notes
+                    WHERE deleted = 0 
+                      AND (is_externally_synced = 0 OR is_externally_synced IS NULL)
+                      AND (sync_excluded = 0 OR sync_excluded IS NULL)
+                    ORDER BY last_modified DESC
+                    LIMIT ?
+                """, (limit,))
+                
+                notes = []
+                for row in cursor:
+                    notes.append({
+                        'id': row[0],
+                        'title': row[1],
+                        'content': row[2],
+                        'version': row[3],
+                        'last_modified': row[4],
+                        'created_at': row[5]
+                    })
+                
+                return notes
+                
+        except Exception as e:
+            logger.error(f"Error getting unsynced notes: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Failed to get unsynced notes: {e}") from e
+    
+    def update_note_sync_metadata(self, user_id: str, note_id: str, sync_metadata: Dict[str, Any],
+                                expected_version: int) -> bool:
+        """
+        Update sync-related metadata for a note.
+        
+        Args:
+            user_id: User ID for database context
+            note_id: Note ID to update
+            sync_metadata: Dictionary containing sync fields to update
+            expected_version: Expected version for optimistic locking
+            
+        Returns:
+            True if updated successfully, False otherwise
+        """
+        db = self._get_db(user_id)
+        
+        try:
+            with db.transaction() as conn:
+                # Build update fields from sync_metadata
+                update_fields = []
+                values = []
+                
+                allowed_fields = {
+                    'file_path_on_disk', 'relative_file_path_on_disk', 'sync_root_folder',
+                    'last_synced_disk_file_hash', 'last_synced_disk_file_mtime',
+                    'is_externally_synced', 'sync_strategy', 'sync_excluded', 'file_extension'
+                }
+                
+                for field, value in sync_metadata.items():
+                    if field in allowed_fields:
+                        update_fields.append(f"{field} = ?")
+                        values.append(value)
+                
+                if not update_fields:
+                    logger.warning("No valid sync metadata fields to update")
+                    return False
+                
+                # Add version increment and timestamp
+                update_fields.append("version = ?")
+                values.append(expected_version + 1)
+                
+                update_fields.append("last_modified = CURRENT_TIMESTAMP")
+                
+                # Add WHERE clause parameters
+                values.extend([note_id, expected_version])
+                
+                query = f"""
+                    UPDATE notes
+                    SET {', '.join(update_fields)}
+                    WHERE id = ? AND version = ? AND deleted = 0
+                """
+                
+                cursor = conn.execute(query, values)
+                
+                if cursor.rowcount == 0:
+                    logger.warning(f"No rows updated for note {note_id} - version mismatch or deleted")
+                    return False
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error updating note sync metadata: {e}", exc_info=True)
+            return False
+    
+    def link_note_to_file(self, user_id: str, note_id: str, file_path: Path,
+                         sync_root_folder: Path, sync_strategy: str = 'bidirectional') -> bool:
+        """
+        Link a note to an external file for syncing.
+        
+        Args:
+            user_id: User ID for database context
+            note_id: Note ID to link
+            file_path: Absolute path to the file
+            sync_root_folder: Root folder for sync
+            sync_strategy: Sync strategy ('disk_to_db', 'db_to_disk', 'bidirectional')
+            
+        Returns:
+            True if linked successfully
+        """
+        # Get current note version
+        note = self.get_note_by_id(user_id, note_id)
+        if not note:
+            logger.error(f"Note {note_id} not found")
+            return False
+        
+        try:
+            relative_path = file_path.relative_to(sync_root_folder)
+        except ValueError:
+            logger.error(f"File {file_path} is not under sync root {sync_root_folder}")
+            return False
+        
+        sync_metadata = {
+            'file_path_on_disk': str(file_path),
+            'relative_file_path_on_disk': str(relative_path),
+            'sync_root_folder': str(sync_root_folder),
+            'is_externally_synced': True,
+            'sync_strategy': sync_strategy,
+            'file_extension': file_path.suffix
+        }
+        
+        return self.update_note_sync_metadata(user_id, note_id, sync_metadata, note['version'])
+    
+    def unlink_note_from_file(self, user_id: str, note_id: str) -> bool:
+        """
+        Unlink a note from its external file.
+        
+        Args:
+            user_id: User ID for database context
+            note_id: Note ID to unlink
+            
+        Returns:
+            True if unlinked successfully
+        """
+        # Get current note version
+        note = self.get_note_by_id(user_id, note_id)
+        if not note:
+            logger.error(f"Note {note_id} not found")
+            return False
+        
+        sync_metadata = {
+            'file_path_on_disk': None,
+            'relative_file_path_on_disk': None,
+            'last_synced_disk_file_hash': None,
+            'last_synced_disk_file_mtime': None,
+            'is_externally_synced': False
+        }
+        
+        return self.update_note_sync_metadata(user_id, note_id, sync_metadata, note['version'])
+
 #
 # End of Notes_Library.py
 #######################################################################################################################
