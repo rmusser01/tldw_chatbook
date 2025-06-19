@@ -62,8 +62,7 @@ class NotesSidebarRight(VerticalScroll):
 
         # New Collapsible for Emojis
         with Collapsible(title="Emojis", collapsed=True):
-            #yield EmojiPicker(id="notes-emoji-picker")
-            pass  # Placeholder for EmojiPicker widget
+            yield Button("Open Emoji Picker 🎨", id="notes-sidebar-emoji-button")
 
         # Group export options
         with Collapsible(title="Export Options", collapsed=True):

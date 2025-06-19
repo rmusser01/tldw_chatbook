@@ -1006,6 +1006,23 @@ async def handle_notes_copy_text_button_pressed(app: 'TldwCli', event: Button.Pr
     await _copy_note_to_clipboard(app, "text")
 
 
+async def handle_notes_sidebar_emoji_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the sidebar emoji button press."""
+    from ..Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
+    
+    async def emoji_callback(emoji_char: str) -> None:
+        if emoji_char:
+            # Insert emoji at cursor in notes editor
+            try:
+                editor = app.query_one("#notes-editor-area", TextArea)
+                editor.insert_text_at_cursor(emoji_char)
+                editor.focus()
+            except QueryError:
+                pass
+    
+    await app.push_screen(EmojiPickerScreen(), emoji_callback)
+
+
 async def _copy_note_to_clipboard(app: 'TldwCli', format_type: str) -> None:
     """Copy the current note to clipboard in the specified format."""
     logger_instance = getattr(app, 'loguru_logger', logger)
@@ -1354,6 +1371,7 @@ NOTES_BUTTON_HANDLERS = {
     "notes-copy-text-button": handle_notes_copy_text_button_pressed,
     "notes-preview-toggle": handle_notes_preview_toggle,
     "notes-sort-order-button": handle_notes_sort_order_toggle,
+    "notes-sidebar-emoji-button": handle_notes_sidebar_emoji_button_pressed,
 }
 
 # End of notes_events.py

@@ -37,6 +37,7 @@ class NotesWindow(Container):
     #notes-controls-area {
         height: 3;
         align: center middle;
+        overflow-x: auto;
     }
     
     .unsaved-indicator {
@@ -70,8 +71,7 @@ class NotesWindow(Container):
             with Horizontal(id="notes-controls-area"):
                 yield Button("☰ L", id="toggle-notes-sidebar-left", classes="sidebar-toggle")
                 yield Static()  # Spacer
-                # Temporarily simplified button for testing:
-                yield Button("E", id="open-emoji-picker-button")
+                yield Button("😊", id="open-emoji-picker-button", tooltip="Insert Emoji")
                 yield Static() # Spacer
                 yield Label("", id="notes-unsaved-indicator", classes="unsaved-indicator")
                 yield Button("Save Note", id="notes-save-button", variant="primary")
