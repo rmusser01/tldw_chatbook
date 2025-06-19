@@ -2031,6 +2031,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
             new_window = self.query_one(f"#{new_tab}-window")
             new_window.display = True
+            
+            # Update word count in footer based on tab
+            try:
+                footer = self.query_one("AppFooterStatus")
+                if new_tab == "notes":
+                    # Get current word count from notes editor
+                    try:
+                        notes_editor = self.query_one("#notes-editor-area", TextArea)
+                        text = notes_editor.text
+                        word_count = len(text.split()) if text else 0
+                        footer.update_word_count(word_count)
+                    except QueryError:
+                        footer.update_word_count(0)
+                else:
+                    # Clear word count when not on notes tab
+                    footer.update_word_count(0)
+            except QueryError:
+                pass
 
             # Focus input logic (as in original, adjust if needed)
             if new_tab not in [TAB_LOGS, TAB_STATS]: # Don't focus input on these tabs

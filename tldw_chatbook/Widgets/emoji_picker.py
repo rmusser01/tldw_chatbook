@@ -183,7 +183,7 @@ class EmojiButton(Button):
 
 
 class EmojiGrid(VerticalScroll):
-    COLUMN_COUNT = 10  # Increased for more compact display
+    COLUMN_COUNT = 6  # Reduced for smaller dialog
 
     def __init__(self, emojis: List[ProcessedEmoji], **kwargs):
         super().__init__(**kwargs)
@@ -229,9 +229,9 @@ class EmojiPickerScreen(ModalScreen[str]):
     CSS = """
     EmojiPickerScreen { align: center middle; }
     #dialog { 
-        width: 60w; 
-        max-width: 60; 
-        height: 28; 
+        width: 40w; 
+        max-width: 40; 
+        height: 20; 
         border: thick $primary; 
         background: $surface; 
         padding: 1;

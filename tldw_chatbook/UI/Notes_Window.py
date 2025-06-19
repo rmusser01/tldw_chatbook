@@ -58,6 +58,12 @@ class NotesWindow(Container):
     #notes-preview-toggle {
         margin: 0 1;
     }
+    
+    .compact-button {
+        width: 3;
+        min-width: 3;
+        padding: 0;
+    }
     """
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
@@ -70,11 +76,10 @@ class NotesWindow(Container):
             yield TextArea(id="notes-editor-area", classes="notes-editor")
             with Horizontal(id="notes-controls-area"):
                 yield Button("☰ L", id="toggle-notes-sidebar-left", classes="sidebar-toggle")
-                yield Button("😊", id="open-emoji-picker-button", tooltip="Insert Emoji")
+                yield Button("😊", id="open-emoji-picker-button", tooltip="Insert Emoji", classes="compact-button")
                 yield Label("", id="notes-unsaved-indicator", classes="unsaved-indicator")
                 yield Button("Save Note", id="notes-save-button", variant="primary")
                 yield Button("Preview", id="notes-preview-toggle", variant="default")
-                yield Label("Words: 0", id="notes-word-count", classes="word-count")
                 yield Button("Sync 🔄", id="notes-sync-button", variant="default")
                 yield Button("R ☰", id="toggle-notes-sidebar-right", classes="sidebar-toggle")
 

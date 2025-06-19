@@ -1190,12 +1190,15 @@ async def handle_notes_editor_changed(app: 'TldwCli', event) -> None:
         else:
             app.notes_unsaved_changes = False
     
-    # Update word count
+    # Update word count in footer
     try:
-        word_count_label = app.query_one("#notes-word-count", Label)
         text = event.text_area.text
         word_count = len(text.split()) if text else 0
-        word_count_label.update(f"Words: {word_count}")
+        
+        # Update footer if Notes tab is active
+        if app.current_tab == "notes":
+            footer = app.query_one("AppFooterStatus")
+            footer.update_word_count(word_count)
     except QueryError:
         pass
 
@@ -1328,6 +1331,15 @@ async def handle_notes_create_from_template(app: 'TldwCli', event: Button.Presse
             
             keywords_area = app.query_one("#notes-keywords-area", TextArea)
             keywords_area.load_text(keywords)
+            
+            # Update word count in footer if on notes tab
+            if app.current_tab == "notes":
+                try:
+                    footer = app.query_one("AppFooterStatus")
+                    word_count = len(content.split()) if content else 0
+                    footer.update_word_count(word_count)
+                except QueryError:
+                    pass
             
             # Reset unsaved changes since this is a new note
             app.notes_unsaved_changes = False
