@@ -17,6 +17,7 @@ from rich.table import Table
 #
 # Local Imports
 from ..Notes.sync_service import SyncDirection, ConflictResolution
+from textual.screen import ModalScreen
 #
 ########################################################################################################################
 #
@@ -146,7 +147,7 @@ class SyncProgressWidget(Container):
         self.remove_class("active")
 
 
-class NotesSyncWidget(Container):
+class NotesSyncWidget(ModalScreen):
     """Main widget for note synchronization management."""
     
     def __init__(self, app_instance, **kwargs):
@@ -157,8 +158,15 @@ class NotesSyncWidget(Container):
     
     DEFAULT_CSS = """
     NotesSyncWidget {
-        layout: vertical;
-        height: 100%;
+        align: center middle;
+    }
+    
+    NotesSyncWidget > Container {
+        background: $surface;
+        border: thick $primary;
+        width: 80%;
+        max-width: 100;
+        height: 80%;
         overflow-y: auto;
     }
     
@@ -205,30 +213,62 @@ class NotesSyncWidget(Container):
     .sync-note-item > SyncStatusIcon {
         width: 3;
     }
+    
+    .modal-header {
+        height: 3;
+        width: 100%;
+        background: $primary-background;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    
+    .modal-title {
+        width: 1fr;
+        text-align: center;
+        text-style: bold;
+        content-align: center middle;
+    }
+    
+    .close-button {
+        width: 3;
+        min-width: 3;
+        background: transparent;
+        border: none;
+    }
+    
+    .close-button:hover {
+        background: $error;
+    }
     """
     
     def compose(self) -> ComposeResult:
-        # Quick Sync Section
-        with Container(classes="sync-section"):
-            yield Static("Quick Sync", classes="section-title")
+        with Container():
+            # Header with close button
+            with Horizontal(classes="modal-header"):
+                yield Static("📁 Notes Sync Manager", classes="modal-title")
+                yield Button("✕", id="sync-close-button", classes="close-button")
             
-            with Horizontal(classes="sync-controls"):
-                yield Input(
-                    placeholder="Select folder to sync...",
-                    id="sync-folder-input"
-                )
-                yield Button("Browse", id="sync-browse-button")
-            
-            with Horizontal(classes="sync-controls"):
-                yield Select(
+            # Quick Sync Section
+            with Container(classes="sync-section"):
+                yield Static("Quick Sync", classes="section-title")
+                
+                with Horizontal(classes="sync-controls"):
+                    yield Input(
+                        placeholder="Select folder to sync...",
+                        id="sync-folder-input"
+                    )
+                    yield Button("Browse", id="sync-browse-button")
+                
+                with Horizontal(classes="sync-controls"):
+                    yield Select(
                     [(SyncDirection.BIDIRECTIONAL.value, "Bidirectional"),
                      (SyncDirection.DISK_TO_DB.value, "Disk → Database"),
                      (SyncDirection.DB_TO_DISK.value, "Database → Disk")],
                     id="sync-direction-select",
                     value=SyncDirection.BIDIRECTIONAL.value
                 )
-                
-                yield Select(
+                    
+                    yield Select(
                     [(ConflictResolution.ASK.value, "Ask on Conflict"),
                      (ConflictResolution.NEWER_WINS.value, "Newer Wins"),
                      (ConflictResolution.DB_WINS.value, "Database Wins"),
@@ -236,53 +276,53 @@ class NotesSyncWidget(Container):
                     id="sync-conflict-select",
                     value=ConflictResolution.ASK.value
                 )
+                
+                with Horizontal(classes="sync-controls"):
+                    yield Button("Start Sync", id="sync-start-button", variant="primary")
+                    yield Button("Save as Profile", id="sync-save-profile-button")
             
-            with Horizontal(classes="sync-controls"):
-                yield Button("Start Sync", id="sync-start-button", variant="primary")
-                yield Button("Save as Profile", id="sync-save-profile-button")
-        
-        # Sync Profiles Section
-        with Container(classes="sync-section"):
-            yield Static("Sync Profiles", classes="section-title")
-            yield ListView(id="sync-profiles-list")
+            # Sync Profiles Section
+            with Container(classes="sync-section"):
+                yield Static("Sync Profiles", classes="section-title")
+                yield ListView(id="sync-profiles-list")
+                
+                with Horizontal(classes="sync-controls"):
+                    yield Button("Sync Selected", id="sync-profile-run-button")
+                    yield Button("Edit", id="sync-profile-edit-button")
+                    yield Button("Delete", id="sync-profile-delete-button", variant="error")
             
-            with Horizontal(classes="sync-controls"):
-                yield Button("Sync Selected", id="sync-profile-run-button")
-                yield Button("Edit", id="sync-profile-edit-button")
-                yield Button("Delete", id="sync-profile-delete-button", variant="error")
-        
-        # Sync Status Section
-        with Container(classes="sync-section"):
-            yield Static("Notes Sync Status", classes="section-title")
+            # Sync Status Section
+            with Container(classes="sync-section"):
+                yield Static("Notes Sync Status", classes="section-title")
+                
+                with Horizontal(classes="sync-controls"):
+                    yield Input(
+                        placeholder="Filter notes...",
+                        id="sync-notes-filter"
+                    )
+                    yield Select(
+                        [("all", "All Notes"),
+                         ("synced", "Synced"),
+                         ("changed", "Changed"),
+                         ("conflicts", "Conflicts")],
+                        id="sync-status-filter",
+                        value="all"
+                    )
+                    yield Button("Refresh", id="sync-refresh-status-button")
+                
+                    yield ScrollableContainer(id="sync-notes-status-container")
             
-            with Horizontal(classes="sync-controls"):
-                yield Input(
-                    placeholder="Filter notes...",
-                    id="sync-notes-filter"
-                )
-                yield Select(
-                    [("all", "All Notes"),
-                     ("synced", "Synced"),
-                     ("changed", "Changed"),
-                     ("conflicts", "Conflicts")],
-                    id="sync-status-filter",
-                    value="all"
-                )
-                yield Button("Refresh", id="sync-refresh-status-button")
+            # Sync History Section
+            with Container(classes="sync-section"):
+                yield Static("Sync History", classes="section-title")
+                yield ListView(id="sync-history-list")
+                
+                with Horizontal(classes="sync-controls"):
+                    yield Button("View Details", id="sync-history-details-button")
+                    yield Button("View Conflicts", id="sync-history-conflicts-button")
             
-            yield ScrollableContainer(id="sync-notes-status-container")
-        
-        # Sync History Section
-        with Container(classes="sync-section"):
-            yield Static("Sync History", classes="section-title")
-            yield ListView(id="sync-history-list")
-            
-            with Horizontal(classes="sync-controls"):
-                yield Button("View Details", id="sync-history-details-button")
-                yield Button("View Conflicts", id="sync-history-conflicts-button")
-        
-        # Progress widget (hidden by default)
-        yield SyncProgressWidget(id="sync-progress-widget")
+            # Progress widget (hidden by default)
+            yield SyncProgressWidget(id="sync-progress-widget")
     
     def on_mount(self):
         """Initialize the widget when mounted."""
@@ -440,6 +480,9 @@ class NotesSyncWidget(Container):
             progress_widget = self.query_one("#sync-progress-widget", SyncProgressWidget)
             if event.button.label == "Close":
                 progress_widget.hide_progress()
+        
+        elif event.button.id == "sync-close-button":
+            self.dismiss()
 
 #
 # End of notes_sync_widget.py

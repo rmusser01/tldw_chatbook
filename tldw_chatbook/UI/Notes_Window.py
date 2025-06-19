@@ -70,15 +70,12 @@ class NotesWindow(Container):
             yield TextArea(id="notes-editor-area", classes="notes-editor")
             with Horizontal(id="notes-controls-area"):
                 yield Button("☰ L", id="toggle-notes-sidebar-left", classes="sidebar-toggle")
-                yield Static()  # Spacer
                 yield Button("😊", id="open-emoji-picker-button", tooltip="Insert Emoji")
-                yield Static() # Spacer
                 yield Label("", id="notes-unsaved-indicator", classes="unsaved-indicator")
                 yield Button("Save Note", id="notes-save-button", variant="primary")
-                yield Button("Sync 🔄", id="notes-sync-button", variant="default")
                 yield Button("Preview", id="notes-preview-toggle", variant="default")
                 yield Label("Words: 0", id="notes-word-count", classes="word-count")
-                yield Static()  # Spacer
+                yield Button("Sync 🔄", id="notes-sync-button", variant="default")
                 yield Button("R ☰", id="toggle-notes-sidebar-right", classes="sidebar-toggle")
 
         yield NotesSidebarRight(id="notes-sidebar-right")

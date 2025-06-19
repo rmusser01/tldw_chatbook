@@ -403,10 +403,13 @@ class EmojiPickerScreen(ModalScreen[str]):
             elif main_grid_no_tabs:
                 main_grid_no_tabs.display = True
                 # main_grid_no_tabs.populate_grid() # Could re-populate if needed
-                first_button_main = main_grid_no_tabs.query(EmojiButton).first()
-                if first_button_main:
-                    first_button_main.focus()
-                else:
+                try:
+                    first_button_main = main_grid_no_tabs.query(EmojiButton).first()
+                    if first_button_main:
+                        first_button_main.focus()
+                    else:
+                        self.query_one("#search-input").focus()  # Fallback to search
+                except QueryError:
                     self.query_one("#search-input").focus()  # Fallback to search
             else:  # Should not be reached, fallback to search input
                 self.query_one("#search-input", Input).focus()
