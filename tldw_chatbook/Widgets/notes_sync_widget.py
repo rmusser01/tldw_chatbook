@@ -14,9 +14,10 @@ from textual.binding import Binding
 from textual.css.query import NoMatches
 from rich.text import Text
 from rich.table import Table
+from loguru import logger
 #
 # Local Imports
-from ..Notes.sync_service import SyncDirection, ConflictResolution
+from ..Notes.sync_engine import SyncDirection, ConflictResolution
 from textual.screen import ModalScreen
 #
 ########################################################################################################################
@@ -261,20 +262,18 @@ class NotesSyncWidget(ModalScreen):
                 
                 with Horizontal(classes="sync-controls"):
                     yield Select(
-                    [(SyncDirection.BIDIRECTIONAL.value, "Bidirectional"),
-                     (SyncDirection.DISK_TO_DB.value, "Disk → Database"),
-                     (SyncDirection.DB_TO_DISK.value, "Database → Disk")],
-                    id="sync-direction-select",
-                    value=SyncDirection.BIDIRECTIONAL.value
+                    [("bidirectional", "Bidirectional"),
+                     ("disk_to_db", "Disk → Database"),
+                     ("db_to_disk", "Database → Disk")],
+                    id="sync-direction-select"
                 )
                     
                     yield Select(
-                    [(ConflictResolution.ASK.value, "Ask on Conflict"),
-                     (ConflictResolution.NEWER_WINS.value, "Newer Wins"),
-                     (ConflictResolution.DB_WINS.value, "Database Wins"),
-                     (ConflictResolution.DISK_WINS.value, "Disk Wins")],
-                    id="sync-conflict-select",
-                    value=ConflictResolution.ASK.value
+                    [("ask", "Ask on Conflict"),
+                     ("newer_wins", "Newer Wins"),
+                     ("db_wins", "Database Wins"),
+                     ("disk_wins", "Disk Wins")],
+                    id="sync-conflict-select"
                 )
                 
                 with Horizontal(classes="sync-controls"):
@@ -305,8 +304,7 @@ class NotesSyncWidget(ModalScreen):
                          ("synced", "Synced"),
                          ("changed", "Changed"),
                          ("conflicts", "Conflicts")],
-                        id="sync-status-filter",
-                        value="all"
+                        id="sync-status-filter"
                     )
                     yield Button("Refresh", id="sync-refresh-status-button")
                 
@@ -388,11 +386,12 @@ class NotesSyncWidget(ModalScreen):
             ("Design Review", "conflict"),
         ]
         
-        with container:
-            for title, status in example_notes:
-                with Horizontal(classes="sync-note-item"):
-                    container.mount(Static(title))
-                    container.mount(SyncStatusIcon(status))
+        for title, status in example_notes:
+            item_container = Horizontal(classes="sync-note-item")
+            title_widget = Static(title)
+            status_widget = SyncStatusIcon(status)
+            container.mount(item_container)
+            item_container.mount(title_widget, status_widget)
     
     async def start_sync(self, folder: Path, direction: SyncDirection, 
                         conflict_resolution: ConflictResolution):
