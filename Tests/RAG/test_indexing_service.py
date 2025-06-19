@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock, AsyncMock, call
 from tldw_chatbook.RAG_Search.Services.indexing_service import IndexingService
 
 
+@pytest.mark.requires_rag_deps
 class TestIndexingService:
     """Test the document indexing service"""
     

@@ -17,6 +17,7 @@ from unittest.mock import Mock, MagicMock, patch
 from tldw_chatbook.RAG_Search.Services.service_factory import RAGServiceFactory
 
 
+@pytest.mark.requires_rag_deps
 class TestRAGServiceFactory:
     """Test cases for RAGServiceFactory."""
     
@@ -281,6 +282,7 @@ class TestRAGServiceFactory:
         assert services is not None
 
 
+@pytest.mark.requires_rag_deps
 class TestServiceFactoryIntegration:
     """Integration tests for service factory."""
     

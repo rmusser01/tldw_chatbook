@@ -21,6 +21,7 @@ from tldw_chatbook.RAG_Search.Services.config_integration import (
 )
 
 
+@pytest.mark.requires_rag_deps
 class TestRAGConfigManager:
     """Test cases for RAGConfigManager."""
     
@@ -316,6 +317,7 @@ class TestRAGConfigManager:
             assert result is False
 
 
+@pytest.mark.requires_rag_deps
 class TestConfigIntegrationFunctions:
     """Test module-level convenience functions."""
     
@@ -364,6 +366,7 @@ class TestConfigIntegrationFunctions:
             mock_manager.get_rag_setting.assert_called_once_with('processor', 'max_context_length', 4096)
 
 
+@pytest.mark.requires_rag_deps
 class TestConfigValidation:
     """Test configuration validation."""
     

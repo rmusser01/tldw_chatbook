@@ -12,6 +12,7 @@ from tldw_chatbook.RAG_Search.Services.cache_service import LRUCache, CacheServi
 from tldw_chatbook.RAG_Search.Services.chunking_service import ChunkingService
 
 
+@pytest.mark.requires_rag_deps
 class TestLRUCacheProperties:
     """Property-based tests for LRU cache"""
     
@@ -94,6 +95,7 @@ class TestLRUCacheProperties:
             assert cache.get(key) is None
 
 
+@pytest.mark.requires_rag_deps
 class TestChunkingServiceProperties:
     """Property-based tests for chunking service"""
     
@@ -200,6 +202,7 @@ class TestChunkingServiceProperties:
             assert len(chunks) == 0
 
 
+@pytest.mark.requires_rag_deps
 class TestCacheServiceProperties:
     """Property-based tests for cache service"""
     
@@ -271,6 +274,7 @@ class TestCacheServiceProperties:
                 assert cached[text] == embedding
 
 
+@pytest.mark.requires_rag_deps
 class CacheStateMachine(RuleBasedStateMachine):
     """Stateful testing for cache operations"""
     

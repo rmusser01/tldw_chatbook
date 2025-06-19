@@ -1900,11 +1900,11 @@ def apply_strategy(entries: List[ChatDictionary], strategy: str = "sorted_evenly
     """
     logging.debug(f"Applying strategy: {strategy}")
     if strategy == "sorted_evenly":
-        return sorted(entries, key=lambda e: str(e.key_raw)) # Ensure key_raw is string for sort
+        return sorted(entries, key=lambda e: str(e.raw_key)) # Ensure raw_key is string for sort
     elif strategy == "character_lore_first":
-        return sorted(entries, key=lambda e: (e.group != "character", str(e.key_raw)))
+        return sorted(entries, key=lambda e: (e.group != "character", str(e.raw_key)))
     elif strategy == "global_lore_first":
-        return sorted(entries, key=lambda e: (e.group != "global", str(e.key_raw)))
+        return sorted(entries, key=lambda e: (e.group != "global", str(e.raw_key)))
     return entries # Fallback if strategy not recognized
 
 
@@ -1957,7 +1957,7 @@ def group_scoring(entries: List[ChatDictionary]) -> List[ChatDictionary]:
             selected_entries.extend(group_entries_list)
         else:
             # For named groups, keep the original behavior of selecting the best.
-            best_entry_in_group = max(group_entries_list, key=lambda e: len(str(e.key_raw)) if e.key_raw else 0)
+            best_entry_in_group = max(group_entries_list, key=lambda e: len(str(e.raw_key)) if e.raw_key else 0)
             selected_entries.append(best_entry_in_group)
 
     logging.debug(f"Selected {len(selected_entries)} entries after group scoring.")
@@ -1987,7 +1987,7 @@ def apply_timed_effects(entry: ChatDictionary, current_time: datetime) -> bool:
     Returns:
         True if the entry is valid after timed effect checks, False otherwise.
     """
-    logging.debug(f"Applying timed effects for entry: {entry.key_raw}") # Use key_raw for logging
+    logging.debug(f"Applying timed effects for entry: {entry.raw_key}") # Use raw_key for logging
     if entry.timed_effects["delay"] > 0:
         # If never triggered, assume it's valid for delay unless delay is from program start
         # For simplicity, if last_triggered is None, it passes delay check.
@@ -1995,12 +1995,12 @@ def apply_timed_effects(entry: ChatDictionary, current_time: datetime) -> bool:
         # Current logic: delay is from last trigger. If never triggered, passes delay.
         if entry.last_triggered is not None and \
            current_time - entry.last_triggered < timedelta(seconds=entry.timed_effects["delay"]):
-            logging.debug(f"Entry {entry.key_raw} delayed.")
+            logging.debug(f"Entry {entry.raw_key} delayed.")
             return False
     if entry.timed_effects["cooldown"] > 0:
         if entry.last_triggered and \
            current_time - entry.last_triggered < timedelta(seconds=entry.timed_effects["cooldown"]):
-            logging.debug(f"Entry {entry.key_raw} on cooldown.")
+            logging.debug(f"Entry {entry.raw_key} on cooldown.")
             return False
 
     # If checks pass, update last_triggered (conceptually, this happens if it *would* be used)
@@ -2050,7 +2050,7 @@ def enforce_token_budget(entries: List[ChatDictionary], max_tokens: int) -> List
             valid_entries.append(entry)
             total_tokens += tokens
         else:
-            logging.debug(f"Token budget exceeded with entry {entry.key_raw}. Total tokens: {total_tokens + tokens}, Max: {max_tokens}")
+            logging.debug(f"Token budget exceeded with entry {entry.raw_key}. Total tokens: {total_tokens + tokens}, Max: {max_tokens}")
             break # Stop adding entries once budget is full
     return valid_entries
 
@@ -2120,7 +2120,7 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
         - `str`: The text after the first replacement (or original text if no match).
         - `int`: The number of replacements made (0 or 1).
     """
-    logging.debug(f"Applying replacement for entry: {entry.key_raw} with content: {entry.content[:50]}... in text: {text[:50]}...")
+    logging.debug(f"Applying replacement for entry: {entry.raw_key} with content: {entry.content[:50]}... in text: {text[:50]}...")
     if isinstance(entry.key, re.Pattern):
         replaced_text, replaced_count = entry.key.subn(entry.content, text, count=1)
     else: # Plain string key
@@ -2192,7 +2192,7 @@ def process_user_input(
             matched_entries = []
 
 
-        logging.debug(f"Matched entries after initial filtering: {[e.key_raw for e in matched_entries]}")
+        logging.debug(f"Matched entries after initial filtering: {[e.raw_key for e in matched_entries]}")
 
         # 2. Apply group scoring
         try:
@@ -2274,11 +2274,11 @@ def process_user_input(
                     else:
                         break # No more matches for this key
                 if replacements_done_for_this_entry > 0:
-                     logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.key_raw}'")
+                     logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.raw_key}'")
 
             except Exception as e_replace:
-                log_counter("chat_dict_replacement_error", labels={"key": entry.key_raw})
-                logging.error(f"Error applying replacement for entry {entry.key_raw}: {str(e_replace)}", exc_info=True)
+                log_counter("chat_dict_replacement_error", labels={"key": entry.raw_key})
+                logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
                 continue
 
     except Exception as e_crit: # Catch-all for ChatProcessingError or other unexpected issues

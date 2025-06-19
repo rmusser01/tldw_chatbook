@@ -95,10 +95,10 @@ class IngestWindow(Container):
             # FIXME/TODO: Consider if URL/Local File input is applicable for all media_type or if this also needs to be specific
             # For example, mediawiki_dump typically uses a local file path.
             yield Label("Media URLs (one per line):")
-            yield TextArea(id=f"tldw-api-urls-{media_type}", language="plain_text", classes="ingest-textarea-small")
+            yield TextArea(id=f"tldw-api-urls-{media_type}", classes="ingest-textarea-small")
             # yield Label(
             #     "Local File Paths (one per line, if API supports local path references or for client-side upload):")
-            # yield TextArea(id=f"tldw-api-local-files-{media_type}", language="plain_text", classes="ingest-textarea-small")
+            # yield TextArea(id=f"tldw-api-local-files-{media_type}", classes="ingest-textarea-small")
             yield Button("Browse Local Files...", id=f"tldw-api-browse-local-files-button-{media_type}")
             yield Label("Selected Local Files:", classes="ingest-label") # Added class for consistency
             yield ListView(id=f"tldw-api-selected-local-files-list-{media_type}", classes="ingest-selected-files-list")
@@ -226,8 +226,7 @@ class IngestWindow(Container):
                 "",
                 id=f"tldw-api-status-area-{media_type}",
                 read_only=True,
-                classes="ingest-status-area hidden",  # Initially hidden, common styling
-                language="markdown"  # Use markdown for potential formatting
+                classes="ingest-status-area hidden"  # Initially hidden, common styling
             )
 
     def compose(self) -> ComposeResult:

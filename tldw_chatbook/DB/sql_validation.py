@@ -20,7 +20,7 @@ VALID_TABLES = {
         'Media', 'Keywords', 'MediaKeywords', 'MediaVersion', 
         'MediaModifications', 'UnvectorizedMediaChunks', 'DocumentVersions',
         'IngestionTriggerTracking', 'sync_log', 'Media_fts', 
-        'Keywords_fts', 'MediaChunks', 'MediaChunks_fts'
+        'Keywords_fts', 'MediaChunks', 'MediaChunks_fts', 'Transcripts'
     },
     'prompts': {
         'Prompts', 'Keywords', 'PromptKeywords', 'sync_log',

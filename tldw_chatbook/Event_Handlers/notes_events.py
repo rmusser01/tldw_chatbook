@@ -987,15 +987,28 @@ async def handle_notes_export_text_button_pressed(app: 'TldwCli', event: Button.
 #
 # --- Template Definitions ---
 
-NOTE_TEMPLATES = {
-    "blank": {
-        "title": "New Note",
-        "content": "",
-        "keywords": ""
-    },
-    "meeting": {
-        "title": "Meeting Notes - {date}",
-        "content": """## Meeting Notes
+import json
+import os
+from pathlib import Path
+
+def load_note_templates():
+    """Load note templates from JSON file or use defaults."""
+    # Try to load from user's config directory first
+    user_config_path = Path.home() / ".config" / "tldw_cli" / "note_templates.json"
+    
+    # Fallback to app's config directory
+    app_config_path = Path(__file__).parent.parent / "Config_Files" / "note_templates.json"
+    
+    # Use hardcoded defaults as last resort
+    default_templates = {
+        "blank": {
+            "title": "New Note",
+            "content": "",
+            "keywords": ""
+        },
+        "meeting": {
+            "title": "Meeting Notes - {date}",
+            "content": """## Meeting Notes
 
 **Date:** {date}
 **Time:** {time}
@@ -1016,138 +1029,44 @@ NOTE_TEMPLATES = {
 
 ### Notes
 """,
-        "keywords": "meeting, notes"
-    },
-    "daily": {
-        "title": "Daily Journal - {date}",
-        "content": """## Daily Journal - {date}
-
-### Today's Goals
-- [ ] 
-- [ ] 
-- [ ] 
-
-### Accomplishments
-- 
-
-### Challenges
-- 
-
-### Tomorrow's Priorities
-- 
-
-### Reflections
-""",
-        "keywords": "journal, daily"
-    },
-    "project": {
-        "title": "Project: ",
-        "content": """## Project Overview
-
-**Project Name:** 
-**Start Date:** {date}
-**Status:** Planning
-
-### Objectives
-- 
-
-### Scope
-- 
-
-### Timeline
-- 
-
-### Resources Needed
-- 
-
-### Risks
-- 
-
-### Notes
-""",
-        "keywords": "project, planning"
-    },
-    "todo": {
-        "title": "Todo List - {date}",
-        "content": """## Todo List
-
-### High Priority
-- [ ] 
-- [ ] 
-
-### Medium Priority
-- [ ] 
-- [ ] 
-
-### Low Priority
-- [ ] 
-- [ ] 
-
-### Completed
-- [x] 
-
-### Notes
-""",
-        "keywords": "todo, tasks"
-    },
-    "brainstorm": {
-        "title": "Brainstorming Session - {date}",
-        "content": """## Brainstorming Session
-
-**Topic:** 
-**Date:** {date}
-
-### Ideas
-- 
-- 
-- 
-
-### Concepts to Explore
-- 
-
-### Connections
-- 
-
-### Next Actions
-- 
-
-### Resources
-- 
-""",
-        "keywords": "brainstorming, ideas"
-    },
-    "research": {
-        "title": "Research Notes - ",
-        "content": """## Research Notes
-
-**Topic:** 
-**Date Started:** {date}
-
-### Research Question
-- 
-
-### Key Findings
-- 
-
-### Sources
-1. 
-2. 
-
-### Quotes
-> 
-
-### Analysis
-- 
-
-### Conclusions
-- 
-
-### Further Reading
-- 
-""",
-        "keywords": "research, notes"
+            "keywords": "meeting, notes"
+        }
     }
-}
+    
+    # Try to load templates
+    templates_data = None
+    loaded_from = None
+    
+    # First try user config
+    if user_config_path.exists():
+        try:
+            with open(user_config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                templates_data = data.get('templates', data)
+                loaded_from = "user config"
+        except Exception as e:
+            logger.warning(f"Failed to load user templates from {user_config_path}: {e}")
+    
+    # Then try app config
+    if templates_data is None and app_config_path.exists():
+        try:
+            with open(app_config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                templates_data = data.get('templates', data)
+                loaded_from = "app config"
+        except Exception as e:
+            logger.warning(f"Failed to load app templates from {app_config_path}: {e}")
+    
+    # Use defaults if nothing loaded
+    if templates_data is None:
+        templates_data = default_templates
+        loaded_from = "defaults"
+    
+    logger.info(f"Loaded {len(templates_data)} note templates from {loaded_from}")
+    return templates_data
+
+# Load templates on module import
+NOTE_TEMPLATES = load_note_templates()
 
 # --- New UX Enhancement Handlers ---
 
@@ -1298,7 +1217,7 @@ async def handle_notes_create_from_template(app: 'TldwCli', event: Button.Presse
             title_input.value = title
             
             keywords_area = app.query_one("#notes-keywords-area", TextArea)
-            keywords_area.text = keywords
+            keywords_area.load_text(keywords)
             
             # Reset unsaved changes since this is a new note
             app.notes_unsaved_changes = False

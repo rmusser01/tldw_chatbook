@@ -1,0 +1,3227 @@
+DETAILED TEST FAILURES
+================================================================================
+
+
+1. Tests/Chat/test_chat_integration_APIs.py::test_provider_api_basic_call[koboldcpp]
+----------------------------------------
+.venv/lib/python3.12/site-packages/urllib3/connection.py:198: in _new_conn
+    sock = connection.create_connection(
+.venv/lib/python3.12/site-packages/urllib3/util/connection.py:85: in create_connection
+    raise err
+.venv/lib/python3.12/site-packages/urllib3/util/connection.py:73: in create_connection
+    sock.connect(sa)
+E   ConnectionRefusedError: [Errno 61] Connection refused
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.12/site-packages/urllib3/conn
+
+2. Tests/Chat/test_chat_integration_APIs.py::test_provider_api_streaming_call[koboldcpp]
+----------------------------------------
+.venv/lib/python3.12/site-packages/urllib3/connection.py:198: in _new_conn
+    sock = connection.create_connection(
+.venv/lib/python3.12/site-packages/urllib3/util/connection.py:85: in create_connection
+    raise err
+.venv/lib/python3.12/site-packages/urllib3/util/connection.py:73: in create_connection
+    sock.connect(sa)
+E   ConnectionRefusedError: [Errno 61] Connection refused
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.12/site-packages/urllib3/conn
+
+3. Tests/Chat/test_chat_sidebar_media_search.py::test_media_search_initial_state
+----------------------------------------
+Tests/Chat/test_chat_sidebar_media_search.py:161: in test_media_search_initial_state
+    assert type(review_display_mock).text.fget(review_display_mock) == ""
+E   AssertionError: assert <MagicMock name='mock().fget()' id='4957088576'> == ''
+E    +  where <MagicMock name='mock().fget()' id='4957088576'> = <MagicMock name='mock().fget' id='4954158768'>(<MagicMock spec='TextArea' id='4957083344'>)
+E    +    where <MagicMock name='mock().fget' id='4954158768'> = <MagicMock name='mock()' id='49572948
+
+4. Tests/Chat/test_chat_sidebar_media_search.py::test_media_search_functionality
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Chat/test_chat_sidebar_media_search.py, line 170
+  @pytest.mark.asyncio
+  async def test_media_search_functionality(mock_app_media_test: TldwCli, pilot):  # pilot for timers if used
+      app = mock_app_media_test
+      app.mock_media_db_instance.search_media_db = MagicMock(return_value=MOCK_MEDIA_SEARCH_RESULTS)
+
+      search_input_mock = app.query_one("#chat-media-search-input", Input)
+      results_list_view_mock = app.query_one("#chat-medi
+
+5. Tests/Chat/test_chat_sidebar_media_search.py::test_media_load_for_review
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Chat/test_chat_sidebar_media_search.py, line 216
+  @pytest.mark.asyncio
+  async def test_media_load_for_review(mock_app_media_test: TldwCli, pilot):
+      app = mock_app_media_test
+
+      app.mock_media_db_instance.search_media_db = MagicMock(return_value=[MOCK_MEDIA_ITEM_1])
+      perform_media_sidebar_search(app, "item1")
+
+      results_list_view_mock = app.query_one("#chat-media-search-results-listview", ListView)
+      assert len(results_l
+
+6. Tests/Chat/test_chat_sidebar_media_search.py::test_media_copy_buttons[chat-media-copy-title-button-title-Title copied to clipboard.]
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Chat/test_chat_sidebar_media_search.py, line 253
+  @pytest.mark.asyncio
+  @pytest.mark.parametrize("button_id, field_key, expected_notification", [
+      ("chat-media-copy-title-button", "title", "Title copied to clipboard."),
+      ("chat-media-copy-content-button", "content", "Content copied to clipboard."),
+      ("chat-media-copy-author-button", "author", "Author copied to clipboard."),
+      ("chat-media-copy-url-button", "url", "URL copi
+
+7. Tests/Chat/test_chat_sidebar_media_search.py::test_media_copy_buttons[chat-media-copy-content-button-content-Content copied to clipboard.]
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Chat/test_chat_sidebar_media_search.py, line 253
+  @pytest.mark.asyncio
+  @pytest.mark.parametrize("button_id, field_key, expected_notification", [
+      ("chat-media-copy-title-button", "title", "Title copied to clipboard."),
+      ("chat-media-copy-content-button", "content", "Content copied to clipboard."),
+      ("chat-media-copy-author-button", "author", "Author copied to clipboard."),
+      ("chat-media-copy-url-button", "url", "URL copi
+
+8. Tests/Chat/test_chat_sidebar_media_search.py::test_media_copy_buttons[chat-media-copy-author-button-author-Author copied to clipboard.]
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Chat/test_chat_sidebar_media_search.py, line 253
+  @pytest.mark.asyncio
+  @pytest.mark.parametrize("button_id, field_key, expected_notification", [
+      ("chat-media-copy-title-button", "title", "Title copied to clipboard."),
+      ("chat-media-copy-content-button", "content", "Content copied to clipboard."),
+      ("chat-media-copy-author-button", "author", "Author copied to clipboard."),
+      ("chat-media-copy-url-button", "url", "URL copi
+
+9. Tests/Chat/test_chat_sidebar_media_search.py::test_media_copy_buttons[chat-media-copy-url-button-url-URL copied to clipboard.]
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Chat/test_chat_sidebar_media_search.py, line 253
+  @pytest.mark.asyncio
+  @pytest.mark.parametrize("button_id, field_key, expected_notification", [
+      ("chat-media-copy-title-button", "title", "Title copied to clipboard."),
+      ("chat-media-copy-content-button", "content", "Content copied to clipboard."),
+      ("chat-media-copy-author-button", "author", "Author copied to clipboard."),
+      ("chat-media-copy-url-button", "url", "URL copi
+
+10. Tests/Chat/test_chat_sidebar_media_search.py::test_media_review_clearing_on_new_empty_search
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Chat/test_chat_sidebar_media_search.py, line 283
+  @pytest.mark.asyncio
+  async def test_media_review_clearing_on_new_empty_search(mock_app_media_test: TldwCli, pilot):
+      app = mock_app_media_test
+
+      app.current_sidebar_media_item = MOCK_MEDIA_ITEM_1
+      review_display_mock = app.query_one("#chat-media-review-display", TextArea)
+      type(review_display_mock).text.fset(review_display_mock, "Some loaded text")
+
+      # Simulate butto
+
+11. Tests/Chat/test_prompt_template_manager.py::TestTemplateRendering::test_safe_render_prevents_unsafe_operations
+----------------------------------------
+Tests/Chat/test_prompt_template_manager.py:163: in test_safe_render_prevents_unsafe_operations
+    assert result == template_str
+E   AssertionError: assert 'Unsafe access: ' == 'Unsafe acces....__class__ }}'
+E     
+E     - Unsafe access: {{ my_obj.__class__ }}
+E     + Unsafe access:
+
+12. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImageCompatibility::test_database_schema_supports_images
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+13. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImageCompatibility::test_store_and_retrieve_image
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+14. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImageCompatibility::test_messages_without_images
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+15. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImageCompatibility::test_mixed_messages_in_conversation
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+16. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImagePerformance::test_large_image_storage_performance
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+17. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImagePerformance::test_bulk_image_operations
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+18. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImagePerformance::test_conversation_with_many_images
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+19. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImageIntegrity::test_image_data_integrity
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+20. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImageIntegrity::test_concurrent_image_operations
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+21. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseImageIntegrity::test_image_null_handling
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+22. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseMigrationCompatibility::test_existing_database_migration
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:422: in test_existing_database_migration
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+23. Tests/DB/test_chat_image_db_compatibility.py::TestDatabaseMigrationCompatibility::test_backward_compatibility
+----------------------------------------
+Tests/DB/test_chat_image_db_compatibility.py:32: in temp_db
+    db = CharactersRAGDB(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'
+
+24. Tests/DB/test_pagination.py::TestMediaDatabasePagination::test_get_all_active_media_for_embedding_pagination
+----------------------------------------
+Tests/DB/test_pagination.py:81: in mock_media_db
+    conn.execute("""
+E   sqlite3.IntegrityError: NOT NULL constraint failed: Keywords.last_modified
+
+25. Tests/DB/test_pagination.py::TestMediaDatabasePagination::test_fetch_all_keywords_pagination
+----------------------------------------
+Tests/DB/test_pagination.py:81: in mock_media_db
+    conn.execute("""
+E   sqlite3.IntegrityError: NOT NULL constraint failed: Keywords.last_modified
+
+26. Tests/DB/test_pagination.py::TestMediaDatabasePagination::test_get_unprocessed_media_pagination
+----------------------------------------
+Tests/DB/test_pagination.py:81: in mock_media_db
+    conn.execute("""
+E   sqlite3.IntegrityError: NOT NULL constraint failed: Keywords.last_modified
+
+27. Tests/DB/test_pagination.py::TestMediaDatabasePagination::test_get_all_content_from_database_pagination
+----------------------------------------
+Tests/DB/test_pagination.py:81: in mock_media_db
+    conn.execute("""
+E   sqlite3.IntegrityError: NOT NULL constraint failed: Keywords.last_modified
+
+28. Tests/DB/test_pagination.py::TestMediaDatabasePagination::test_pagination_with_none_limit
+----------------------------------------
+Tests/DB/test_pagination.py:81: in mock_media_db
+    conn.execute("""
+E   sqlite3.IntegrityError: NOT NULL constraint failed: Keywords.last_modified
+
+29. Tests/DB/test_pagination.py::TestPaginationEdgeCases::test_pagination_with_empty_database
+----------------------------------------
+Tests/DB/test_pagination.py:210: in test_pagination_with_empty_database
+    assert db.fetch_all_keywords(limit=10) == []
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.fetch_all_keywords() got an unexpected keyword argument 'limit'
+
+30. Tests/DB/test_pagination.py::TestBatchQueryOptimization::test_search_prompts_batch_keyword_fetch
+----------------------------------------
+Tests/DB/test_pagination.py:274: in test_search_prompts_batch_keyword_fetch
+    db._init_schema()
+    ^^^^^^^^^^^^^^^
+E   AttributeError: 'PromptsDatabase' object has no attribute '_init_schema'
+
+31. Tests/DB/test_pagination.py::TestPaginationConsistency::test_pagination_result_consistency
+----------------------------------------
+Tests/DB/test_pagination.py:347: in test_pagination_result_consistency
+    conn.execute("""
+E   sqlite3.IntegrityError: NOT NULL constraint failed: Media.type
+
+32. Tests/DB/test_sql_validation.py::TestValidateLinkTable::test_invalid_link_tables
+----------------------------------------
+Tests/DB/test_sql_validation.py:189: in test_invalid_link_tables
+    assert validate_link_table('conversation_keywords', 'keyword_id', 'conversation_id') is False
+E   AssertionError: assert True is False
+E    +  where True = validate_link_table('conversation_keywords', 'keyword_id', 'conversation_id')
+
+33. Tests/Evals/test_eval_integration.py::TestEndToEndEvaluation::test_complete_evaluation_pipeline
+----------------------------------------
+Tests/Evals/test_eval_integration.py:91: in test_complete_evaluation_pipeline
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.
+
+34. Tests/Evals/test_eval_integration.py::TestEndToEndEvaluation::test_eleuther_task_integration
+----------------------------------------
+Tests/Evals/test_eval_integration.py:165: in test_eleuther_task_integration
+    task_id = await orchestrator.create_task_from_file(str(task_file), 'eleuther')
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/App_Functions/Evals/eval_orchestrator.py:71: in create_task_from_file
+    raise ValueError(f"Task validation failed: {validation_issues}")
+E   ValueError: Task validation failed: ['doc_to_choice required for classification tasks']
+
+35. Tests/Evals/test_eval_integration.py::TestEndToEndEvaluation::test_csv_dataset_integration
+----------------------------------------
+Tests/Evals/test_eval_integration.py:209: in test_csv_dataset_integration
+    task_id = await orchestrator.create_task_from_file(str(csv_file), 'csv')
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/App_Functions/Evals/eval_orchestrator.py:74: in create_task_from_file
+    task_id = self.db.create_task(
+tldw_chatbook/DB/Evals_DB.py:318: in create_task
+    raise InputError(f"Invalid config_format: {config_format}")
+E   tldw_chatbook.DB.Evals_DB.InputError
+
+36. Tests/Evals/test_eval_integration.py::TestMultiProviderIntegration::test_multiple_provider_evaluation
+----------------------------------------
+Tests/Evals/test_eval_integration.py:286: in test_multiple_provider_evaluation
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3
+
+37. Tests/Evals/test_eval_integration.py::TestMultiProviderIntegration::test_provider_fallback_mechanism
+----------------------------------------
+Tests/Evals/test_eval_integration.py:350: in test_provider_fallback_mechanism
+    with patch.object(orchestrator, '_create_llm_interface', side_effect=mock_llm_factory):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/
+
+38. Tests/Evals/test_eval_integration.py::TestSpecializedTaskIntegration::test_code_evaluation_integration
+----------------------------------------
+Tests/Evals/test_eval_integration.py:378: in test_code_evaluation_integration
+    task_id = orchestrator.db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: code_generation
+
+39. Tests/Evals/test_eval_integration.py::TestSpecializedTaskIntegration::test_safety_evaluation_integration
+----------------------------------------
+Tests/Evals/test_eval_integration.py:432: in test_safety_evaluation_integration
+    task_id = orchestrator.db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: safety_check
+
+40. Tests/Evals/test_eval_integration.py::TestSpecializedTaskIntegration::test_multilingual_evaluation_integration
+----------------------------------------
+Tests/Evals/test_eval_integration.py:534: in test_multilingual_evaluation_integration
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python
+
+41. Tests/Evals/test_eval_integration.py::TestConcurrentEvaluations::test_concurrent_runs_same_task
+----------------------------------------
+Tests/Evals/test_eval_integration.py:607: in test_concurrent_runs_same_task
+    run_ids = await asyncio.gather(*tasks)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/Evals/test_eval_integration.py:594: in run_evaluation_with_mock
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/u
+
+42. Tests/Evals/test_eval_integration.py::TestConcurrentEvaluations::test_concurrent_task_creation
+----------------------------------------
+Tests/Evals/test_eval_integration.py:675: in test_concurrent_task_creation
+    run_ids = await asyncio.gather(*tasks)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/Evals/test_eval_integration.py:662: in create_and_run_task
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittes
+
+43. Tests/Evals/test_eval_integration.py::TestErrorRecoveryIntegration::test_partial_failure_recovery
+----------------------------------------
+Tests/Evals/test_eval_integration.py:726: in test_partial_failure_recovery
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.
+
+44. Tests/Evals/test_eval_integration.py::TestErrorRecoveryIntegration::test_database_recovery_integration
+----------------------------------------
+Tests/Evals/test_eval_integration.py:787: in test_database_recovery_integration
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/
+
+45. Tests/Evals/test_eval_integration.py::TestPerformanceIntegration::test_large_scale_evaluation
+----------------------------------------
+Tests/Evals/test_eval_integration.py:839: in test_large_scale_evaluation
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11
+
+46. Tests/Evals/test_eval_integration.py::TestPerformanceIntegration::test_memory_efficiency_integration
+----------------------------------------
+Tests/Evals/test_eval_integration.py:899: in test_memory_efficiency_integration
+    with patch.object(orchestrator, '_create_llm_interface', return_value=mock_llm):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/
+
+47. Tests/Evals/test_eval_properties.py::TestDatabaseProperties::test_task_roundtrip_property
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/test_eval_properties.py, line 137
+      @given(task_config_strategy())
+      @settings(max_examples=20, deadline=None)
+      def test_task_roundtrip_property(self, task_config, in_memory_db):
+E       fixture 'task_config' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, async_setup, cache, 
+
+48. Tests/Evals/test_eval_properties.py::TestDatabaseProperties::test_multiple_tasks_uniqueness
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/test_eval_properties.py, line 160
+      @given(st.lists(task_config_strategy(), min_size=1, max_size=10))
+      @settings(max_examples=10, deadline=None)
+      def test_multiple_tasks_uniqueness(self, task_configs, in_memory_db):
+E       fixture 'task_configs' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyi
+
+49. Tests/Evals/test_eval_properties.py::TestDatabaseProperties::test_search_consistency
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/test_eval_properties.py, line 186
+      @given(st.text(min_size=1, max_size=100))
+      @settings(max_examples=20, deadline=None)
+      def test_search_consistency(self, search_term, in_memory_db):
+E       fixture 'search_term' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, async_setup, c
+
+50. Tests/Evals/test_eval_properties.py::TestDatabaseProperties::test_pagination_properties
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/test_eval_properties.py, line 227
+      @given(st.integers(min_value=1, max_value=100))
+      @settings(max_examples=10, deadline=None)
+      def test_pagination_properties(self, total_tasks, in_memory_db):
+E       fixture 'total_tasks' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, async
+
+51. Tests/Evals/test_eval_properties.py::TestEvaluationProperties::test_exact_match_symmetry
+----------------------------------------
+Tests/Evals/test_eval_properties.py:276: in test_exact_match_symmetry
+    @settings(max_examples=50, deadline=None)
+               ^^^^^^^
+Tests/Evals/test_eval_properties.py:279: in test_exact_match_symmetry
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+E   Falsifying example: test_exact_match_symmetry(
+E       self=<Tests.Evals.test_eval_properties.Tes
+
+52. Tests/Evals/test_eval_properties.py::TestEvaluationProperties::test_exact_match_reflexivity
+----------------------------------------
+Tests/Evals/test_eval_properties.py:287: in test_exact_match_reflexivity
+    @settings(max_examples=30, deadline=None)
+               ^^^^^^^
+Tests/Evals/test_eval_properties.py:290: in test_exact_match_reflexivity
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+E   Falsifying example: test_exact_match_reflexivity(
+E       self=<Tests.Evals.test_eval_prope
+
+53. Tests/Evals/test_eval_properties.py::TestEvaluationProperties::test_contains_answer_monotonicity
+----------------------------------------
+Tests/Evals/test_eval_properties.py:296: in test_contains_answer_monotonicity
+    @settings(max_examples=50, deadline=None)
+               ^^^^^^^
+Tests/Evals/test_eval_properties.py:299: in test_contains_answer_monotonicity
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+E   Falsifying example: test_contains_answer_monotonicity(
+E       self=<Tests.Evals.
+
+54. Tests/Evals/test_eval_properties.py::TestEvaluationProperties::test_metrics_aggregation_properties
+----------------------------------------
+Tests/Evals/test_eval_properties.py:314: in test_metrics_aggregation_properties
+    @settings(max_examples=30, deadline=None)
+               ^^^^^^^
+Tests/Evals/test_eval_properties.py:317: in test_metrics_aggregation_properties
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+E   Falsifying example: test_metrics_aggregation_properties(
+E       self=<Tests.
+
+55. Tests/Evals/test_eval_properties.py::TestEvaluationProperties::test_eval_result_invariants
+----------------------------------------
+Tests/Evals/test_eval_properties.py:337: in test_eval_result_invariants
+    @settings(max_examples=20, deadline=None)
+               ^^^^^^^
+Tests/Evals/test_eval_properties.py:98: in eval_result_strategy
+    return EvalResult(
+E   TypeError: EvalResult.__init__() got an unexpected keyword argument 'model_output'
+E   while generating 'eval_result' from eval_result_strategy()
+
+56. Tests/Evals/test_eval_properties.py::TestTaskConfigurationProperties::test_generation_kwargs_validation
+----------------------------------------
++ Exception Group Traceback (most recent call last):
+  |   File "/Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/test_eval_properties.py", line 383, in test_generation_kwargs_validation
+  |     keys=st.sampled_from(["temperature", "max_tokens", "top_p", "top_k"]),
+  |            ^^^^^^^
+  |   File "/Users/appledev/Working/tldw_chatbook_dev/.venv/lib/python3.12/site-packages/hypothesis/core.py", line 2047, in wrapped_test
+  |     raise the_error_hypothesis_found
+  | ExceptionGroup: Hypothes
+
+57. Tests/Evals/test_eval_properties.py::TestFileHandlingProperties::test_text_processing_robustness
+----------------------------------------
+Tests/Evals/test_eval_properties.py:464: in test_text_processing_robustness
+    @settings(max_examples=20, deadline=None)
+               ^^^^^^^
+Tests/Evals/test_eval_properties.py:467: in test_text_processing_robustness
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+E   Falsifying example: test_text_processing_robustness(
+E       self=<Tests.Evals.test_e
+
+58. Tests/Evals/test_eval_properties.py::TestConcurrencyProperties::test_concurrent_task_creation_uniqueness
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/test_eval_properties.py, line 493
+      @given(st.lists(st.text(min_size=1, max_size=50), min_size=2, max_size=10, unique=True))
+      @settings(max_examples=10, deadline=None)
+      def test_concurrent_task_creation_uniqueness(self, task_names, temp_db):
+E       fixture 'task_names' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, 
+
+59. Tests/Evals/test_eval_properties.py::TestConcurrencyProperties::test_evaluation_order_independence
+----------------------------------------
+Tests/Evals/test_eval_properties.py:533: in test_evaluation_order_independence
+    @settings(max_examples=5, deadline=None)
+               ^^^^^^^
+Tests/Evals/test_eval_properties.py:552: in test_evaluation_order_independence
+    runner = EvalRunner(llm_interface=mock_llm)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+E   Falsifying example: test_evaluation_order_independence(
+E       self=<Tests.Evals.test
+
+60. Tests/Evals/test_eval_properties.py::TestSystemInvariants::test_resource_cleanup_invariant
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/test_eval_properties.py, line 572
+      @given(st.integers(min_value=1, max_value=50))
+      @settings(max_examples=5, deadline=None)
+      def test_resource_cleanup_invariant(self, num_operations, temp_db):
+E       fixture 'num_operations' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, a
+
+61. Tests/Evals/test_eval_properties.py::TestSystemInvariants::test_database_consistency_invariant
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/test_eval_properties.py, line 606
+      @given(st.lists(
+          st.tuples(
+              st.text(min_size=1, max_size=20),  # operation type
+              st.dictionaries(st.text(), st.text(), max_size=3)  # operation data
+          ),
+          min_size=1,
+          max_size=20
+      ))
+      @settings(max_examples=5, deadline=None)
+      def test_database_consistency_invariant(self, operations, temp_db):
+E       fixture 'operations'
+
+62. Tests/Evals/test_eval_runner.py::TestEvalResult::test_eval_result_creation
+----------------------------------------
+Tests/Evals/test_eval_runner.py:32: in test_eval_result_creation
+    result = EvalResult(
+E   TypeError: EvalResult.__init__() got an unexpected keyword argument 'model_output'
+
+63. Tests/Evals/test_eval_runner.py::TestEvalResult::test_eval_result_with_error
+----------------------------------------
+Tests/Evals/test_eval_runner.py:47: in test_eval_result_with_error
+    result = EvalResult(
+E   TypeError: EvalResult.__init__() got an unexpected keyword argument 'model_output'
+
+64. Tests/Evals/test_eval_runner.py::TestEvalProgress::test_eval_progress_creation
+----------------------------------------
+Tests/Evals/test_eval_runner.py:66: in test_eval_progress_creation
+    progress = EvalProgress(
+E   TypeError: EvalProgress.__init__() got an unexpected keyword argument 'total_samples'
+
+65. Tests/Evals/test_eval_runner.py::TestEvalProgress::test_progress_percentage
+----------------------------------------
+Tests/Evals/test_eval_runner.py:80: in test_progress_percentage
+    progress = EvalProgress(
+E   TypeError: EvalProgress.__init__() got an unexpected keyword argument 'total_samples'
+
+66. Tests/Evals/test_eval_runner.py::TestEvalProgress::test_estimated_time_remaining
+----------------------------------------
+Tests/Evals/test_eval_runner.py:95: in test_estimated_time_remaining
+    progress = EvalProgress(
+E   TypeError: EvalProgress.__init__() got an unexpected keyword argument 'total_samples'
+
+67. Tests/Evals/test_eval_runner.py::TestEvalRunnerInitialization::test_eval_runner_creation
+----------------------------------------
+Tests/Evals/test_eval_runner.py:111: in test_eval_runner_creation
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+68. Tests/Evals/test_eval_runner.py::TestEvalRunnerInitialization::test_eval_runner_with_config
+----------------------------------------
+Tests/Evals/test_eval_runner.py:119: in test_eval_runner_with_config
+    runner = EvalRunner(
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+69. Tests/Evals/test_eval_runner.py::TestBasicEvaluation::test_run_single_sample
+----------------------------------------
+Tests/Evals/test_eval_runner.py:136: in test_run_single_sample
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+70. Tests/Evals/test_eval_runner.py::TestBasicEvaluation::test_run_multiple_samples
+----------------------------------------
+Tests/Evals/test_eval_runner.py:154: in test_run_multiple_samples
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+71. Tests/Evals/test_eval_runner.py::TestBasicEvaluation::test_run_with_progress_callback
+----------------------------------------
+Tests/Evals/test_eval_runner.py:173: in test_run_with_progress_callback
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+72. Tests/Evals/test_eval_runner.py::TestDifferentTaskTypes::test_question_answer_task
+----------------------------------------
+Tests/Evals/test_eval_runner.py:210: in test_question_answer_task
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+73. Tests/Evals/test_eval_runner.py::TestDifferentTaskTypes::test_multiple_choice_task
+----------------------------------------
+Tests/Evals/test_eval_runner.py:237: in test_multiple_choice_task
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+74. Tests/Evals/test_eval_runner.py::TestDifferentTaskTypes::test_text_generation_task
+----------------------------------------
+Tests/Evals/test_eval_runner.py:265: in test_text_generation_task
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+75. Tests/Evals/test_eval_runner.py::TestDifferentTaskTypes::test_code_generation_task
+----------------------------------------
+Tests/Evals/test_eval_runner.py:293: in test_code_generation_task
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+76. Tests/Evals/test_eval_runner.py::TestMetricsCalculation::test_exact_match_metric
+----------------------------------------
+Tests/Evals/test_eval_runner.py:317: in test_exact_match_metric
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+77. Tests/Evals/test_eval_runner.py::TestMetricsCalculation::test_contains_answer_metric
+----------------------------------------
+Tests/Evals/test_eval_runner.py:333: in test_contains_answer_metric
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+78. Tests/Evals/test_eval_runner.py::TestMetricsCalculation::test_bleu_score_metric
+----------------------------------------
+Tests/Evals/test_eval_runner.py:349: in test_bleu_score_metric
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+79. Tests/Evals/test_eval_runner.py::TestMetricsCalculation::test_f1_score_metric
+----------------------------------------
+Tests/Evals/test_eval_runner.py:365: in test_f1_score_metric
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+80. Tests/Evals/test_eval_runner.py::TestMetricsCalculation::test_code_execution_metric
+----------------------------------------
+Tests/Evals/test_eval_runner.py:381: in test_code_execution_metric
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+81. Tests/Evals/test_eval_runner.py::TestMetricsCalculation::test_safety_metrics
+----------------------------------------
+Tests/Evals/test_eval_runner.py:399: in test_safety_metrics
+    runner = EvalRunner(llm_interface=AsyncMock())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+82. Tests/Evals/test_eval_runner.py::TestErrorHandling::test_api_timeout_handling
+----------------------------------------
+Tests/Evals/test_eval_runner.py:417: in test_api_timeout_handling
+    runner = EvalRunner(
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+83. Tests/Evals/test_eval_runner.py::TestErrorHandling::test_retry_mechanism
+----------------------------------------
+Tests/Evals/test_eval_runner.py:446: in test_retry_mechanism
+    runner = EvalRunner(
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+84. Tests/Evals/test_eval_runner.py::TestErrorHandling::test_partial_failure_handling
+----------------------------------------
+Tests/Evals/test_eval_runner.py:476: in test_partial_failure_handling
+    runner = EvalRunner(llm_interface=mock_llm)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+85. Tests/Evals/test_eval_runner.py::TestConcurrencyAndPerformance::test_concurrent_execution
+----------------------------------------
+Tests/Evals/test_eval_runner.py:513: in test_concurrent_execution
+    runner = EvalRunner(
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+86. Tests/Evals/test_eval_runner.py::TestConcurrencyAndPerformance::test_memory_efficient_streaming
+----------------------------------------
+Tests/Evals/test_eval_runner.py:538: in test_memory_efficient_streaming
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+87. Tests/Evals/test_eval_runner.py::TestConcurrencyAndPerformance::test_cancellation_support
+----------------------------------------
+Tests/Evals/test_eval_runner.py:562: in test_cancellation_support
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+88. Tests/Evals/test_eval_runner.py::TestAdvancedFeatures::test_few_shot_prompting
+----------------------------------------
+Tests/Evals/test_eval_runner.py:597: in test_few_shot_prompting
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+89. Tests/Evals/test_eval_runner.py::TestAdvancedFeatures::test_custom_prompt_templates
+----------------------------------------
+Tests/Evals/test_eval_runner.py:628: in test_custom_prompt_templates
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+90. Tests/Evals/test_eval_runner.py::TestAdvancedFeatures::test_response_filtering
+----------------------------------------
+Tests/Evals/test_eval_runner.py:664: in test_response_filtering
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+91. Tests/Evals/test_eval_runner.py::TestSpecializedEvaluations::test_multilingual_evaluation
+----------------------------------------
+Tests/Evals/test_eval_runner.py:697: in test_multilingual_evaluation
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+92. Tests/Evals/test_eval_runner.py::TestSpecializedEvaluations::test_math_evaluation
+----------------------------------------
+Tests/Evals/test_eval_runner.py:736: in test_math_evaluation
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+93. Tests/Evals/test_eval_runner.py::TestSpecializedEvaluations::test_safety_evaluation
+----------------------------------------
+Tests/Evals/test_eval_runner.py:765: in test_safety_evaluation
+    runner = EvalRunner(llm_interface=mock_llm_interface)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: EvalRunner.__init__() got an unexpected keyword argument 'llm_interface'
+
+94. Tests/Evals/test_evals_db.py::TestEvalsDBInitialization::test_memory_db_initialization
+----------------------------------------
+Tests/Evals/test_evals_db.py:33: in test_memory_db_initialization
+    assert db.db_path == ":memory:"
+E   AssertionError: assert PosixPath(':memory:') == ':memory:'
+E    +  where PosixPath(':memory:') = <tldw_chatbook.DB.Evals_DB.EvalsDB object at 0x1262be210>.db_path
+
+95. Tests/Evals/test_evals_db.py::TestEvalsDBInitialization::test_file_db_initialization
+----------------------------------------
+Tests/Evals/test_evals_db.py:39: in test_file_db_initialization
+    assert db.db_path == temp_db_path
+E   AssertionError: assert PosixPath('/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpe02rkmm6.db') == '/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpe02rkmm6.db'
+E    +  where PosixPath('/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpe02rkmm6.db') = <tldw_chatbook.DB.Evals_DB.EvalsDB object at 0x126298350>.db_path
+
+96. Tests/Evals/test_evals_db.py::TestEvalsDBInitialization::test_schema_creation
+----------------------------------------
+Tests/Evals/test_evals_db.py:44: in test_schema_creation
+    tables = in_memory_db.get_connection().execute(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'EvalsDB' object has no attribute 'get_connection'. Did you mean: '_get_connection'?
+
+97. Tests/Evals/test_evals_db.py::TestEvalsDBInitialization::test_fts_tables_creation
+----------------------------------------
+Tests/Evals/test_evals_db.py:59: in test_fts_tables_creation
+    tables = in_memory_db.get_connection().execute(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'EvalsDB' object has no attribute 'get_connection'. Did you mean: '_get_connection'?
+
+98. Tests/Evals/test_evals_db.py::TestTaskOperations::test_create_task_with_dataset
+----------------------------------------
+Tests/Evals/test_evals_db.py:86: in test_create_task_with_dataset
+    dataset_id = in_memory_db.create_dataset(
+E   TypeError: EvalsDB.create_dataset() got an unexpected keyword argument 'source_type'
+
+99. Tests/Evals/test_evals_db.py::TestTaskOperations::test_update_task
+----------------------------------------
+Tests/Evals/test_evals_db.py:158: in test_update_task
+    success = in_memory_db.update_task(
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'EvalsDB' object has no attribute 'update_task'. Did you mean: 'create_task'?
+
+100. Tests/Evals/test_evals_db.py::TestTaskOperations::test_delete_task
+----------------------------------------
+Tests/Evals/test_evals_db.py:182: in test_delete_task
+    success = in_memory_db.delete_task(task_id)
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'EvalsDB' object has no attribute 'delete_task'. Did you mean: 'create_task'?
+
+101. Tests/Evals/test_evals_db.py::TestDatasetOperations::test_create_dataset
+----------------------------------------
+Tests/Evals/test_evals_db.py:199: in test_create_dataset
+    dataset_id = in_memory_db.create_dataset(
+E   TypeError: EvalsDB.create_dataset() got an unexpected keyword argument 'source_type'
+
+102. Tests/Evals/test_evals_db.py::TestDatasetOperations::test_get_dataset
+----------------------------------------
+Tests/Evals/test_evals_db.py:211: in test_get_dataset
+    dataset_id = in_memory_db.create_dataset(
+E   TypeError: EvalsDB.create_dataset() got an unexpected keyword argument 'source_type'
+
+103. Tests/Evals/test_evals_db.py::TestDatasetOperations::test_list_datasets
+----------------------------------------
+Tests/Evals/test_evals_db.py:227: in test_list_datasets
+    dataset_id = in_memory_db.create_dataset(
+E   TypeError: EvalsDB.create_dataset() got an unexpected keyword argument 'source_type'
+
+104. Tests/Evals/test_evals_db.py::TestRunOperations::test_create_run
+----------------------------------------
+Tests/Evals/test_evals_db.py:277: in test_create_run
+    task_id = in_memory_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+105. Tests/Evals/test_evals_db.py::TestRunOperations::test_get_run
+----------------------------------------
+Tests/Evals/test_evals_db.py:297: in test_get_run
+    task_id = in_memory_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+106. Tests/Evals/test_evals_db.py::TestRunOperations::test_update_run_status
+----------------------------------------
+Tests/Evals/test_evals_db.py:319: in test_update_run_status
+    task_id = in_memory_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+107. Tests/Evals/test_evals_db.py::TestResultOperations::test_store_result
+----------------------------------------
+Tests/Evals/test_evals_db.py:345: in test_store_result
+    task_id = in_memory_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+108. Tests/Evals/test_evals_db.py::TestResultOperations::test_get_results_for_run
+----------------------------------------
+Tests/Evals/test_evals_db.py:373: in test_get_results_for_run
+    task_id = in_memory_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+109. Tests/Evals/test_evals_db.py::TestMetricsOperations::test_store_run_metrics
+----------------------------------------
+Tests/Evals/test_evals_db.py:411: in test_store_run_metrics
+    task_id = in_memory_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+110. Tests/Evals/test_evals_db.py::TestMetricsOperations::test_get_run_metrics
+----------------------------------------
+Tests/Evals/test_evals_db.py:442: in test_get_run_metrics
+    task_id = in_memory_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+111. Tests/Evals/test_evals_db.py::TestSearchOperations::test_search_tasks
+----------------------------------------
+Tests/Evals/test_evals_db.py:473: in test_search_tasks
+    task_ids.append(in_memory_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+112. Tests/Evals/test_evals_db.py::TestSearchOperations::test_search_datasets
+----------------------------------------
+Tests/Evals/test_evals_db.py:498: in test_search_datasets
+    dataset_ids.append(in_memory_db.create_dataset(
+E   TypeError: EvalsDB.create_dataset() got an unexpected keyword argument 'source_type'
+
+113. Tests/Evals/test_evals_db.py::TestErrorHandling::test_foreign_key_violation
+----------------------------------------
+Tests/Evals/test_evals_db.py:538: in test_foreign_key_violation
+    in_memory_db.create_run(
+E   TypeError: EvalsDB.create_run() got an unexpected keyword argument 'config'
+
+114. Tests/Evals/test_evals_db.py::TestErrorHandling::test_concurrent_modification
+----------------------------------------
+Tests/Evals/test_evals_db.py:547: in test_concurrent_modification
+    task_id = temp_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+115. Tests/Evals/test_evals_db.py::TestThreadSafety::test_concurrent_task_creation
+----------------------------------------
+Tests/Evals/test_evals_db.py:597: in test_concurrent_task_creation
+    assert len(errors) == 0
+E   AssertionError: assert 10 == 0
+E    +  where 10 = len([InputError('Invalid task_type: qa'), InputError('Invalid task_type: qa'), InputError('Invalid task_type: qa'), InputError('Invalid task_type: qa'), InputError('Invalid task_type: qa'), InputError('Invalid task_type: qa'), ...])
+
+116. Tests/Evals/test_evals_db.py::TestThreadSafety::test_concurrent_read_write
+----------------------------------------
+Tests/Evals/test_evals_db.py:604: in test_concurrent_read_write
+    task_id = temp_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+117. Tests/Evals/test_evals_db.py::TestPerformance::test_large_batch_insert
+----------------------------------------
+Tests/Evals/test_evals_db.py:656: in test_large_batch_insert
+    task_id = temp_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+118. Tests/Evals/test_evals_db.py::TestPerformance::test_search_performance
+----------------------------------------
+Tests/Evals/test_evals_db.py:675: in test_search_performance
+    temp_db.create_task(
+tldw_chatbook/DB/Evals_DB.py:315: in create_task
+    raise InputError(f"Invalid task_type: {task_type}")
+E   tldw_chatbook.DB.Evals_DB.InputError: Invalid task_type: qa
+
+119. Tests/Evals/test_task_loader.py::TestTaskLoaderInitialization::test_supported_formats
+----------------------------------------
+Tests/Evals/test_task_loader.py:92: in test_supported_formats
+    assert format_type in loader.supported_formats
+E   AssertionError: assert 'auto' in ['eleuther', 'custom', 'huggingface', 'csv']
+E    +  where ['eleuther', 'custom', 'huggingface', 'csv'] = <tldw_chatbook.App_Functions.Evals.task_loader.TaskLoader object at 0x12628d3d0>.supported_formats
+
+120. Tests/Evals/test_task_loader.py::TestEleutherFormatLoading::test_load_eleuther_yaml_basic
+----------------------------------------
+Tests/Evals/test_task_loader.py:121: in test_load_eleuther_yaml_basic
+    assert config.task_type == "multiple_choice"
+E   AssertionError: assert 'classification' == 'multiple_choice'
+E     
+E     - multiple_choice
+E     + classification
+
+121. Tests/Evals/test_task_loader.py::TestEleutherFormatLoading::test_load_eleuther_with_templates
+----------------------------------------
+Tests/Evals/test_task_loader.py:151: in test_load_eleuther_with_templates
+    assert config.task_type == "generate_until"
+E   AssertionError: assert 'generation' == 'generate_until'
+E     
+E     - generate_until
+E     + generation
+
+122. Tests/Evals/test_task_loader.py::TestEleutherFormatLoading::test_load_eleuther_complex_config
+----------------------------------------
+Tests/Evals/test_task_loader.py:189: in test_load_eleuther_complex_config
+    assert "filter_list" in config.metadata
+E   AssertionError: assert 'filter_list' in {'format': 'eleuther', 'original_config': {'dataset_name': 'gsm8k', 'fewshot_split': 'train', 'filter_list': [{'filter... 'regex_pattern': '####\\s*(\\d+)'}], 'generation_kwargs': {'max_tokens': 200, 'temperature': 0.0, 'top_p': 1.0}, ...}}
+E    +  where {'format': 'eleuther', 'original_config': {'dataset_name': 'gsm8k', 'fewshot_split'
+
+123. Tests/Evals/test_task_loader.py::TestCustomFormatLoading::test_load_custom_with_fewshot
+----------------------------------------
+Tests/Evals/test_task_loader.py:248: in test_load_custom_with_fewshot
+    assert config.metadata.get("fewshot_split") == "train"
+E   AssertionError: assert None == 'train'
+E    +  where None = <built-in method get of dict object at 0x1263c9540>('fewshot_split')
+E    +    where <built-in method get of dict object at 0x1263c9540> = {'format': 'custom'}.get
+E    +      where {'format': 'custom'} = TaskConfig(name='Few-shot Task', description='Task with few-shot examples', task_type='text_generation
+
+124. Tests/Evals/test_task_loader.py::TestHuggingFaceFormatLoading::test_load_huggingface_basic
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+125. Tests/Evals/test_task_loader.py::TestHuggingFaceFormatLoading::test_load_huggingface_with_config
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+126. Tests/Evals/test_task_loader.py::TestTaskValidation::test_validate_missing_required_fields
+----------------------------------------
+Tests/Evals/test_task_loader.py:483: in test_validate_missing_required_fields
+    assert any("metric" in issue for issue in issues)
+E   assert False
+E    +  where False = any(<generator object TestTaskValidation.test_validate_missing_required_fields.<locals>.<genexpr> at 0x130628450>)
+
+127. Tests/Evals/test_task_loader.py::TestTaskValidation::test_validate_generation_kwargs
+----------------------------------------
+Tests/Evals/test_task_loader.py:521: in test_validate_generation_kwargs
+    assert any("temperature" in issue for issue in issues)
+E   assert False
+E    +  where False = any(<generator object TestTaskValidation.test_validate_generation_kwargs.<locals>.<genexpr> at 0x12726de50>)
+
+128. Tests/Evals/test_task_loader.py::TestTaskValidation::test_validate_code_task_requirements
+----------------------------------------
+Tests/Evals/test_task_loader.py:540: in test_validate_code_task_requirements
+    assert any("metric" in issue for issue in issues)
+E   assert False
+E    +  where False = any(<generator object TestTaskValidation.test_validate_code_task_requirements.<locals>.<genexpr> at 0x1306df9f0>)
+
+129. Tests/Evals/test_task_loader.py::TestErrorHandling::test_invalid_yaml_syntax
+----------------------------------------
+Tests/Evals/test_task_loader.py:565: in test_invalid_yaml_syntax
+    loader.load_task(str(yaml_file), 'eleuther')
+tldw_chatbook/App_Functions/Evals/task_loader.py:105: in load_task
+    return self._load_eleuther_task(source)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/App_Functions/Evals/task_loader.py:160: in _load_eleuther_task
+    config_data = yaml.safe_load(f)
+                  ^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/yaml/__init__.py:125: in safe_load
+    return l
+
+130. Tests/Evals/test_task_loader.py::TestErrorHandling::test_invalid_json_syntax
+----------------------------------------
+Tests/Evals/test_task_loader.py:577: in test_invalid_json_syntax
+    loader.load_task(str(json_file), 'custom')
+tldw_chatbook/App_Functions/Evals/task_loader.py:107: in load_task
+    return self._load_custom_task(source)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/App_Functions/Evals/task_loader.py:256: in _load_custom_task
+    config_data = json.load(f)
+                  ^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/js
+
+131. Tests/Evals/test_task_loader.py::TestFormatConversion::test_eleuther_to_custom_conversion
+----------------------------------------
+Tests/Evals/test_task_loader.py:631: in test_eleuther_to_custom_conversion
+    custom_dict = loader.convert_to_custom_format(config)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute 'convert_to_custom_format'. Did you mean: '_convert_to_eleuther_format'?
+
+132. Tests/Evals/test_task_loader.py::TestFormatConversion::test_custom_to_eleuther_conversion
+----------------------------------------
+Tests/Evals/test_task_loader.py:641: in test_custom_to_eleuther_conversion
+    eleuther_dict = loader.convert_to_eleuther_format(sample_task_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute 'convert_to_eleuther_format'. Did you mean: '_convert_to_eleuther_format'?
+
+133. Tests/Evals/test_task_loader.py::TestTaskTemplateGeneration::test_generate_basic_template
+----------------------------------------
+Tests/Evals/test_task_loader.py:654: in test_generate_basic_template
+    template = loader.generate_template("question_answer")
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute 'generate_template'
+
+134. Tests/Evals/test_task_loader.py::TestTaskTemplateGeneration::test_generate_code_template
+----------------------------------------
+Tests/Evals/test_task_loader.py:665: in test_generate_code_template
+    template = loader.generate_template("code_generation")
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute 'generate_template'
+
+135. Tests/Evals/test_task_loader.py::TestTaskTemplateGeneration::test_generate_eleuther_template
+----------------------------------------
+Tests/Evals/test_task_loader.py:675: in test_generate_eleuther_template
+    template = loader.generate_eleuther_template("multiple_choice")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute 'generate_eleuther_template'
+
+136. Tests/Evals/test_task_loader.py::TestUtilityFunctions::test_detect_file_format
+----------------------------------------
+Tests/Evals/test_task_loader.py:692: in test_detect_file_format
+    assert loader._detect_file_format(str(yaml_file)) == "eleuther"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute '_detect_file_format'. Did you mean: '_detect_format'?
+
+137. Tests/Evals/test_task_loader.py::TestUtilityFunctions::test_normalize_task_type
+----------------------------------------
+Tests/Evals/test_task_loader.py:711: in test_normalize_task_type
+    assert loader._normalize_task_type("multiple_choice") == "multiple_choice"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute '_normalize_task_type'
+
+138. Tests/Evals/test_task_loader.py::TestUtilityFunctions::test_validate_dataset_path
+----------------------------------------
+Tests/Evals/test_task_loader.py:721: in test_validate_dataset_path
+    assert loader._validate_dataset_path("local_file.csv") == True
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute '_validate_dataset_path'
+
+139. Tests/Evals/test_task_loader.py::TestUtilityFunctions::test_merge_generation_kwargs
+----------------------------------------
+Tests/Evals/test_task_loader.py:735: in test_merge_generation_kwargs
+    merged = loader._merge_generation_kwargs(defaults, overrides)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'TaskLoader' object has no attribute '_merge_generation_kwargs'
+
+140. Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_send_button_pressed_basic
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events.py:143: in test_handle_chat_send_button_pressed_basic
+    await handle_chat_send_button_pressed(mock_app, MagicMock())
+tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py:360: in handle_chat_send_button_pressed
+    await chat_container.mount(user_msg_widget_instance)
+E   TypeError: object MagicMock can't be used in 'await' expression
+
+141. Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_send_with_active_character
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events.py:177: in test_handle_chat_send_with_active_character
+    await handle_chat_send_button_pressed(mock_app, MagicMock())
+tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py:360: in handle_chat_send_button_pressed
+    await chat_container.mount(user_msg_widget_instance)
+E   TypeError: object MagicMock can't be used in 'await' expression
+
+142. Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_new_conversation_button_pressed
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events.py:193: in test_handle_new_conversation_button_pressed
+    await handle_chat_new_conversation_button_pressed(mock_app, MagicMock())
+tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py:888: in handle_chat_new_conversation_button_pressed
+    await chat_log_widget.remove_children()
+E   TypeError: object MagicMock can't be used in 'await' expression
+
+143. Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_save_current_chat_button_pressed
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events.py:220: in test_handle_save_current_chat_button_pressed
+    await handle_chat_save_current_chat_button_pressed(mock_app, MagicMock())
+tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py:974: in handle_chat_save_current_chat_button_pressed
+    new_conv_title_from_ui = app.query_one("#chat-conversation-title-input", Input).value.strip()
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/pyth
+
+144. Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_action_button_pressed_edit_and_save
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events.py:246: in test_handle_chat_action_button_pressed_edit_and_save
+    await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py:543: in handle_chat_action_button_pressed
+    await action_widget.mount(editor, before=static_text_widget)
+E   TypeError: object MagicMock can't be used in 'await' expression
+
+145. Tests/Event_Handlers/Chat_Events/test_chat_events.py::test_handle_chat_load_character_with_greeting
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:949: in assert_called_with
+    raise AssertionError(_error_message()) from cause
+E   AssertionError: expected call not found.
+E   Expected: mount(<AsyncMock name='ChatMessage()' id='5107557264'>)
+E     Actual: mount(<coroutine object AsyncMockMixin._execute_mock_call at 0x130343840>)
+
+During handling of the above exception, another exception occurred:
+/opt/homebrew/Cellar/python@3.1
+
+146. Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py::test_disable_media_copy_buttons
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py:76: in test_disable_media_copy_buttons
+    await _disable_media_copy_buttons(mock_app)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name '_disable_media_copy_buttons' is not defined
+
+147. Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py::test_perform_media_sidebar_search_with_results
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py:96: in test_perform_media_sidebar_search_with_results
+    await perform_media_sidebar_search(mock_app, "test term")
+tldw_chatbook/Event_Handlers/Chat_Events/chat_events_sidebar.py:64: in perform_media_sidebar_search
+    await results_list_view.clear()
+E   TypeError: object MagicMock can't be used in 'await' expression
+
+148. Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py::test_perform_media_sidebar_search_no_results
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py:114: in test_perform_media_sidebar_search_no_results
+    await perform_media_sidebar_search(mock_app, "no results term")
+tldw_chatbook/Event_Handlers/Chat_Events/chat_events_sidebar.py:64: in perform_media_sidebar_search
+    await results_list_view.clear()
+E   TypeError: object MagicMock can't be used in 'await' expression
+
+149. Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py::test_perform_media_sidebar_search_empty_term
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py:125: in test_perform_media_sidebar_search_empty_term
+    await perform_media_sidebar_search(mock_app, "")
+tldw_chatbook/Event_Handlers/Chat_Events/chat_events_sidebar.py:64: in perform_media_sidebar_search
+    await results_list_view.clear()
+E   TypeError: object MagicMock can't be used in 'await' expression
+
+150. Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py::test_handle_chat_media_search_input_changed_debouncing
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py:136: in test_handle_chat_media_search_input_changed_debouncing
+    await handle_chat_media_search_input_changed(mock_app, mock_input_widget)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'handle_chat_media_search_input_changed' is not defined
+
+151. Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py::test_handle_chat_media_load_selected_button_pressed
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py:158: in test_handle_chat_media_load_selected_button_pressed
+    await handle_chat_media_load_selected_button_pressed(mock_app, MagicMock())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'handle_chat_media_load_selected_button_pressed' is not defined
+
+152. Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py::test_handle_chat_media_load_selected_no_selection
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py:175: in test_handle_chat_media_load_selected_no_selection
+    await handle_chat_media_load_selected_button_pressed(mock_app, MagicMock())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   NameError: name 'handle_chat_media_load_selected_button_pressed' is not defined
+
+153. Tests/Event_Handlers/Chat_Events/test_chat_image_events.py::TestChatImageHandler::test_process_image_with_tilde_path
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_image_events.py:135: in test_process_image_with_tilde_path
+    relative_path = temp_image_file.relative_to(home_path)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py:682: in relative_to
+    raise ValueError(f"{str(self)!r} is not in the subpath of {str(other)!r}")
+E   ValueError: '/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpldt
+
+154. Tests/Event_Handlers/Chat_Events/test_chat_image_events.py::TestChatImageHandlerEdgeCases::test_process_zero_size_file
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_image_events.py:276: in test_process_zero_size_file
+    with pytest.raises(Exception):
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'Exception'>
+
+155. Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py::test_handle_streaming_chunk_appends_text
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py:59: in test_handle_streaming_chunk_appends_text
+    await handle_streaming_chunk(mock_app, event)
+tldw_chatbook/Event_Handlers/Chat_Events/chat_streaming_events.py:31: in handle_streaming_chunk
+    if current_widget and current_widget.is_mounted:
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'coroutine' object has no attribute 'is_mounted'
+
+156. Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py::test_handle_stream_done_success_and_save
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py:85: in test_handle_stream_done_success_and_save
+    await handle_stream_done(mock_app, event)
+tldw_chatbook/Event_Handlers/Chat_Events/chat_streaming_events.py:83: in handle_stream_done
+    if not ai_widget or not ai_widget.is_mounted:
+                            ^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'coroutine' object has no attribute 'is_mounted'
+
+157. Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py::test_handle_stream_done_with_tag_stripping
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py:111: in test_handle_stream_done_with_tag_stripping
+    await handle_stream_done(mock_app, event)
+tldw_chatbook/Event_Handlers/Chat_Events/chat_streaming_events.py:83: in handle_stream_done
+    if not ai_widget or not ai_widget.is_mounted:
+                            ^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'coroutine' object has no attribute 'is_mounted'
+
+158. Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py::test_handle_stream_done_with_error
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py:127: in test_handle_stream_done_with_error
+    await handle_stream_done(mock_app, event)
+tldw_chatbook/Event_Handlers/Chat_Events/chat_streaming_events.py:83: in handle_stream_done
+    if not ai_widget or not ai_widget.is_mounted:
+                            ^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'coroutine' object has no attribute 'is_mounted'
+
+159. Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py::test_handle_stream_done_no_widget
+----------------------------------------
+Tests/Event_Handlers/Chat_Events/test_chat_streaming_events.py:151: in test_handle_stream_done_no_widget
+    await handle_stream_done(mock_app, event)
+tldw_chatbook/Event_Handlers/Chat_Events/chat_streaming_events.py:83: in handle_stream_done
+    if not ai_widget or not ai_widget.is_mounted:
+                            ^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'coroutine' object has no attribute 'is_mounted'
+
+160. Tests/LLM_Management/test_llm_management_events.py::test_handle_start_llamacpp_server_button_pressed_basic_command
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:50: in test_handle_start_llamacpp_server_button_pressed_basic_command
+    await handle_start_llamacpp_server_button_pressed(mock_app)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: handle_start_llamacpp_server_button_pressed() missing 1 required positional argument: 'event'
+
+161. Tests/LLM_Management/test_llm_management_events.py::test_handle_start_llamacpp_server_no_additional_args
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:77: in test_handle_start_llamacpp_server_no_additional_args
+    mock_app.query_one("#llamacpp-additional-args").value = ""  # Override default for this test
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cella
+
+162. Tests/LLM_Management/test_llm_management_events.py::test_handle_start_llamacpp_server_additional_args_with_spaces
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:97: in test_handle_start_llamacpp_server_additional_args_with_spaces
+    mock_app.query_one("#llamacpp-additional-args").value = '--custom-path "/mnt/my models/llama" --another-arg value'
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+
+163. Tests/LLM_Management/test_llm_management_events.py::test_handle_start_llamacpp_server_default_host_port
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:118: in test_handle_start_llamacpp_server_default_host_port
+    mock_app.query_one("#llamacpp-host").value = ""
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versio
+
+164. Tests/LLM_Management/test_llm_management_events.py::test_handle_start_llamacpp_server_missing_exec_path
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:141: in test_handle_start_llamacpp_server_missing_exec_path
+    mock_app.query_one("#llamacpp-exec-path").value = ""  # Missing exec path
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Fra
+
+165. Tests/LLM_Management/test_llm_management_events.py::test_handle_start_llamacpp_server_invalid_exec_path
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:155: in test_handle_start_llamacpp_server_invalid_exec_path
+    mock_app.query_one("#llamacpp-exec-path").value = "/invalid/path/server"
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Fram
+
+166. Tests/LLM_Management/test_llm_management_events.py::test_handle_start_llamacpp_server_missing_model_path
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:167: in test_handle_start_llamacpp_server_missing_model_path
+    mock_app.query_one("#llamacpp-model-path").value = ""  # Missing model path
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11
+
+167. Tests/LLM_Management/test_llm_management_events.py::test_handle_start_llamacpp_server_invalid_model_path
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:179: in test_handle_start_llamacpp_server_invalid_model_path
+    mock_app.query_one("#llamacpp-exec-path").value = "/path/to/server"  # Valid mock path
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.
+
+168. Tests/LLM_Management/test_llm_management_events.py::test_mlx_lm_nav_button_shows_correct_view
+----------------------------------------
+Tests/LLM_Management/test_llm_management_events.py:293: in test_mlx_lm_nav_button_shows_correct_view
+    await handle_llm_nav_button_pressed(pilot.app, "llm-nav-mlx-lm")
+tldw_chatbook/Event_Handlers/llm_nav_events.py:32: in handle_llm_nav_button_pressed
+    button_id = event.button.id
+                ^^^^^^^^^^^^
+E   AttributeError: 'str' object has no attribute 'button'
+
+169. Tests/LLM_Management/test_mlx_lm.py::test_start_mlx_lm_server_success
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+170. Tests/LLM_Management/test_mlx_lm.py::test_start_mlx_lm_server_with_additional_args
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+171. Tests/LLM_Management/test_mlx_lm.py::test_start_mlx_lm_server_file_not_found
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+172. Tests/LLM_Management/test_mlx_lm.py::test_start_mlx_lm_server_other_exception
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+173. Tests/LLM_Management/test_mlx_lm.py::test_stop_mlx_lm_server_graceful_termination
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+174. Tests/LLM_Management/test_mlx_lm.py::test_stop_mlx_lm_server_force_kill_on_timeout
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+175. Tests/LLM_Management/test_mlx_lm.py::test_stop_mlx_lm_server_already_terminated
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+176. Tests/LLM_Management/test_mlx_lm.py::test_stop_mlx_lm_server_no_process
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+177. Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_success_with_config
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+178. Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_args_override_config
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+179. Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_api_url_override
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+180. Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_missing_model_config
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+181. Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_provider_error
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+182. Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_kwargs_passthrough
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+183. Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_missing_host_port_config
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+184. Tests/LLM_Management/test_mlx_lm.py::test_chat_with_mlx_lm_model_arg_overrides_missing_config
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+185. Tests/LLM_Management/test_mlx_lm.py::test_start_mlx_lm_server_empty_additional_args
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+186. Tests/LLM_Management/test_mlx_lm.py::test_stop_mlx_lm_server_terminate_exception
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+187. Tests/LLM_Management/test_mlx_lm.py::test_stop_mlx_lm_server_kill_exception_after_timeout
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1581: in __enter__
+    setattr(self.target, self.attribute, new_attr)
+E   AttributeError: 'dict' object attribute 'get' is read-only
+
+During handling of the above exception, another exception occurred:
+Tests/LLM_Management/test_mlx_lm.py:46: in mock_mlx_settings
+    with patch.object(settings, 'get') as mock_settings_get:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/p
+
+188. Tests/Media_DB/test_media_db_properties.py::TestMediaItemProperties::test_media_item_roundtrip
+----------------------------------------
+Tests/Media_DB/test_media_db_properties.py:117: in test_media_item_roundtrip
+    def test_media_item_roundtrip(self, db_instance: MediaDatabase, media_data: dict):
+               ^^^^^^^^^^^^^^^^^^^^
+Tests/Media_DB/test_media_db_properties.py:139: in test_media_item_roundtrip
+    linked_keywords = {kw.lower().strip() for kw in fetch_keywords_for_media(media_id, db_instance)}
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/Clien
+
+189. Tests/Media_DB/test_media_db_properties.py::TestSearchProperties::test_search_finds_item_by_its_properties
+----------------------------------------
+Tests/Media_DB/test_media_db_properties.py:233: in test_search_finds_item_by_its_properties
+    def test_search_finds_item_by_its_properties(self, db_instance: MediaDatabase, media_data: dict):
+               ^^^^^^^^^^^^^^^^^^^^
+Tests/Media_DB/test_media_db_properties.py:238: in test_search_finds_item_by_its_properties
+    assert total == 1
+E   assert 0 == 1
+E   Falsifying example: test_search_finds_item_by_its_properties(
+E       self=<Tests.Media_DB.test_media_db_properties.TestSearchProperti
+
+190. Tests/Media_DB/test_media_db_properties.py::TestSearchProperties::test_soft_deleted_item_is_not_in_fts_search
+----------------------------------------
+Tests/Media_DB/test_media_db_properties.py:266: in test_soft_deleted_item_is_not_in_fts_search
+    def test_soft_deleted_item_is_not_in_fts_search(self, db_instance: MediaDatabase, media_data: dict):
+               ^^^^^^^^^^^^^^^^^^^^
+Tests/Media_DB/test_media_db_properties.py:272: in test_soft_deleted_item_is_not_in_fts_search
+    assert total == 1
+E   assert 0 == 1
+E   Falsifying example: test_soft_deleted_item_is_not_in_fts_search(
+E       self=<Tests.Media_DB.test_media_db_properties.TestSe
+
+191. Tests/Media_DB/test_media_db_properties.py::TestIdempotencyAndConstraints::test_add_media_with_conflicting_hash_is_handled
+----------------------------------------
+Tests/Media_DB/test_media_db_properties.py:301: in test_add_media_with_conflicting_hash_is_handled
+    media1=st_media_data(),
+           ^^^^^^^^^^^^^^^^^
+Tests/Media_DB/test_media_db_properties.py:361: in test_add_media_with_conflicting_hash_is_handled
+    assert final_item['title'] == media2['title'], "Title should be updated"
+E   AssertionError: Title should be updated
+E   assert '0' == '¤'
+E     
+E     - ¤
+E     + 0
+E   Falsifying example: test_add_media_with_conflicting_hash_is_handled(
+E 
+
+192. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_add_note_returns_none_unexpectedly
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:949: in assert_called_with
+    raise AssertionError(_error_message()) from cause
+E   AssertionError: expected call not found.
+E   Expected: error("add_note for user user1 returned None unexpectedly for title 'Test Note'.")
+E     Actual: error("add_note for user_id 'user1' (as client_id) returned None unexpectedly for title 'Test Note'.")
+
+During handling of the above exception, anot
+
+193. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_close_all_user_connections
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1020: in assert_any_call
+    raise AssertionError(
+E   AssertionError: info('All cached user DB connections have been processed for closure.') call not found
+
+During handling of the above exception, another exception occurred:
+Tests/Notes/test_notes_library_unit.py:280: in test_close_all_user_connections
+    self.mock_notes_library_logger.info.assert_any_call(
+E   AssertionError: in
+
+194. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_close_connection_exception
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:949: in assert_called_with
+    raise AssertionError(_error_message()) from cause
+E   AssertionError: expected call not found.
+E   Expected: error("Error closing DB connection for user_id 'user_close_fail': Failed to close", exc_info=True)
+E     Actual: error("Error closing DB instance for user context 'user_close_fail': Failed to close", exc_info=True)
+
+During handling of the above 
+
+195. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_close_user_connection
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1020: in assert_any_call
+    raise AssertionError(
+E   AssertionError: info("Closed and removed DB connection for user_id 'user1'.") call not found
+
+During handling of the above exception, another exception occurred:
+Tests/Notes/test_notes_library_unit.py:259: in test_close_user_connection
+    self.mock_notes_library_logger.info.assert_any_call(
+E   AssertionError: info("Closed and 
+
+196. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_close_user_connection_not_exist
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1020: in assert_any_call
+    raise AssertionError(
+E   AssertionError: debug("No active DB connection found in cache for user_id 'non_existent_user' to close.") call not found
+
+During handling of the above exception, another exception occurred:
+Tests/Notes/test_notes_library_unit.py:266: in test_close_user_connection_not_exist
+    self.mock_notes_library_logger.debug.assert_any_call
+
+197. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_get_db_init_failure_ragdb_error
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:949: in assert_called_with
+    raise AssertionError(_error_message()) from cause
+E   AssertionError: expected call not found.
+E   Expected: error("Failed to initialize DB for user_id 'user_fail_ragdb' at /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/notes_service_test_c1tlwr34/user_user_fail_ragdb.sqlite: DB init failed via class from RAGDBError", exc_info=True)
+E     Act
+
+198. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_get_db_init_failure_sqlite_error
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:949: in assert_called_with
+    raise AssertionError(_error_message()) from cause
+E   AssertionError: expected call not found.
+E   Expected: error("Failed to initialize DB for user_id 'user_fail_sqlite' at /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/notes_service_test_5ijit0n0/user_user_fail_sqlite.sqlite: SQLite connection failed from sqlite3.Error", exc_info=True)
+E   
+
+199. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_get_db_init_failure_unexpected_error
+----------------------------------------
+tldw_chatbook/Notes/Notes_Library.py:111: in _get_db
+    db_instance = CharactersRAGDB(
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1143: in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+    
+
+200. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_get_db_new_instance
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:949: in assert_called_with
+    raise AssertionError(_error_message()) from cause
+E   AssertionError: expected call not found.
+E   Expected: CharactersRAGDB(db_path=PosixPath('/private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/notes_service_test_adhb88mc/user_user1.sqlite'), client_id='test_api_client_v1')
+E     Actual: CharactersRAGDB(db_path='/Users/appledev/.local/share/tldw
+
+201. Tests/Notes/test_notes_library_unit.py::TestNotesInteropService::test_initialization
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1020: in assert_any_call
+    raise AssertionError(
+E   AssertionError: info('NotesInteropService initialized. Base DB directory: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/notes_service_test_26n4tvjr') call not found
+
+During handling of the above exception, another exception occurred:
+Tests/Notes/test_notes_library_unit.py:59: in test_initialization
+    self.mock_notes
+
+202. Tests/RAG/test_cache_service.py::TestCacheService::test_statistics
+----------------------------------------
+Tests/RAG/test_cache_service.py:225: in test_statistics
+    assert stats['total_hits'] == 2
+E   assert 1 == 2
+
+203. Tests/RAG/test_chunking_service.py::TestChunkingService::test_chunk_by_words
+----------------------------------------
+Tests/RAG/test_chunking_service.py:38: in test_chunk_by_words
+    chunks = chunking_service.chunk_by_words(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ChunkingService' object has no attribute 'chunk_by_words'. Did you mean: '_chunk_by_words'?
+
+204. Tests/RAG/test_chunking_service.py::TestChunkingService::test_chunk_by_sentences
+----------------------------------------
+Tests/RAG/test_chunking_service.py:71: in test_chunk_by_sentences
+    chunks = chunking_service.chunk_by_sentences(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ChunkingService' object has no attribute 'chunk_by_sentences'. Did you mean: '_chunk_by_sentences'?
+
+205. Tests/RAG/test_chunking_service.py::TestChunkingService::test_chunk_by_paragraphs
+----------------------------------------
+Tests/RAG/test_chunking_service.py:95: in test_chunk_by_paragraphs
+    chunks = chunking_service.chunk_by_paragraphs(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ChunkingService' object has no attribute 'chunk_by_paragraphs'. Did you mean: '_chunk_by_paragraphs'?
+
+206. Tests/RAG/test_chunking_service.py::TestChunkingService::test_chunk_document
+----------------------------------------
+Tests/RAG/test_chunking_service.py:114: in test_chunk_document
+    chunks = chunking_service.chunk_document(
+E   TypeError: ChunkingService.chunk_document() got an unexpected keyword argument 'method'
+
+207. Tests/RAG/test_chunking_service.py::TestChunkingService::test_different_chunking_methods
+----------------------------------------
+Tests/RAG/test_chunking_service.py:173: in test_different_chunking_methods
+    word_chunks = chunking_service.chunk_document(
+E   TypeError: ChunkingService.chunk_document() got an unexpected keyword argument 'method'
+
+208. Tests/RAG/test_chunking_service.py::TestChunkingService::test_chunk_overlap_behavior
+----------------------------------------
+Tests/RAG/test_chunking_service.py:200: in test_chunk_overlap_behavior
+    chunks_no_overlap = chunking_service.chunk_document(
+E   TypeError: ChunkingService.chunk_document() got an unexpected keyword argument 'chunk_overlap'
+
+209. Tests/RAG/test_config_integration.py::TestRAGConfigManager::test_get_rag_setting_with_default
+----------------------------------------
+Tests/RAG/test_config_integration.py:250: in test_get_rag_setting_with_default
+    assert value == 42
+E   assert None == 42
+
+210. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_initialization
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+211. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_initialize_embedding_model
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+212. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_initialize_embedding_model_no_deps
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+213. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_create_embeddings
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+214. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_create_embeddings_with_cache
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+215. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_create_embeddings_no_model
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+216. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_get_or_create_collection
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+217. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_get_or_create_collection_with_metadata
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+218. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_get_or_create_collection_no_client
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+219. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_add_documents_to_collection
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+220. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_add_documents_to_collection_no_collection
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+221. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_search_collection
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+222. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_search_collection_with_filter
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+223. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_delete_collection
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+224. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_delete_collection_no_client
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+225. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_list_collections
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+226. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_list_collections_no_client
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+227. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_get_collection_info
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+228. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_get_collection_info_no_collection
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+229. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_clear_collection
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+230. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_update_documents
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+231. Tests/RAG/test_embeddings_service.py::TestEmbeddingsService::test_delete_documents
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+232. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_media_items
+----------------------------------------
+Tests/RAG/test_indexing_service.py:104: in test_index_media_items
+    assert result == 2  # Two items indexed
+    ^^^^^^^^^^^^^^^^^^
+E   assert 0 == 2
+
+233. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_media_items_with_progress
+----------------------------------------
+Tests/RAG/test_indexing_service.py:134: in test_index_media_items_with_progress
+    assert len(progress_calls) > 0
+E   assert 0 > 0
+E    +  where 0 = len([])
+
+234. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_media_batch
+----------------------------------------
+Tests/RAG/test_indexing_service.py:161: in test_index_media_batch
+    assert add_call[0][0] == "media_chunks"
+           ^^^^^^^^^^^^^^
+E   IndexError: tuple index out of range
+
+235. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_conversations
+----------------------------------------
+Tests/RAG/test_indexing_service.py:171: in test_index_conversations
+    assert result == 2  # Two conversations indexed
+    ^^^^^^^^^^^^^^^^^^
+E   assert 0 == 2
+
+236. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_conversations_with_progress
+----------------------------------------
+Tests/RAG/test_indexing_service.py:193: in test_index_conversations_with_progress
+    assert len(progress_calls) > 0
+E   assert 0 > 0
+E    +  where 0 = len([])
+
+237. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_conversation_batch
+----------------------------------------
+Tests/RAG/test_indexing_service.py:217: in test_index_conversation_batch
+    assert 'user:' in documents[0]
+E   AssertionError: assert 'user:' in 'First chunk'
+
+238. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_notes
+----------------------------------------
+Tests/RAG/test_indexing_service.py:225: in test_index_notes
+    assert result == 2  # Two notes indexed
+    ^^^^^^^^^^^^^^^^^^
+E   assert 0 == 2
+
+239. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_notes_batch
+----------------------------------------
+Tests/RAG/test_indexing_service.py:246: in test_index_notes_batch
+    assert add_call[0][0] == "notes_chunks"
+           ^^^^^^^^^^^^^^
+E   IndexError: tuple index out of range
+
+240. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_all
+----------------------------------------
+Tests/RAG/test_indexing_service.py:259: in test_index_all
+    assert result['media'] == 2
+E   assert 0 == 2
+
+241. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_all_with_progress
+----------------------------------------
+Tests/RAG/test_indexing_service.py:279: in test_index_all_with_progress
+    assert 'media' in types_reported
+E   AssertionError: assert 'media' in set()
+
+242. Tests/RAG/test_indexing_service.py::TestIndexingService::test_index_all_partial
+----------------------------------------
+Tests/RAG/test_indexing_service.py:291: in test_index_all_partial
+    assert result['media'] == 2
+E   assert 0 == 2
+
+243. Tests/RAG/test_indexing_service.py::TestIndexingService::test_chunk_parameters
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:918: in assert_called
+    raise AssertionError(msg)
+E   AssertionError: Expected 'chunk_document' to have been called.
+
+During handling of the above exception, another exception occurred:
+Tests/RAG/test_indexing_service.py:343: in test_chunk_parameters
+    mock_chunking_service.chunk_document.assert_called()
+E   AssertionError: Expected 'chunk_document' to have been called.
+
+244. Tests/RAG/test_memory_management_service.py::TestMemoryManagementService::test_get_collection_stats
+----------------------------------------
+Tests/RAG/test_memory_management_service.py:133: in test_get_collection_stats
+    assert stats is not None
+E   assert None is not None
+
+245. Tests/RAG/test_memory_management_service.py::TestMemoryManagementService::test_identify_collections_for_cleanup
+----------------------------------------
+Tests/RAG/test_memory_management_service.py:179: in test_identify_collections_for_cleanup
+    assert len(candidates) >= 1
+E   assert 0 >= 1
+E    +  where 0 = len([])
+
+246. Tests/RAG/test_memory_management_service.py::TestMemoryManagementService::test_cleanup_old_documents
+----------------------------------------
+Tests/RAG/test_memory_management_service.py:206: in test_cleanup_old_documents
+    assert mock_collection.delete.called
+E   AssertionError: assert False
+E    +  where False = <Mock name='mock.get_or_create_collection().delete' id='6270847360'>.called
+E    +    where <Mock name='mock.get_or_create_collection().delete' id='6270847360'> = <Mock name='mock.get_or_create_collection()' id='6271385776'>.delete
+
+247. Tests/RAG/test_memory_management_service.py::TestMemoryManagementService::test_cleanup_old_documents_batch_processing
+----------------------------------------
+Tests/RAG/test_memory_management_service.py:237: in test_cleanup_old_documents_batch_processing
+    assert mock_collection.delete.call_count >= 2  # At least 2 batches
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: assert 0 >= 2
+E    +  where 0 = <Mock name='mock.get_or_create_collection().delete' id='6270968192'>.call_count
+E    +    where <Mock name='mock.get_or_create_collection().delete' id='6270968192'> = <Mock name='mock.get_or_create_collection()' id='6270847168'>.d
+
+248. Tests/RAG/test_memory_management_service.py::TestMemoryManagementService::test_force_cleanup_collection
+----------------------------------------
+Tests/RAG/test_memory_management_service.py:253: in test_force_cleanup_collection
+    assert mock_embeddings_service.client.delete_collection.called
+E   AssertionError: assert False
+E    +  where False = <MagicMock name='mock.client.delete_collection' id='6119527664'>.called
+E    +    where <MagicMock name='mock.client.delete_collection' id='6119527664'> = <MagicMock name='mock.client' id='6270969200'>.delete_collection
+E    +      where <MagicMock name='mock.client' id='6270969200'> = <Mock id=
+
+249. Tests/RAG/test_memory_management_service.py::TestMemoryManagementService::test_automatic_cleanup
+----------------------------------------
+Tests/RAG/test_memory_management_service.py:274: in test_automatic_cleanup
+    assert 'collection1' in results
+E   AssertionError: assert 'collection1' in {}
+
+250. Tests/RAG/test_memory_management_service.py::TestMemoryManagementService::test_get_memory_usage_summary
+----------------------------------------
+Tests/RAG/test_memory_management_service.py:329: in test_get_memory_usage_summary
+    assert summary['total_collections'] == 2
+E   assert 0 == 2
+
+251. Tests/RAG/test_memory_management_service.py::TestMemoryManagementIntegration::test_with_real_chromadb
+----------------------------------------
+Tests/RAG/test_memory_management_service.py:371: in test_with_real_chromadb
+    collection.add(
+    ^^^^^^^^^^^^^^
+E   AttributeError: 'NoneType' object has no attribute 'add'
+
+252. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_plain_rag_search
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+253. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_plain_rag_search_with_source_filtering
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+254. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_plain_rag_with_context_limit
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+255. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_plain_rag_with_reranking
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+256. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_full_rag_pipeline
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+257. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_hybrid_rag_search
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+258. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_get_rag_context_for_chat
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+259. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_rag_search_caching
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+260. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_error_handling
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+261. Tests/RAG/test_rag_integration.py::TestRAGIntegration::test_indexing_and_search_integration
+----------------------------------------
+Tests/RAG/test_rag_integration.py:52: in media_db
+    db = MediaDatabase(str(db_path))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MediaDatabase.__init__() missing 1 required positional argument: 'client_id'
+
+262. Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties::test_chunk_by_words_coverage
+----------------------------------------
+Tests/RAG/test_rag_properties.py:101: in test_chunk_by_words_coverage
+    text=st.text(min_size=1, max_size=1000),
+           ^^^^^^^
+Tests/RAG/test_rag_properties.py:110: in test_chunk_by_words_coverage
+    chunks = service.chunk_by_words(text, chunk_size, chunk_overlap)
+             ^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ChunkingService' object has no attribute 'chunk_by_words'. Did you mean: '_chunk_by_words'?
+E   Falsifying example: test_chunk_by_words_coverage(
+E       self=<Tests.RAG.
+
+263. Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties::test_chunk_by_sentences_preserves_boundaries
+----------------------------------------
+Tests/RAG/test_rag_properties.py:126: in test_chunk_by_sentences_preserves_boundaries
+    text=st.text(min_size=100, max_size=1000, alphabet=st.characters(min_codepoint=32, max_codepoint=126)),
+           ^^^^^^^
+Tests/RAG/test_rag_properties.py:136: in test_chunk_by_sentences_preserves_boundaries
+    chunks = service.chunk_by_sentences(text, chunk_size, overlap=10)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ChunkingService' object has no attribute 'chunk_by_sentences'. Did you
+
+264. Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties::test_chunk_document_metadata_consistency
+----------------------------------------
+Tests/RAG/test_rag_properties.py:147: in test_chunk_document_metadata_consistency
+    doc=st.fixed_dictionaries({
+           ^^^^^^^
+Tests/RAG/test_rag_properties.py:168: in test_chunk_document_metadata_consistency
+    assert 'metadata' in chunk
+E   AssertionError: assert 'metadata' in {'chunk_id': 'c88a1ec8', 'chunk_index': 0, 'document_id': '0', 'document_title': '0', ...}
+E   Falsifying example: test_chunk_document_metadata_consistency(
+E       self=<Tests.RAG.test_rag_properties.TestChunking
+
+265. Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties::test_short_text_single_chunk
+----------------------------------------
+Tests/RAG/test_rag_properties.py:181: in test_short_text_single_chunk
+    text=st.text(min_size=0, max_size=50),
+           ^^^^^^^
+Tests/RAG/test_rag_properties.py:198: in test_short_text_single_chunk
+    assert chunks[0]['text'] == text
+E   AssertionError: assert '0' == '0 '
+E     
+E     - 0 
+E     + 0
+E   Falsifying example: test_short_text_single_chunk(
+E       self=<Tests.RAG.test_rag_properties.TestChunkingServiceProperties object at 0x1255a9340>,
+E       text='0 ',
+E       chunk_size=100,
+
+266. Tests/RAG/test_rag_properties.py::TestCacheServiceProperties::test_embedding_cache_batch_operations
+----------------------------------------
+Tests/RAG/test_rag_properties.py:244: in test_embedding_cache_batch_operations
+    embeddings_data=st.lists(
+           ^^^^^^^
+Tests/RAG/test_rag_properties.py:267: in test_embedding_cache_batch_operations
+    assert len(cached) == len(embeddings_data)
+E   AssertionError: assert 1 == 2
+E    +  where 1 = len({'0': [0.0, 0.0, 0.0]})
+E    +  and   2 = len([('0', [0.0, 0.0, 0.0]), ('0', [0.0, 0.0, 0.0])])
+E   Falsifying example: test_embedding_cache_batch_operations(
+E       self=<Tests.RAG.test_ra
+
+267. Tests/RAG/test_rag_properties.py::TestCacheStateMachine::runTest
+----------------------------------------
+.venv/lib/python3.12/site-packages/hypothesis/stateful.py:476: in runTest
+    run_state_machine_as_test(cls, settings=self.settings)
+.venv/lib/python3.12/site-packages/hypothesis/stateful.py:258: in run_state_machine_as_test
+    state_machine_test(state_machine_factory)
+.venv/lib/python3.12/site-packages/hypothesis/stateful.py:115: in run_state_machine
+    @given(st.data())
+               ^^^^^^^
+E   hypothesis.errors.FailedHealthCheck: Rules should return None if they have no target bundle, but
+
+268. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_embeddings_service
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+269. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_chunking_service
+----------------------------------------
+Tests/RAG/test_service_factory.py:78: in test_create_chunking_service
+    service = factory.create_chunking_service()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'RAGServiceFactory' object has no attribute 'create_chunking_service'. Did you mean: 'create_indexing_service'?
+
+270. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_indexing_service
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+271. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_indexing_service_auto_dependencies
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+272. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_memory_management_service
+----------------------------------------
+Tests/RAG/test_service_factory.py:128: in test_create_memory_management_service
+    service = factory.create_memory_management_service(mock_embeddings)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'RAGServiceFactory' object has no attribute 'create_memory_management_service'
+
+273. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_cache_service
+----------------------------------------
+Tests/RAG/test_service_factory.py:136: in test_create_cache_service
+    service = factory.create_cache_service()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'RAGServiceFactory' object has no attribute 'create_cache_service'
+
+274. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_rag_service
+----------------------------------------
+Tests/RAG/test_service_factory.py:150: in test_create_rag_service
+    service = factory.create_rag_service(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'RAGServiceFactory' object has no attribute 'create_rag_service'. Did you mean: 'create_indexing_service'?
+
+275. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_complete_rag_services
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+276. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_services_without_embeddings
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1393: in patched
+    with self.decoration_helper(patched,
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:1375: in decoration_helper
+   
+
+277. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_memory_manager_circular_reference
+----------------------------------------
+Tests/RAG/test_service_factory.py:208: in test_memory_manager_circular_reference
+    memory_manager = factory.create_memory_management_service(mock_embeddings)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'RAGServiceFactory' object has no attribute 'create_memory_management_service'
+
+278. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_performance_configuration_propagation
+----------------------------------------
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/unittest/mock.py:960: in assert_called_once_with
+    raise AssertionError(msg)
+E   AssertionError: Expected 'configure_performance' to be called once. Called 0 times.
+
+During handling of the above exception, another exception occurred:
+Tests/RAG/test_service_factory.py:242: in test_performance_configuration_propagation
+    mock_instance.configure_performance.assert_called_once_with(
+E   AssertionErr
+
+279. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_error_handling_in_factory
+----------------------------------------
+Tests/RAG/test_service_factory.py:254: in test_error_handling_in_factory
+    services = factory.create_complete_rag_services(Path("/tmp"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/RAG_Search/Services/service_factory.py:144: in create_complete_rag_services
+    embeddings_service = RAGServiceFactory.create_embeddings_service(
+tldw_chatbook/RAG_Search/Services/service_factory.py:66: in create_embeddings_service
+    embeddings_service = EmbeddingsService(
+/opt/
+
+280. Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_custom_configuration_override
+----------------------------------------
+Tests/RAG/test_service_factory.py:273: in test_custom_configuration_override
+    services = factory.create_complete_rag_services(
+E   TypeError: RAGServiceFactory.create_complete_rag_services() got an unexpected keyword argument 'embeddings_dir'
+
+281. Tests/RAG/test_service_factory.py::TestServiceFactoryIntegration::test_real_service_creation
+----------------------------------------
+Tests/RAG/test_service_factory.py:307: in test_real_service_creation
+    assert embeddings is not None
+E   assert None is not None
+
+282. Tests/UI/test_command_palette_basic.py::test_theme_provider_discover_structure
+----------------------------------------
+Tests/UI/test_command_palette_basic.py:91: in test_theme_provider_discover_structure
+    provider.app = MagicMock()
+    ^^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ThemeProvider' object has no setter
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_command_palette_basic.py:107: in test_theme_provider_discover_structure
+    pytest.fail(f"discover() method failed: {e}")
+E   Failed: discover() method failed: property 'app' of 'ThemeProvider' object has no s
+
+283. Tests/UI/test_command_palette_basic.py::test_provider_error_handling_basic
+----------------------------------------
+Tests/UI/test_command_palette_basic.py:119: in test_provider_error_handling_basic
+    provider.app = mock_app
+    ^^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ThemeProvider' object has no setter
+
+284. Tests/UI/test_command_palette_basic.py::test_theme_config_integration
+----------------------------------------
+Tests/UI/test_command_palette_basic.py:183: in test_theme_config_integration
+    provider.app = mock_app
+    ^^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ThemeProvider' object has no setter
+
+285. Tests/UI/test_command_palette_providers.py::TestThemeProvider::test_discover_shows_single_change_theme_command
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:112: in theme_provider
+    provider = ThemeProvider()
+               ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+286. Tests/UI/test_command_palette_providers.py::TestThemeProvider::test_search_shows_change_theme_command
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:112: in theme_provider
+    provider = ThemeProvider()
+               ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+287. Tests/UI/test_command_palette_providers.py::TestThemeProvider::test_search_shows_specific_themes_for_theme_keywords
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:112: in theme_provider
+    provider = ThemeProvider()
+               ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+288. Tests/UI/test_command_palette_providers.py::TestThemeProvider::test_search_filters_themes_correctly
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:112: in theme_provider
+    provider = ThemeProvider()
+               ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+289. Tests/UI/test_command_palette_providers.py::TestThemeProvider::test_show_theme_submenu
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:112: in theme_provider
+    provider = ThemeProvider()
+               ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+290. Tests/UI/test_command_palette_providers.py::TestThemeProvider::test_switch_theme_success
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:112: in theme_provider
+    provider = ThemeProvider()
+               ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+291. Tests/UI/test_command_palette_providers.py::TestThemeProvider::test_switch_theme_failure
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:112: in theme_provider
+    provider = ThemeProvider()
+               ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+292. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_discover_shows_popular_tabs
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+293. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_search_shows_all_tabs
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+294. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_switch_tab_success
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+295. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_switch_tab_failure
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+296. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[chat]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+297. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[conversations_characters_prompts]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+298. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[notes]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+299. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[media]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+300. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[search]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+301. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[ingest]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+302. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[tools_settings]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+303. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[llm_management]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+304. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[logs]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+305. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[stats]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+306. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[evals]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+307. Tests/UI/test_command_palette_providers.py::TestTabNavigationProvider::test_all_tabs_switchable[coding]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:216: in tab_provider
+    provider = TabNavigationProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+308. Tests/UI/test_command_palette_providers.py::TestQuickActionsProvider::test_discover_shows_popular_actions
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:296: in quick_actions_provider
+    provider = QuickActionsProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+309. Tests/UI/test_command_palette_providers.py::TestQuickActionsProvider::test_search_shows_all_actions
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:296: in quick_actions_provider
+    provider = QuickActionsProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+310. Tests/UI/test_command_palette_providers.py::TestQuickActionsProvider::test_execute_new_chat_action
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:296: in quick_actions_provider
+    provider = QuickActionsProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+311. Tests/UI/test_command_palette_providers.py::TestQuickActionsProvider::test_execute_new_note_action
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:296: in quick_actions_provider
+    provider = QuickActionsProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+312. Tests/UI/test_command_palette_providers.py::TestQuickActionsProvider::test_execute_action_failure
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:296: in quick_actions_provider
+    provider = QuickActionsProvider()
+               ^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+313. Tests/UI/test_command_palette_providers.py::TestLLMProviderProvider::test_discover_shows_popular_providers
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:368: in llm_provider
+    provider = LLMProviderProvider()
+               ^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+314. Tests/UI/test_command_palette_providers.py::TestLLMProviderProvider::test_show_current_provider
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:368: in llm_provider
+    provider = LLMProviderProvider()
+               ^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+315. Tests/UI/test_command_palette_providers.py::TestLLMProviderProvider::test_provider_switch_request
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:368: in llm_provider
+    provider = LLMProviderProvider()
+               ^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+316. Tests/UI/test_command_palette_providers.py::TestSettingsProvider::test_discover_shows_popular_settings
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:417: in settings_provider
+    provider = SettingsProvider()
+               ^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+317. Tests/UI/test_command_palette_providers.py::TestSettingsProvider::test_open_settings_tab
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:417: in settings_provider
+    provider = SettingsProvider()
+               ^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+318. Tests/UI/test_command_palette_providers.py::TestSettingsProvider::test_show_config_path
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:417: in settings_provider
+    provider = SettingsProvider()
+               ^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+319. Tests/UI/test_command_palette_providers.py::TestSettingsProvider::test_temperature_settings[temp_low-0.1]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:417: in settings_provider
+    provider = SettingsProvider()
+               ^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+320. Tests/UI/test_command_palette_providers.py::TestSettingsProvider::test_temperature_settings[temp_med-0.7]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:417: in settings_provider
+    provider = SettingsProvider()
+               ^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+321. Tests/UI/test_command_palette_providers.py::TestSettingsProvider::test_temperature_settings[temp_high-1.0]
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:417: in settings_provider
+    provider = SettingsProvider()
+               ^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+322. Tests/UI/test_command_palette_providers.py::TestCommandPaletteIntegration::test_all_providers_have_required_methods
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:483: in test_all_providers_have_required_methods
+    provider = provider_class()
+               ^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+323. Tests/UI/test_command_palette_providers.py::TestCommandPaletteIntegration::test_all_providers_return_hits_from_discover
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:498: in test_all_providers_return_hits_from_discover
+    ThemeProvider(), TabNavigationProvider(), LLMProviderProvider(),
+    ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+324. Tests/UI/test_command_palette_providers.py::TestCommandPaletteIntegration::test_search_consistency_across_providers
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:524: in test_search_consistency_across_providers
+    ThemeProvider(), TabNavigationProvider(), LLMProviderProvider(),
+    ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+325. Tests/UI/test_command_palette_providers.py::TestCommandPaletteIntegration::test_provider_error_handling
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:549: in test_provider_error_handling
+    (ThemeProvider(), "switch_theme", ["test-theme"]),
+     ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+326. Tests/UI/test_command_palette_providers.py::TestCommandPalettePerformance::test_discover_performance
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:592: in test_discover_performance
+    ThemeProvider(), TabNavigationProvider(), LLMProviderProvider(),
+    ^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+327. Tests/UI/test_command_palette_providers.py::TestCommandPalettePerformance::test_search_performance
+----------------------------------------
+Tests/UI/test_command_palette_providers.py:617: in test_search_performance
+    providers = [TabNavigationProvider(), QuickActionsProvider(), SettingsProvider()]
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: Provider.__init__() missing 1 required positional argument: 'screen'
+
+328. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_initial_tldw_api_nav_buttons_and_views
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+329. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_tldw_api_navigation_and_view_display[video]
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+330. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_tldw_api_navigation_and_view_display[audio]
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+331. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_tldw_api_navigation_and_view_display[document]
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+332. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_tldw_api_navigation_and_view_display[pdf]
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+333. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_tldw_api_navigation_and_view_display[ebook]
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+334. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_tldw_api_navigation_and_view_display[xml]
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+335. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_tldw_api_navigation_and_view_display[mediawiki_dump]
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+336. Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_tldw_api_video_submission_data_collection
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+337. Tests/UI/test_tools_settings_window.py::test_tab_renaming
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+338. Tests/UI/test_tools_settings_window.py::test_load_config_values
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+339. Tests/UI/test_tools_settings_window.py::test_save_config_values
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+340. Tests/UI/test_tools_settings_window.py::test_reload_config_values
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+341. Tests/UI/test_tools_settings_window.py::test_save_invalid_toml_format
+----------------------------------------
+async def functions are not natively supported.
+You need to install a suitable plugin for your async framework, for example:
+  - anyio
+  - pytest-asyncio
+  - pytest-tornasync
+  - pytest-trio
+  - pytest-twisted
+
+342. Tests/Utils/test_optional_deps.py::test_embeddings_rag_deps_missing
+----------------------------------------
+Tests/Utils/test_optional_deps.py:101: in test_embeddings_rag_deps_missing
+    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_embeddings_rag_deps
+tldw_chatbook/Utils/optional_deps.py:5: in <module>
+    from typing import Dict, Any, Optional, Callable
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/typing.py:23: in <module>
+    import collections
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Vers
+
+343. Tests/Utils/test_optional_deps.py::test_embeddings_lib_graceful_failure
+----------------------------------------
+Tests/Utils/test_optional_deps.py:124: in test_embeddings_lib_graceful_failure
+    from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory
+tldw_chatbook/Embeddings/Embeddings_Lib.py:191: in <module>
+    class _HuggingFaceEmbedder:
+tldw_chatbook/Embeddings/Embeddings_Lib.py:220: in _HuggingFaceEmbedder
+    @torch.inference_mode()
+     ^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'NoneType' object has no attribute 'inference_mode'
+
+344. Tests/Utils/test_optional_deps.py::test_chroma_lib_graceful_failure
+----------------------------------------
+Tests/Utils/test_optional_deps.py:147: in test_chroma_lib_graceful_failure
+    from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
+tldw_chatbook/Embeddings/Chroma_Lib.py:70: in <module>
+    from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
+tldw_chatbook/Embeddings/Embeddings_Lib.py:191: in <module>
+    class _HuggingFaceEmbedder:
+tldw_chatbook/Embeddings/Embeddings_Lib.py:220: in _HuggingFaceEmbedder
+    @torch.inference_mode()
+     ^^^^^^^^^
+
+345. Tests/Utils/test_path_validation_properties.py::TestFilenameValidationProperties::test_safe_filenames_preserve_content
+----------------------------------------
+Tests/Utils/test_path_validation_properties.py:113: in test_safe_filenames_preserve_content
+    def test_safe_filenames_preserve_content(self, filename):
+               ^^^^^^^
+Tests/Utils/test_path_validation_properties.py:123: in test_safe_filenames_preserve_content
+    result = validate_filename(filename)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Utils/path_validation.py:82: in validate_filename
+    raise ValueError("Filename cannot contain parent directory references")
+E   Value
+
+346. Tests/Utils/test_path_validation_properties.py::TestSafeJoinPathProperties::test_safe_components_join_successfully
+----------------------------------------
+Tests/Utils/test_path_validation_properties.py:162: in test_safe_components_join_successfully
+    def test_safe_components_join_successfully(self, components):
+               ^^^^^^^
+Tests/Utils/test_path_validation_properties.py:175: in test_safe_components_join_successfully
+    result = safe_join_path(base_dir, *components)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Utils/path_validation.py:124: in safe_join_path
+    validate_filename(path_component)
+tldw_chatbook/Utils/p
+
+347. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_compose_with_image
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+348. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_compose_without_image
+----------------------------------------
+.venv/lib/python3.12/site-packages/textual/message_pump.py:235: in app
+    return active_app.get()
+           ^^^^^^^^^^^^^^^^
+E   LookupError: <ContextVar name='active_app' at 0x1072a2fc0>
+
+During handling of the above exception, another exception occurred:
+Tests/Widgets/test_chat_message_enhanced.py:113: in test_compose_without_image
+    widgets = list(message.compose())
+              ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/chat_message_enhanced.py:177: in compose
+    with Vertical():
+  
+
+349. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_render_regular_with_textual_image
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+350. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_render_regular_fallback
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+351. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_render_pixelated
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+352. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_toggle_pixel_mode
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+353. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_save_image
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+354. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_generation_complete_watcher
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+355. Tests/Widgets/test_chat_message_enhanced.py::TestChatMessageEnhanced::test_button_action_event
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+356. Tests/Widgets/test_chat_message_enhanced.py::TestImageRenderingEdgeCases::test_render_with_corrupt_image
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+357. Tests/Widgets/test_chat_message_enhanced.py::TestImageRenderingEdgeCases::test_render_with_large_image
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+358. Tests/Widgets/test_chat_message_enhanced.py::TestImageRenderingEdgeCases::test_render_without_image_widget
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:56: in chat_message
+    message.app = mock_app
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+359. Tests/Widgets/test_chat_message_enhanced.py::TestImageRenderingEdgeCases::test_save_image_without_data
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced.py:301: in test_save_image_without_data
+    message.app = Mock()
+    ^^^^^^^^^^^
+E   AttributeError: property 'app' of 'ChatMessageEnhanced' object has no setter
+
+360. Tests/Widgets/test_chat_message_enhanced_async.py::TestChatMessageEnhancedAsync::test_initialization
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced_async.py:58: in test_initialization
+    async with app.run_test() as pilot:
+               ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+.venv/lib/python3.12/site-packages/textual/app.py:2036: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/screen.py:1232: in _refresh_layout
+    hidden, shown, resize
+
+361. Tests/Widgets/test_chat_message_enhanced_async.py::TestChatMessageEnhancedAsync::test_compose_with_image
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced_async.py:93: in test_compose_with_image
+    async with app.run_test() as pilot:
+               ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+.venv/lib/python3.12/site-packages/textual/app.py:2036: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/screen.py:1232: in _refresh_layout
+    hidden, shown, re
+
+362. Tests/Widgets/test_chat_message_enhanced_async.py::TestChatMessageEnhancedAsync::test_render_regular_with_textual_image
+----------------------------------------
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:508: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:773: in inner
+    _loop.run_until_complete(task)
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/pyth
+
+363. Tests/Widgets/test_chat_message_enhanced_async.py::TestChatMessageEnhancedAsync::test_toggle_pixel_mode
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced_async.py:149: in test_toggle_pixel_mode
+    async with app.run_test() as pilot:
+               ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2036: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/screen.py:1232: in _refresh_layout
+    hidden, sh
+
+364. Tests/Widgets/test_chat_message_enhanced_async.py::TestChatMessageEnhancedAsync::test_save_image
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced_async.py:168: in test_save_image
+    async with app.run_test() as pilot:
+               ^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2036: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/screen.py:1232: in _refresh_layout
+    hidden, shown, re
+
+365. Tests/Widgets/test_chat_message_enhanced_fixed.py::TestChatMessageEnhancedAsync::test_toggle_pixel_mode
+----------------------------------------
+Tests/Widgets/test_chat_message_enhanced_fixed.py:98: in test_toggle_pixel_mode
+    message.toggle_pixel_mode()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ChatMessageEnhanced' object has no attribute 'toggle_pixel_mode'. Did you mean: 'watch_pixel_mode'?
+
+366. Tests/integration/test_chat_image_integration.py::TestChatMessageImageIntegration::test_image_render_mode_switching
+----------------------------------------
+Tests/integration/test_chat_image_integration.py:262: in test_image_render_mode_switching
+    buffer = BytesIO()
+             ^^^^^^^
+E   NameError: name 'BytesIO' is not defined
+
+367. Tests/integration/test_core_functionality_without_optional_deps.py::test_core_imports_without_optional_deps
+----------------------------------------
+Tests/integration/test_core_functionality_without_optional_deps.py:17: in test_core_imports_without_optional_deps
+    from tldw_chatbook.Chat.Chat_Functions import get_chat_completion
+E   ImportError: cannot import name 'get_chat_completion' from 'tldw_chatbook.Chat.Chat_Functions' (/Users/appledev/Working/tldw_chatbook_dev/tldw_chatbook/Chat/Chat_Functions.py)
+
+368. Tests/integration/test_core_functionality_without_optional_deps.py::test_notes_functionality_without_optional_deps
+----------------------------------------
+Tests/integration/test_core_functionality_without_optional_deps.py:34: in test_notes_functionality_without_optional_deps
+    notes_service = NotesInteropService()
+                    ^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: NotesInteropService.__init__() missing 2 required positional arguments: 'base_db_directory' and 'api_client_id'
+
+369. Tests/integration/test_core_functionality_without_optional_deps.py::test_character_chat_without_optional_deps
+----------------------------------------
+Tests/integration/test_core_functionality_without_optional_deps.py:40: in test_character_chat_without_optional_deps
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+E   ImportError: cannot import name 'parse_character_card_file' from 'tldw_chatbook.Character_Chat.Character_Chat_Lib' (/Users/appledev/Working/tldw_chatbook_dev/tldw_chatbook/Character_Chat/Character_Chat_Lib.py)
+
+370. Tests/integration/test_core_functionality_without_optional_deps.py::test_core_app_import_without_torch
+----------------------------------------
+Tests/integration/test_core_functionality_without_optional_deps.py:160: in test_core_app_import_without_torch
+    from tldw_chatbook.config import get_cli_setting
+tldw_chatbook/config.py:5: in <module>
+    import copy
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/copy.py:51: in <module>
+    import types
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/types.py:16: in <module>
+    SimpleNamespace 
+
+371. Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_valid_path
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:68: in test_load_chat_history_with_valid_path
+    assert conv_id == "conv_123"
+E   AssertionError: assert None == 'conv_123'
+
+372. Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_invalid_path
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:82: in test_load_chat_history_with_invalid_path
+    with pytest.raises(ValueError, match="outside the allowed directory"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+
+373. Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_path_traversal
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:96: in test_load_chat_history_with_path_traversal
+    with pytest.raises(ValueError, match="outside the allowed directory"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+
+374. Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_from_file_object
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:119: in test_load_chat_history_from_file_object
+    assert conv_id == "conv_123"
+E   AssertionError: assert None == 'conv_123'
+
+375. Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_valid_paths
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:143: in test_prepare_files_with_valid_paths
+    httpx_files = prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+
+376. Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_invalid_paths
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:170: in test_prepare_files_with_invalid_paths
+    prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+
+377. Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_path_traversal
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:182: in test_prepare_files_with_path_traversal
+    prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+
+378. Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_prepare_files_with_missing_files
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py, line 235
+      def test_prepare_files_with_missing_files(self, temp_upload_dir):
+E       fixture 'temp_upload_dir' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, class_mocker
+
+379. Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_prepare_files_error_recovery
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py, line 251
+      def test_prepare_files_error_recovery(self, temp_upload_dir):
+E       fixture 'temp_upload_dir' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, class_mocker, do
+
+380. Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_hidden_file_validation
+----------------------------------------
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py, line 272
+      def test_hidden_file_validation(self, temp_upload_dir):
+E       fixture 'temp_upload_dir' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, class_mocker, doctest_
+
+381. Tests/integration/test_file_operations_with_validation.py::TestEndToEndFileUpload::test_complete_upload_workflow
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:324: in test_complete_upload_workflow
+    httpx_files = prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+
+382. Tests/integration/test_file_operations_with_validation.py::TestEndToEndFileUpload::test_mixed_valid_invalid_paths
+----------------------------------------
+Tests/integration/test_file_operations_with_validation.py:364: in test_mixed_valid_invalid_paths
+    prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'

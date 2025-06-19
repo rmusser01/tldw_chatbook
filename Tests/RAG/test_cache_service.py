@@ -9,6 +9,7 @@ import shutil
 from tldw_chatbook.RAG_Search.Services.cache_service import CacheService, LRUCache, get_cache_service
 
 
+@pytest.mark.requires_rag_deps
 class TestLRUCache:
     """Test the LRU cache implementation"""
     
@@ -62,6 +63,7 @@ class TestLRUCache:
         assert cache.get("key1") is None
 
 
+@pytest.mark.requires_rag_deps
 class TestCacheService:
     """Test the main cache service"""
     
@@ -289,6 +291,7 @@ class TestCacheService:
         assert key6.startswith("test:")
 
 
+@pytest.mark.requires_rag_deps
 class TestGlobalCacheService:
     """Test the global cache service instance"""
     

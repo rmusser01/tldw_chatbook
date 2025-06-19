@@ -29,6 +29,10 @@ except ImportError:
     HF_DATASETS_AVAILABLE = False
     logger.warning("HuggingFace datasets not available. Install with: pip install datasets")
 
+class ValidationError(Exception):
+    """Raised when task validation fails."""
+    pass
+
 @dataclass
 class TaskConfig:
     """Standardized task configuration structure."""

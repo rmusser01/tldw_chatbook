@@ -24,6 +24,7 @@ from tldw_chatbook.RAG_Search.Services import (
 )
 
 
+@pytest.mark.requires_rag_deps
 class TestRAGIntegration:
     """Integration tests for the complete RAG pipeline"""
     
@@ -85,7 +86,7 @@ class TestRAGIntegration:
     def chachanotes_db(self, temp_dirs):
         """Create a real ChaChaNotes database with test data"""
         db_path = temp_dirs['chachanotes'] / "chachanotes.db"
-        db = CharactersRAGDB(str(db_path))
+        db = CharactersRAGDB(str(db_path), client_id="test_client")
         
         # Add test conversations
         conv_id = db.create_conversation(

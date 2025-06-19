@@ -112,7 +112,7 @@ class LLMManagementWindow(Container):
                     yield Label("Port (default 8000):", classes="label")
                     yield Input(id="llamafile-port", value="8000")
                     yield Label("Additional Arguments (multi-line):", classes="label")
-                    yield TextArea(id="llamafile-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark") # Ensure TextArea is imported
+                    yield TextArea(id="llamafile-additional-args", classes="additional_args_textarea", theme="vscode_dark") # Ensure TextArea is imported
                     with Collapsible(title="Common Llamafile Arguments", collapsed=True,
                                      id="llamafile-args-help-collapsible"):
                         yield RichLog(
@@ -139,7 +139,7 @@ class LLMManagementWindow(Container):
                 yield Label("Port:", classes="label")
                 yield Input(id="vllm-port", value="8000")
                 yield Label("Additional Arguments:", classes="label")
-                yield TextArea(id="vllm-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark") # Ensure TextArea is imported
+                yield TextArea(id="vllm-additional-args", classes="additional_args_textarea", theme="vscode_dark") # Ensure TextArea is imported
                 # Add a similar Collapsible RichLog for vLLM args here
                 # with Collapsible(title="Common vLLM Arguments", collapsed=True):
                 #     yield RichLog(id="vllm-args-help-display", markup=True, classes="help-text-display")
@@ -166,7 +166,7 @@ class LLMManagementWindow(Container):
                     yield Label("Port:", classes="label")
                     yield Input(id="onnx-port", value="8004", classes="input_field")
                     yield Label("Additional Script Arguments:", classes="label")
-                    yield TextArea(id="onnx-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark")
+                    yield TextArea(id="onnx-additional-args", classes="additional_args_textarea", theme="vscode_dark")
                     with Container(classes="button_container"):
                         yield Button("Start ONNX Server", id="onnx-start-server-button", classes="action_button")
                         yield Button("Stop ONNX Server", id="onnx-stop-server-button", classes="action_button")
@@ -211,7 +211,7 @@ class LLMManagementWindow(Container):
                     yield Label("Port:", classes="label")
                     yield Input(id="transformers-server-port", value="8003") # Example port
                     yield Label("Additional Script Arguments:", classes="label")
-                    yield TextArea(id="transformers-server-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark")
+                    yield TextArea(id="transformers-server-additional-args", classes="additional_args_textarea", theme="vscode_dark")
                     yield Button("Start Transformers Server", id="transformers-start-server-button", classes="action_button")
                     yield Button("Stop Transformers Server", id="transformers-stop-server-button", classes="action_button")
 
@@ -246,7 +246,7 @@ class LLMManagementWindow(Container):
                             classes="help-text-display"
                         )
                     yield Label("Additional Server Arguments:", classes="label")
-                    yield TextArea(id="mlx-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark")
+                    yield TextArea(id="mlx-additional-args", classes="additional_args_textarea", theme="vscode_dark")
                     with Container(classes="button_container"):
                         yield Button("Start MLX Server", id="mlx-start-server-button", classes="action_button")
                         yield Button("Stop MLX Server", id="mlx-stop-server-button", classes="action_button")

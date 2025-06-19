@@ -2,6 +2,11 @@
 #
 # Comprehensive tests for command palette providers
 #
+# Test Dependencies:
+# - textual: Required for Provider and Hit classes
+# - Core tldw_chatbook app must be importable
+# - All command palette provider classes must be defined in app.py
+#
 # Imports
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -17,6 +22,10 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 try:
+    # First try to import the base Provider class from textual
+    from textual.command import Provider
+    
+    # Then try to import from the app
     from tldw_chatbook.app import (
         ThemeProvider,
         TabNavigationProvider,
@@ -109,8 +118,9 @@ class TestThemeProvider:
     @pytest.fixture
     def theme_provider(self, mock_app):
         """Create a ThemeProvider instance with mock app."""
-        provider = ThemeProvider()
-        provider.app = mock_app
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = ThemeProvider(screen=mock_screen)
         provider.matcher = MagicMock()
         provider.matcher.match = MagicMock(return_value=1.0)
         provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
@@ -181,7 +191,7 @@ class TestThemeProvider:
     
     def test_switch_theme_success(self, theme_provider):
         """Test successful theme switching."""
-        with patch('tldw_chatbook.app.save_setting_to_cli_config') as mock_save:
+        with patch('tldw_chatbook.config.save_setting_to_cli_config') as mock_save:
             theme_provider.switch_theme("test-theme")
             
             assert theme_provider.app.theme == "test-theme"
@@ -213,8 +223,9 @@ class TestTabNavigationProvider:
     @pytest.fixture
     def tab_provider(self, mock_app):
         """Create a TabNavigationProvider instance with mock app."""
-        provider = TabNavigationProvider()
-        provider.app = mock_app
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = TabNavigationProvider(screen=mock_screen)
         provider.matcher = MagicMock()
         provider.matcher.match = MagicMock(return_value=1.0)
         provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
@@ -293,8 +304,9 @@ class TestQuickActionsProvider:
     @pytest.fixture
     def quick_actions_provider(self, mock_app):
         """Create a QuickActionsProvider instance with mock app."""
-        provider = QuickActionsProvider()
-        provider.app = mock_app
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = QuickActionsProvider(screen=mock_screen)
         provider.matcher = MagicMock()
         provider.matcher.match = MagicMock(return_value=1.0)
         provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
@@ -365,8 +377,9 @@ class TestLLMProviderProvider:
     @pytest.fixture
     def llm_provider(self, mock_app):
         """Create an LLMProviderProvider instance with mock app."""
-        provider = LLMProviderProvider()
-        provider.app = mock_app
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = LLMProviderProvider(screen=mock_screen)
         provider.matcher = MagicMock()
         provider.matcher.match = MagicMock(return_value=1.0)
         provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
@@ -414,8 +427,9 @@ class TestSettingsProvider:
     @pytest.fixture
     def settings_provider(self, mock_app):
         """Create a SettingsProvider instance with mock app."""
-        provider = SettingsProvider()
-        provider.app = mock_app
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        provider = SettingsProvider(screen=mock_screen)
         provider.matcher = MagicMock()
         provider.matcher.match = MagicMock(return_value=1.0)
         provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
@@ -442,7 +456,7 @@ class TestSettingsProvider:
     
     def test_show_config_path(self, settings_provider):
         """Test showing config file path."""
-        with patch('tldw_chatbook.app.DEFAULT_CONFIG_PATH', '/test/config.toml'):
+        with patch('tldw_chatbook.config.DEFAULT_CONFIG_PATH', '/test/config.toml'):
             settings_provider.handle_setting("open_config")
             
             settings_provider.app.notify.assert_called_once()

@@ -18,8 +18,8 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 )
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 
-MODULE_PATH_PREFIX_CHACHA_DB = "tldw_Server_API.app.core.DB_Management.ChaChaNotes_DB"
-NOTES_LIBRARY_MODULE_PATH = "tldw_Server_API.app.core.Notes.Notes_Library"
+MODULE_PATH_PREFIX_CHACHA_DB = "tldw_chatbook.DB.ChaChaNotes_DB"
+NOTES_LIBRARY_MODULE_PATH = "tldw_chatbook.Notes.Notes_Library"
 CHARACHERS_RAGDB_CLASS_PATCH_TARGET = f"{NOTES_LIBRARY_MODULE_PATH}.CharactersRAGDB"
 
 

@@ -22,6 +22,7 @@ from tldw_chatbook.RAG_Search.Services.memory_management_service import (
 )
 
 
+@pytest.mark.requires_rag_deps
 class TestMemoryManagementConfig:
     """Test cases for MemoryManagementConfig validation."""
     
@@ -65,6 +66,7 @@ class TestMemoryManagementConfig:
             )
 
 
+@pytest.mark.requires_rag_deps
 class TestMemoryManagementService:
     """Test cases for MemoryManagementService."""
     
@@ -348,6 +350,7 @@ class TestMemoryManagementService:
         assert config.min_documents_to_keep < config.max_documents_per_collection
 
 
+@pytest.mark.requires_rag_deps
 class TestMemoryManagementIntegration:
     """Integration tests with real ChromaDB (if available)."""
     

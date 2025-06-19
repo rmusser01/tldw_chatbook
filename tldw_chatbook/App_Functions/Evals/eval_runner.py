@@ -36,6 +36,35 @@ except ImportError:
 from .task_loader import TaskConfig
 from .llm_interface import LLMInterface, EvalProviderError, EvalAPIError, EvalAuthenticationError, EvalRateLimitError
 
+class EvalError(Exception):
+    """Base exception for evaluation errors."""
+    pass
+
+@dataclass
+class EvalProgress:
+    """Progress tracking for evaluation runs."""
+    current: int
+    total: int
+    current_task: Optional[str] = None
+    
+    @property
+    def percentage(self) -> float:
+        return (self.current / self.total * 100) if self.total > 0 else 0
+
+@dataclass
+class EvalResult:
+    """Result of an evaluation run."""
+    task_name: str
+    metrics: Dict[str, Any]
+    samples_evaluated: int
+    duration_seconds: float
+    timestamp: str
+    errors: List[str] = None
+    
+    def __post_init__(self):
+        if self.errors is None:
+            self.errors = []
+
 @dataclass
 class EvalSample:
     """Individual evaluation sample."""

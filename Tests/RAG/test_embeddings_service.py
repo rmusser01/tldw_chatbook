@@ -10,6 +10,7 @@ from unittest.mock import patch, MagicMock, call
 from tldw_chatbook.RAG_Search.Services.embeddings_service import EmbeddingsService
 
 
+@pytest.mark.requires_rag_deps
 class TestEmbeddingsService:
     """Test the embeddings service"""
     

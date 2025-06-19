@@ -58,16 +58,24 @@ class NotesSidebarLeft(VerticalScroll):
         yield Static("My Notes (0)", classes="sidebar-title", id="notes-sidebar-title-main")
         
         yield Static("Create from Template:", classes="sidebar-label")
+        
+        # Import here to avoid circular imports
+        from ..Event_Handlers.notes_events import NOTE_TEMPLATES
+        
+        # Build options from loaded templates
+        template_options = []
+        for key, template in NOTE_TEMPLATES.items():
+            # Use description if available, otherwise use title
+            label = template.get('description', template.get('title', key.replace('_', ' ').title()))
+            # Select expects (label, value) pairs
+            template_options.append((label, key))
+        
+        # Sort options to ensure consistent order
+        template_options.sort(key=lambda x: x[1])  # Sort by key
+        
         yield Select(
-            options=[
-                ("blank", "Blank Note"),
-                ("meeting", "Meeting Notes"),
-                ("daily", "Daily Journal"),
-                ("project", "Project Notes"),
-                ("todo", "Todo List"),
-                ("brainstorm", "Brainstorming"),
-                ("research", "Research Notes")
-            ],
+            options=template_options,
+            value="blank" if "blank" in NOTE_TEMPLATES else (template_options[0][1] if template_options else None),
             id="notes-template-select"
         )
         yield Button("Create from Template", id="notes-create-from-template-button", variant="success")

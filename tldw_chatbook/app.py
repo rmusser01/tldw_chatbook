@@ -170,6 +170,10 @@ logging.info("Initial basic logging configured.")
 class ThemeProvider(Provider):
     """A command provider for theme switching."""
     
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the ThemeProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
+    
     async def search(self, query: str) -> Hits:
         """Search for theme commands."""
         matcher = self.matcher(query)
@@ -234,6 +238,10 @@ class ThemeProvider(Provider):
 class TabNavigationProvider(Provider):
     """Provider for tab navigation commands."""
     
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the TabNavigationProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
+    
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         
@@ -290,6 +298,10 @@ class TabNavigationProvider(Provider):
 
 class LLMProviderProvider(Provider):
     """Provider for LLM provider management commands."""
+    
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the LLMProviderProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
     
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
@@ -355,6 +367,10 @@ class LLMProviderProvider(Provider):
 
 class QuickActionsProvider(Provider):
     """Provider for quick action commands."""
+    
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the QuickActionsProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
     
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
@@ -423,6 +439,10 @@ class QuickActionsProvider(Provider):
 class SettingsProvider(Provider):
     """Provider for settings and preferences commands."""
     
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the SettingsProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
+    
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         
@@ -490,6 +510,10 @@ class SettingsProvider(Provider):
 class CharacterProvider(Provider):
     """Provider for character and persona management commands."""
     
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the CharacterProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
+    
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         
@@ -551,6 +575,10 @@ class CharacterProvider(Provider):
 class MediaProvider(Provider):
     """Provider for media and content management commands."""
     
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the MediaProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
+    
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         
@@ -611,6 +639,10 @@ class MediaProvider(Provider):
 
 class DeveloperProvider(Provider):
     """Provider for developer and debug commands."""
+    
+    def __init__(self, screen, *args, **kwargs):
+        """Initialize the DeveloperProvider with required screen parameter."""
+        super().__init__(screen, *args, **kwargs)
     
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
@@ -830,7 +862,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     # Tools Tab
     tools_settings_active_view: reactive[Optional[str]] = reactive(None)  # Or a default view ID
-    _initial_tools_settings_view: Optional[str] = "view_general_settings"
+    _initial_tools_settings_view: Optional[str] = "ts-view-general-settings"
 
     _prompt_search_timer: Optional[Timer] = None
 
@@ -1101,13 +1133,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Tools & Settings Handlers ---
         tools_settings_handlers = {
-            "ts-nav-general-settings": functools.partial(_handle_nav, prefix="ts-view",
+            "ts-nav-general-settings": functools.partial(_handle_nav, prefix="ts",
                                                          reactive_attr="tools_settings_active_view"),
-            "ts-nav-config-file-settings": functools.partial(_handle_nav, prefix="ts-view",
+            "ts-nav-config-file-settings": functools.partial(_handle_nav, prefix="ts",
                                                              reactive_attr="tools_settings_active_view"),
-            "ts-nav-db-tools": functools.partial(_handle_nav, prefix="ts-view",
+            "ts-nav-db-tools": functools.partial(_handle_nav, prefix="ts",
                                                  reactive_attr="tools_settings_active_view"),
-            "ts-nav-appearance": functools.partial(_handle_nav, prefix="ts-view",
+            "ts-nav-appearance": functools.partial(_handle_nav, prefix="ts",
                                                    reactive_attr="tools_settings_active_view"),
         }
 

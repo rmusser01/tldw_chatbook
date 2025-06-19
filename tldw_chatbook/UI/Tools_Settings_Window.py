@@ -25,6 +25,166 @@ class ToolsSettingsWindow(Container):
     """
     Container for the Tools & Settings Tab's UI.
     """
+    DEFAULT_CSS = """
+    ToolsSettingsWindow {
+        layout: horizontal;
+        height: 100%;
+    }
+    
+    .tools-nav-pane {
+        width: 25;
+        min-width: 20;
+        max-width: 35;
+        background: $boost;
+        padding: 1;
+        border-right: thick $background;
+    }
+    
+    .tools-content-pane {
+        width: 1fr;
+        overflow-y: auto;
+        padding: 1;
+    }
+    
+    .ts-view-area {
+        display: none;
+        width: 100%;
+        height: 100%;
+    }
+    
+    .ts-view-area.active {
+        display: block;
+    }
+    
+    .ts-nav-button {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .ts-nav-button.active-nav {
+        background: $primary;
+    }
+    
+    .section-title {
+        text-style: bold;
+        text-align: center;
+        margin-bottom: 1;
+        color: $primary;
+    }
+    
+    .section-description {
+        text-align: center;
+        margin-bottom: 2;
+        color: $text-muted;
+    }
+    
+    .settings-container {
+        padding: 1;
+    }
+    
+    .settings-label, .form-label {
+        margin-top: 1;
+        margin-bottom: 0;
+        text-style: bold;
+    }
+    
+    .settings-input, .settings-select {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .settings-button-container, .form-actions {
+        layout: horizontal;
+        margin-top: 2;
+        height: 3;
+    }
+    
+    .settings-button-container Button, .form-actions Button {
+        margin-right: 1;
+    }
+    
+    .config-editor {
+        height: 30;
+        width: 100%;
+    }
+    
+    .config-button-container {
+        layout: horizontal;
+        margin-top: 1;
+        height: 3;
+    }
+    
+    .config-button-container Button {
+        margin-right: 1;
+    }
+    
+    .config-form {
+        padding: 1;
+    }
+    
+    .form-section-title {
+        text-style: bold underline;
+        margin-top: 2;
+        margin-bottom: 1;
+        color: $secondary;
+    }
+    
+    .form-subsection-title {
+        text-style: bold;
+        margin-top: 1;
+        margin-bottom: 1;
+        color: $accent;
+    }
+    
+    .provider-models-textarea {
+        height: 5;
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .system-prompt-textarea {
+        height: 5;
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    .tab-description {
+        margin-bottom: 1;
+        color: $text-muted;
+        text-align: center;
+    }
+    
+    #config-tabs {
+        height: 100%;
+    }
+    
+    #config-tabs ContentSwitcher {
+        height: 100%;
+        overflow-y: auto;
+    }
+    
+    .db-status {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    
+    .help-text {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    
+    .danger {
+        color: $error;
+    }
+    
+    .danger-warning {
+        color: $error;
+        text-style: bold;
+        margin-top: 1;
+        text-align: center;
+    }
+    """
+    
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
@@ -32,278 +192,147 @@ class ToolsSettingsWindow(Container):
 
     def _compose_general_settings(self) -> ComposeResult:
         """Compose the General Settings UI with commonly used settings."""
-        with VerticalScroll(classes="general-settings-container"):
-            yield Static("General Settings", classes="section-title")
-            yield Static("Configure commonly used settings", classes="section-description")
+        yield Static("General Settings", classes="section-title")
+        yield Static("Configure commonly used application settings", classes="section-description")
+        
+        with Container(classes="settings-container"):
+            general_config = self.config_data.get("general", {})
             
-            # Application Settings Section
-            yield Static("Application Settings", classes="subsection-title")
-            with Container(classes="settings-group"):
-                general_config = self.config_data.get("general", {})
-                
-                yield Label("Default Tab on Startup:", classes="settings-label")
-                tab_options = [
-                    ("Chat", "chat"),
-                    ("Character Chat", "character"),
-                    ("Notes", "notes"),
-                    ("Media", "media"),
-                    ("Search", "search"),
-                    ("Tools & Settings", "tools_settings")
-                ]
-                yield Select(
-                    options=tab_options,
-                    value=general_config.get("default_tab", "chat"),
-                    id="general-default-tab",
-                    classes="settings-select"
-                )
-                
-                yield Label("Theme:", classes="settings-label")
-                theme_options = [
-                    ("Dark Theme", "textual-dark"),
-                    ("Light Theme", "textual-light")
-                ]
-                yield Select(
-                    options=theme_options,
-                    value=general_config.get("default_theme", "textual-dark"),
-                    id="general-theme",
-                    classes="settings-select"
-                )
-                
-                yield Label("User Name:", classes="settings-label")
-                yield Input(
-                    value=general_config.get("users_name", "default_user"),
-                    placeholder="Enter your name",
-                    id="general-username",
-                    classes="settings-input"
-                )
-                
-                yield Label("Log Level:", classes="settings-label")
-                log_options = [
-                    ("DEBUG", "DEBUG"),
-                    ("INFO", "INFO"),
-                    ("WARNING", "WARNING"),
-                    ("ERROR", "ERROR"),
-                    ("CRITICAL", "CRITICAL")
-                ]
-                yield Select(
-                    options=log_options,
-                    value=general_config.get("log_level", "INFO"),
-                    id="general-log-level",
-                    classes="settings-select"
-                )
+            yield Label("Default Tab:", classes="settings-label")
+            tab_options = [
+                ("Chat", "chat"),
+                ("Character Chat", "character"),
+                ("Notes", "notes"),
+                ("Media", "media"),
+                ("RAG Search", "rag_search")
+            ]
+            yield Select(
+                options=tab_options,
+                value=general_config.get("default_tab", "chat"),
+                id="general-default-tab",
+                classes="settings-select"
+            )
             
-            # Default Provider & Model Section
-            yield Static("Default LLM Provider & Model", classes="subsection-title")
-            with Container(classes="settings-group"):
-                api_settings = self.config_data.get("api_settings", {})
-                chat_defaults = self.config_data.get("chat_defaults", {})
-                
-                yield Label("Default Provider:", classes="settings-label")
-                provider_options = [(name, name) for name in API_MODELS_BY_PROVIDER.keys()]
-                if not provider_options:
-                    provider_options = [("OpenAI", "OpenAI"), ("Anthropic", "Anthropic")]
-                current_provider = chat_defaults.get("provider", "OpenAI")
-                # Ensure the current provider is in the options
-                if current_provider not in [option[1] for option in provider_options]:
-                    current_provider = provider_options[0][1] if provider_options else "OpenAI"
-                yield Select(
-                    options=provider_options,
-                    value=current_provider,
-                    id="general-default-provider",
-                    classes="settings-select"
-                )
-                
-                yield Label("Default Model:", classes="settings-label")
-                yield Input(
-                    value=chat_defaults.get("model", "gpt-4o"),
-                    placeholder="Enter model name",
-                    id="general-default-model",
-                    classes="settings-input"
-                )
-                
-                yield Label("Default Temperature:", classes="settings-label")
-                yield Input(
-                    value=str(chat_defaults.get("temperature", 0.7)),
-                    placeholder="0.7",
-                    id="general-temperature",
-                    classes="settings-input"
-                )
-                
-                yield Label("Default Max Tokens:", classes="settings-label")
-                yield Input(
-                    value=str(chat_defaults.get("max_tokens", 4096)),
-                    placeholder="4096",
-                    id="general-max-tokens",
-                    classes="settings-input"
-                )
-                
-                yield Label("Enable Streaming:", classes="settings-label")
-                yield Switch(
-                    value=chat_defaults.get("streaming", False),
-                    id="general-streaming"
-                )
+            yield Label("Theme:", classes="settings-label")
             
-            # API Keys Section
-            yield Static("API Keys", classes="subsection-title")
-            yield Static("⚠️  API keys are stored in plain text. Use environment variables for better security.", classes="warning-text")
-            with Container(classes="settings-group"):
-                yield Label("OpenAI API Key:", classes="settings-label")
-                openai_key = api_settings.get("openai", {}).get("api_key", "")
-                yield Input(
-                    value=openai_key if openai_key != "<API_KEY_HERE>" else "",
-                    placeholder="sk-...",
-                    password=True,
-                    id="general-openai-key",
-                    classes="settings-input"
-                )
-                
-                yield Label("Anthropic API Key:", classes="settings-label")
-                anthropic_key = api_settings.get("anthropic", {}).get("api_key", "")
-                yield Input(
-                    value=anthropic_key if anthropic_key != "<API_KEY_HERE>" else "",
-                    placeholder="sk-ant-...",
-                    password=True,
-                    id="general-anthropic-key",
-                    classes="settings-input"
-                )
-                
-                yield Label("Google API Key:", classes="settings-label")
-                google_key = api_settings.get("google", {}).get("api_key", "")
-                yield Input(
-                    value=google_key if google_key != "<API_KEY_HERE>" else "",
-                    placeholder="AIza...",
-                    password=True,
-                    id="general-google-key",
-                    classes="settings-input"
-                )
+            # Import themes to get all available options
+            from ..css.Themes.themes import ALL_THEMES
             
-            # Basic RAG Settings Section
-            yield Static("Basic RAG Settings", classes="subsection-title")
-            with Container(classes="settings-group"):
-                rag_config = self.config_data.get("rag_search", {})
-                
-                yield Label("Enable RAG Search:", classes="settings-label")
-                yield Switch(
-                    value=rag_config.get("enabled", True),
-                    id="general-rag-enabled"
-                )
-                
-                yield Label("Default Search Sources:", classes="settings-label")
-                with Horizontal(classes="checkbox-group"):
-                    sources_config = rag_config.get("default_sources", {})
-                    yield Checkbox(
-                        "Media Files",
-                        value=sources_config.get("media", True),
-                        id="general-rag-source-media"
-                    )
-                    yield Checkbox(
-                        "Conversations",
-                        value=sources_config.get("conversations", True),
-                        id="general-rag-source-conversations"
-                    )
-                    yield Checkbox(
-                        "Notes",
-                        value=sources_config.get("notes", True),
-                        id="general-rag-source-notes"
-                    )
-                
-                yield Label("Default Top-K Results:", classes="settings-label")
-                yield Input(
-                    value=str(rag_config.get("default_top_k", 10)),
-                    placeholder="10",
-                    id="general-rag-top-k",
-                    classes="settings-input"
-                )
+            # Build theme options from ALL_THEMES
+            theme_options = [
+                ("Dark Theme", "textual-dark"),
+                ("Light Theme", "textual-light")
+            ]
             
-            # Database Paths Section
-            yield Static("Database Paths", classes="subsection-title")
-            with Container(classes="settings-group"):
-                db_config = self.config_data.get("database", {})
-                
-                yield Label("ChaChaNotes Database:", classes="settings-label")
-                yield Input(
-                    value=db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"),
-                    placeholder="Path to ChaChaNotes database",
-                    id="general-chachanotes-path",
-                    classes="settings-input"
-                )
-                
-                yield Label("Media Database:", classes="settings-label")
-                yield Input(
-                    value=db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"),
-                    placeholder="Path to Media database",
-                    id="general-media-path",
-                    classes="settings-input"
-                )
-                
-                yield Label("Prompts Database:", classes="settings-label")
-                yield Input(
-                    value=db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db"),
-                    placeholder="Path to Prompts database",
-                    id="general-prompts-path",
-                    classes="settings-input"
-                )
+            # Add custom themes from ALL_THEMES
+            for theme in ALL_THEMES:
+                theme_name = theme.name
+                # Create a user-friendly label from the theme name
+                label = theme_name.replace('_', ' ').title()
+                theme_options.append((label, theme_name))
             
-            # Save Button
-            with Container(classes="settings-actions"):
+            current_theme = general_config.get("default_theme", "textual-dark")
+            
+            yield Select(
+                options=theme_options,
+                value=current_theme,
+                id="general-theme",
+                classes="settings-select"
+            )
+            
+            yield Label("User Name:", classes="settings-label")
+            yield Input(
+                value=general_config.get("users_name", "default_user"),
+                id="general-username",
+                classes="settings-input"
+            )
+            
+            yield Label("Log Level:", classes="settings-label")
+            log_options = [
+                ("Debug", "DEBUG"),
+                ("Info", "INFO"),
+                ("Warning", "WARNING"),
+                ("Error", "ERROR"),
+                ("Critical", "CRITICAL")
+            ]
+            yield Select(
+                options=log_options,
+                value=general_config.get("log_level", "INFO"),
+                id="general-log-level",
+                classes="settings-select"
+            )
+            
+            with Container(classes="settings-button-container"):
                 yield Button("Save General Settings", id="save-general-settings", variant="primary")
-                yield Button("Reset to Defaults", id="reset-general-settings", variant="default")
+                yield Button("Reset General Settings", id="reset-general-settings")
     
     def _compose_config_file_settings(self) -> ComposeResult:
         """Compose the Configuration File Settings UI with organized sections."""
-        with VerticalScroll(classes="config-file-settings-container"):
-            yield Static("Configuration File Settings", classes="section-title")
-            yield Static("Edit all configuration values with organized sections or raw TOML", classes="section-description")
+        yield Static("Configuration File Settings", classes="section-title")
+        yield Static("Edit all configuration values with organized sections or raw TOML", classes="section-description")
+        
+        with TabbedContent(id="config-tabs"):
+            # Raw TOML Editor Tab
+            with TabPane("Raw TOML", id="tab-raw-toml"):
+                yield Static("Direct TOML Configuration Editor", classes="tab-description")
+                config_text = ""
+                try:
+                    if self.config_data:
+                        config_text = toml.dumps(self.config_data)
+                    else:
+                        config_text = "# No configuration data loaded"
+                except Exception as e:
+                    config_text = f"# Error loading configuration: {e}\n# Please check the configuration file."
+                yield TextArea(
+                    text=config_text,
+                    read_only=False,
+                    id="config-text-area",
+                    classes="config-editor"
+                )
+                with Container(classes="config-button-container"):
+                    yield Button("Save TOML", id="save-config-button", variant="primary")
+                    yield Button("Reload", id="reload-config-button")
+                    yield Button("Validate", id="validate-config-button")
             
-            with TabbedContent(id="config-tabs"):
-                # Raw TOML Editor Tab
-                with TabPane("Raw TOML", id="tab-raw-toml"):
-                    yield Static("Direct TOML Configuration Editor", classes="tab-description")
-                    yield TextArea(
-                        text=toml.dumps(self.config_data),
-                        language="toml",
-                        read_only=False,
-                        id="config-text-area",
-                        classes="config-editor"
-                    )
-                    with Container(classes="config-button-container"):
-                        yield Button("Save TOML", id="save-config-button", variant="primary")
-                        yield Button("Reload", id="reload-config-button")
-                        yield Button("Validate", id="validate-config-button")
-                
-                # General Configuration Tab
-                with TabPane("General", id="tab-general-config"):
-                    yield Static("Application General Settings", classes="tab-description")
+            # General Configuration Tab
+            with TabPane("General", id="tab-general-config"):
+                yield Static("Application General Settings", classes="tab-description")
+                with VerticalScroll():
                     yield from self._compose_general_config_form()
-                
-                # API Settings Tab
-                with TabPane("API Settings", id="tab-api-config"):
-                    yield Static("API Provider Configurations", classes="tab-description")
+            
+            # API Settings Tab
+            with TabPane("API Settings", id="tab-api-config"):
+                yield Static("API Provider Configurations", classes="tab-description")
+                with VerticalScroll():
                     yield from self._compose_api_config_form()
-                
-                # Database Settings Tab
-                with TabPane("Database", id="tab-database-config"):
-                    yield Static("Database Configuration", classes="tab-description")
+            
+            # Database Settings Tab
+            with TabPane("Database", id="tab-database-config"):
+                yield Static("Database Configuration", classes="tab-description")
+                with VerticalScroll():
                     yield from self._compose_database_config_form()
-                
-                # RAG Settings Tab
-                with TabPane("RAG Settings", id="tab-rag-config"):
-                    yield Static("Retrieval-Augmented Generation Settings", classes="tab-description")
+            
+            # RAG Settings Tab
+            with TabPane("RAG Settings", id="tab-rag-config"):
+                yield Static("Retrieval-Augmented Generation Settings", classes="tab-description")
+                with VerticalScroll():
                     yield from self._compose_rag_config_form()
-                
-                # Providers Tab
-                with TabPane("Providers", id="tab-providers-config"):
-                    yield Static("Available Models by Provider", classes="tab-description")
+            
+            # Providers Tab
+            with TabPane("Providers", id="tab-providers-config"):
+                yield Static("Available Models by Provider", classes="tab-description")
+                with VerticalScroll():
                     yield from self._compose_providers_config_form()
-                
-                # Advanced Tab
-                with TabPane("Advanced", id="tab-advanced-config"):
-                    yield Static("Advanced Configuration Options", classes="tab-description")
+            
+            # Advanced Tab
+            with TabPane("Advanced", id="tab-advanced-config"):
+                yield Static("Advanced Configuration Options", classes="tab-description")
+                with VerticalScroll():
                     yield from self._compose_advanced_config_form()
     
     def _compose_general_config_form(self) -> ComposeResult:
         """Form for general configuration section."""
-        with VerticalScroll(classes="config-form"):
+        with Container(classes="config-form"):
             general_config = self.config_data.get("general", {})
             
             yield Label("Default Tab:", classes="form-label")
@@ -355,72 +384,121 @@ class ToolsSettingsWindow(Container):
     
     def _compose_api_config_form(self) -> ComposeResult:
         """Form for API settings configuration."""
-        with VerticalScroll(classes="config-form"):
+        with Container(classes="config-form"):
             api_settings = self.config_data.get("api_settings", {})
             
-            # OpenAI Settings
-            yield Static("OpenAI Configuration", classes="form-section-title")
-            openai_config = api_settings.get("openai", {})
+            # Create sections for each provider
+            # The display_name must match the keys in API_MODELS_BY_PROVIDER
+            providers = [
+                ("OpenAI", "openai", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("Anthropic", "anthropic", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("Google", "google", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("DeepSeek", "deepseek", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("Groq", "groq", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("MistralAI", "mistralai", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("Cohere", "cohere", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("HuggingFace", "huggingface", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("OpenRouter", "openrouter", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ]
             
-            yield Label("API Key Environment Variable:", classes="form-label")
-            yield Input(
-                value=openai_config.get("api_key_env_var", "OPENAI_API_KEY"),
-                id="config-openai-env-var"
-            )
+            # Local API providers
+            local_providers = [
+                ("Llama.cpp", "llama_cpp", ["api_url", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+                ("Ollama", "ollama", ["api_url", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+                ("vLLM", "vllm", ["api_key_env_var", "api_url", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+                ("KoboldCPP", "koboldcpp", ["api_url", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+                ("Oobabooga", "oobabooga", ["api_key_env_var", "api_url", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+            ]
             
-            yield Label("API Key (Fallback):", classes="form-label")
-            yield Input(
-                value=openai_config.get("api_key", "<API_KEY_HERE>"),
-                password=True,
-                id="config-openai-api-key"
-            )
+            # Commercial providers
+            for display_name, key, fields in providers:
+                yield Static(f"{display_name} Configuration", classes="form-section-title")
+                provider_config = api_settings.get(key, {})
+                
+                for field in fields:
+                    if field == "api_key":
+                        yield Label("API Key (Fallback):", classes="form-label")
+                        yield Input(
+                            value=provider_config.get(field, "<API_KEY_HERE>"),
+                            password=True,
+                            id=f"config-{key}-{field}",
+                            placeholder="Enter API key or use environment variable"
+                        )
+                    elif field == "api_key_env_var":
+                        yield Label("API Key Environment Variable:", classes="form-label")
+                        yield Input(
+                            value=provider_config.get(field, f"{key.upper()}_API_KEY"),
+                            id=f"config-{key}-{field}",
+                            placeholder=f"{key.upper()}_API_KEY"
+                        )
+                    elif field == "model":
+                        yield Label("Default Model:", classes="form-label")
+                        # Get available models for this provider
+                        try:
+                            models = list(API_MODELS_BY_PROVIDER.get(display_name, []))
+                        except:
+                            models = []
+                        
+                        current_model = provider_config.get(field, "")
+                        
+                        # Always use Input for now to avoid Select widget issues
+                        yield Input(
+                            value=current_model,
+                            id=f"config-{key}-{field}",
+                            placeholder=f"Enter model name (e.g., {models[0] if models else 'model-name'})"
+                        )
+                    elif field == "streaming":
+                        yield Checkbox(
+                            "Enable Streaming",
+                            value=provider_config.get(field, False),
+                            id=f"config-{key}-{field}"
+                        )
+                    else:
+                        # Format field name nicely
+                        label = field.replace("_", " ").title()
+                        yield Label(f"{label}:", classes="form-label")
+                        yield Input(
+                            value=str(provider_config.get(field, "")),
+                            id=f"config-{key}-{field}",
+                            placeholder=f"Enter {label.lower()}"
+                        )
             
-            yield Label("Default Model:", classes="form-label")
-            yield Input(
-                value=openai_config.get("model", "gpt-4o"),
-                id="config-openai-model"
-            )
+            # Local providers section
+            yield Static("Local API Providers", classes="form-section-title")
             
-            yield Label("Temperature:", classes="form-label")
-            yield Input(
-                value=str(openai_config.get("temperature", 0.7)),
-                id="config-openai-temperature"
-            )
-            
-            yield Label("Max Tokens:", classes="form-label")
-            yield Input(
-                value=str(openai_config.get("max_tokens", 4096)),
-                id="config-openai-max-tokens"
-            )
-            
-            # Anthropic Settings
-            yield Static("Anthropic Configuration", classes="form-section-title")
-            anthropic_config = api_settings.get("anthropic", {})
-            
-            yield Label("API Key Environment Variable:", classes="form-label")
-            yield Input(
-                value=anthropic_config.get("api_key_env_var", "ANTHROPIC_API_KEY"),
-                id="config-anthropic-env-var"
-            )
-            
-            yield Label("API Key (Fallback):", classes="form-label")
-            yield Input(
-                value=anthropic_config.get("api_key", "<API_KEY_HERE>"),
-                password=True,
-                id="config-anthropic-api-key"
-            )
-            
-            yield Label("Default Model:", classes="form-label")
-            yield Input(
-                value=anthropic_config.get("model", "claude-3-haiku-20240307"),
-                id="config-anthropic-model"
-            )
-            
-            yield Label("Temperature:", classes="form-label")
-            yield Input(
-                value=str(anthropic_config.get("temperature", 0.7)),
-                id="config-anthropic-temperature"
-            )
+            for display_name, key, fields in local_providers:
+                yield Static(f"{display_name} Configuration", classes="form-subsection-title")
+                provider_config = api_settings.get(key, {})
+                
+                for field in fields:
+                    if field == "api_url":
+                        yield Label("API URL:", classes="form-label")
+                        yield Input(
+                            value=provider_config.get(field, "http://localhost:8080"),
+                            id=f"config-{key}-{field}",
+                            placeholder="http://localhost:8080"
+                        )
+                    elif field == "system_prompt":
+                        yield Label("Default System Prompt:", classes="form-label")
+                        yield TextArea(
+                            text=provider_config.get(field, "You are a helpful AI assistant"),
+                            id=f"config-{key}-{field}",
+                            classes="system-prompt-textarea"
+                        )
+                    elif field == "streaming":
+                        yield Checkbox(
+                            "Enable Streaming",
+                            value=provider_config.get(field, False),
+                            id=f"config-{key}-{field}"
+                        )
+                    else:
+                        label = field.replace("_", " ").title()
+                        yield Label(f"{label}:", classes="form-label")
+                        yield Input(
+                            value=str(provider_config.get(field, "")),
+                            id=f"config-{key}-{field}",
+                            placeholder=f"Enter {label.lower()}"
+                        )
             
             with Container(classes="form-actions"):
                 yield Button("Save API Config", id="save-api-config-form", variant="primary")
@@ -428,7 +506,7 @@ class ToolsSettingsWindow(Container):
     
     def _compose_database_config_form(self) -> ComposeResult:
         """Form for database configuration."""
-        with VerticalScroll(classes="config-form"):
+        with Container(classes="config-form"):
             db_config = self.config_data.get("database", {})
             
             yield Label("ChaChaNotes Database Path:", classes="form-label")
@@ -461,7 +539,7 @@ class ToolsSettingsWindow(Container):
     
     def _compose_rag_config_form(self) -> ComposeResult:
         """Form for RAG configuration."""
-        with VerticalScroll(classes="config-form"):
+        with Container(classes="config-form"):
             rag_config = self.config_data.get("rag_search", {})
             
             yield Label("Default Search Mode:", classes="form-label")
@@ -548,7 +626,7 @@ class ToolsSettingsWindow(Container):
     
     def _compose_providers_config_form(self) -> ComposeResult:
         """Form for providers configuration."""
-        with VerticalScroll(classes="config-form"):
+        with Container(classes="config-form"):
             providers_config = self.config_data.get("providers", {})
             
             yield Static("Configure available models for each provider", classes="form-description")
@@ -569,7 +647,7 @@ class ToolsSettingsWindow(Container):
     
     def _compose_advanced_config_form(self) -> ComposeResult:
         """Form for advanced configuration options."""
-        with VerticalScroll(classes="config-form"):
+        with Container(classes="config-form"):
             yield Static("Advanced settings - modify with caution", classes="form-description")
             
             # Logging Configuration
@@ -625,9 +703,180 @@ class ToolsSettingsWindow(Container):
                 yield Button("Reset Section", id="reset-advanced-config-form")
                 yield Button("Export Configuration", id="export-config-button")
                 yield Button("Import Configuration", id="import-config-button")
+    
+    def _compose_database_tools(self) -> ComposeResult:
+        """Compose the Database Tools UI."""
+        yield Static("Database Tools", classes="section-title")
+        yield Static("Manage and maintain your application databases", classes="section-description")
+        
+        with Container(classes="settings-container"):
+            # Database Status Section
+            yield Static("Database Status", classes="form-section-title")
+            
+            # Show current database sizes
+            yield Label("ChaChaNotes Database:", classes="settings-label")
+            yield Static("Size: Loading...", id="db-size-chachanotes", classes="db-status")
+            
+            yield Label("Prompts Database:", classes="settings-label")
+            yield Static("Size: Loading...", id="db-size-prompts", classes="db-status")
+            
+            yield Label("Media Database:", classes="settings-label")
+            yield Static("Size: Loading...", id="db-size-media", classes="db-status")
+            
+            # Database Maintenance Section
+            yield Static("Database Maintenance", classes="form-section-title")
+            
+            yield Button("Vacuum All Databases", id="db-vacuum-all", variant="primary")
+            yield Static("Reclaim unused space and optimize database performance", classes="help-text")
+            
+            yield Button("Backup All Databases", id="db-backup-all", variant="success")
+            yield Static("Create timestamped backups of all databases", classes="help-text")
+            
+            yield Button("Check Database Integrity", id="db-check-integrity", variant="warning")
+            yield Static("Verify database structure and data integrity", classes="help-text")
+            
+            # Export/Import Section
+            yield Static("Export & Import", classes="form-section-title")
+            
+            yield Button("Export Conversations", id="db-export-conversations")
+            yield Button("Export Notes", id="db-export-notes")
+            yield Button("Export Characters", id="db-export-characters")
+            
+            yield Button("Import Data", id="db-import-data", variant="primary")
+            yield Static("Import previously exported data files", classes="help-text")
+            
+            # Danger Zone
+            yield Static("Danger Zone", classes="form-section-title danger")
+            
+            yield Button("Clear All Conversations", id="db-clear-conversations", variant="error")
+            yield Button("Clear All Notes", id="db-clear-notes", variant="error")
+            yield Button("Reset All Databases", id="db-reset-all", variant="error")
+            yield Static("⚠️ These actions cannot be undone!", classes="danger-warning")
+    
+    def _compose_appearance_settings(self) -> ComposeResult:
+        """Compose the Appearance Settings UI."""
+        yield Static("Appearance Settings", classes="section-title")
+        yield Static("Customize the look and feel of your application", classes="section-description")
+        
+        with Container(classes="settings-container"):
+            # Theme Selection
+            yield Label("Application Theme:", classes="settings-label")
+            
+            # Import themes to get all available options
+            from ..css.Themes.themes import ALL_THEMES
+            
+            # Build theme options from ALL_THEMES
+            theme_options = [
+                ("Textual Dark", "textual-dark"),
+                ("Textual Light", "textual-light")
+            ]
+            
+            # Add custom themes from ALL_THEMES
+            for theme in ALL_THEMES:
+                theme_name = theme.name
+                # Create a user-friendly label from the theme name
+                label = theme_name.replace('_', ' ').title()
+                theme_options.append((label, theme_name))
+            
+            current_theme = self.config_data.get("general", {}).get("default_theme", "textual-dark")
+            
+            yield Select(
+                options=theme_options,
+                value=current_theme,
+                id="appearance-theme-select",
+                classes="settings-select"
+            )
+            
+            yield Button("Apply Theme", id="appearance-apply-theme", variant="primary")
+            yield Static("Changes will take effect immediately", classes="help-text")
+            
+            # Font Settings
+            yield Static("Font Settings", classes="form-section-title")
+            
+            yield Label("Code Font Size:", classes="settings-label")
+            yield Select(
+                options=[
+                    ("Small (10px)", "10"),
+                    ("Medium (12px)", "12"),
+                    ("Large (14px)", "14"),
+                    ("Extra Large (16px)", "16")
+                ],
+                value="12",
+                id="appearance-font-size",
+                classes="settings-select"
+            )
+            
+            # UI Density
+            yield Static("UI Density", classes="form-section-title")
+            
+            yield Label("Interface Density:", classes="settings-label")
+            yield Select(
+                options=[
+                    ("Compact", "compact"),
+                    ("Normal", "normal"),
+                    ("Comfortable", "comfortable")
+                ],
+                value="normal",
+                id="appearance-density",
+                classes="settings-select"
+            )
+            
+            # Animation Settings
+            yield Static("Animation Settings", classes="form-section-title")
+            
+            yield Checkbox(
+                "Enable UI Animations",
+                value=True,
+                id="appearance-enable-animations"
+            )
+            
+            yield Checkbox(
+                "Enable Smooth Scrolling",
+                value=True,
+                id="appearance-smooth-scrolling"
+            )
+            
+            # Color Customization
+            yield Static("Color Customization", classes="form-section-title")
+            
+            yield Label("Accent Color:", classes="settings-label")
+            yield Input(
+                value="#0078D4",
+                placeholder="#0078D4",
+                id="appearance-accent-color",
+                classes="settings-input"
+            )
+            
+            yield Label("Success Color:", classes="settings-label")
+            yield Input(
+                value="#10B981",
+                placeholder="#10B981",
+                id="appearance-success-color",
+                classes="settings-input"
+            )
+            
+            yield Label("Warning Color:", classes="settings-label")
+            yield Input(
+                value="#F59E0B",
+                placeholder="#F59E0B",
+                id="appearance-warning-color",
+                classes="settings-input"
+            )
+            
+            yield Label("Error Color:", classes="settings-label")
+            yield Input(
+                value="#EF4444",
+                placeholder="#EF4444",
+                id="appearance-error-color",
+                classes="settings-input"
+            )
+            
+            with Container(classes="settings-button-container"):
+                yield Button("Save Appearance Settings", id="save-appearance-settings", variant="primary")
+                yield Button("Reset to Defaults", id="reset-appearance-settings")
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="tools-settings-nav-pane", classes="tools-nav-pane"):
+        with Container(id="tools-settings-nav-pane", classes="tools-nav-pane"):
             yield Static("Navigation", classes="sidebar-title")
             yield Button("General Settings", id="ts-nav-general-settings", classes="ts-nav-button")
             yield Button("Configuration File Settings", id="ts-nav-config-file-settings", classes="ts-nav-button")
@@ -646,12 +895,12 @@ class ToolsSettingsWindow(Container):
                 classes="ts-view-area",
             )
             yield Container(
-                Static("Database Tools Area - Content Coming Soon!"),
+                *self._compose_database_tools(),
                 id="ts-view-db-tools",
                 classes="ts-view-area",
             )
             yield Container(
-                Static("Appearance Settings Area - Content Coming Soon!"),
+                *self._compose_appearance_settings(),
                 id="ts-view-appearance",
                 classes="ts-view-area",
             )
@@ -660,8 +909,18 @@ class ToolsSettingsWindow(Container):
         """Event handler called when a button is pressed."""
         button_id = event.button.id
 
+        # Navigation handlers
+        if button_id == "ts-nav-general-settings":
+            await self._show_view("ts-view-general-settings")
+        elif button_id == "ts-nav-config-file-settings":
+            await self._show_view("ts-view-config-file-settings")
+        elif button_id == "ts-nav-db-tools":
+            await self._show_view("ts-view-db-tools")
+        elif button_id == "ts-nav-appearance":
+            await self._show_view("ts-view-appearance")
+            
         # General Settings handlers
-        if button_id == "save-general-settings":
+        elif button_id == "save-general-settings":
             await self._save_general_settings()
         elif button_id == "reset-general-settings":
             await self._reset_general_settings()
@@ -709,80 +968,32 @@ class ToolsSettingsWindow(Container):
     async def _save_general_settings(self) -> None:
         """Save General Settings to the configuration file."""
         try:
-            # General App Settings
-            if save_setting_to_cli_config("general", "default_tab", self.query_one("#general-default-tab", Select).value):
-                if save_setting_to_cli_config("general", "default_theme", self.query_one("#general-theme", Select).value):
-                    if save_setting_to_cli_config("general", "users_name", self.query_one("#general-username", Input).value):
-                        if save_setting_to_cli_config("general", "log_level", self.query_one("#general-log-level", Select).value):
-                            # Default Provider Settings
-                            if save_setting_to_cli_config("chat_defaults", "provider", self.query_one("#general-default-provider", Select).value):
-                                if save_setting_to_cli_config("chat_defaults", "model", self.query_one("#general-default-model", Input).value):
-                                    # Chat Defaults
-                                    try:
-                                        temperature = float(self.query_one("#general-temperature", Input).value)
-                                        if save_setting_to_cli_config("chat_defaults", "temperature", temperature):
-                                            try:
-                                                max_tokens = int(self.query_one("#general-max-tokens", Input).value)
-                                                if save_setting_to_cli_config("chat_defaults", "max_tokens", max_tokens):
-                                                    streaming = self.query_one("#general-streaming", Switch).value
-                                                    if save_setting_to_cli_config("chat_defaults", "streaming", streaming):
-                                                        # API Keys
-                                                        openai_key = self.query_one("#general-openai-key", Input).value
-                                                        if openai_key and openai_key.strip():
-                                                            save_setting_to_cli_config("api_settings.openai", "api_key", openai_key)
-                                                        
-                                                        anthropic_key = self.query_one("#general-anthropic-key", Input).value
-                                                        if anthropic_key and anthropic_key.strip():
-                                                            save_setting_to_cli_config("api_settings.anthropic", "api_key", anthropic_key)
-                                                        
-                                                        google_key = self.query_one("#general-google-key", Input).value
-                                                        if google_key and google_key.strip():
-                                                            save_setting_to_cli_config("api_settings.google", "api_key", google_key)
-                                                        
-                                                        # RAG Settings
-                                                        rag_enabled = self.query_one("#general-rag-enabled", Switch).value
-                                                        if save_setting_to_cli_config("rag_search", "enabled", rag_enabled):
-                                                            # RAG Sources
-                                                            media_enabled = self.query_one("#general-rag-source-media", Checkbox).value
-                                                            conversations_enabled = self.query_one("#general-rag-source-conversations", Checkbox).value
-                                                            notes_enabled = self.query_one("#general-rag-source-notes", Checkbox).value
-                                                            
-                                                            save_setting_to_cli_config("rag_search.default_sources", "media", media_enabled)
-                                                            save_setting_to_cli_config("rag_search.default_sources", "conversations", conversations_enabled)
-                                                            save_setting_to_cli_config("rag_search.default_sources", "notes", notes_enabled)
-                                                            
-                                                            # RAG Top-K
-                                                            try:
-                                                                top_k = int(self.query_one("#general-rag-top-k", Input).value)
-                                                                save_setting_to_cli_config("rag_search", "default_top_k", top_k)
-                                                            except ValueError:
-                                                                self.app_instance.notify("Invalid Top-K value, keeping current setting", severity="warning")
-                                                            
-                                                            # Database Paths
-                                                            chachanotes_path = self.query_one("#general-chachanotes-path", Input).value
-                                                            if chachanotes_path:
-                                                                save_setting_to_cli_config("database", "chachanotes_db_path", chachanotes_path)
-                                                            
-                                                            media_path = self.query_one("#general-media-path", Input).value
-                                                            if media_path:
-                                                                save_setting_to_cli_config("database", "media_db_path", media_path)
-                                                            
-                                                            prompts_path = self.query_one("#general-prompts-path", Input).value
-                                                            if prompts_path:
-                                                                save_setting_to_cli_config("database", "prompts_db_path", prompts_path)
-                                                            
-                                                            # Update internal config
-                                                            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
-                                                            self.app_instance.notify("General Settings saved successfully!")
-                                                            return
-                                            except ValueError:
-                                                self.app_instance.notify("Invalid max tokens value", severity="error")
-                                                return
-                                    except ValueError:
-                                        self.app_instance.notify("Invalid temperature value", severity="error")
-                                        return
+            # Save only the settings that exist in the current general settings form
+            saved_count = 0
             
-            self.app_instance.notify("Failed to save some General Settings", severity="error")
+            # Default Tab
+            if save_setting_to_cli_config("general", "default_tab", self.query_one("#general-default-tab", Select).value):
+                saved_count += 1
+            
+            # Theme
+            if save_setting_to_cli_config("general", "default_theme", self.query_one("#general-theme", Select).value):
+                saved_count += 1
+            
+            # Username
+            if save_setting_to_cli_config("general", "users_name", self.query_one("#general-username", Input).value):
+                saved_count += 1
+            
+            # Log Level
+            if save_setting_to_cli_config("general", "log_level", self.query_one("#general-log-level", Select).value):
+                saved_count += 1
+            
+            # Update internal config
+            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
+            
+            if saved_count > 0:
+                self.app_instance.notify(f"General Settings saved successfully! ({saved_count} settings updated)")
+            else:
+                self.app_instance.notify("No settings were updated", severity="warning")
             
         except Exception as e:
             self.app_instance.notify(f"Error saving General Settings: {e}", severity="error")
@@ -790,27 +1001,11 @@ class ToolsSettingsWindow(Container):
     async def _reset_general_settings(self) -> None:
         """Reset General Settings to default values."""
         try:
-            # Reset UI elements to defaults
+            # Reset only the UI elements that exist in the current general settings form
             self.query_one("#general-default-tab", Select).value = "chat"
             self.query_one("#general-theme", Select).value = "textual-dark"
             self.query_one("#general-username", Input).value = "default_user"
             self.query_one("#general-log-level", Select).value = "INFO"
-            self.query_one("#general-default-provider", Select).value = "openai"
-            self.query_one("#general-default-model", Input).value = "gpt-4o"
-            self.query_one("#general-temperature", Input).value = "0.7"
-            self.query_one("#general-max-tokens", Input).value = "4096"
-            self.query_one("#general-streaming", Switch).value = False
-            self.query_one("#general-openai-key", Input).value = ""
-            self.query_one("#general-anthropic-key", Input).value = ""
-            self.query_one("#general-google-key", Input).value = ""
-            self.query_one("#general-rag-enabled", Switch).value = True
-            self.query_one("#general-rag-source-media", Checkbox).value = True
-            self.query_one("#general-rag-source-conversations", Checkbox).value = True
-            self.query_one("#general-rag-source-notes", Checkbox).value = True
-            self.query_one("#general-rag-top-k", Input).value = "10"
-            self.query_one("#general-chachanotes-path", Input).value = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
-            self.query_one("#general-media-path", Input).value = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-            self.query_one("#general-prompts-path", Input).value = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
             
             self.app_instance.notify("General Settings reset to defaults!")
             
@@ -877,20 +1072,73 @@ class ToolsSettingsWindow(Container):
     async def _save_api_config_form(self) -> None:
         """Save API configuration form."""
         try:
-            # OpenAI settings
-            save_setting_to_cli_config("api_settings.openai", "api_key_env_var", self.query_one("#config-openai-env-var", Input).value)
-            save_setting_to_cli_config("api_settings.openai", "api_key", self.query_one("#config-openai-api-key", Input).value)
-            save_setting_to_cli_config("api_settings.openai", "model", self.query_one("#config-openai-model", Input).value)
-            save_setting_to_cli_config("api_settings.openai", "temperature", float(self.query_one("#config-openai-temperature", Input).value))
-            save_setting_to_cli_config("api_settings.openai", "max_tokens", int(self.query_one("#config-openai-max-tokens", Input).value))
+            saved_count = 0
+            errors = []
             
-            # Anthropic settings
-            save_setting_to_cli_config("api_settings.anthropic", "api_key_env_var", self.query_one("#config-anthropic-env-var", Input).value)
-            save_setting_to_cli_config("api_settings.anthropic", "api_key", self.query_one("#config-anthropic-api-key", Input).value)
-            save_setting_to_cli_config("api_settings.anthropic", "model", self.query_one("#config-anthropic-model", Input).value)
-            save_setting_to_cli_config("api_settings.anthropic", "temperature", float(self.query_one("#config-anthropic-temperature", Input).value))
+            # Get all providers and their fields
+            all_providers = [
+                ("openai", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("anthropic", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("google", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("deepseek", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("groq", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("mistralai", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("cohere", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("huggingface", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("openrouter", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+                ("llama_cpp", ["api_url", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+                ("ollama", ["api_url", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+                ("vllm", ["api_key_env_var", "api_url", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+                ("koboldcpp", ["api_url", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+                ("oobabooga", ["api_key_env_var", "api_url", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+            ]
             
-            self.app_instance.notify("API configuration saved!")
+            # Save settings for each provider
+            for provider_key, fields in all_providers:
+                for field in fields:
+                    widget_id = f"#config-{provider_key}-{field}"
+                    try:
+                        if field == "streaming":
+                            # Handle checkbox
+                            value = self.query_one(widget_id, Checkbox).value
+                        elif field == "system_prompt":
+                            # Handle TextArea
+                            value = self.query_one(widget_id, TextArea).text
+                        else:
+                            # Handle Input fields
+                            raw_value = self.query_one(widget_id, Input).value
+                            
+                            # Convert to appropriate type
+                            if field in ["temperature", "top_p", "top_k", "min_p"]:
+                                value = float(raw_value) if raw_value else 0.0
+                            elif field in ["max_tokens", "timeout", "retries", "retry_delay"]:
+                                value = int(raw_value) if raw_value else 0
+                            else:
+                                value = raw_value
+                        
+                        if save_setting_to_cli_config(f"api_settings.{provider_key}", field, value):
+                            saved_count += 1
+                            
+                    except QueryError:
+                        # Widget doesn't exist, skip
+                        pass
+                    except ValueError as e:
+                        errors.append(f"{provider_key}.{field}: {str(e)}")
+                    except Exception as e:
+                        errors.append(f"{provider_key}.{field}: {str(e)}")
+            
+            # Update internal config
+            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
+            
+            if errors:
+                self.app_instance.notify(f"API config saved with {len(errors)} errors. Check logs for details.", severity="warning")
+                for error in errors[:3]:  # Show first 3 errors
+                    self.app_instance.notify(f"Error: {error}", severity="error")
+            elif saved_count > 0:
+                self.app_instance.notify(f"API configuration saved! ({saved_count} settings updated)")
+            else:
+                self.app_instance.notify("No API settings were updated", severity="warning")
+                
         except Exception as e:
             self.app_instance.notify(f"Error saving API config: {e}", severity="error")
     
@@ -1078,6 +1326,53 @@ class ToolsSettingsWindow(Container):
             self.app_instance.notify("Import feature not yet implemented. Please manually copy TOML content.", severity="warning")
         except Exception as e:
             self.app_instance.notify(f"Error importing configuration: {e}", severity="error")
+    
+    async def _show_view(self, view_id: str) -> None:
+        """Show the specified view and hide all others."""
+        # List of all view IDs
+        view_ids = [
+            "ts-view-general-settings",
+            "ts-view-config-file-settings", 
+            "ts-view-db-tools",
+            "ts-view-appearance"
+        ]
+        
+        # Hide all views by removing active class
+        for v_id in view_ids:
+            try:
+                view = self.query_one(f"#{v_id}")
+                view.remove_class("active")
+            except Exception:
+                pass  # View might not exist yet
+        
+        # Show the requested view by adding active class
+        try:
+            view = self.query_one(f"#{view_id}")
+            view.add_class("active")
+        except Exception:
+            pass
+            
+        # Update navigation button styles
+        nav_buttons = {
+            "ts-view-general-settings": "ts-nav-general-settings",
+            "ts-view-config-file-settings": "ts-nav-config-file-settings",
+            "ts-view-db-tools": "ts-nav-db-tools",
+            "ts-view-appearance": "ts-nav-appearance"
+        }
+        
+        for v_id, btn_id in nav_buttons.items():
+            try:
+                button = self.query_one(f"#{btn_id}")
+                if v_id == view_id:
+                    button.add_class("active-nav")
+                else:
+                    button.remove_class("active-nav")
+            except Exception:
+                pass
+    
+    async def on_mount(self) -> None:
+        """Called when the widget is mounted. Set initial view."""
+        await self._show_view("ts-view-general-settings")
 
 #
 # End of Tools_Settings_Window.py

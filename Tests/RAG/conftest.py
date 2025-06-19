@@ -1,40 +1,38 @@
-# conftest.py
-# Pytest configuration for RAG tests
+# conftest.py for RAG tests
+# Provides common fixtures and markers for RAG-related tests
 
 import pytest
-import sys
-from pathlib import Path
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
-# Add the project root to the Python path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+# Check if optional dependencies are available
+EMBEDDINGS_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+CHROMADB_AVAILABLE = DEPENDENCIES_AVAILABLE.get('chromadb', False)
 
-# Configure pytest-asyncio
-pytest_plugins = ('pytest_asyncio',)
+# Define custom markers
+pytest.mark.requires_embeddings = pytest.mark.skipif(
+    not EMBEDDINGS_AVAILABLE,
+    reason="Embeddings dependencies (sentence-transformers) not installed. Install with: pip install -e '.[embeddings_rag]'"
+)
 
+pytest.mark.requires_chromadb = pytest.mark.skipif(
+    not CHROMADB_AVAILABLE,
+    reason="ChromaDB not installed. Install with: pip install -e '.[embeddings_rag]'"
+)
 
-@pytest.fixture(scope="session")
-def event_loop_policy():
-    """Set the event loop policy for asyncio tests"""
-    import asyncio
-    if sys.platform.startswith('win'):
-        # Windows requires special handling
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    return asyncio.get_event_loop_policy()
+pytest.mark.requires_rag_deps = pytest.mark.skipif(
+    not (EMBEDDINGS_AVAILABLE and CHROMADB_AVAILABLE),
+    reason="RAG dependencies not installed. Install with: pip install -e '.[embeddings_rag]'"
+)
 
-
-# Markers for different test types
+# Register markers with pytest
 def pytest_configure(config):
     """Register custom markers"""
     config.addinivalue_line(
-        "markers", "unit: mark test as a unit test"
+        "markers", "requires_embeddings: mark test as requiring embeddings dependencies"
     )
     config.addinivalue_line(
-        "markers", "integration: mark test as an integration test"
+        "markers", "requires_chromadb: mark test as requiring ChromaDB"
     )
     config.addinivalue_line(
-        "markers", "property: mark test as a property-based test"
-    )
-    config.addinivalue_line(
-        "markers", "slow: mark test as slow running"
+        "markers", "requires_rag_deps: mark test as requiring all RAG dependencies"
     )
