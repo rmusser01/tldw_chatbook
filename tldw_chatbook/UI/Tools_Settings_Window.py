@@ -233,6 +233,11 @@ class ToolsSettingsWindow(Container):
             
             current_theme = general_config.get("default_theme", "textual-dark")
             
+            # Validate the current theme - if it's not in the valid options, use default
+            valid_theme_values = [value for _, value in theme_options]
+            if current_theme not in valid_theme_values:
+                current_theme = "textual-dark"
+            
             yield Select(
                 options=theme_options,
                 value=current_theme,
@@ -779,6 +784,11 @@ class ToolsSettingsWindow(Container):
                 theme_options.append((label, theme_name))
             
             current_theme = self.config_data.get("general", {}).get("default_theme", "textual-dark")
+            
+            # Validate the current theme - if it's not in the valid options, use default
+            valid_theme_values = [value for _, value in theme_options]
+            if current_theme not in valid_theme_values:
+                current_theme = "textual-dark"
             
             yield Select(
                 options=theme_options,

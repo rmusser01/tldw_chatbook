@@ -87,8 +87,8 @@ class RichLogHandler(logging.Handler):
                 #    except asyncio.QueueEmpty: break
                 break  # Exit the loop on cancellation
             except Exception as e:
-                loguru_logger.critical(f"!!! CRITICAL ERROR in RichLog processor: {e}")  # Use print as fallback
-                traceback.print_exc()
+                print(f"!!! CRITICAL ERROR in RichLog processor: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
                 # Avoid continuous loop on error, maybe sleep?
                 await asyncio.sleep(1)
 
@@ -98,13 +98,33 @@ class RichLogHandler(logging.Handler):
             message = self.format(record)
             # Use call_soon_threadsafe if emit might be called from non-asyncio threads (workers)
             # For workers started with thread=True, this is necessary.
-            if hasattr(self.rich_log_widget, 'app') and self.rich_log_widget.app:
-                self.rich_log_widget.app._loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
-            else:  # Fallback during startup/shutdown
-                if record.levelno >= logging.WARNING: logging.warning(f"LOG_FALLBACK: {message}")
+            try:
+                # Check if the widget is mounted and has an app with an event loop
+                if (hasattr(self.rich_log_widget, 'is_mounted') and 
+                    self.rich_log_widget.is_mounted and 
+                    hasattr(self.rich_log_widget, 'app') and 
+                    self.rich_log_widget.app and
+                    hasattr(self.rich_log_widget.app, '_loop') and
+                    self.rich_log_widget.app._loop):
+                    self.rich_log_widget.app._loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
+                else:
+                    # During startup/shutdown, try to queue the message anyway
+                    try:
+                        # If we have an event loop running, use it
+                        loop = asyncio.get_running_loop()
+                        loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
+                    except RuntimeError:
+                        # No event loop running, fallback to direct logging for warnings and above
+                        if record.levelno >= logging.WARNING: 
+                            print(f"LOG_FALLBACK: {message}", file=sys.stderr)
+            except Exception as e:
+                # Don't re-raise to avoid breaking the logging system
+                if record.levelno >= logging.WARNING:
+                    print(f"LOG_FALLBACK: {message}", file=sys.stderr)
         except Exception:
-            loguru_logger.warning(f"!!!!!!!! ERROR within RichLogHandler.emit !!!!!!!!!!")  # Use print as fallback
-            traceback.print_exc()
+            # Last resort - print to stderr to avoid losing critical messages
+            print(f"!!!!!!!! ERROR within RichLogHandler.emit !!!!!!!!!!", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
 
 
 def configure_application_logging(app_instance):
