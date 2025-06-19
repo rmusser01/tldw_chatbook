@@ -15,6 +15,31 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError, ChatAPIError, ChatConfigurationError
 )
 
+# Documentation for test dependencies
+"""
+Integration Test Dependencies:
+============================
+
+These tests require actual API services to be available. They will be skipped
+if the required environment variables are not set.
+
+Required environment variables by provider:
+- OpenAI: OPENAI_API_KEY, OPENAI_TEST_MODEL
+- Anthropic: ANTHROPIC_API_KEY, ANTHROPIC_TEST_MODEL  
+- Ollama: OLLAMA_TEST_URL, OLLAMA_TEST_MODEL
+- KoboldCPP: KOBOLDCPP_TEST_URL
+- Other providers: See get_provider_env_vars() function
+
+For local services (Ollama, KoboldCPP, etc.), the service must be running
+at the specified URL for tests to pass.
+
+To run only integration tests that require external services:
+    pytest -m integration
+
+To run unit tests with mocked services (no external dependencies):
+    pytest Tests/Chat/test_chat_unit_mocked_APIs.py
+"""
+
 
 # HOW TO USE THIS TEST:
 # # Set environment variables first (example for bash/zsh)

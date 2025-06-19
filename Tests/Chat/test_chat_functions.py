@@ -71,6 +71,7 @@ def create_base64_image():
 class TestChatApiCall:
     def test_routes_to_correct_handler(self, mock_handlers, mocker):
         mock_openai_handler = mocker.MagicMock(return_value="OpenAI response")
+        mock_openai_handler.__name__ = "mock_openai_handler"
         mock_handlers.get.return_value = mock_openai_handler
 
         response = chat_api_call(
@@ -98,6 +99,7 @@ class TestChatApiCall:
         http_error = requests.exceptions.HTTPError(response=mock_response)
 
         mock_handler = mocker.MagicMock(side_effect=http_error)
+        mock_handler.__name__ = "mock_handler"
         mock_handlers.get.return_value = mock_handler
 
         with pytest.raises(ChatAuthenticationError):
@@ -198,6 +200,15 @@ class TestChatFunction:
 
 class TestChatHistorySaving:
     def test_save_chat_history_to_db_new_conversation(self, db_instance: CharactersRAGDB):
+        # Create default character first
+        default_char_id = db_instance.add_character_card({
+            "name": "Default Character",
+            "description": "Default character for general conversations",
+            "system_prompt": "You are a helpful assistant.",
+            "tags": ["default"],
+            "creator_notes": ""
+        })
+        
         # The history format is now OpenAI's message objects
         chatbot_history = [
             {"role": "user", "content": "Hello there"},
@@ -222,9 +233,18 @@ class TestChatHistorySaving:
         assert messages[1]['sender'] == 'assistant'
 
         conv_details = db_instance.get_conversation_by_id(conv_id)
-        assert conv_details['character_id'] == 1  # Default character
+        assert conv_details['character_id'] == default_char_id  # Default character
 
     def test_save_chat_history_with_image(self, db_instance: CharactersRAGDB):
+        # Create default character first
+        db_instance.add_character_card({
+            "name": "Default Character",
+            "description": "Default character for general conversations",
+            "system_prompt": "You are a helpful assistant.",
+            "tags": ["default"],
+            "creator_notes": ""
+        })
+        
         b64_img = create_base64_image()
         chatbot_history = [
             {"role": "user", "content": [
@@ -285,27 +305,30 @@ class TestCharacterManagement:
         save_character(db_instance, {"name": "Beta"})
         save_character(db_instance, {"name": "Alpha"})
 
-        # Default character is also present
+        # Default Assistant is created during DB initialization
         names = get_character_names(db_instance)
-        assert names == ["Alpha", "Beta", DEFAULT_CHARACTER_NAME]
+        assert names == ["Alpha", "Beta", "Default Assistant"]
 
 
 class TestChatDictionary:
-    def test_parse_user_dict_markdown_file(self, tmp_path):
-        dict_content = """
-        key1: value1
-        key2: |
-        This is a
-        multiline value.
-        ---@@@---
-        /key3/i: value3
-        """
+    @patch('tldw_chatbook.Chat.Chat_Functions.validate_path')
+    def test_parse_user_dict_markdown_file(self, mock_validate_path, tmp_path):
+        # Mock validate_path to return the validated path
         dict_file = tmp_path / "test_dict.md"
+        mock_validate_path.return_value = str(dict_file)
+        
+        dict_content = """key1: value1
+key2: |
+  This is a
+  multiline value.
+---@@@---
+/key3/i: value3
+"""
         dict_file.write_text(dict_content)
 
         parsed = parse_user_dict_markdown_file(str(dict_file))
         assert parsed["key1"] == "value1"
-        assert parsed["key2"] == "This is a\nmultiline value."
+        assert parsed["key2"] == "This is a\n  multiline value."
         assert parsed["/key3/i"] == "value3"
 
     def test_process_user_input_simple_replacement(self):

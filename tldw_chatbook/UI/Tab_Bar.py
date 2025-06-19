@@ -37,7 +37,7 @@ class TabBar(Horizontal):  # The outer container for the tab bar
                 if tab_id_loop == TAB_CCP:
                     label_text = "CCP"
                 elif tab_id_loop == TAB_TOOLS_SETTINGS:
-                    label_text = "Tools & Settings"
+                    label_text = "Settings"
                 elif tab_id_loop == TAB_INGEST:
                     label_text = "Ingest Content"
                 elif tab_id_loop == TAB_LLM:

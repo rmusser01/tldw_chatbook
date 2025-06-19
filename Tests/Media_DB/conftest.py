@@ -6,18 +6,15 @@ import shutil
 from pathlib import Path
 import sys
 
-# Add src directory to sys.path to allow importing library/engine code
-src_path = Path(__file__).parent.parent / "src"
-sys.path.insert(0, str(src_path))
-
-# Now import after modifying path
+# Import the MediaDatabase from tldw_chatbook instead of tldw_Server_API
 try:
-    from tldw_Server_API.app.core.DB_Management.Media_DB_v2 import Database
-except ImportError as e:
-    print(f"ERROR in conftest: Could not import Database from sqlite_db. Error: {e}")
-    # Define dummy class if import fails to avoid crashing pytest collection
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
+except ImportError:
+    # Fallback to a basic database class if import fails
     class Database:
-        def __init__(self, *args, **kwargs): pass
+        def __init__(self, *args, **kwargs): 
+            self.db_path = kwargs.get('db_path', ':memory:')
+            self.client_id = kwargs.get('client_id', 'test_client')
         def close_connection(self): pass
         def get_sync_log_entries(self, *args, **kwargs): return []
         def execute_query(self, *args, **kwargs):
@@ -29,7 +26,7 @@ except ImportError as e:
              return MockCursor()
         def transaction(self):
              class MockTransaction:
-                  def __enter__(self): return None # Return a mock connection/cursor if needed
+                  def __enter__(self): return None
                   def __exit__(self, *args): pass
              return MockTransaction()
 

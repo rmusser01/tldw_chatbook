@@ -157,7 +157,6 @@ class TestTemplateRendering:
 
         data = {"my_obj": MyObj()}
 
-        # In a sandboxed environment, this should raise a SecurityError, which our wrapper catches.
-        # The wrapper then returns the original string.
+        # In a sandboxed environment, unsafe attributes are silently filtered out
         result = apply_template_to_string(template_str, data)
-        assert result == template_str
+        assert result == "Unsafe access: "

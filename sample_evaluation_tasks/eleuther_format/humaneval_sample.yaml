@@ -1,0 +1,120 @@
+# HumanEval Sample Task - Eleuther AI Format
+# Python code generation and execution evaluation
+# Format: https://github.com/EleutherAI/lm-evaluation-harness
+
+task: humaneval_sample
+dataset_name: openai_humaneval
+dataset_config_name: openai_humaneval
+test_split: test
+num_fewshot: 0  # Zero-shot evaluation
+output_type: generate_until
+until:
+  - "\ndef"
+  - "\nclass"
+  - "\nif"
+  - "\n#"
+  - "\n\n\n"
+
+# Template for code generation
+doc_to_text: "{{prompt}}"
+doc_to_target: "{{canonical_solution}}"
+
+# Generation parameters for code
+generation_kwargs:
+  temperature: 0.2
+  max_tokens: 512
+  top_p: 0.95
+  stop:
+    - "\ndef"
+    - "\nclass"
+    - "\nif __name__"
+
+# Code execution and validation
+filter_list:
+  - filter: "code_execution"
+    language: "python"
+    timeout: 10
+    safe_execution: true
+
+# Primary metrics
+metric_list:
+  - pass_at_k
+  - execution_success
+  - syntax_valid
+
+# Additional code-specific metrics
+secondary_metrics:
+  - code_length
+  - cyclomatic_complexity
+  - readability_score
+  - style_compliance
+
+# Task metadata
+metadata:
+  description: "Python function implementation from natural language descriptions"
+  category: "programming"
+  difficulty: "intermediate"
+  language: "en"
+  programming_language: "python"
+  domain: "software_engineering"
+  task_type: "code_generation"
+  evaluation_time: "slow"
+  requires_execution: true
+  
+# Evaluation settings
+batch_size: 8  # Smaller batch for code execution
+limit: 50  # Limit for demonstration
+k_values: [1, 5, 10]  # For pass@k metric
+bootstrap_iters: 1000
+
+# Model requirements
+model_requirements:
+  min_context_length: 2048
+  supports_code: true
+  programming_languages: ["python"]
+
+# Security settings for code execution
+execution_settings:
+  timeout: 10
+  memory_limit: "128MB"
+  network_access: false
+  file_system_access: false
+  allowed_imports:
+    - math
+    - string
+    - re
+    - collections
+    - itertools
+    - functools
+    - operator
+  
+# Example problems (for reference)
+example_samples:
+  - task_id: "HumanEval/0"
+    prompt: |
+      from typing import List
+      
+      def has_close_elements(numbers: List[float], threshold: float) -> bool:
+          \"\"\" Check if in given list of numbers, are any two numbers closer to each other than
+          given threshold.
+          >>> has_close_elements([1.0, 2.0, 3.0], 0.5)
+          False
+          >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)
+          True
+          \"\"\"
+    canonical_solution: |
+      for idx, elem in enumerate(numbers):
+          for idx2, elem2 in enumerate(numbers):
+              if idx != idx2:
+                  distance = abs(elem - elem2)
+                  if distance < threshold:
+                      return True
+      
+      return False
+    test: |
+      def check(candidate):
+          assert candidate([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.3) == True
+          assert candidate([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.05) == False
+          assert candidate([1.0, 2.0, 5.9, 4.0, 5.0], 0.95) == True
+          assert candidate([1.0, 2.0, 5.9, 4.0, 5.0], 0.8) == False
+          assert candidate([1.0, 2.0, 3.0, 4.0, 5.0, 2.0], 0.1) == True

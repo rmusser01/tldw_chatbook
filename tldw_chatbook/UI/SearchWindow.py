@@ -22,38 +22,64 @@ from ..Notes.Notes_Library import NotesInteropService
 logger = logger.bind(module="SearchWindow")
 #
 # Local Imports
-from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
 from tldw_chatbook.config import get_cli_setting
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError
-from ..Embeddings.Embeddings_Lib import ModelCfg
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError as MediaDatabaseError
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
+from ..Utils.pagination import paginated_fetch
+
 if TYPE_CHECKING:
     from ..app import TldwCli
-try:
-    from ..Embeddings.Embeddings_Lib import *
-    EMBEDDINGS_GENERATION_AVAILABLE = True
-    logger.info("✅ Embeddings Generation dependencies found. Feature is enabled.")
-except (ImportError, ModuleNotFoundError) as e:
-    EMBEDDINGS_GENERATION_AVAILABLE = False
-    logger.warning(f"Embeddings Generation depenedencies not found, features related will be disabled. Reason: {e}")
-try:
-    from ..Embeddings.Chroma_Lib import *
-    VECTORDB_AVAILABLE = True
-    logger.info("✅ Vector Database dependencies found. Feature is enabled.")
-except (ImportError, ModuleNotFoundError) as e:
-    VECTORDB_AVAILABLE = False
-    logger.warning(f"Vector Database depenedencies not found, features related will be disabled. Reason: {e}")
-try:
-    from ..Web_Scraping.WebSearch_APIs import generate_and_search, analyze_and_aggregate
 
-    WEB_SEARCH_AVAILABLE = True
-    logger.info("✅ Web Search dependencies found. Feature is enabled.")
-except (ImportError, ModuleNotFoundError) as e:
-    WEB_SEARCH_AVAILABLE = False
-    # Use a warning here, as this is an expected condition, not a critical error.
-    logger.warning(f"⚠️ Web Search dependencies not found, feature will be disabled. Reason: {e}")
+# Import dependency checking system
+from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+# Conditional imports for embeddings functionality
+if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+    try:
+        from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
+        from ..Embeddings.Embeddings_Lib import ModelCfg
+    except ImportError:
+        ChromaDBManager = None
+        ModelCfg = None
+else:
+    ChromaDBManager = None
+    ModelCfg = None
+
+# Set availability flags based on centralized dependency checking
+EMBEDDINGS_GENERATION_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+VECTORDB_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+WEB_SEARCH_AVAILABLE = DEPENDENCIES_AVAILABLE.get('websearch', False)
+
+# Import modules conditionally
+if EMBEDDINGS_GENERATION_AVAILABLE:
+    try:
+        from ..Embeddings.Embeddings_Lib import *
+        logger.info("✅ Embeddings Generation dependencies found. Feature is enabled.")
+    except (ImportError, ModuleNotFoundError) as e:
+        EMBEDDINGS_GENERATION_AVAILABLE = False
+        logger.warning(f"Embeddings Generation dependencies not found, features related will be disabled. Reason: {e}")
+
+if VECTORDB_AVAILABLE:
+    try:
+        from ..Embeddings.Chroma_Lib import *
+        logger.info("✅ Vector Database dependencies found. Feature is enabled.")
+    except (ImportError, ModuleNotFoundError) as e:
+        VECTORDB_AVAILABLE = False
+        logger.warning(f"Vector Database dependencies not found, features related will be disabled. Reason: {e}")
+
+if WEB_SEARCH_AVAILABLE:
+    try:
+        from ..Web_Scraping.WebSearch_APIs import generate_and_search, analyze_and_aggregate
+        logger.info("✅ Web Search dependencies found. Feature is enabled.")
+    except (ImportError, ModuleNotFoundError) as e:
+        WEB_SEARCH_AVAILABLE = False
+        logger.warning(f"⚠️ Web Search dependencies not found, feature will be disabled. Reason: {e}")
+        # Define placeholders so the rest of the file doesn't crash if they are referenced.
+        generate_and_search = None
+        analyze_and_aggregate = None
+else:
     # Define placeholders so the rest of the file doesn't crash if they are referenced.
     generate_and_search = None
     analyze_and_aggregate = None
@@ -120,7 +146,14 @@ class SearchWindow(Container):
             view.display = False
             logger.debug(f"SearchWindow.on_mount: Setting view {view.id} display to False")
 
-        initial_sub_tab = self.app_instance.search_active_sub_tab or SEARCH_VIEW_EMBEDDINGS_CREATION
+        # Default to a view based on available dependencies
+        default_view = SEARCH_VIEW_RAG_QA
+        if EMBEDDINGS_GENERATION_AVAILABLE and VECTORDB_AVAILABLE:
+            default_view = SEARCH_VIEW_EMBEDDINGS_CREATION
+        elif WEB_SEARCH_AVAILABLE:
+            default_view = SEARCH_VIEW_WEB_SEARCH
+        
+        initial_sub_tab = self.app_instance.search_active_sub_tab or default_view
         self.app_instance.search_active_sub_tab = initial_sub_tab  # Ensure it's set
         logger.debug(f"SearchWindow.on_mount: Initial active sub-tab set to {initial_sub_tab}")
 
@@ -167,7 +200,20 @@ class SearchWindow(Container):
                              classes="search-nav-button disabled")
 
         with Container(id="search-content-pane", classes="search-content-pane"):
-            yield Container(id=SEARCH_VIEW_RAG_QA, classes="search-view-area")
+            # Import and use the new SearchRAGWindow for RAG Q&A
+            try:
+                from .SearchRAGWindow import SearchRAGWindow
+                yield SearchRAGWindow(app_instance=self.app_instance, id=SEARCH_VIEW_RAG_QA)
+            except ImportError as e:
+                logger.warning(f"Could not import SearchRAGWindow: {e}")
+                # Create a placeholder container with a message
+                with Container(id=SEARCH_VIEW_RAG_QA, classes="search-view-area"):
+                    yield Static(
+                        "⚠️ RAG Search functionality is not available.\n\n"
+                        "To enable RAG search, install the required dependencies:\n"
+                        "pip install -e '.[embeddings_rag]'",
+                        classes="rag-unavailable-message"
+                    )
             yield Container(id=SEARCH_VIEW_RAG_CHAT, classes="search-view-area")
             yield Container(id=SEARCH_VIEW_RAG_MANAGEMENT, classes="search-view-area")
 
@@ -352,8 +398,8 @@ class SearchWindow(Container):
 
     async def _get_chroma_manager(self) -> "ChromaDBManager":
         """Get or create a ChromaDBManager instance using the app's configuration."""
-        if not VECTORDB_AVAILABLE:
-            raise RuntimeError("Vector-database functionality is disabled in this environment.")
+        if not VECTORDB_AVAILABLE or ChromaDBManager is None:
+            raise RuntimeError("Vector-database functionality is disabled due to missing dependencies. Install with: pip install tldw_chatbook[embeddings_rag]")
         if self._chroma_manager is None:
             logger.info("ChromaDBManager instance not found, creating a new one.")
             try:
@@ -762,7 +808,16 @@ class SearchWindow(Container):
         """Populates dropdowns and sets defaults for the Creation view."""
         logger.info("Initializing Embeddings Creation view.")
 
-        db_select = self.query_one("#creation-db-select", Select)
+        # Check if embeddings dependencies are available before accessing elements
+        if not (EMBEDDINGS_GENERATION_AVAILABLE and VECTORDB_AVAILABLE):
+            logger.warning("Embeddings dependencies not available, skipping initialization")
+            return
+
+        try:
+            db_select = self.query_one("#creation-db-select", Select)
+        except QueryError:
+            logger.error("creation-db-select element not found, dependencies may not be available")
+            return
         # Trigger its changed event handler to set dependent fields
         self.on_creation_db_select_changed(Select.Changed(db_select, str(db_select.value)))  # type: ignore
 
@@ -876,14 +931,27 @@ class SearchWindow(Container):
     async def _initialize_embeddings_management_view(self) -> None:
         """Populates dropdowns and sets defaults for the Management view."""
         logger.info("Initializing Embeddings Management view.")
-        # DB Source Select is static.
-        # Collection Select needs to be populated based on ChromaDB.
-        await self._refresh_mgmt_collections_list()
-        # Item select will be populated when a collection is chosen.
-        self.query_one("#mgmt-item-select", Select).set_options([])
-        self.query_one("#mgmt-item-select", Select).prompt = "Select Collection First"
-        await self.query_one("#mgmt-embedding-details-md", Markdown).update("Select a database source and collection.")
-        await self.query_one("#mgmt-status-output", Markdown).update("Ready for management tasks.")
+        
+        # Check if vector database dependencies are available before accessing elements
+        if not VECTORDB_AVAILABLE:
+            logger.warning("Vector database dependencies not available, skipping initialization")
+            return
+
+        try:
+            # DB Source Select is static.
+            # Collection Select needs to be populated based on ChromaDB.
+            await self._refresh_mgmt_collections_list()
+            # Item select will be populated when a collection is chosen.
+            try:
+                self.query_one("#mgmt-item-select", Select).set_options([])
+                self.query_one("#mgmt-item-select", Select).prompt = "Select Collection First"
+                await self.query_one("#mgmt-embedding-details-md", Markdown).update("Select a database source and collection.")
+                await self.query_one("#mgmt-status-output", Markdown).update("Ready for management tasks.")
+            except QueryError:
+                logger.warning("Some management view elements not found, continuing anyway")
+        except QueryError as e:
+            logger.error(f"Management view elements not found, dependencies may not be available: {e}")
+            return
 
     async def _refresh_collections_list(self) -> None:
         """Alias for _refresh_mgmt_collections_list for compatibility with main app."""
@@ -891,8 +959,17 @@ class SearchWindow(Container):
 
     async def _refresh_mgmt_collections_list(self) -> None:
         """Refreshes the list of ChromaDB collections in the management view."""
-        collection_select = self.query_one("#mgmt-collection-select", Select)
-        status_output = self.query_one("#mgmt-status-output", Markdown)
+        # Check if vector database dependencies are available
+        if not VECTORDB_AVAILABLE:
+            logger.warning("Vector database dependencies not available, skipping collection refresh")
+            return
+            
+        try:
+            collection_select = self.query_one("#mgmt-collection-select", Select)
+            status_output = self.query_one("#mgmt-status-output", Markdown)
+        except QueryError:
+            logger.warning("Management view elements not found, skipping collection refresh")
+            return
 
         await status_output.update("⏳ Loading collections from ChromaDB...")
         try:
@@ -1164,11 +1241,21 @@ class SearchWindow(Container):
             try:
                 if selection_mode == "all":
                     await update_status(
-                        f"⏳ Loading ALL items from Media DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)})...")
-                    # Use get_all_active_media_for_embedding to get items with content
-                    raw_media_items = await asyncio.to_thread(
-                        media_db_instance.get_all_active_media_for_embedding,
-                        limit=10000  # Large number to fetch "all"
+                        f"⏳ Loading items from Media DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)}) with pagination...")
+                    
+                    # Create a wrapper function for pagination that matches the expected signature
+                    def fetch_media_page(limit: int, offset: int) -> List[Dict[str, Any]]:
+                        return media_db_instance.get_all_active_media_for_embedding(limit=limit, offset=offset)
+                    
+                    # Use paginated fetch to avoid loading too many items at once
+                    async def status_updater(msg: str):
+                        await update_status(msg)
+                    
+                    raw_media_items = await paginated_fetch(
+                        fetch_func=fetch_media_page,
+                        page_size=200,  # Reasonable page size
+                        max_items=2000,  # Reasonable limit to prevent UI freezing
+                        status_callback=status_updater
                     )
 
 
@@ -1298,8 +1385,22 @@ class SearchWindow(Container):
             try:
                 if selection_mode == "all":
                     await update_status(
-                        f"⏳ Loading ALL conversations from Chat DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)})...")
-                    raw_conv_data = await asyncio.to_thread(chat_db.list_all_active_conversations, limit=10000)
+                        f"⏳ Loading conversations from Chat DB ({self.DB_DISPLAY_NAMES.get(db_type, db_type)}) with pagination...")
+                    
+                    # Create a wrapper function for pagination
+                    def fetch_conversations_page(limit: int, offset: int) -> List[Dict[str, Any]]:
+                        return chat_db.list_all_active_conversations(limit=limit, offset=offset)
+                    
+                    # Use paginated fetch
+                    async def status_updater(msg: str):
+                        await update_status(msg)
+                    
+                    raw_conv_data = await paginated_fetch(
+                        fetch_func=fetch_conversations_page,
+                        page_size=100,  # Reasonable page size for conversations
+                        max_items=1000,  # Reasonable limit to prevent UI freezing
+                        status_callback=status_updater
+                    )
 
                 elif selection_mode == "individual" and selected_item_db_ids:
                     await update_status(f"⏳ Loading {len(selected_item_db_ids)} selected conversation(s)...")
@@ -1315,6 +1416,18 @@ class SearchWindow(Container):
                     raw_conv_data = await asyncio.to_thread(chat_db.search_conversations_by_title, title_query=keyword,
                                                             limit=1000)
 
+                # Optimize: Batch fetch messages for all conversations to avoid N+1 queries
+                conversation_ids = [conv_item.get("id") for conv_item in raw_conv_data if conv_item.get("id")]
+                if conversation_ids:
+                    all_messages_by_conv = await asyncio.to_thread(
+                        chat_db.get_messages_for_conversations_batch, 
+                        conversation_ids=conversation_ids,
+                        limit_per_conversation=1000,
+                        order_by_timestamp="ASC"
+                    )
+                else:
+                    all_messages_by_conv = {}
+
                 for conv_item in raw_conv_data:
                     conv_id = conv_item.get("id")
                     if not conv_id:
@@ -1322,9 +1435,7 @@ class SearchWindow(Container):
                             f"Skipping conversation due to missing ID: {conv_item.get('title', 'Untitled Conversation')}")
                         continue
 
-                    messages = await asyncio.to_thread(chat_db.get_messages_for_conversation, conversation_id=conv_id,
-                                                       limit=1000,
-                                                       order_by_timestamp="ASC")  # Fetch a good number of messages
+                    messages = all_messages_by_conv.get(conv_id, [])
 
                     full_conv_content_parts = []
                     for msg in messages:

@@ -1,0 +1,58 @@
+{
+  "templates": {
+    "blank": {
+      "title": "New Note",
+      "content": "",
+      "keywords": "",
+      "description": "Empty note template"
+    },
+    "meeting": {
+      "title": "Meeting Notes - {date}",
+      "content": "## Meeting Notes\n\n**Date:** {date}\n**Time:** {time}\n**Attendees:** \n\n### Agenda\n- \n\n### Discussion Points\n- \n\n### Action Items\n- [ ] \n- [ ] \n\n### Next Steps\n- \n\n### Notes\n",
+      "keywords": "meeting, notes",
+      "description": "Template for meeting notes"
+    },
+    "daily": {
+      "title": "Daily Journal - {date}",
+      "content": "## Daily Journal - {date}\n\n### Today's Goals\n- [ ] \n- [ ] \n- [ ] \n\n### Accomplishments\n- \n\n### Challenges\n- \n\n### Tomorrow's Priorities\n- \n\n### Reflections\n",
+      "keywords": "journal, daily",
+      "description": "Daily journal entry template"
+    },
+    "project": {
+      "title": "Project: ",
+      "content": "## Project Overview\n\n**Project Name:** \n**Start Date:** {date}\n**Status:** Planning\n\n### Objectives\n- \n\n### Scope\n- \n\n### Timeline\n- \n\n### Resources Needed\n- \n\n### Risks\n- \n\n### Notes\n",
+      "keywords": "project, planning",
+      "description": "Project planning template"
+    },
+    "todo": {
+      "title": "Todo List - {date}",
+      "content": "## Todo List\n\n### High Priority\n- [ ] \n- [ ] \n\n### Medium Priority\n- [ ] \n- [ ] \n\n### Low Priority\n- [ ] \n- [ ] \n\n### Completed\n- [x] \n\n### Notes\n",
+      "keywords": "todo, tasks",
+      "description": "Todo list template"
+    },
+    "brainstorm": {
+      "title": "Brainstorming Session - {date}",
+      "content": "## Brainstorming Session\n\n**Topic:** \n**Date:** {date}\n\n### Ideas\n- \n- \n- \n\n### Concepts to Explore\n- \n\n### Connections\n- \n\n### Next Actions\n- \n\n### Resources\n- \n",
+      "keywords": "brainstorming, ideas",
+      "description": "Brainstorming session template"
+    },
+    "research": {
+      "title": "Research Notes - ",
+      "content": "## Research Notes\n\n**Topic:** \n**Date Started:** {date}\n\n### Research Question\n- \n\n### Key Findings\n- \n\n### Sources\n1. \n2. \n\n### Quotes\n> \n\n### Analysis\n- \n\n### Conclusions\n- \n\n### Further Reading\n- \n",
+      "keywords": "research, notes",
+      "description": "Research notes template"
+    },
+    "code_review": {
+      "title": "Code Review - {date}",
+      "content": "## Code Review\n\n**Date:** {date}\n**Time:** {time}\n**Repository/PR:** \n**Author:** \n\n### Summary\n- \n\n### Issues Found\n- [ ] \n- [ ] \n\n### Suggestions\n- \n\n### Good Practices Observed\n- \n\n### Overall Assessment\n",
+      "keywords": "code review, development",
+      "description": "Code review template"
+    },
+    "bug_report": {
+      "title": "Bug Report - {date}",
+      "content": "## Bug Report\n\n**Date:** {date}\n**Reporter:** \n**Severity:** High/Medium/Low\n\n### Description\n\n### Steps to Reproduce\n1. \n2. \n3. \n\n### Expected Behavior\n\n### Actual Behavior\n\n### Environment\n- OS: \n- Version: \n- Browser: \n\n### Screenshots/Logs\n\n### Additional Notes\n",
+      "keywords": "bug, issue, development",
+      "description": "Bug report template"
+    }
+  }
+}

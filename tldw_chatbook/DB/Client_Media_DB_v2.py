@@ -47,6 +47,7 @@ from loguru import logger
 #
 # Local Imports
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from .sql_validation import validate_table_name, validate_column_name
 #
 ########################################################################################################################
 #
@@ -812,6 +813,12 @@ class MediaDatabase:
         Raises:
             DatabaseError: If the database query fails.
         """
+        # Validate SQL identifiers to prevent injection
+        if not validate_table_name(table, 'media'):
+            raise InputError(f"Invalid table name: {table}")
+        if not validate_column_name(id_col, table):
+            raise InputError(f"Invalid column name: {id_col}")
+            
         try:
             cursor = conn.execute(f"SELECT version FROM {table} WHERE {id_col} = ? AND deleted = 0", (id_val,))
             result = cursor.fetchone()
@@ -1791,6 +1798,14 @@ class MediaDatabase:
                     child_tables = [("Transcripts", "media_id", "uuid"), ("MediaChunks", "media_id", "uuid"),
                                     ("UnvectorizedMediaChunks", "media_id", "uuid"), ("DocumentVersions", "media_id", "uuid")]
                     for table, fk_col, uuid_col in child_tables:
+                        # Validate SQL identifiers to prevent injection
+                        if not validate_table_name(table, 'media'):
+                            raise InputError(f"Invalid table name: {table}")
+                        if not validate_column_name(fk_col, table):
+                            raise InputError(f"Invalid column name: {fk_col}")
+                        if not validate_column_name(uuid_col, table):
+                            raise InputError(f"Invalid column name: {uuid_col}")
+                            
                         cursor.execute(f"SELECT id, {uuid_col} AS uuid, version FROM {table} WHERE {fk_col} = ? AND deleted = 0", (media_id,))
                         children = cursor.fetchall()
                         if not children:
@@ -4111,7 +4126,8 @@ def check_database_integrity(db_path): # Standalone check is fine
         if conn:
             try:
                 conn.close()
-            except:
+            except sqlite3.Error:
+                # Ignore connection close errors - connection may already be closed
                 pass
 
 

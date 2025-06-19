@@ -50,6 +50,7 @@ from loguru import logger
 # Third-Party Libraries
 #
 # Local Imports
+from .sql_validation import validate_table_name, validate_column_name  
 #
 ########################################################################################################################
 #
@@ -125,7 +126,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 4 # Incremented schema version
+    _CURRENT_SCHEMA_VERSION = 5 # Incremented schema version for sync support
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
 
     _FULL_SCHEMA_SQL_V4 = """
@@ -878,6 +879,36 @@ UPDATE db_schema_version
    AND version < 4;
 """
 
+    _MIGRATE_V4_TO_V5_SQL = """
+/*───────────────────────────────────────────────────────────────
+  Migration from V4 to V5: Add sync support columns
+───────────────────────────────────────────────────────────────*/
+-- Add sync-related columns to notes table (without UNIQUE constraint)
+ALTER TABLE notes ADD COLUMN file_path_on_disk TEXT;
+ALTER TABLE notes ADD COLUMN relative_file_path_on_disk TEXT;
+ALTER TABLE notes ADD COLUMN sync_root_folder TEXT;
+ALTER TABLE notes ADD COLUMN last_synced_disk_file_hash TEXT;
+ALTER TABLE notes ADD COLUMN last_synced_disk_file_mtime REAL;
+ALTER TABLE notes ADD COLUMN is_externally_synced BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE notes ADD COLUMN sync_strategy TEXT;
+ALTER TABLE notes ADD COLUMN sync_excluded BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE notes ADD COLUMN file_extension TEXT DEFAULT '.md';
+
+-- Create indexes for sync operations
+CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path_on_disk) WHERE file_path_on_disk IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_notes_sync_root ON notes(sync_root_folder) WHERE sync_root_folder IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_notes_is_synced ON notes(is_externally_synced) WHERE is_externally_synced = 1;
+
+-- Create a unique index instead of UNIQUE constraint
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_file_path_unique ON notes(file_path_on_disk) WHERE file_path_on_disk IS NOT NULL;
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 5
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 4;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str):
         """
         Initializes the CharactersRAGDB instance.
@@ -956,7 +987,8 @@ UPDATE db_schema_version
                     f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening.")
                 try:
                     conn.close()
-                except Exception:
+                except sqlite3.Error:
+                    # Ignore connection close errors - connection may already be closed
                     pass
                 conn = None
 
@@ -1231,11 +1263,11 @@ UPDATE db_schema_version
 
     def _apply_schema_v4(self, conn: sqlite3.Connection):
         """
-        Applies the full SQL schema for version `_CURRENT_SCHEMA_VERSION` (V4).
+        Applies the full SQL schema for version 4.
 
         This method executes the `_FULL_SCHEMA_SQL_V4` script, which defines
         all tables, FTS tables, triggers, and updates the schema version record in
-        `db_schema_version` to `_CURRENT_SCHEMA_VERSION`.
+        `db_schema_version` to 4.
 
         Args:
             conn: The active sqlite3.Connection. The operations are performed
@@ -1243,27 +1275,62 @@ UPDATE db_schema_version
 
         Raises:
             SchemaError: If the schema script execution fails or the version
-                         is not correctly updated to `_CURRENT_SCHEMA_VERSION` in `db_schema_version`.
+                         is not correctly updated to 4 in `db_schema_version`.
         """
-        logger.info(f"Applying schema Version {self._CURRENT_SCHEMA_VERSION} for '{self._SCHEMA_NAME}' to DB: {self.db_path_str}...")
+        logger.info(f"Applying schema Version 4 for '{self._SCHEMA_NAME}' to DB: {self.db_path_str}...")
         try:
             # Using conn.executescript directly as it manages its own transaction
             conn.executescript(self._FULL_SCHEMA_SQL_V4)
-            logger.debug(f"[{self._SCHEMA_NAME} V{self._CURRENT_SCHEMA_VERSION}] Full schema script executed.")
+            logger.debug(f"[{self._SCHEMA_NAME} V4] Full schema script executed.")
 
             final_version = self._get_db_version(conn)
-            if final_version != self._CURRENT_SCHEMA_VERSION:
+            if final_version != 4:
                 raise SchemaError(
-                    f"[{self._SCHEMA_NAME} V{self._CURRENT_SCHEMA_VERSION}] Schema version update check failed. Expected {self._CURRENT_SCHEMA_VERSION}, got: {final_version}")
-            logger.info(f"[{self._SCHEMA_NAME} V{self._CURRENT_SCHEMA_VERSION}] Schema {self._CURRENT_SCHEMA_VERSION} applied and version confirmed for DB: {self.db_path_str}.")
+                    f"[{self._SCHEMA_NAME} V4] Schema version update check failed. Expected 4, got: {final_version}")
+            logger.info(f"[{self._SCHEMA_NAME} V4] Schema 4 applied and version confirmed for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V{self._CURRENT_SCHEMA_VERSION}] Schema application failed: {e}", exc_info=True)
-            raise SchemaError(f"DB schema V{self._CURRENT_SCHEMA_VERSION} setup failed for '{self._SCHEMA_NAME}': {e}") from e
+            logger.error(f"[{self._SCHEMA_NAME} V4] Schema application failed: {e}", exc_info=True)
+            raise SchemaError(f"DB schema V4 setup failed for '{self._SCHEMA_NAME}': {e}") from e
         except SchemaError:
             raise
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V{self._CURRENT_SCHEMA_VERSION}] Unexpected error during schema V{self._CURRENT_SCHEMA_VERSION} application: {e}", exc_info=True)
-            raise SchemaError(f"Unexpected error applying schema V{self._CURRENT_SCHEMA_VERSION} for '{self._SCHEMA_NAME}': {e}") from e
+            logger.error(f"[{self._SCHEMA_NAME} V4] Unexpected error during schema V4 application: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error applying schema V4 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v4_to_v5(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 4 to version 5.
+
+        This migration adds sync-related columns to the notes table to support
+        bi-directional file synchronization.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 5 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V4 to V5 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V4_TO_V5_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V4→V5] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 5:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V4→V5] Migration version check failed. Expected 5, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V4→V5] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V4→V5] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V4 to V5 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V4 to V5 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _initialize_schema(self):
         """
@@ -1302,16 +1369,14 @@ UPDATE db_schema_version
                         f"Database schema '{self._SCHEMA_NAME}' version ({current_db_version}) is newer than supported by code ({target_version}). Aborting.")
 
                 if current_db_version == 0:
-                    self._apply_schema_v4(conn) # This will apply version _CURRENT_SCHEMA_VERSION
-                # Example for future migrations:
-                # elif current_db_version == 1:
-                #     self._migrate_from_v1_to_v2(conn)
-                #     current_db_version = self._get_db_version(conn) # Refresh version
-                #     if current_db_version == 2 and target_version > 2: # Continue if more migrations needed
-                #         self._migrate_from_v2_to_v3(conn)
-                #         # ...and so on
+                    self._apply_schema_v4(conn) # This will apply version 4
+                    current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 4 and target_version > 4:
+                        self._migrate_from_v4_to_v5(conn)
+                elif current_db_version == 4 and target_version == 5:
+                    self._migrate_from_v4_to_v5(conn)
                 elif current_initial_version < target_version: # An older schema exists
-                    # Current simple logic: if not 0 and not target, and older, it's an unhandled migration.
+                    # For versions older than 4, we don't have a migration path
                     raise SchemaError(
                         f"Migration path undefined for '{self._SCHEMA_NAME}' from version {current_initial_version} to {target_version}. "
                         f"Manual migration or a new database may be required.")
@@ -1373,6 +1438,12 @@ UPDATE db_schema_version
             ConflictError: If the record is not found (with `entity` and `entity_id` attributes
                            set in the exception) or if the record is found but is soft-deleted.
         """
+        # Validate SQL identifiers to prevent injection
+        if not validate_table_name(table_name, 'chachanotes'):
+            raise ValueError(f"Invalid table name: {table_name}")
+        if not validate_column_name(pk_col_name, table_name):
+            raise ValueError(f"Invalid column name: {pk_col_name}")
+            
         cursor = conn.execute(f"SELECT version, deleted FROM {table_name} WHERE {pk_col_name} = ?", (pk_value,))
         row = cursor.fetchone()
 
@@ -2368,6 +2439,56 @@ UPDATE db_schema_version
             logger.error(f"Error searching conversations for title '{safe_search_term}': {e}")
             raise
 
+    def search_conversations_by_content(self, search_query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Searches conversations by message content using FTS.
+        
+        Searches the messages table for content matching the query,
+        then returns the unique conversations containing those messages.
+        
+        Args:
+            search_query: The search term for content. Supports FTS query syntax.
+            limit: Maximum number of conversations to return. Defaults to 10.
+            
+        Returns:
+            A list of matching conversation dictionaries with relevance scores.
+            
+        Raises:
+            CharactersRAGDBError: For database search errors.
+        """
+        if not search_query.strip():
+            logger.warning("Empty search_query provided for conversation content search. Returning empty list.")
+            return []
+            
+        # Search for messages containing the query, then get their conversations
+        query = """
+            SELECT DISTINCT c.*, 
+                   COUNT(m.id) as message_count,
+                   MIN(rank) as best_rank
+            FROM messages_fts fts
+            JOIN messages m ON fts.rowid = m.rowid
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE fts.messages_fts MATCH ?
+              AND m.deleted = 0
+              AND c.deleted = 0
+            GROUP BY c.id
+            ORDER BY best_rank
+            LIMIT ?
+        """
+        
+        try:
+            cursor = self.execute_query(query, (search_query, limit))
+            results = []
+            for row in cursor.fetchall():
+                conv_dict = dict(row)
+                # Add a relevance score based on rank (lower rank = better match)
+                conv_dict['relevance_score'] = 1.0 / (1.0 + abs(conv_dict.get('best_rank', 0)))
+                results.append(conv_dict)
+            return results
+        except CharactersRAGDBError as e:
+            logger.error(f"Error searching conversations by content '{search_query}': {e}")
+            raise
+
     # --- Message Methods ---
     def add_message(self, msg_data: Dict[str, Any]) -> Optional[str]:
         """
@@ -2503,6 +2624,67 @@ UPDATE db_schema_version
             return [dict(row) for row in cursor.fetchall()]
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching messages for conversation ID {conversation_id}: {e}")
+            raise
+
+    def get_messages_for_conversations_batch(self, conversation_ids: List[str], limit_per_conversation: int = 100,
+                                           order_by_timestamp: str = "ASC") -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Batch fetch messages for multiple conversations to avoid N+1 queries.
+        
+        Args:
+            conversation_ids: List of conversation IDs to fetch messages for
+            limit_per_conversation: Maximum messages per conversation
+            order_by_timestamp: Order by timestamp ASC or DESC
+            
+        Returns:
+            Dictionary mapping conversation_id to list of messages
+        """
+        if not conversation_ids:
+            return {}
+            
+        if order_by_timestamp.upper() not in ["ASC", "DESC"]:
+            raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
+        
+        # Use ROW_NUMBER() window function to limit messages per conversation
+        placeholders = ','.join('?' * len(conversation_ids))
+        query = f"""
+            WITH ranked_messages AS (
+                SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
+                       m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
+                       m.last_modified, m.version, m.client_id, m.deleted,
+                       ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
+                FROM messages m
+                JOIN conversations c ON m.conversation_id = c.id
+                WHERE m.conversation_id IN ({placeholders})
+                  AND m.deleted = 0
+                  AND c.deleted = 0
+            )
+            SELECT * FROM ranked_messages 
+            WHERE row_num <= ?
+            ORDER BY conversation_id, timestamp {order_by_timestamp}
+        """
+        
+        try:
+            cursor = self.execute_query(query, tuple(conversation_ids) + (limit_per_conversation,))
+            all_messages = [dict(row) for row in cursor.fetchall()]
+            
+            # Group messages by conversation_id
+            result = {}
+            for message in all_messages:
+                conv_id = message['conversation_id']
+                if conv_id not in result:
+                    result[conv_id] = []
+                result[conv_id].append(message)
+            
+            # Ensure all requested conversation IDs are in the result (even if empty)
+            for conv_id in conversation_ids:
+                if conv_id not in result:
+                    result[conv_id] = []
+                    
+            return result
+            
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error fetching messages for conversations: {e}")
             raise
 
     def update_message(self, message_id: str, update_data: Dict[str, Any], expected_version: int) -> bool | None:

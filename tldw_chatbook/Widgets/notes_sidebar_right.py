@@ -57,18 +57,18 @@ class NotesSidebarRight(VerticalScroll):
 
         yield Static("Keywords:", classes="sidebar-label")
         yield TextArea("", id="notes-keywords-area", classes="notes-keywords-textarea")
-        yield Button("Save Note (from Editor)", id="notes-save-current-button",
-                     variant="success")  # Or "Save Active Note"
-        yield Button("Save Keywords", id="notes-save-keywords-button", variant="primary")
+        yield Button("Save All Changes", id="notes-save-current-button",
+                     variant="success")  # Saves both note content and keywords
 
         # New Collapsible for Emojis
         with Collapsible(title="Emojis", collapsed=True):
-            #yield EmojiPicker(id="notes-emoji-picker")
-            pass  # Placeholder for EmojiPicker widget
+            yield Button("Open Emoji Picker 🎨", id="notes-sidebar-emoji-button")
 
         # Group export options
         with Collapsible(title="Export Options", collapsed=True):
             yield Button("Export as Markdown", id="notes-export-markdown-button")
             yield Button("Export as Text", id="notes-export-text-button")
+            yield Button("Copy as Markdown", id="notes-copy-markdown-button")
+            yield Button("Copy as Text", id="notes-copy-text-button")
         with Collapsible(title="Delete Note", collapsed=True):
             yield Button("Delete Selected Note", id="notes-delete-button", variant="error")

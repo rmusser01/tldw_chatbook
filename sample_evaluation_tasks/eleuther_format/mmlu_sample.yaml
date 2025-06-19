@@ -1,0 +1,60 @@
+# MMLU Sample Task - Eleuther AI Format
+# Multiple choice questions from the Massive Multitask Language Understanding benchmark
+# Format: https://github.com/EleutherAI/lm-evaluation-harness
+
+task: mmlu_sample_abstract_algebra
+dataset_name: cais/mmlu
+dataset_config_name: abstract_algebra
+test_split: test
+fewshot_split: dev
+num_fewshot: 5
+output_type: multiple_choice
+metric_list:
+  - acc
+
+# Template for formatting questions
+doc_to_text: |
+  {{question}}
+  A. {{choices[0]}}
+  B. {{choices[1]}}
+  C. {{choices[2]}}
+  D. {{choices[3]}}
+  Answer:
+
+doc_to_target: "{{answer}}"
+
+# Few-shot example formatting
+fewshot_delimiter: "\n\n"
+
+# Generation parameters
+generation_kwargs:
+  temperature: 0.0
+  max_tokens: 1
+  top_p: 1.0
+
+# Post-processing filters
+filter_list:
+  - filter: "regex"
+    regex_pattern: "([ABCD])"
+    group: 1
+
+# Task metadata
+metadata:
+  description: "Multiple choice questions testing knowledge of abstract algebra"
+  category: "mathematics"
+  difficulty: "undergraduate"
+  language: "en"
+  domain: "academic"
+  task_type: "knowledge_retrieval"
+  evaluation_time: "fast"
+  
+# Evaluation settings
+batch_size: 32
+limit: null  # No limit on number of samples
+bootstrap_iters: 100000
+
+# Model requirements
+model_requirements:
+  min_context_length: 2048
+  supports_logprobs: false
+  supports_chat_format: true

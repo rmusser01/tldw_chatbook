@@ -65,60 +65,66 @@ class LLMManagementWindow(Container):
 
         with Container(id="llm-content-pane", classes="llm-content-pane"):
             with Container(id="llm-view-llama-cpp", classes="llm-view-area"):
-                yield Label("Executable Path:", classes="label")
-                with Container(classes="input_container"):
-                    yield Input(id="llamacpp-exec-path", placeholder="/path/to/llama.cpp/server")
-                    yield Button("Browse", id="llamacpp-browse-exec-button", classes="browse_button")
-                yield Label("Model Path:", classes="label")
-                with Container(classes="input_container"):
-                    yield Input(id="llamacpp-model-path", placeholder="/path/to/model.gguf")
-                    yield Button("Browse", id="llamacpp-browse-model-button", classes="browse_button")
-                yield Label("Host:", classes="label")
-                yield Input(id="llamacpp-host", value="127.0.0.1")
-                yield Label("Port:", classes="label")
-                yield Input(id="llamacpp-port", value="8001")
-                yield Label("Additional Arguments:", classes="label")
-                yield Input(id="llamacpp-additional-args", placeholder="e.g., --n-gpu-layers 1")
-                with Collapsible(title="Common Llama.cpp Server Arguments", collapsed=True,
-                                 id="llamacpp-args-help-collapsible"):
-                    # RichLog for scrollable, formatted help text
-                    yield RichLog(
-                        id="llamacpp-args-help-display",
-                        markup=True,
-                        highlight=False,  # No syntax highlighting needed for this help text
-                        classes="help-text-display"  # Add a class for styling
-                    )
-                with Container(classes="button_container"):
-                    yield Button("Start Server", id="llamacpp-start-server-button", classes="action_button")
-                    yield Button("Stop Server", id="llamacpp-stop-server-button", classes="action_button")
-                yield RichLog(id="llamacpp-log-output", classes="log_output", wrap=True, highlight=True)
+                with VerticalScroll():
+                    yield Label("🦙 Llama.cpp Configuration", classes="section-title")
+                    yield Label("Launch a llama.cpp server instance with a GGUF model", classes="description")
+                    yield Label("Llama.cpp Server Executable Path:", classes="label")
+                    with Container(classes="input_container"):
+                        yield Input(id="llamacpp-exec-path", placeholder="/path/to/llama.cpp/build/bin/server")
+                        yield Button("Browse", id="llamacpp-browse-exec-button", classes="browse_button")
+                    yield Label("GGUF Model File Path:", classes="label")
+                    with Container(classes="input_container"):
+                        yield Input(id="llamacpp-model-path", placeholder="/path/to/model.gguf")
+                        yield Button("Browse", id="llamacpp-browse-model-button", classes="browse_button")
+                    yield Label("Host:", classes="label")
+                    yield Input(id="llamacpp-host", value="127.0.0.1")
+                    yield Label("Port (default 8001):", classes="label")
+                    yield Input(id="llamacpp-port", value="8001")
+                    yield Label("Additional Arguments (single line):", classes="label")
+                    yield Input(id="llamacpp-additional-args", placeholder="e.g., --n-gpu-layers 1 --threads 4")
+                    with Collapsible(title="Common Llama.cpp Server Arguments", collapsed=True,
+                                     id="llamacpp-args-help-collapsible"):
+                        # RichLog for scrollable, formatted help text
+                        yield RichLog(
+                            id="llamacpp-args-help-display",
+                            markup=True,
+                            highlight=False,  # No syntax highlighting needed for this help text
+                            classes="help-text-display"  # Add a class for styling
+                        )
+                    with Container(classes="button_container"):
+                        yield Button("Start Server", id="llamacpp-start-server-button", classes="action_button")
+                        yield Button("Stop Server", id="llamacpp-stop-server-button", classes="action_button")
+                    yield RichLog(id="llamacpp-log-output", classes="log_output", wrap=True, highlight=True)
             with Container(id="llm-view-llamafile", classes="llm-view-area"):
-                yield Label("Llamafile Executable Path:", classes="label")
-                with Container(classes="input_container"):
-                    yield Input(id="llamafile-exec-path", placeholder="/path/to/llamafile_executable")
-                    yield Button("Browse", id="llamafile-browse-exec-button", classes="browse_button")
-                yield Label("Llamafile Model Path:", classes="label")
-                with Container(classes="input_container"):
-                    yield Input(id="llamafile-model-path", placeholder="/path/to/model.gguf")
-                    yield Button("Browse", id="llamafile-browse-model-button", classes="browse_button")
-                yield Label("Host:", classes="label")
-                yield Input(id="llamafile-host", value="127.0.0.1")
-                yield Label("Port:", classes="label")
-                yield Input(id="llamafile-port", value="8000")
-                yield Label("Additional Arguments:", classes="label")
-                yield TextArea(id="llamafile-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark") # Ensure TextArea is imported
-                with Collapsible(title="Common Llamafile Arguments", collapsed=True,
-                                 id="llamafile-args-help-collapsible"):
-                    yield RichLog(
-                        id="llamafile-args-help-display",
-                        markup=True,
-                        highlight=False,
-                        classes="help-text-display"
-                    )
-                with Container(classes="button_container"):
-                    yield Button("Start Server", id="llamafile-start-server-button", classes="action_button")
-                    yield Button("Stop Server", id="llamafile-stop-server-button", classes="action_button")
-                yield RichLog(id="llamafile-log-output", classes="log_output", wrap=True, highlight=True)
+                with VerticalScroll():
+                    yield Label("📁 Llamafile Configuration", classes="section-title")
+                    yield Label("Run a self-contained llamafile executable (model included)", classes="description")
+                    yield Label("Llamafile Executable (.llamafile):", classes="label")
+                    with Container(classes="input_container"):
+                        yield Input(id="llamafile-exec-path", placeholder="/path/to/model.llamafile")
+                        yield Button("Browse", id="llamafile-browse-exec-button", classes="browse_button")
+                    yield Label("Optional External Model (GGUF):", classes="label")
+                    with Container(classes="input_container"):
+                        yield Input(id="llamafile-model-path", placeholder="/path/to/external-model.gguf (optional)")
+                        yield Button("Browse", id="llamafile-browse-model-button", classes="browse_button")
+                    yield Label("Host:", classes="label")
+                    yield Input(id="llamafile-host", value="127.0.0.1")
+                    yield Label("Port (default 8000):", classes="label")
+                    yield Input(id="llamafile-port", value="8000")
+                    yield Label("Additional Arguments (multi-line):", classes="label")
+                    yield TextArea(id="llamafile-additional-args", classes="additional_args_textarea", theme="vscode_dark") # Ensure TextArea is imported
+                    with Collapsible(title="Common Llamafile Arguments", collapsed=True,
+                                     id="llamafile-args-help-collapsible"):
+                        yield RichLog(
+                            id="llamafile-args-help-display",
+                            markup=True,
+                            highlight=False,
+                            classes="help-text-display"
+                        )
+                    with Container(classes="button_container"):
+                        yield Button("Start Server", id="llamafile-start-server-button", classes="action_button")
+                        yield Button("Stop Server", id="llamafile-stop-server-button", classes="action_button")
+                    yield RichLog(id="llamafile-log-output", classes="log_output", wrap=True, highlight=True)
             with Container(id="llm-view-vllm", classes="llm-view-area"):
                 yield Label("Python Interpreter Path:", classes="label")
                 with Container(classes="input_container"):
@@ -133,7 +139,7 @@ class LLMManagementWindow(Container):
                 yield Label("Port:", classes="label")
                 yield Input(id="vllm-port", value="8000")
                 yield Label("Additional Arguments:", classes="label")
-                yield TextArea(id="vllm-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark") # Ensure TextArea is imported
+                yield TextArea(id="vllm-additional-args", classes="additional_args_textarea", theme="vscode_dark") # Ensure TextArea is imported
                 # Add a similar Collapsible RichLog for vLLM args here
                 # with Collapsible(title="Common vLLM Arguments", collapsed=True):
                 #     yield RichLog(id="vllm-args-help-display", markup=True, classes="help-text-display")
@@ -160,7 +166,7 @@ class LLMManagementWindow(Container):
                     yield Label("Port:", classes="label")
                     yield Input(id="onnx-port", value="8004", classes="input_field")
                     yield Label("Additional Script Arguments:", classes="label")
-                    yield TextArea(id="onnx-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark")
+                    yield TextArea(id="onnx-additional-args", classes="additional_args_textarea", theme="vscode_dark")
                     with Container(classes="button_container"):
                         yield Button("Start ONNX Server", id="onnx-start-server-button", classes="action_button")
                         yield Button("Stop ONNX Server", id="onnx-stop-server-button", classes="action_button")
@@ -205,7 +211,7 @@ class LLMManagementWindow(Container):
                     yield Label("Port:", classes="label")
                     yield Input(id="transformers-server-port", value="8003") # Example port
                     yield Label("Additional Script Arguments:", classes="label")
-                    yield TextArea(id="transformers-server-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark")
+                    yield TextArea(id="transformers-server-additional-args", classes="additional_args_textarea", theme="vscode_dark")
                     yield Button("Start Transformers Server", id="transformers-start-server-button", classes="action_button")
                     yield Button("Stop Transformers Server", id="transformers-stop-server-button", classes="action_button")
 
@@ -240,7 +246,7 @@ class LLMManagementWindow(Container):
                             classes="help-text-display"
                         )
                     yield Label("Additional Server Arguments:", classes="label")
-                    yield TextArea(id="mlx-additional-args", classes="additional_args_textarea", language="bash", theme="vscode_dark")
+                    yield TextArea(id="mlx-additional-args", classes="additional_args_textarea", theme="vscode_dark")
                     with Container(classes="button_container"):
                         yield Button("Start MLX Server", id="mlx-start-server-button", classes="action_button")
                         yield Button("Stop MLX Server", id="mlx-stop-server-button", classes="action_button")

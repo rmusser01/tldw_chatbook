@@ -7,11 +7,12 @@ from typing import TYPE_CHECKING, Optional # Added Optional
 # 3rd-Party Imports
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.widgets import Button, TextArea, Static
+from textual.widgets import Button, TextArea, Static, Label
 #
 # Local Imports
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
+from ..Widgets.notes_sync_widget import NotesSyncWidget
 # Import EmojiSelected and EmojiPickerScreen
 from ..Widgets.emoji_picker import EmojiSelected, EmojiPickerScreen
 # from ..Constants import TAB_NOTES # Not strictly needed if IDs are hardcoded here
@@ -27,6 +28,43 @@ class NotesWindow(Container):
     """
     Container for the Notes Tab's UI.
     """
+    
+    DEFAULT_CSS = """
+    NotesWindow {
+        height: 100%;
+    }
+    
+    #notes-controls-area {
+        height: 3;
+        align: center middle;
+        overflow-x: auto;
+    }
+    
+    .unsaved-indicator {
+        color: $warning;
+        text-style: bold;
+        margin: 0 1;
+    }
+    
+    .unsaved-indicator.has-unsaved {
+        color: $error;
+    }
+    
+    .word-count {
+        color: $text-muted;
+        margin: 0 1;
+    }
+    
+    #notes-preview-toggle {
+        margin: 0 1;
+    }
+    
+    .compact-button {
+        width: 3;
+        min-width: 3;
+        padding: 0;
+    }
+    """
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance # Not strictly used in compose below, but good practice if needed later
@@ -38,12 +76,11 @@ class NotesWindow(Container):
             yield TextArea(id="notes-editor-area", classes="notes-editor")
             with Horizontal(id="notes-controls-area"):
                 yield Button("☰ L", id="toggle-notes-sidebar-left", classes="sidebar-toggle")
-                yield Static()  # Spacer
-                # Temporarily simplified button for testing:
-                yield Button("E", id="open-emoji-picker-button")
-                yield Static() # Spacer, ensure it's between emoji and save
+                yield Button("😊", id="open-emoji-picker-button", tooltip="Insert Emoji", classes="compact-button")
+                yield Label("", id="notes-unsaved-indicator", classes="unsaved-indicator")
                 yield Button("Save Note", id="notes-save-button", variant="primary")
-                yield Static()  # Spacer
+                yield Button("Preview", id="notes-preview-toggle", variant="default")
+                yield Button("Sync 🔄", id="notes-sync-button", variant="default")
                 yield Button("R ☰", id="toggle-notes-sidebar-right", classes="sidebar-toggle")
 
         yield NotesSidebarRight(id="notes-sidebar-right")
@@ -60,6 +97,10 @@ class NotesWindow(Container):
         if event.button.id == "open-emoji-picker-button":
             # Use a unique ID for the picker if needed, e.g., "notes-modal-emoji-picker"
             self.app.push_screen(EmojiPickerScreen(id="notes_emoji_modal_picker"), self._handle_emoji_picker_result)
+            event.stop()
+        elif event.button.id == "notes-sync-button":
+            # Push the sync widget as a modal screen
+            self.app.push_screen(NotesSyncWidget(self.app_instance))
             event.stop()
         # Add other button ID checks here if necessary for this window's specific buttons.
         # For example, the sidebar toggles are often handled at the app level via actions,

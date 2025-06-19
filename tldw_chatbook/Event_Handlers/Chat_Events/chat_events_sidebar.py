@@ -77,7 +77,7 @@ async def perform_media_sidebar_search(app: 'TldwCli', search_term: str = ""):
         search_fields = ['title', 'content', 'author', 'keywords', 'notes']
         media_types_filter = None
 
-        media_items = app.media_db.search_media_db(
+        media_items, total_count = app.media_db.search_media_db(
             search_query=search_term,
             search_fields=search_fields,
             media_types=media_types_filter,
@@ -86,6 +86,8 @@ async def perform_media_sidebar_search(app: 'TldwCli', search_term: str = ""):
             page=1,
             results_per_page=50
         )
+        
+        loguru_logger.debug(f"Search returned {len(media_items) if media_items else 0} items")
 
         if not media_items:
             # FIX: Await the async append method.

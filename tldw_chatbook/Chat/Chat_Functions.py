@@ -21,6 +21,7 @@ import os
 import random
 import re
 import tempfile
+from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 import warnings
 from datetime import datetime, timedelta
@@ -46,6 +47,7 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_aphrodite, cha
     chat_with_kobold, chat_with_llama, chat_with_oobabooga, chat_with_tabbyapi, chat_with_vllm, chat_with_custom_openai, \
     chat_with_custom_openai_2, chat_with_mlx_lm
 from tldw_chatbook.Utils.Utils import generate_unique_filename, logging
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.config import load_settings
 #
@@ -863,8 +865,11 @@ def chat(
                         elif image_history_mode == "tag_past":
                             mime_type_part = "image"
                             if image_url_data.startswith("data:image/") and ";base64," in image_url_data:
-                                try: mime_type_part = image_url_data.split(';base64,')[0].split('/')[-1]
-                                except: pass
+                                try: 
+                                    mime_type_part = image_url_data.split(';base64,')[0].split('/')[-1]
+                                except (IndexError, ValueError) as e:
+                                    logger.debug(f"Failed to parse image MIME type from data URL: {e}")
+                                    # mime_type_part remains "image"
                             processed_hist_content_parts.append({"type": "text", "text": f"<image: prior_history.{mime_type_part}>"})
                         # "ignore_past": do nothing, image part is skipped
 
@@ -1385,17 +1390,20 @@ def save_chat_history(
         safe_conversation_name = re.sub(r'[^a-zA-Z0-9_-]', '_', conversation_name)
         base_filename = f"{safe_conversation_name}_{timestamp}.json"
 
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as temp_file:
-            temp_file.write(content)
-            temp_file_path = temp_file.name
+        # Create a secure temporary file
+        temp_file_path = create_secure_temp_file(content, suffix='.json', prefix='chat_export_')
 
-        # Generate a unique filename
-        unique_filename = generate_unique_filename(os.path.dirname(temp_file_path), base_filename)
-        final_path = os.path.join(os.path.dirname(temp_file_path), unique_filename)
+        try:
+            # Generate a unique filename
+            unique_filename = generate_unique_filename(os.path.dirname(temp_file_path), base_filename)
+            final_path = os.path.join(os.path.dirname(temp_file_path), unique_filename)
 
-        # Rename the temporary file to the unique filename
-        os.rename(temp_file_path, final_path)
+            # Rename the temporary file to the unique filename
+            os.rename(temp_file_path, final_path)
+        except Exception:
+            # Clean up temp file if renaming fails
+            secure_delete_file(temp_file_path)
+            raise
 
         save_duration = time.time() - start_time
         log_histogram("save_chat_history_duration", save_duration)
@@ -1704,7 +1712,7 @@ def update_chat_content(
 #
 # Chat Dictionary Functions
 
-def parse_user_dict_markdown_file(file_path: str) -> Dict[str, str]:
+def parse_user_dict_markdown_file(file_path: str, base_directory: Optional[str] = None) -> Dict[str, str]:
     """
     Parses a user-defined dictionary from a markdown-like file.
 
@@ -1724,6 +1732,8 @@ def parse_user_dict_markdown_file(file_path: str) -> Dict[str, str]:
 
     Args:
         file_path: The path to the markdown dictionary file.
+        base_directory: Optional base directory to restrict file access to. If None, 
+                       uses the config directory or current working directory.
 
     Returns:
         A dictionary where keys are strings and values are the corresponding
@@ -1731,6 +1741,19 @@ def parse_user_dict_markdown_file(file_path: str) -> Dict[str, str]:
         or an error occurs during parsing.
     """
     logger.debug(f"Parsing user dictionary file: {file_path}")
+    
+    # Validate the file path to prevent directory traversal
+    if base_directory is None:
+        # Default to a safe base directory - typically config or user data directory
+        base_directory = os.path.expanduser("~/.config/tldw_cli/")
+    
+    try:
+        validated_path = validate_path(file_path, base_directory)
+        logger.debug(f"Validated file path: {validated_path}")
+    except ValueError as e:
+        logger.error(f"Invalid file path '{file_path}': {e}")
+        return {}
+    
     replacement_dict: Dict[str, str] = {}
     current_key: Optional[str] = None
     current_value_lines: List[str] = []
@@ -1739,7 +1762,7 @@ def parse_user_dict_markdown_file(file_path: str) -> Dict[str, str]:
     termination_pattern = re.compile(r'^\s*---@@@---\s*$')
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as file:
+        with open(validated_path, 'r', encoding='utf-8') as file:
             for line_number, line_content_original in enumerate(file, 1):
                 line_for_logic = line_content_original.strip()  # Use for terminator/blank checks
 
@@ -1877,11 +1900,11 @@ def apply_strategy(entries: List[ChatDictionary], strategy: str = "sorted_evenly
     """
     logging.debug(f"Applying strategy: {strategy}")
     if strategy == "sorted_evenly":
-        return sorted(entries, key=lambda e: str(e.key_raw)) # Ensure key_raw is string for sort
+        return sorted(entries, key=lambda e: str(e.raw_key)) # Ensure raw_key is string for sort
     elif strategy == "character_lore_first":
-        return sorted(entries, key=lambda e: (e.group != "character", str(e.key_raw)))
+        return sorted(entries, key=lambda e: (e.group != "character", str(e.raw_key)))
     elif strategy == "global_lore_first":
-        return sorted(entries, key=lambda e: (e.group != "global", str(e.key_raw)))
+        return sorted(entries, key=lambda e: (e.group != "global", str(e.raw_key)))
     return entries # Fallback if strategy not recognized
 
 
@@ -1934,7 +1957,7 @@ def group_scoring(entries: List[ChatDictionary]) -> List[ChatDictionary]:
             selected_entries.extend(group_entries_list)
         else:
             # For named groups, keep the original behavior of selecting the best.
-            best_entry_in_group = max(group_entries_list, key=lambda e: len(str(e.key_raw)) if e.key_raw else 0)
+            best_entry_in_group = max(group_entries_list, key=lambda e: len(str(e.raw_key)) if e.raw_key else 0)
             selected_entries.append(best_entry_in_group)
 
     logging.debug(f"Selected {len(selected_entries)} entries after group scoring.")
@@ -1964,7 +1987,7 @@ def apply_timed_effects(entry: ChatDictionary, current_time: datetime) -> bool:
     Returns:
         True if the entry is valid after timed effect checks, False otherwise.
     """
-    logging.debug(f"Applying timed effects for entry: {entry.key_raw}") # Use key_raw for logging
+    logging.debug(f"Applying timed effects for entry: {entry.raw_key}") # Use raw_key for logging
     if entry.timed_effects["delay"] > 0:
         # If never triggered, assume it's valid for delay unless delay is from program start
         # For simplicity, if last_triggered is None, it passes delay check.
@@ -1972,12 +1995,12 @@ def apply_timed_effects(entry: ChatDictionary, current_time: datetime) -> bool:
         # Current logic: delay is from last trigger. If never triggered, passes delay.
         if entry.last_triggered is not None and \
            current_time - entry.last_triggered < timedelta(seconds=entry.timed_effects["delay"]):
-            logging.debug(f"Entry {entry.key_raw} delayed.")
+            logging.debug(f"Entry {entry.raw_key} delayed.")
             return False
     if entry.timed_effects["cooldown"] > 0:
         if entry.last_triggered and \
            current_time - entry.last_triggered < timedelta(seconds=entry.timed_effects["cooldown"]):
-            logging.debug(f"Entry {entry.key_raw} on cooldown.")
+            logging.debug(f"Entry {entry.raw_key} on cooldown.")
             return False
 
     # If checks pass, update last_triggered (conceptually, this happens if it *would* be used)
@@ -2027,7 +2050,7 @@ def enforce_token_budget(entries: List[ChatDictionary], max_tokens: int) -> List
             valid_entries.append(entry)
             total_tokens += tokens
         else:
-            logging.debug(f"Token budget exceeded with entry {entry.key_raw}. Total tokens: {total_tokens + tokens}, Max: {max_tokens}")
+            logging.debug(f"Token budget exceeded with entry {entry.raw_key}. Total tokens: {total_tokens + tokens}, Max: {max_tokens}")
             break # Stop adding entries once budget is full
     return valid_entries
 
@@ -2097,7 +2120,7 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
         - `str`: The text after the first replacement (or original text if no match).
         - `int`: The number of replacements made (0 or 1).
     """
-    logging.debug(f"Applying replacement for entry: {entry.key_raw} with content: {entry.content[:50]}... in text: {text[:50]}...")
+    logging.debug(f"Applying replacement for entry: {entry.raw_key} with content: {entry.content[:50]}... in text: {text[:50]}...")
     if isinstance(entry.key, re.Pattern):
         replaced_text, replaced_count = entry.key.subn(entry.content, text, count=1)
     else: # Plain string key
@@ -2169,7 +2192,7 @@ def process_user_input(
             matched_entries = []
 
 
-        logging.debug(f"Matched entries after initial filtering: {[e.key_raw for e in matched_entries]}")
+        logging.debug(f"Matched entries after initial filtering: {[e.raw_key for e in matched_entries]}")
 
         # 2. Apply group scoring
         try:
@@ -2251,11 +2274,11 @@ def process_user_input(
                     else:
                         break # No more matches for this key
                 if replacements_done_for_this_entry > 0:
-                     logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.key_raw}'")
+                     logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.raw_key}'")
 
             except Exception as e_replace:
-                log_counter("chat_dict_replacement_error", labels={"key": entry.key_raw})
-                logging.error(f"Error applying replacement for entry {entry.key_raw}: {str(e_replace)}", exc_info=True)
+                log_counter("chat_dict_replacement_error", labels={"key": entry.raw_key})
+                logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
                 continue
 
     except Exception as e_crit: # Catch-all for ChatProcessingError or other unexpected issues

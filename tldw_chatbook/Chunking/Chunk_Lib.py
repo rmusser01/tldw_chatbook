@@ -20,6 +20,8 @@ from nltk.tokenize import sent_tokenize
 #
 # Import Local
 from tldw_chatbook.config import load_settings, get_cli_setting
+from .language_chunkers import LanguageChunkerFactory
+from .token_chunker import create_token_chunker
 #
 #######################################################################################################################
 # Custom Exceptions
@@ -151,28 +153,20 @@ class Chunker:
 
         logger.debug(f"Chunker initialized with options: {self.options}")
 
-        from transformers import PreTrainedTokenizerBase
-        self._tokenizer: Optional[PreTrainedTokenizerBase] = None
+        self._token_chunker = None
         self._tokenizer_path_to_load: str = self.options.get('tokenizer_name_or_path', tokenizer_name_or_path)
 
-    from transformers import PreTrainedTokenizerBase
     @property
-    def tokenizer(self) -> PreTrainedTokenizerBase:
-        if self._tokenizer is None:
-            try:
-                from transformers import AutoTokenizer, PreTrainedTokenizerBase # Import here
-                logger.info(f"Lazily loading tokenizer: {self._tokenizer_path_to_load}")
-                self._tokenizer = AutoTokenizer.from_pretrained(self._tokenizer_path_to_load)
-            except ImportError:
-                logger.error("Transformers library not found. Please install it to use token-based chunking.")
-                raise ChunkingError("Transformers library not found.")
-            except Exception as e:
-                logger.error(f"Failed to lazy-load tokenizer '{self._tokenizer_path_to_load}': {e}")
-                # Optionally, raise a more specific error or allow fallback if applicable
-                raise ChunkingError(f"Failed to load tokenizer: {e}") from e
-        if self._tokenizer is None: # Should not happen if logic above is correct, but as a safeguard
-            raise ChunkingError("Tokenizer could not be loaded.")
-        return self._tokenizer
+    def token_chunker(self):
+        """Get the token-based chunker, creating it if needed."""
+        if self._token_chunker is None:
+            self._token_chunker = create_token_chunker(self._tokenizer_path_to_load)
+        return self._token_chunker
+    
+    @property 
+    def tokenizer(self):
+        """Get the underlying tokenizer for backward compatibility."""
+        return self.token_chunker.tokenizer
 
     def _get_option(self, key: str, default_override: Optional[Any] = None) -> Any:
         """Helper to get an option, allowing for a dynamic default."""
@@ -262,14 +256,11 @@ class Chunker:
             base_adaptive_size = self._get_option('base_adaptive_chunk_size')
             min_adaptive_size = self._get_option('min_adaptive_chunk_size')
             max_adaptive_size = self._get_option('max_adaptive_chunk_size')
-            # Accessing self.tokenizer property here will trigger lazy loading if not already loaded.
+            # Try to use NLTK-based adaptive sizing if available
             try:
-                if self.tokenizer: # NLTK based adaptive_chunk_size needs punkt
-                     max_size = self._adaptive_chunk_size_nltk(text, base_adaptive_size, min_adaptive_size, max_adaptive_size, language)
-                else: # Fallback if no tokenizer for NLTK based one. (tokenizer property would have raised if failed to load)
-                     max_size = self._adaptive_chunk_size_non_punkt(text, base_adaptive_size, min_adaptive_size, max_adaptive_size)
-            except ChunkingError: # Raised by tokenizer property if transformers not found or load fails
-                logger.warning("Tokenizer could not be loaded for adaptive chunk sizing. Using non-NLTK adaptive sizing.")
+                max_size = self._adaptive_chunk_size_nltk(text, base_adaptive_size, min_adaptive_size, max_adaptive_size, language)
+            except Exception as e:
+                logger.warning(f"NLTK-based adaptive sizing failed: {e}. Using non-NLTK adaptive sizing.")
                 max_size = self._adaptive_chunk_size_non_punkt(text, base_adaptive_size, min_adaptive_size, max_adaptive_size)
             logger.info(f"Adaptive chunking adjusted max_size to: {max_size}")
 
@@ -287,7 +278,6 @@ class Chunker:
         elif chunk_method == 'paragraphs':
             return self._chunk_text_by_paragraphs(text, max_paragraphs=max_size, overlap=overlap)
         elif chunk_method == 'tokens':
-            # self.tokenizer will raise ChunkingError if it cannot be loaded by its property.
             return self._chunk_text_by_tokens(text, max_tokens=max_size, overlap=overlap)
         elif chunk_method == 'semantic':
             # semantic_chunking needs to be a method of the class too
@@ -308,7 +298,6 @@ class Chunker:
         elif chunk_method == 'rolling_summarize':
             if not llm_call_function:
                 raise ChunkingError("Missing 'llm_call_function' for 'rolling_summarize' method.")
-            # self.tokenizer will raise ChunkingError if it cannot be loaded by its property.
 
             summary = self._rolling_summarize(
                 text_to_summarize=text,
@@ -332,32 +321,10 @@ class Chunker:
 
     def _chunk_text_by_words(self, text: str, max_words: int, overlap: int, language: str) -> List[str]:
         logger.info(f"Chunking by words: max_words={max_words}, overlap={overlap}, language='{language}'")
-        # Language-specific word tokenization
-        words: List[str]
-        if language.startswith('zh'):  # Chinese
-            try:
-                import jieba
-                words = list(jieba.cut(text))
-                logger.debug(f"Using jieba for Chinese word tokenization, found {len(words)} words")
-            except ImportError:
-                logger.warning("jieba library not found for Chinese word tokenization. Falling back to space splitting.")
-                words = text.split()
-            except Exception as e:
-                logger.warning(f"Error using jieba for Chinese tokenization: {e}. Falling back to space splitting.")
-                words = text.split()
-        elif language == 'ja':  # Japanese
-            try:
-                import fugashi
-                tagger = fugashi.Tagger('-Owakati') # Output wakachi-gaki (space-separated words)
-                words = tagger.parse(text).split()
-            except ImportError:
-                logger.warning("fugashi library not found for Japanese word tokenization. Falling back to space splitting.")
-                words = text.split()
-            except Exception as e: # fugashi can raise various errors
-                logger.warning(f"Error using fugashi for Japanese tokenization: {e}. Falling back to space splitting.")
-                words = text.split()
-        else:  # Default to simple splitting for other languages
-            words = text.split()
+        
+        # Use language-specific chunker
+        language_chunker = LanguageChunkerFactory.get_chunker(language)
+        words = language_chunker.tokenize_words(text)
 
         logger.debug(f"Total words: {len(words)}")
         if max_words <= 0 :
@@ -385,60 +352,10 @@ class Chunker:
 
     def _chunk_text_by_sentences(self, text: str, max_sentences: int, overlap: int, language: str) -> List[str]:
         logger.info(f"Chunking by sentences: max_sentences={max_sentences}, overlap={overlap}, lang='{language}'")
-        sentences: List[str]
-
-        if language.startswith('zh'):
-            # Basic punctuation-based sentence splitting for Chinese
-            sentences = [s.strip() for s in re.split(r'([。！？；])', text) if s.strip()]
-            # Join sentence with its delimiter if present
-            processed_sentences = []
-            temp_sentence = ""
-            for i, part in enumerate(sentences):
-                if part in ['。', '！', '？', '；']:
-                    if temp_sentence: # Add delimiter to previous sentence part
-                        processed_sentences.append(temp_sentence + part)
-                        temp_sentence = ""
-                    # else: # Delimiter at start, could be an issue or just keep it.
-                    #    processed_sentences.append(part)
-                else:
-                    if temp_sentence : # If previous part was also text (should not happen with this regex)
-                        processed_sentences.append(temp_sentence)
-                    temp_sentence = part
-            if temp_sentence: # last sentence part
-                processed_sentences.append(temp_sentence)
-            sentences = [s for s in processed_sentences if s]
-
-        elif language == 'ja':
-            # Basic punctuation-based sentence splitting for Japanese
-            # Consider using a library like "JaSP" for more robust Japanese sentence splitting if needed.
-            sentences = [s.strip() for s in re.split(r'([。！？])', text) if s.strip()]
-            processed_sentences = []
-            temp_sentence = ""
-            for i, part in enumerate(sentences):
-                if part in ['。', '！', '？']:
-                    if temp_sentence:
-                        processed_sentences.append(temp_sentence + part)
-                        temp_sentence = ""
-                else:
-                    if temp_sentence:
-                         processed_sentences.append(temp_sentence)
-                    temp_sentence = part
-            if temp_sentence:
-                processed_sentences.append(temp_sentence)
-            sentences = [s for s in processed_sentences if s]
-        else:
-            try:
-                # NLTK expects language names like 'english', 'spanish', etc.
-                # Map 'en' to 'english' if necessary for NLTK compatibility.
-                nltk_lang_map = {'en': 'english', 'es': 'spanish', 'fr': 'french', 'de': 'german'} # extend as needed
-                nltk_language = nltk_lang_map.get(language.lower(), language.lower()) # Default to language if not in map
-                sentences = sent_tokenize(text, language=nltk_language)
-            except LookupError:
-                logger.warning(f"NLTK Punkt tokenizer not found for language '{language}' (mapped to '{nltk_language}'). Using default 'english'.")
-                sentences = sent_tokenize(text, language='english')
-            except Exception as e_sent_tokenize:
-                logger.error(f"Error during NLTK sentence tokenization for language '{language}': {e_sent_tokenize}. Falling back to newline splitting.")
-                sentences = text.splitlines() # Basic fallback
+        
+        # Use language-specific chunker
+        language_chunker = LanguageChunkerFactory.get_chunker(language)
+        sentences = language_chunker.tokenize_sentences(text)
 
         if max_sentences <= 0:
             logger.warning(f"max_sentences is {max_sentences}, must be positive. Defaulting to 1 sentence if text exists.")
@@ -491,35 +408,12 @@ class Chunker:
 
 
     def _chunk_text_by_tokens(self, text: str, max_tokens: int, overlap: int) -> List[str]:
-        # This uses the accurate tokenizer version
-        # Accessing self.tokenizer property here will trigger lazy loading.
-        # If it fails, ChunkingError will be raised by the property.
-        logger.info(f"Chunking by tokens: max_tokens={max_tokens}, overlap_tokens={overlap} (token overlap)")
-        if max_tokens <= 0:
-            logger.warning("max_tokens must be positive. Returning single chunk or empty.")
-            return [text] if text.strip() else []
-
-        tokens = self.tokenizer.encode(text)
-        logger.debug(f"Total tokens: {len(tokens)}")
-
-        # Overlap here is in number of tokens
-        if overlap >= max_tokens :
-            logger.warning(f"Token overlap {overlap} >= max_tokens {max_tokens}. Setting overlap to 0.")
-            overlap = 0
-
-        step = max_tokens - overlap
-        if step <= 0: step = max_tokens
-
-
-        chunks = []
-        for i in range(0, len(tokens), step):
-            chunk_token_ids = tokens[i : i + max_tokens]
-            chunk_text = self.tokenizer.decode(chunk_token_ids, skip_special_tokens=True) # skip_special_tokens might be an option
-            chunks.append(chunk_text)
-            logger.debug(f"Created token chunk {len(chunks)} with {len(chunk_token_ids)} tokens")
-
+        """Chunk text by token count using the modular token chunker."""
+        logger.info(f"Chunking by tokens: max_tokens={max_tokens}, overlap_tokens={overlap}")
+        
+        chunks = self.token_chunker.chunk_by_tokens(text, max_tokens, overlap)
         processed_chunks = self._post_process_chunks(chunks)
-        logger.info(f"Token chunking complete: created {len(processed_chunks)} chunks from {len(tokens)} tokens")
+        logger.info(f"Token chunking complete: created {len(processed_chunks)} chunks")
         return processed_chunks
 
 
@@ -646,17 +540,17 @@ class Chunker:
         def _count_units(txt: str, unit_type: str) -> int:
             if unit_type == 'words':
                 return len(txt.split())
-            elif unit_type == 'tokens': # self.tokenizer property will be used here
-                return len(self.tokenizer.encode(txt))
+            elif unit_type == 'tokens':
+                try:
+                    return self.token_chunker.count_tokens(txt)
+                except Exception as e:
+                    logger.warning(f"Token counting failed: {e}. Falling back to word count.")
+                    return len(txt.split())
             elif unit_type == 'characters':
                 return len(txt)
-            # Tokenizer might not be available if transformers is not installed.
-            # The self.tokenizer property would raise ChunkingError if called when not available.
-            # So, if unit_type is 'tokens' and we reach here, it should be available.
-            # However, to be safe, let's consider the case it might still be None if an error occurred
-            # but wasn't propagated in a way that prevented this call.
-            logger.warning(f"Unknown unit type '{unit_type}' or tokenizer issues for tokens. Defaulting to word count.")
-            return len(txt.split())
+            else:
+                logger.warning(f"Unknown unit type '{unit_type}'. Defaulting to word count.")
+                return len(txt.split())
 
 
         for i, sentence_text in enumerate(valid_sentences):
@@ -936,24 +830,19 @@ class Chunker:
         for i, chap_data in enumerate(chapter_splits):
             chap_data['metadata']['chunk_index_in_book'] = i + 1
             chap_data['metadata']['total_chapters_detected'] = len(chapter_splits)
-            # Access self.tokenizer property, will lazy load or raise.
+            
+            # Check if we need to sub-chunk this chapter
             tokenizer_available = False
+            chapter_token_count = 0
             try:
-                # Check if tokenizer can be accessed and used
-                _ = self.tokenizer.encode("test") # A simple check that it works
+                chapter_token_count = self.token_chunker.count_tokens(chap_data['text'])
                 tokenizer_available = True
-            except ChunkingError: # From tokenizer property
-                logger.warning("Tokenizer not available for sub-chunking ebook chapters by tokens.")
-            except Exception as e_tok_check: # Other unexpected errors
-                logger.warning(f"Unexpected error checking tokenizer for ebook sub-chunking: {e_tok_check}")
+            except Exception as e_tok_check:
+                logger.warning(f"Could not count tokens for chapter sub-chunking: {e_tok_check}")
 
-
-            if max_size > 0 and tokenizer_available and len(
-                    # FIXME
-                    self.tokenizer.encode(chap_data['text'])) > max_size:
+            if max_size > 0 and tokenizer_available and chapter_token_count > max_size:
                 logger.info(
-                    # FIXME
-                    f"Chapter '{chap_data['metadata']['chapter_title']}' (length {len(self.tokenizer.encode(chap_data['text']))} tokens) exceeds max_size {max_size}. Sub-chunking.")
+                    f"Chapter '{chap_data['metadata']['chapter_title']}' (length {chapter_token_count} tokens) exceeds max_size {max_size}. Sub-chunking.")
                 sub_chunks = self._chunk_text_by_tokens(chap_data['text'], max_tokens=max_size,
                                                         overlap=overlap if overlap < max_size else max_size // 5)
                 for sub_idx, sub_chunk_text in enumerate(sub_chunks):
@@ -1063,9 +952,8 @@ class Chunker:
                            system_prompt_content: str,
                            additional_instructions: Optional[str]
                            ) -> str:
-        # self.tokenizer property will be accessed here.
         logger.info(f"Rolling summarization called. Detail: {detail}")
-        text_token_length = len(self.tokenizer.encode(text_to_summarize))
+        text_token_length = self.token_chunker.count_tokens(text_to_summarize)
         max_summarization_chunks = max(1, text_token_length // min_chunk_tokens)
         min_summarization_chunks = 1
         num_summarization_chunks = int(min_summarization_chunks + detail * (max_summarization_chunks - min_summarization_chunks))
@@ -1141,8 +1029,6 @@ class Chunker:
                                  header: Optional[str] = None,
                                  add_ellipsis_for_overflow: bool = True,
                                  ) -> Tuple[List[str], List[List[int]], int]:
-        # self.tokenizer property will be accessed here.
-
         dropped_chunk_count = 0
         output_combined_texts = []
         output_original_indices = [] # To track which original chunks went into which combined text
@@ -1164,7 +1050,7 @@ class Chunker:
                 pass # Header is already in current_candidate_text_parts if it's the very start.
 
             test_text = chunk_delimiter.join(parts_to_test)
-            token_count = len(self.tokenizer.encode(test_text))
+            token_count = self.token_chunker.count_tokens(test_text)
 
             if token_count > max_tokens:
                 # Current candidate (before adding new chunk) was likely the max fit
@@ -1187,7 +1073,7 @@ class Chunker:
 
                     # If this new chunk *itself* is too large (even with header)
                     current_candidate_only_text = chunk_delimiter.join(current_candidate_text_parts)
-                    if len(self.tokenizer.encode(current_candidate_only_text)) > max_tokens:
+                    if self.token_chunker.count_tokens(current_candidate_only_text) > max_tokens:
                         logger.warning(f"Single chunk (index {chunk_idx}, content: '{chunk_content[:50]}...') itself exceeds max_tokens ({max_tokens}) even after starting new. It will be dropped.")
                         dropped_chunk_count +=1
                         current_candidate_text_parts = [header] if header else [] # Reset for next

@@ -1,0 +1,57 @@
+{
+  "templates": {
+    "blank": {
+      "title": "New Note",
+      "content": "",
+      "keywords": ""
+    },
+    "meeting": {
+      "title": "Meeting Notes - {date}",
+      "content": "## Meeting Notes\n\n**Date:** {date}\n**Time:** {time}\n**Attendees:** \n\n### Agenda\n- \n\n### Discussion Points\n- \n\n### Action Items\n- [ ] \n- [ ] \n\n### Next Steps\n- \n\n### Notes\n",
+      "keywords": "meeting, notes"
+    },
+    "daily_journal": {
+      "title": "Journal - {date}",
+      "content": "# Daily Journal - {date}\n\n## Morning Thoughts\n\n\n## Today's Goals\n- [ ] \n- [ ] \n- [ ] \n\n## Gratitude\nI am grateful for:\n1. \n2. \n3. \n\n## Evening Reflection\n\n\n## Tomorrow's Priorities\n- \n",
+      "keywords": "journal, daily, personal"
+    },
+    "project_notes": {
+      "title": "Project - ",
+      "content": "# Project Notes\n\n## Overview\n\n\n## Goals\n- \n\n## Current Status\n\n\n## Tasks\n- [ ] \n- [ ] \n\n## Resources\n- \n\n## Notes\n",
+      "keywords": "project, work"
+    },
+    "research": {
+      "title": "Research - ",
+      "content": "# Research Notes\n\n## Topic\n\n\n## Key Questions\n1. \n2. \n\n## Sources\n- \n\n## Findings\n\n\n## Conclusions\n\n\n## Further Research Needed\n- \n",
+      "keywords": "research, study"
+    },
+    "markdown_article": {
+      "title": "Article - ",
+      "content": "---\ntitle: \nauthor: \ndate: {date}\ntags: []\n---\n\n# Title\n\n## Introduction\n\n\n## Main Content\n\n\n### Subsection\n\n\n## Conclusion\n\n\n## References\n- \n",
+      "keywords": "article, writing, markdown"
+    }
+  },
+  "sync_templates": {
+    "obsidian_daily": {
+      "title": "{date}",
+      "content": "---\ndate: {date}\ntags: [daily-note]\n---\n\n# {date}\n\n## Tasks\n- [ ] \n\n## Notes\n\n\n## Journal\n",
+      "keywords": "daily, obsidian",
+      "file_extension": ".md",
+      "relative_path": "Daily Notes/{date}.md"
+    },
+    "obsidian_zettelkasten": {
+      "title": "Zettel - {datetime}",
+      "content": "---\nid: {datetime}\ntags: []\naliases: []\n---\n\n# Title\n\n## Main Idea\n\n\n## Connections\n- \n\n## References\n- \n",
+      "keywords": "zettelkasten, pkm",
+      "file_extension": ".md",
+      "relative_path": "Zettelkasten/{datetime}.md"
+    },
+    "logseq_journal": {
+      "title": "Journal {date}",
+      "content": "- ## Morning Pages\n  - \n- ## Tasks\n  - TODO \n- ## Notes\n  - \n",
+      "keywords": "journal, logseq",
+      "file_extension": ".md",
+      "relative_path": "journals/{date}.md"
+    }
+  }
+}

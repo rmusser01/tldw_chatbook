@@ -44,6 +44,7 @@ from loguru import logger
 from loguru import logger as logging
 #
 # Local Imports
+from .sql_validation import validate_table_name, validate_column_name
 #
 ########################################################################################################################
 #
@@ -228,8 +229,8 @@ class PromptsDatabase:
             if not self.is_memory_db:
                 self.db_path = Path(db_path).resolve()
             else:
-                # Even for memory, Path object can be useful internally, though str is ':memory:'
-                self.db_path = Path(":memory:")  # Represent in-memory path consistently
+                # For in-memory DB, we don't need a Path object
+                self.db_path = None
 
         # Store the path as a string for convenience/logging
         self.db_path_str = str(self.db_path) if not self.is_memory_db else ':memory:'
@@ -240,7 +241,7 @@ class PromptsDatabase:
         self.client_id = client_id
 
         # Ensure parent directory exists if it's a file-based DB
-        if not self.is_memory_db:
+        if not self.is_memory_db and self.db_path:
             try:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as e:
@@ -557,6 +558,12 @@ class PromptsDatabase:
 
     def _get_next_version(self, conn: sqlite3.Connection, table: str, id_col: str, id_val: Any) -> Optional[
         Tuple[int, int]]:
+        # Validate SQL identifiers to prevent injection
+        if not validate_table_name(table, 'prompts'):
+            raise InputError(f"Invalid table name: {table}")
+        if not validate_column_name(id_col, table):
+            raise InputError(f"Invalid column name: {id_col}")
+            
         try:
             cursor = conn.execute(f"SELECT version FROM {table} WHERE {id_col} = ? AND deleted = 0", (id_val,))
             result = cursor.fetchone()
@@ -579,7 +586,17 @@ class PromptsDatabase:
             return
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
-        payload_json = json.dumps(payload, separators=(',', ':')) if payload else None
+        # Convert datetime objects to strings for JSON serialization
+        if payload and isinstance(payload, dict):
+            serializable_payload = {}
+            for key, value in payload.items():
+                if isinstance(value, datetime):
+                    serializable_payload[key] = value.isoformat()
+                else:
+                    serializable_payload[key] = value
+            payload_json = json.dumps(serializable_payload, separators=(',', ':'))
+        else:
+            payload_json = json.dumps(payload, separators=(',', ':')) if payload else None
         try:
             conn.execute("""
                          INSERT INTO sync_log (entity, entity_uuid, operation, timestamp, client_id, version, payload)
@@ -1006,6 +1023,10 @@ class PromptsDatabase:
                 col_name = "uuid"
             except ValueError:
                 col_name = "name" # Assume it's a name if not a UUID
+
+        # Validate column name to prevent SQL injection
+        if not validate_column_name(col_name, 'Prompts'):
+            raise InputError(f"Invalid column name: {col_name}")
 
         try:
             with self.transaction() as conn:

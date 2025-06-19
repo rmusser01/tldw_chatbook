@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 
 # Local Imports from this project
 from tldw_chatbook.DB.ChaChaNotes_DB import (
@@ -71,25 +72,20 @@ def create_dummy_png_bytes() -> bytes:
     return byte_arr.getvalue()
 
 
-# FIXME
-# def create_dummy_png_with_chara(chara_json_str: str) -> bytes:
-#     """Creates a 1x1 PNG with embedded 'chara' metadata."""
-#     img = Image.new('RGB', (1, 1), color='red')
-#     # The 'chara' metadata is a base64 encoded string of the JSON
-#     chara_b64 = base64.b64encode(chara_json_str.encode('utf-8')).decode('utf-8')
-#
-#     byte_arr = io.BytesIO()
-#     # Pillow saves metadata in the 'info' dictionary for PNGs
-#     img.save(byte_arr, format='PNG', pnginfo=Image.PngImagePlugin.PngInfo())
-#     byte_arr.seek(0)
-#
-#     # Re-open to add the custom chunk, as 'info' doesn't directly map to chunks
-#     img_with_info = Image.open(byte_arr)
-#     img_with_info.info['chara'] = chara_b64
-#
-#     final_byte_arr = io.BytesIO()
-#     img_with_info.save(final_byte_arr, format='PNG')
-#     return final_byte_arr.getvalue()
+def create_dummy_png_with_chara(chara_json_str: str) -> bytes:
+    """Creates a 1x1 PNG with embedded 'chara' metadata."""
+    img = Image.new('RGB', (1, 1), color='red')
+    # The 'chara' metadata is a base64 encoded string of the JSON
+    chara_b64 = base64.b64encode(chara_json_str.encode('utf-8')).decode('utf-8')
+
+    # Create PngInfo object for metadata
+    pnginfo = PngInfo()
+    # Add chara metadata as a text chunk
+    pnginfo.add_text("chara", chara_b64)
+    
+    byte_arr = io.BytesIO()
+    img.save(byte_arr, format='PNG', pnginfo=pnginfo)
+    return byte_arr.getvalue()
 
 
 def create_sample_v2_card_json(name: str) -> str:
@@ -203,9 +199,8 @@ class TestCharacterLoading:
         char_data, history, img = load_chat_and_character(db_instance, conv_id, "TestUser")
 
         assert char_data['name'] == "Chatter"
-        assert len(history) == 2  # Initial 'Hi' plus the two added messages
-        assert history[0] == (None, 'Hi')
-        assert history[1] == ("Hello there", "General Kenobi")
+        assert len(history) == 1  # Only the two added messages, first_message not included in conversation history
+        assert history[0] == ("Hello there", "General Kenobi")
 
     def test_load_character_wrapper(self, db_instance: CharactersRAGDB):
         char_id = db_instance.add_character_card({"name": "WrappedChar"})

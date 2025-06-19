@@ -1,0 +1,210 @@
+{
+  "name": "Python Code Generation",
+  "description": "Generate Python functions from natural language descriptions with test case validation",
+  "task_type": "code_generation",
+  "dataset_name": "custom_code_generation",
+  "split": "test",
+  "metric": "execution_pass_rate",
+  "num_fewshot": 0,
+  "generation_kwargs": {
+    "temperature": 0.2,
+    "max_tokens": 512,
+    "top_p": 0.95,
+    "stop": ["\ndef ", "\nclass ", "\nif __name__", "\n\n\n"]
+  },
+  "metadata": {
+    "category": "programming",
+    "difficulty": "intermediate",
+    "language": "en",
+    "programming_language": "python",
+    "domain": "software_engineering",
+    "evaluation_time": "medium",
+    "requires_execution": true
+  },
+  "prompt_template": "{problem_description}\n\n{function_signature}",
+  "response_processing": {
+    "extract_code_only": true,
+    "validate_syntax": true,
+    "timeout": 10
+  },
+  "primary_metrics": [
+    "execution_pass_rate",
+    "syntax_valid",
+    "test_cases_passed"
+  ],
+  "secondary_metrics": [
+    "code_length",
+    "time_complexity_estimate",
+    "space_complexity_estimate",
+    "readability_score"
+  ],
+  "execution_settings": {
+    "timeout": 10,
+    "memory_limit": "128MB",
+    "allowed_imports": [
+      "math", "string", "re", "collections", "itertools", 
+      "functools", "operator", "datetime", "random"
+    ],
+    "safe_execution": true
+  },
+  "sample_data": [
+    {
+      "id": "code_gen_001",
+      "problem_description": "Write a function that takes a list of integers and returns the sum of all even numbers in the list.",
+      "function_signature": "def sum_even_numbers(numbers):",
+      "test_cases": [
+        {
+          "input": "[1, 2, 3, 4, 5, 6]",
+          "expected_output": "12",
+          "description": "Mixed even and odd numbers"
+        },
+        {
+          "input": "[1, 3, 5, 7]",
+          "expected_output": "0",
+          "description": "All odd numbers"
+        },
+        {
+          "input": "[2, 4, 6, 8]",
+          "expected_output": "20",
+          "description": "All even numbers"
+        },
+        {
+          "input": "[]",
+          "expected_output": "0",
+          "description": "Empty list"
+        }
+      ],
+      "canonical_solution": "def sum_even_numbers(numbers):\n    return sum(n for n in numbers if n % 2 == 0)",
+      "difficulty": "easy"
+    },
+    {
+      "id": "code_gen_002",
+      "problem_description": "Write a function that finds the longest common prefix string amongst an array of strings. If there is no common prefix, return an empty string.",
+      "function_signature": "def longest_common_prefix(strs):",
+      "test_cases": [
+        {
+          "input": "[\"flower\",\"flow\",\"flight\"]",
+          "expected_output": "\"fl\"",
+          "description": "Common prefix exists"
+        },
+        {
+          "input": "[\"dog\",\"racecar\",\"car\"]",
+          "expected_output": "\"\"",
+          "description": "No common prefix"
+        },
+        {
+          "input": "[\"interspecies\",\"interstellar\",\"interstate\"]",
+          "expected_output": "\"inters\"",
+          "description": "Longer common prefix"
+        },
+        {
+          "input": "[\"\"]",
+          "expected_output": "\"\"",
+          "description": "Single empty string"
+        }
+      ],
+      "canonical_solution": "def longest_common_prefix(strs):\n    if not strs:\n        return \"\"\n    \n    for i in range(len(strs[0])):\n        char = strs[0][i]\n        for string in strs[1:]:\n            if i >= len(string) or string[i] != char:\n                return strs[0][:i]\n    \n    return strs[0]",
+      "difficulty": "medium"
+    },
+    {
+      "id": "code_gen_003",
+      "problem_description": "Write a function that implements a simple calculator. It should take a string expression with +, -, *, / operations and return the result. Assume the input is always valid.",
+      "function_signature": "def simple_calculator(expression):",
+      "test_cases": [
+        {
+          "input": "\"2 + 3\"",
+          "expected_output": "5",
+          "description": "Simple addition"
+        },
+        {
+          "input": "\"10 - 4\"",
+          "expected_output": "6",
+          "description": "Simple subtraction"
+        },
+        {
+          "input": "\"3 * 7\"",
+          "expected_output": "21",
+          "description": "Simple multiplication"
+        },
+        {
+          "input": "\"15 / 3\"",
+          "expected_output": "5",
+          "description": "Simple division"
+        }
+      ],
+      "canonical_solution": "def simple_calculator(expression):\n    # Remove whitespace and evaluate\n    expression = expression.replace(' ', '')\n    # Use eval for simplicity (in real code, use proper parsing)\n    return eval(expression)",
+      "difficulty": "medium",
+      "notes": "This is a simplified version. Production code should use proper expression parsing."
+    },
+    {
+      "id": "code_gen_004",
+      "problem_description": "Write a function that checks if a given string is a valid palindrome, considering only alphanumeric characters and ignoring cases.",
+      "function_signature": "def is_valid_palindrome(s):",
+      "test_cases": [
+        {
+          "input": "\"A man, a plan, a canal: Panama\"",
+          "expected_output": "True",
+          "description": "Valid palindrome with punctuation"
+        },
+        {
+          "input": "\"race a car\"",
+          "expected_output": "False",
+          "description": "Not a palindrome"
+        },
+        {
+          "input": "\"\"",
+          "expected_output": "True",
+          "description": "Empty string is palindrome"
+        },
+        {
+          "input": "\"Madam\"",
+          "expected_output": "True",
+          "description": "Simple palindrome different cases"
+        }
+      ],
+      "canonical_solution": "def is_valid_palindrome(s):\n    # Convert to lowercase and keep only alphanumeric\n    cleaned = ''.join(char.lower() for char in s if char.isalnum())\n    # Check if equal to its reverse\n    return cleaned == cleaned[::-1]",
+      "difficulty": "easy"
+    },
+    {
+      "id": "code_gen_005",
+      "problem_description": "Write a function that merges two sorted lists into one sorted list without using built-in sort functions.",
+      "function_signature": "def merge_sorted_lists(list1, list2):",
+      "test_cases": [
+        {
+          "input": "[1, 2, 4], [1, 3, 4]",
+          "expected_output": "[1, 1, 2, 3, 4, 4]",
+          "description": "Two sorted lists with duplicates"
+        },
+        {
+          "input": "[], []",
+          "expected_output": "[]",
+          "description": "Two empty lists"
+        },
+        {
+          "input": "[], [0]",
+          "expected_output": "[0]",
+          "description": "One empty, one non-empty"
+        },
+        {
+          "input": "[1, 5, 9], [2, 6, 8]",
+          "expected_output": "[1, 2, 5, 6, 8, 9]",
+          "description": "No duplicates"
+        }
+      ],
+      "canonical_solution": "def merge_sorted_lists(list1, list2):\n    result = []\n    i = j = 0\n    \n    while i < len(list1) and j < len(list2):\n        if list1[i] <= list2[j]:\n            result.append(list1[i])\n            i += 1\n        else:\n            result.append(list2[j])\n            j += 1\n    \n    # Add remaining elements\n    result.extend(list1[i:])\n    result.extend(list2[j:])\n    \n    return result",
+      "difficulty": "medium"
+    }
+  ],
+  "evaluation_settings": {
+    "batch_size": 8,
+    "max_samples": null,
+    "shuffle_samples": false,
+    "require_all_tests_pass": false,
+    "partial_credit": true
+  },
+  "model_requirements": {
+    "min_context_length": 2048,
+    "supports_code_generation": true,
+    "programming_languages": ["python"]
+  }
+}

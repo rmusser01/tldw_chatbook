@@ -10,9 +10,18 @@ from typing import Union, AnyStr
 # 3rd-party Libraries
 #
 # Local Imports
-from tldw_Server_API.app.core.Utils.Utils import load_comprehensive_config, get_user_database_path
-from ..Utils.Utils import PROJECT_DATABASES_DIR, log, PROJECT_ROOT_DIR, CONFIG_FILE_PATH, USER_DB_PATH, \
-    USER_DB_DIR
+# Remove non-existent imports
+try:
+    from ..Utils.Utils import PROJECT_DATABASES_DIR, log, PROJECT_ROOT_DIR, CONFIG_FILE_PATH, USER_DB_PATH, \
+        USER_DB_DIR
+except ImportError:
+    # Set defaults if imports fail
+    PROJECT_DATABASES_DIR = None
+    log = logging
+    PROJECT_ROOT_DIR = None
+    CONFIG_FILE_PATH = None 
+    USER_DB_PATH = None
+    USER_DB_DIR = None
 #
 #######################################################################################################################
 #
@@ -89,6 +98,30 @@ def get_project_relative_path(relative_path_str: Union[str, os.PathLike[AnyStr]]
     log.debug(f"Resolved project relative path for '{relative_path_str}': {absolute_path}")
     return absolute_path
 
+def get_user_data_dir() -> Path:
+    """
+    Get the user data directory for the application.
+    Creates the directory if it doesn't exist.
+    
+    Returns:
+        Path to the user data directory
+    """
+    # Try to use XDG_DATA_HOME on Linux/Mac
+    if os.name != 'nt':  # Unix-like systems
+        xdg_data_home = os.environ.get('XDG_DATA_HOME')
+        if xdg_data_home:
+            data_dir = Path(xdg_data_home) / 'tldw_cli'
+        else:
+            data_dir = Path.home() / '.local' / 'share' / 'tldw_cli'
+    else:  # Windows
+        data_dir = Path(os.environ.get('APPDATA', Path.home())) / 'tldw_cli'
+    
+    # Create directory if it doesn't exist
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    return data_dir
+
+
 # --- Example Usage within Utils.py (for testing) ---
 if __name__ == '__main__':
     #logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s:%(name)s] %(message)s')
@@ -155,21 +188,36 @@ def get_project_root() -> Path:
     return PROJECT_ROOT_DIR
 
 
-def get_user_database_path(username) -> Path:
+def get_user_database_path(username: str = None) -> Path:
     """
-    Returns the absolute path to the user's primary database file
-    (located in ~/.config/tldw_cli/). Ensures the directory exists.
+    Returns the absolute path to the user's primary database file.
+    If username is provided, it creates a user-specific database file.
+    Otherwise, it uses the default database path.
+    
+    Args:
+        username: Optional username for user-specific database paths.
+                 If None, uses the default database path.
 
     Returns:
         pathlib.Path: The absolute Path object for the user database file.
     """
     try:
-        # FIXME - handle username properly
         # Ensure the directory ~/.config/tldw_cli exists
         USER_DB_DIR.mkdir(parents=True, exist_ok=True)
         log.info(f"Ensured user database directory exists: {USER_DB_DIR}")
-        log.debug(f"Returning user database path: {USER_DB_PATH}")
-        return USER_DB_PATH
+        
+        if username:
+            # Create a sanitized filename for the user-specific database
+            safe_username = "".join(c for c in username if c.isalnum() or c in ('_', '-'))
+            if not safe_username:
+                safe_username = "default"
+            user_db_path = USER_DB_DIR / f"tldw_cli_{safe_username}.db"
+            log.debug(f"Returning user-specific database path for '{username}': {user_db_path}")
+            return user_db_path
+        else:
+            # Use the default database path
+            log.debug(f"Returning default user database path: {USER_DB_PATH}")
+            return USER_DB_PATH
     except OSError as e:
         log.error(f"Could not create or access user database directory {USER_DB_DIR}: {e}", exc_info=True)
         # Depending on requirements, you might want to raise an exception here

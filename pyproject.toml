@@ -41,10 +41,16 @@ dependencies = [
     "pydantic",
     "psutil",
     "toml",
+    "pyperclip",
 ]
 
 # --- Optional Dependencies ---
 [project.optional-dependencies]
+images = [
+    "textual-image[textual]>=0.6.0",
+    "rich-pixels>=3.0.0",
+    "pillow>=10.0.0",
+]
 coding_map = [
     "grep_ast",
     "pygments",
@@ -111,7 +117,12 @@ exclude = ["Tests*", ".venv*"]
 # If you have other assets inside your tldw_chatbook package (e.g., tldw_chatbook/assets/), add them here:
 # "tldw_chatbook.assets" = ["*"]
 
-[pytest] # This section is fine if you use pytest
+[tool.pytest.ini_options]
+testpaths = ["Tests"]
+# Exclude server tests that don't belong in the TUI
+addopts = "--ignore=STests"
 markers = [
- "unit: marks tests as unit tests",
+    "unit: marks tests as unit tests",
+    "integration: marks tests as integration tests",
+    "asyncio: marks tests as async",
 ]

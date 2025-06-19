@@ -2,6 +2,7 @@
 #
 # Imports
 from typing import List, Dict, Tuple, Optional, Set, Any
+from pathlib import Path
 #
 # 3rd-party Libraries
 from textual.app import ComposeResult
@@ -34,10 +35,55 @@ except ImportError:
 
 # --- Emoji Data Loading and Processing ---
 PREFERRED_CATEGORY_ORDER = [
+    "Recently Used",  # Added recently used as first category
     "Smileys & Emotion", "People & Body", "Animals & Nature", "Food & Drink",
     "Travel & Places", "Activities", "Objects", "Symbols", "Flags",
 ]
 ProcessedEmoji = Dict[str, Any]  # {'char': str, 'name': str, 'category': str, 'aliases': List[str]}
+
+# Storage for recently used emojis
+RECENT_EMOJIS_FILE = Path.home() / ".config" / "tldw_cli" / "recent_emojis.json"
+MAX_RECENT_EMOJIS = 30
+
+
+def load_recent_emojis() -> List[str]:
+    """Load recently used emojis from file."""
+    try:
+        if RECENT_EMOJIS_FILE.exists():
+            import json
+            with open(RECENT_EMOJIS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('recent', [])[:MAX_RECENT_EMOJIS]
+    except Exception:
+        pass
+    return []
+
+
+def save_recent_emoji(emoji_char: str) -> None:
+    """Save an emoji to the recently used list."""
+    try:
+        # Ensure config directory exists
+        RECENT_EMOJIS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Load existing recent emojis
+        recent = load_recent_emojis()
+        
+        # Remove if already exists (to move to front)
+        if emoji_char in recent:
+            recent.remove(emoji_char)
+        
+        # Add to front
+        recent.insert(0, emoji_char)
+        
+        # Limit to max
+        recent = recent[:MAX_RECENT_EMOJIS]
+        
+        # Save back
+        import json
+        with open(RECENT_EMOJIS_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'recent': recent}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass  # Fail silently for recent emojis
 
 
 def _load_emojis() -> Tuple[List[ProcessedEmoji], Dict[str, List[ProcessedEmoji]], List[str]]:
@@ -90,6 +136,20 @@ def _load_emojis() -> Tuple[List[ProcessedEmoji], Dict[str, List[ProcessedEmoji]
             categorized_emojis[category].append(emoji_obj)
             category_names_set.add(category)
 
+    # Add recently used emojis as a category
+    recent_emoji_chars = load_recent_emojis()
+    if recent_emoji_chars:
+        recent_emojis = []
+        emoji_lookup = {e['char']: e for e in all_emojis_list}
+        
+        for char in recent_emoji_chars:
+            if char in emoji_lookup:
+                recent_emojis.append(emoji_lookup[char])
+        
+        if recent_emojis:
+            categorized_emojis["Recently Used"] = recent_emojis
+            category_names_set.add("Recently Used")
+
     sorted_category_names = sorted(
         list(category_names_set),
         key=lambda c: (PREFERRED_CATEGORY_ORDER.index(c) if c in PREFERRED_CATEGORY_ORDER else float('inf'), c)
@@ -123,7 +183,7 @@ class EmojiButton(Button):
 
 
 class EmojiGrid(VerticalScroll):
-    COLUMN_COUNT = 8
+    COLUMN_COUNT = 6  # Reduced for smaller dialog
 
     def __init__(self, emojis: List[ProcessedEmoji], **kwargs):
         super().__init__(**kwargs)
@@ -168,17 +228,80 @@ class EmojiPickerScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "dismiss_picker", "Close Picker")]
     CSS = """
     EmojiPickerScreen { align: center middle; }
-    #dialog { width: 80w; max-width: 70; height: 24; border: thick $primary-background-lighten-2; background: $surface; }
-    #search-input { width: 100%; margin-bottom: 1; }
-    TabbedContent#emoji-tabs { height: 1fr; } /* Apply to specific ID */
-    TabPane { padding: 0; height: 100%; }
-    EmojiGrid { width: 100%; height: 100%; }
-    .emoji_row { width: 100%; height: auto; align: center top; }
-    EmojiButton.emoji_button { width: 1fr; min-width: 3; height: 3; border: none; background: $surface; color: $text; padding: 0 1;}
-    EmojiButton.emoji_button:hover { background: $primary-background; }
-    EmojiButton.emoji_button:focus { border: tall $primary; }
-    .no_emojis_message { width: 100%; content-align: center middle; padding: 1; color: $text-muted; }
-    #footer { height: auto; width: 100%; dock: bottom; padding-top: 1; align: right middle; }
+    #dialog { 
+        width: 40w; 
+        max-width: 40; 
+        height: 20; 
+        border: thick $primary; 
+        background: $surface; 
+        padding: 1;
+    }
+    #search-input { 
+        width: 100%; 
+        margin-bottom: 1; 
+        border: tall $primary-background;
+    }
+    #search-input:focus {
+        border: tall $primary;
+    }
+    TabbedContent#emoji-tabs { 
+        height: 1fr; 
+        border: none;
+    }
+    TabPane { 
+        padding: 0 1; 
+        height: 100%; 
+    }
+    EmojiGrid { 
+        width: 100%; 
+        height: 100%; 
+        padding: 0;
+    }
+    .emoji_row { 
+        width: 100%; 
+        height: auto; 
+        align: left top; 
+        margin: 0;
+    }
+    EmojiButton.emoji_button { 
+        width: 5; 
+        height: 3; 
+        border: none; 
+        background: transparent; 
+        color: $text; 
+        padding: 0;
+        text-align: center;
+        content-align: center middle;
+    }
+    EmojiButton.emoji_button:hover { 
+        background: $primary-background; 
+        border: tall $primary;
+    }
+    EmojiButton.emoji_button:focus { 
+        background: $primary-background-lighten-1;
+        border: tall $accent;
+    }
+    .no_emojis_message { 
+        width: 100%; 
+        content-align: center middle; 
+        padding: 2; 
+        color: $text-muted; 
+        text-style: italic;
+    }
+    #footer { 
+        height: auto; 
+        width: 100%; 
+        dock: bottom; 
+        padding-top: 1; 
+        align: right middle; 
+    }
+    .dialog-title {
+        width: 100%;
+        text-align: center;
+        text-style: bold;
+        color: $primary;
+        margin-bottom: 1;
+    }
     """
 
     # Removed: search_results: reactive[List[ProcessedEmoji] | None] = reactive(None)
@@ -191,6 +314,7 @@ class EmojiPickerScreen(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
+            yield Static("🎨 Emoji Picker", classes="dialog-title")
             yield Input(placeholder="Search emojis (e.g., smile, cat, :thumbsup:)", id="search-input")
 
             # Check if we have meaningful categories to create tabs
@@ -279,17 +403,22 @@ class EmojiPickerScreen(ModalScreen[str]):
             elif main_grid_no_tabs:
                 main_grid_no_tabs.display = True
                 # main_grid_no_tabs.populate_grid() # Could re-populate if needed
-                first_button_main = main_grid_no_tabs.query(EmojiButton).first()
-                if first_button_main:
-                    first_button_main.focus()
-                else:
+                try:
+                    first_button_main = main_grid_no_tabs.query(EmojiButton).first()
+                    if first_button_main:
+                        first_button_main.focus()
+                    else:
+                        self.query_one("#search-input").focus()  # Fallback to search
+                except QueryError:
                     self.query_one("#search-input").focus()  # Fallback to search
             else:  # Should not be reached, fallback to search input
                 self.query_one("#search-input", Input).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if isinstance(event.button, EmojiButton):
-            self.dismiss(event.button.emoji_data['char'])
+            emoji_char = event.button.emoji_data['char']
+            save_recent_emoji(emoji_char)  # Save to recently used
+            self.dismiss(emoji_char)
         elif event.button.id == "cancel-button":
             self.action_dismiss_picker()  # Corrected: call the action method
 
