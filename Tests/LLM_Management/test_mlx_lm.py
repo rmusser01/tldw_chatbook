@@ -2,10 +2,10 @@ import pytest
 import subprocess
 from unittest.mock import patch, MagicMock, ANY
 
-from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (
+from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_mlx_lm
+from tldw_chatbook.Local_Inference.mlx_lm_inference_local import (
     start_mlx_lm_server,
-    stop_mlx_lm_server,
-    chat_with_mlx_lm
+    stop_mlx_lm_server
 )
 from tldw_chatbook.config import settings  # Assuming settings is already loaded or mutable for tests
 from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError, ChatProviderError

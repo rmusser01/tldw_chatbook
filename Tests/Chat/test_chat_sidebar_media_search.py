@@ -216,7 +216,7 @@ async def test_media_search_functionality(mock_app_media_test: TldwCli):
     app.media_db.search_media_db.reset_mock()
     app.media_db.search_media_db.return_value = ([], 0)
     search_input_mock.value = "nomatch"
-    perform_media_sidebar_search(app, "nomatch")
+    await perform_media_sidebar_search(app, "nomatch")
 
     app.media_db.search_media_db.assert_called_once_with(
         search_query="nomatch",
@@ -237,7 +237,7 @@ async def test_media_load_for_review(mock_app_media_test: TldwCli):
     app = mock_app_media_test
 
     app.media_db.search_media_db = MagicMock(return_value=([MOCK_MEDIA_ITEM_1], 1))
-    perform_media_sidebar_search(app, "item1")
+    await perform_media_sidebar_search(app, "item1")
 
     results_list_view_mock = app.query_one("#chat-media-search-results-listview", ListView)
     assert len(results_list_view_mock._nodes) == 1
@@ -322,8 +322,12 @@ async def test_media_copy_buttons(mock_app_media_test: TldwCli, button_id, field
     app.copy_to_clipboard.reset_mock()
     app.notify.reset_mock()
 
-    # Call the handler synchronously (these are not async functions)
-    copy_handler(app)
+    # Create a mock event
+    mock_event = MagicMock(spec=Button.Pressed)
+    mock_event.button = app.query_one(f"#{button_id}", Button)
+    
+    # Call the async handler
+    await copy_handler(app, mock_event)
 
     app.copy_to_clipboard.assert_called_once_with(str(MOCK_MEDIA_ITEM_1[field_key]))
     app.notify.assert_called_with(expected_notification)
@@ -344,7 +348,7 @@ async def test_media_review_clearing_on_new_empty_search(mock_app_media_test: Tl
     app.query_one("#chat-media-copy-url-button", Button).disabled = False
 
     app.media_db.search_media_db = MagicMock(return_value=[])
-    perform_media_sidebar_search(app, "newsearchterm_that_returns_nothing")
+    await perform_media_sidebar_search(app, "newsearchterm_that_returns_nothing")
 
     assert review_display_mock.text == ""
     assert app.current_sidebar_media_item is None
