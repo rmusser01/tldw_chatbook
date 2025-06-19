@@ -69,5 +69,7 @@ class NotesSidebarRight(VerticalScroll):
         with Collapsible(title="Export Options", collapsed=True):
             yield Button("Export as Markdown", id="notes-export-markdown-button")
             yield Button("Export as Text", id="notes-export-text-button")
+            yield Button("Copy as Markdown", id="notes-copy-markdown-button")
+            yield Button("Copy as Text", id="notes-copy-text-button")
         with Collapsible(title="Delete Note", collapsed=True):
             yield Button("Delete Selected Note", id="notes-delete-button", variant="error")

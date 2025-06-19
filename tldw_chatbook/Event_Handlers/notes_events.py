@@ -946,7 +946,7 @@ async def handle_notes_export_markdown_button_pressed(app: 'TldwCli', event: But
     await app.push_screen(
         FileSave(
             location=str(Path.home()),
-            filename=default_filename,
+            default_file=default_filename,
             title="Export Note as Markdown"
         ),
         callback=lambda path: _note_export_callback(app, path, "markdown")
@@ -975,11 +975,104 @@ async def handle_notes_export_text_button_pressed(app: 'TldwCli', event: Button.
     await app.push_screen(
         FileSave(
             location=str(Path.home()),
-            filename=default_filename,
+            default_file=default_filename,
             title="Export Note as Text"
         ),
         callback=lambda path: _note_export_callback(app, path, "text")
     )
+
+
+async def handle_notes_copy_markdown_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the 'Copy as Markdown' button press."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    logger_instance.info("Notes 'Copy as Markdown' button pressed.")
+    
+    if not app.current_selected_note_id:
+        app.notify("No note selected to copy.", severity="warning")
+        return
+    
+    await _copy_note_to_clipboard(app, "markdown")
+
+
+async def handle_notes_copy_text_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the 'Copy as Text' button press."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    logger_instance.info("Notes 'Copy as Text' button pressed.")
+    
+    if not app.current_selected_note_id:
+        app.notify("No note selected to copy.", severity="warning")
+        return
+    
+    await _copy_note_to_clipboard(app, "text")
+
+
+async def _copy_note_to_clipboard(app: 'TldwCli', format_type: str) -> None:
+    """Copy the current note to clipboard in the specified format."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    
+    try:
+        # Ensure we have the latest content from the editor
+        editor = app.query_one("#notes-editor-area", TextArea)
+        title_input = app.query_one("#notes-title-input", Input)
+        
+        current_title = title_input.value.strip() or "Untitled Note"
+        current_content = editor.text
+        
+        # Get keywords for the note
+        keywords_text = ""
+        if app.notes_service:
+            keywords_data = app.notes_service.get_keywords_for_note(
+                user_id=app.notes_user_id, 
+                note_id=app.current_selected_note_id
+            )
+            if keywords_data:
+                keywords_text = ", ".join([kw['keyword'] for kw in keywords_data])
+        
+        # Format content based on format type
+        if format_type == "markdown":
+            # Add metadata as YAML frontmatter for markdown
+            clipboard_content = f"""---
+title: {current_title}
+date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+keywords: {keywords_text}
+note_id: {app.current_selected_note_id}
+---
+
+# {current_title}
+
+{current_content}"""
+        else:  # Plain text
+            clipboard_content = f"""Title: {current_title}
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Keywords: {keywords_text}
+Note ID: {app.current_selected_note_id}
+
+{'=' * 50}
+
+{current_content}"""
+        
+        # Copy to clipboard
+        try:
+            import pyperclip
+            pyperclip.copy(clipboard_content)
+            app.notify(f"Note copied to clipboard as {format_type}!", severity="information")
+            logger_instance.info(f"Note '{current_title}' copied to clipboard as {format_type}")
+        except ImportError:
+            # Fallback to Textual's clipboard if pyperclip is not available
+            try:
+                await app.copy_to_clipboard(clipboard_content)
+                app.notify(f"Note copied to clipboard as {format_type}!", severity="information")
+                logger_instance.info(f"Note '{current_title}' copied to clipboard as {format_type}")
+            except Exception as e:
+                app.notify("Clipboard copy failed. Please install 'pyperclip' for better clipboard support.", severity="error")
+                logger_instance.error(f"Failed to copy to clipboard: {e}")
+        
+    except QueryError as e:
+        app.notify("UI error while copying note.", severity="error")
+        logger_instance.error(f"UI component not found: {e}")
+    except Exception as e:
+        app.notify(f"Error copying note: {type(e).__name__}", severity="error")
+        logger_instance.error(f"Error copying note to clipboard: {e}", exc_info=True)
 
 
 # Button Handler Map will be defined at the end of the file
@@ -1257,6 +1350,8 @@ NOTES_BUTTON_HANDLERS = {
     "notes-delete-button": handle_notes_delete_button_pressed,
     "notes-export-markdown-button": handle_notes_export_markdown_button_pressed,
     "notes-export-text-button": handle_notes_export_text_button_pressed,
+    "notes-copy-markdown-button": handle_notes_copy_markdown_button_pressed,
+    "notes-copy-text-button": handle_notes_copy_text_button_pressed,
     "notes-preview-toggle": handle_notes_preview_toggle,
     "notes-sort-order-button": handle_notes_sort_order_toggle,
 }
