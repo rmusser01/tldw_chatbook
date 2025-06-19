@@ -24,13 +24,43 @@ from rich.text import Text
 from loguru import logger
 
 # Local Imports
-from ..Event_Handlers.Chat_Events.chat_rag_events import (
-    perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
-)
-from ..RAG_Search.Services import EmbeddingsService, ChunkingService, IndexingService
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from ..DB.search_history_db import SearchHistoryDB
 from ..Utils.paths import get_user_data_dir
+
+# Conditionally import RAG-related modules
+try:
+    from ..Event_Handlers.Chat_Events.chat_rag_events import (
+        perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
+    )
+    RAG_EVENTS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"RAG event handlers not available: {e}")
+    RAG_EVENTS_AVAILABLE = False
+    # Create placeholder functions
+    async def perform_plain_rag_search(*args, **kwargs):
+        raise ImportError("RAG search not available - missing dependencies")
+    async def perform_full_rag_pipeline(*args, **kwargs):
+        raise ImportError("RAG pipeline not available - missing dependencies")
+    async def perform_hybrid_rag_search(*args, **kwargs):
+        raise ImportError("Hybrid RAG search not available - missing dependencies")
+
+try:
+    from ..RAG_Search.Services import EmbeddingsService, ChunkingService, IndexingService
+    RAG_SERVICES_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"RAG services not available: {e}")
+    RAG_SERVICES_AVAILABLE = False
+    # Create placeholder classes
+    class EmbeddingsService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("EmbeddingsService not available - missing dependencies")
+    class ChunkingService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("ChunkingService not available - missing dependencies")
+    class IndexingService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("IndexingService not available - missing dependencies")
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -272,8 +302,9 @@ class SearchRAGWindow(Container):
         self._load_recent_search_history()
         
         # Check dependencies
-        self.embeddings_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+        self.embeddings_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) and RAG_SERVICES_AVAILABLE
         self.flashrank_available = DEPENDENCIES_AVAILABLE.get('flashrank', False)
+        self.rag_search_available = RAG_EVENTS_AVAILABLE and RAG_SERVICES_AVAILABLE
         
         # Search configuration state
         self.current_search_config: Dict[str, Any] = {}
@@ -284,7 +315,13 @@ class SearchRAGWindow(Container):
             # Header Section
             with Container(classes="search-header-section"):
                 yield Static("🔍 RAG Search & Discovery", classes="rag-title-enhanced")
-                yield Static("Search across your media, conversations, and notes with semantic understanding", classes="rag-subtitle")
+                if not self.rag_search_available:
+                    yield Static(
+                        "⚠️ RAG search functionality is limited - install dependencies with: pip install -e '.[embeddings_rag]'",
+                        classes="rag-warning"
+                    )
+                else:
+                    yield Static("Search across your media, conversations, and notes with semantic understanding", classes="rag-subtitle")
             
             # Search Section with visual prominence
             with Container(classes="search-section"):
@@ -559,6 +596,14 @@ class SearchRAGWindow(Container):
     @work(exclusive=True)
     async def _perform_search(self, query: str) -> None:
         """Perform the actual search with streaming results"""
+        if not self.rag_search_available:
+            self.app_instance.notify(
+                "RAG search functionality is not available. Please install required dependencies.",
+                severity="error",
+                timeout=5
+            )
+            return
+            
         self.is_searching = True
         start_time = datetime.now()
         
@@ -860,6 +905,9 @@ class SearchRAGWindow(Container):
             cache_service = get_cache_service()
             cache_service.clear_all_caches()
             self.app_instance.notify("✅ Cache cleared successfully", severity="success")
+        except ImportError:
+            logger.warning("Cache service not available - dependencies missing")
+            self.app_instance.notify("❌ Cache service not available - please install RAG dependencies", severity="error")
         except Exception as e:
             logger.error(f"Error clearing cache: {e}")
             self.app_instance.notify(f"❌ Error clearing cache: {str(e)}", severity="error")
@@ -867,7 +915,7 @@ class SearchRAGWindow(Container):
     @work(exclusive=True)
     async def _index_all_content(self) -> None:
         """Index all content with background progress indicator"""
-        if not self.embeddings_available:
+        if not self.embeddings_available or not RAG_SERVICES_AVAILABLE:
             self.app_instance.notify(
                 "Embeddings dependencies not available. Install with: pip install -e '.[embeddings_rag]'",
                 severity="warning"

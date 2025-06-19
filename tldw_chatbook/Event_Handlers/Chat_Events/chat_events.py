@@ -447,11 +447,13 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     app.current_ai_message_widget = ai_placeholder_widget
 
     # --- 10.5. Apply RAG Context if enabled ---
-    from .chat_rag_events import get_rag_context_for_chat
-    
-    # Get RAG context for the message
     rag_context = None
+    message_text_with_rag = message_text_from_input
+    
     try:
+        from .chat_rag_events import get_rag_context_for_chat
+        
+        # Get RAG context for the message
         rag_context = await get_rag_context_for_chat(app, message_text_from_input)
         if rag_context:
             loguru_logger.info(f"RAG context retrieved, length: {len(rag_context)} chars")
@@ -459,9 +461,10 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             message_text_with_rag = rag_context + message_text_from_input
         else:
             message_text_with_rag = message_text_from_input
+    except ImportError:
+        loguru_logger.debug("RAG events not available - skipping RAG context")
     except Exception as e:
         loguru_logger.error(f"Error getting RAG context: {e}", exc_info=True)
-        message_text_with_rag = message_text_from_input
     
     # --- 11. Prepare and Dispatch API Call via Worker ---
     loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_with_rag[:50]}...', History items: {len(chat_history_for_api)}")
