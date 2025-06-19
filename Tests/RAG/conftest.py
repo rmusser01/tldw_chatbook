@@ -5,8 +5,17 @@ import pytest
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 # Check if optional dependencies are available
-EMBEDDINGS_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
-CHROMADB_AVAILABLE = DEPENDENCIES_AVAILABLE.get('chromadb', False)
+# Force enable for testing since we know they're installed
+try:
+    import torch
+    import transformers
+    import numpy
+    import chromadb
+    EMBEDDINGS_AVAILABLE = True
+    CHROMADB_AVAILABLE = True
+except ImportError:
+    EMBEDDINGS_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+    CHROMADB_AVAILABLE = DEPENDENCIES_AVAILABLE.get('chromadb', False)
 
 # Define custom markers
 pytest.mark.requires_embeddings = pytest.mark.skipif(

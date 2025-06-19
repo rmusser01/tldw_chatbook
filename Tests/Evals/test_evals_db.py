@@ -36,7 +36,8 @@ class TestEvalsDBInitialization:
     def test_file_db_initialization(self, temp_db_path):
         """Test file-based database initialization."""
         db = EvalsDB(db_path=temp_db_path, client_id="test")
-        assert db.db_path == temp_db_path
+        # db_path is a Path object for file-based databases
+        assert str(db.db_path) == temp_db_path
         assert Path(temp_db_path).exists()
     
     def test_schema_creation(self, in_memory_db):
@@ -85,7 +86,7 @@ class TestTaskOperations:
         # First create a dataset
         dataset_id = in_memory_db.create_dataset(
             name="test_dataset",
-            source_type="local",
+            format="json",
             source_path="/path/to/data",
             metadata={"format": "json"}
         )
@@ -198,7 +199,7 @@ class TestDatasetOperations:
         """Test dataset creation."""
         dataset_id = in_memory_db.create_dataset(
             name="test_dataset",
-            source_type="huggingface",
+            format="huggingface",
             source_path="test/dataset",
             metadata={"split": "test", "config": "default"}
         )
@@ -210,7 +211,7 @@ class TestDatasetOperations:
         """Test dataset retrieval."""
         dataset_id = in_memory_db.create_dataset(
             name="test_dataset",
-            source_type="local",
+            format="custom",
             source_path="/path/to/data",
             metadata={"format": "csv"}
         )
@@ -226,7 +227,7 @@ class TestDatasetOperations:
         for i in range(2):
             dataset_id = in_memory_db.create_dataset(
                 name=f"dataset_{i}",
-                source_type="local",
+                format="custom",
                 source_path=f"/path/to/data_{i}",
                 metadata={"index": i}
             )
@@ -497,13 +498,13 @@ class TestSearchOperations:
         dataset_ids = []
         dataset_ids.append(in_memory_db.create_dataset(
             name="MMLU Dataset",
-            source_type="huggingface",
+            format="huggingface",
             source_path="cais/mmlu",
             metadata={"description": "Massive multitask language understanding"}
         ))
         dataset_ids.append(in_memory_db.create_dataset(
             name="GSM8K Dataset", 
-            source_type="huggingface",
+            format="huggingface",
             source_path="gsm8k",
             metadata={"description": "Grade school math word problems"}
         ))

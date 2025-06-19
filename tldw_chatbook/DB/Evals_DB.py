@@ -65,12 +65,16 @@ class EvalsDB:
             db_path: Path to the SQLite database file
             client_id: Identifier for the client making changes (for audit trail)
         """
-        self.db_path = Path(db_path)
+        # Handle special case for in-memory database
+        if db_path == ":memory:":
+            self.db_path = db_path
+        else:
+            self.db_path = Path(db_path)
+            # Ensure database directory exists
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        
         self.client_id = client_id
         self._local = threading.local()
-        
-        # Ensure database directory exists
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Initialize database schema
         self._init_schema()
@@ -80,12 +84,18 @@ class EvalsDB:
     def _get_connection(self) -> sqlite3.Connection:
         """Get thread-local database connection."""
         if not hasattr(self._local, 'connection'):
-            conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            # Convert Path to string if necessary, but keep :memory: as is
+            db_path_str = self.db_path if isinstance(self.db_path, str) else str(self.db_path)
+            conn = sqlite3.connect(db_path_str, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
             self._local.connection = conn
         return self._local.connection
+    
+    def get_connection(self) -> sqlite3.Connection:
+        """Public method to get thread-local database connection."""
+        return self._get_connection()
     
     def _init_schema(self):
         """Initialize database schema."""
@@ -338,13 +348,76 @@ class EvalsDB:
                 raise ConflictError(f"Task with name '{name}' already exists", "eval_tasks", name)
             raise EvalsDBError(f"Failed to create task: {e}")
     
-    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+    def update_task(self, task_id: str, name: str = None, description: str = None,
+                   config_data: Dict[str, Any] = None) -> bool:
+        """Update an existing task."""
+        updates = []
+        params = []
+        
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name.strip())
+        
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+            
+        if config_data is not None:
+            updates.append("config_data = ?")
+            params.append(json.dumps(config_data))
+        
+        if not updates:
+            return True  # Nothing to update
+        
+        updates.append("updated_at = datetime('now', 'utc')")
+        updates.append("version = version + 1")
+        
+        query = f"UPDATE eval_tasks SET {', '.join(updates)} WHERE id = ? AND deleted_at IS NULL"
+        params.append(task_id)
+        
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.execute(query, params)
+                if cursor.rowcount > 0:
+                    logger.info(f"Updated eval task: {task_id}")
+                    return True
+                return False
+                
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                raise ConflictError(f"Task name already exists", "eval_tasks", task_id)
+            raise EvalsDBError(f"Failed to update task: {e}")
+    
+    def delete_task(self, task_id: str) -> bool:
+        """Soft delete a task."""
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.execute("""
+                    UPDATE eval_tasks 
+                    SET deleted_at = datetime('now', 'utc'),
+                        updated_at = datetime('now', 'utc')
+                    WHERE id = ? AND deleted_at IS NULL
+                """, (task_id,))
+                
+                if cursor.rowcount > 0:
+                    logger.info(f"Deleted eval task: {task_id}")
+                    return True
+                return False
+                
+        except Exception as e:
+            raise EvalsDBError(f"Failed to delete task: {e}")
+    
+    def get_task(self, task_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
         """Get task by ID."""
         conn = self._get_connection()
-        cursor = conn.execute("""
-            SELECT * FROM eval_tasks 
-            WHERE id = ? AND deleted_at IS NULL
-        """, (task_id,))
+        
+        query = "SELECT * FROM eval_tasks WHERE id = ?"
+        if not include_deleted:
+            query += " AND deleted_at IS NULL"
+        
+        cursor = conn.execute(query, (task_id,))
         
         row = cursor.fetchone()
         if row:
@@ -452,6 +525,24 @@ class EvalsDB:
             WHERE deleted_at IS NULL
             ORDER BY created_at DESC LIMIT ? OFFSET ?
         """, (limit, offset))
+        
+        datasets = []
+        for row in cursor.fetchall():
+            dataset = dict(row)
+            dataset['metadata'] = json.loads(dataset['metadata'])
+            datasets.append(dataset)
+        
+        return datasets
+    
+    def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Search datasets using FTS5."""
+        conn = self._get_connection()
+        cursor = conn.execute("""
+            SELECT d.* FROM eval_datasets d
+            JOIN eval_datasets_fts fts ON d.id = fts.id
+            WHERE eval_datasets_fts MATCH ? AND d.deleted_at IS NULL
+            ORDER BY rank LIMIT ?
+        """, (query, limit))
         
         datasets = []
         for row in cursor.fetchall():
@@ -701,6 +792,10 @@ class EvalsDB:
             results.append(result)
         
         return results
+    
+    def get_results_for_run(self, run_id: str, limit: int = 1000, offset: int = 0) -> List[Dict[str, Any]]:
+        """Alias for get_run_results for backward compatibility."""
+        return self.get_run_results(run_id, limit, offset)
     
     def get_run_metrics(self, run_id: str) -> Dict[str, Any]:
         """Get aggregated metrics for a run."""
