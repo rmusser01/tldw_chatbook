@@ -43,10 +43,6 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
     """
     if feature_name is None:
         feature_name = module_name
-        
-    # Return cached result if already checked
-    if feature_name in DEPENDENCIES_AVAILABLE:
-        return DEPENDENCIES_AVAILABLE[feature_name]
     
     try:
         module = __import__(module_name)
@@ -61,7 +57,7 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
 
 def check_embeddings_rag_deps() -> bool:
     """Check all dependencies needed for embeddings and RAG functionality."""
-    required_deps = ['torch', 'transformers', 'numpy', 'chromadb']
+    required_deps = ['torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers']
     all_available = True
     
     for dep in required_deps:
@@ -188,6 +184,29 @@ def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") 
     return handler
 
 # Initialize dependency checks
+def reset_dependency_checks():
+    """Reset all dependency checks - useful for testing."""
+    global DEPENDENCIES_AVAILABLE, MODULES
+    DEPENDENCIES_AVAILABLE = {
+        'torch': False,
+        'transformers': False,
+        'numpy': False,
+        'chromadb': False,
+        'embeddings_rag': False,
+        'websearch': False,
+        'jieba': False,
+        'fugashi': False,
+        'flashrank': False,
+        'sentence_transformers': False,
+        'chunker': False,
+        'chinese_chunking': False,
+        'japanese_chunking': False,
+        'token_chunking': False,
+        'cohere': False,
+    }
+    MODULES = {}
+    logger.debug("Reset dependency checks")
+
 def initialize_dependency_checks():
     """Initialize all dependency checks at startup."""
     logger.info("Checking optional dependencies...")
@@ -197,6 +216,7 @@ def initialize_dependency_checks():
     check_dependency('transformers') 
     check_dependency('numpy')
     check_dependency('chromadb')
+    check_dependency('sentence_transformers')
     check_dependency('jieba')
     check_dependency('fugashi')
     check_dependency('flashrank')
@@ -218,5 +238,9 @@ def initialize_dependency_checks():
     
     logger.info("Dependency check complete.")
 
-# Auto-initialize when module is imported
-initialize_dependency_checks()
+# Auto-initialize when module is imported unless in test environment
+import os
+if 'PYTEST_CURRENT_TEST' not in os.environ:
+    initialize_dependency_checks()
+else:
+    logger.debug("Skipping auto-initialization in test environment")

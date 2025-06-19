@@ -57,7 +57,7 @@ class ConflictError(EvalsDBError):
 class EvalsDB:
     """Database manager for LLM evaluation data and results."""
     
-    def __init__(self, db_path: str = "evals.db", client_id: str = "default_client"):
+    def __init__(self, db_path: Union[str, Path] = "evals.db", client_id: str = "default_client"):
         """
         Initialize the EvalsDB with a database path and client ID.
         

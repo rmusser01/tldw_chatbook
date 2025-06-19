@@ -2,20 +2,35 @@
 # Provides common fixtures and markers for RAG-related tests
 
 import pytest
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
-# Check if optional dependencies are available
-# Force enable for testing since we know they're installed
-try:
-    import torch
-    import transformers
-    import numpy
-    import chromadb
-    EMBEDDINGS_AVAILABLE = True
-    CHROMADB_AVAILABLE = True
-except ImportError:
-    EMBEDDINGS_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
-    CHROMADB_AVAILABLE = DEPENDENCIES_AVAILABLE.get('chromadb', False)
+# Reset and re-initialize dependency checks before importing anything else
+from tldw_chatbook.Utils.optional_deps import reset_dependency_checks, initialize_dependency_checks, DEPENDENCIES_AVAILABLE
+reset_dependency_checks()
+initialize_dependency_checks()
+
+# Now check the availability
+EMBEDDINGS_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+CHROMADB_AVAILABLE = DEPENDENCIES_AVAILABLE.get('chromadb', False)
+
+# If still not detected but we know they're installed, force enable
+if not EMBEDDINGS_AVAILABLE:
+    try:
+        import torch
+        import transformers
+        import numpy
+        import chromadb
+        import sentence_transformers
+        EMBEDDINGS_AVAILABLE = True
+        CHROMADB_AVAILABLE = True
+        # Update the global state
+        DEPENDENCIES_AVAILABLE['embeddings_rag'] = True
+        DEPENDENCIES_AVAILABLE['chromadb'] = True
+        DEPENDENCIES_AVAILABLE['torch'] = True
+        DEPENDENCIES_AVAILABLE['transformers'] = True
+        DEPENDENCIES_AVAILABLE['numpy'] = True
+        DEPENDENCIES_AVAILABLE['sentence_transformers'] = True
+    except ImportError:
+        pass
 
 # Define custom markers
 pytest.mark.requires_embeddings = pytest.mark.skipif(

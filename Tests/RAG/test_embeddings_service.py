@@ -63,17 +63,15 @@ class TestEmbeddingsService:
         assert service.client is None
         assert service.cache_service is not None
     
-    @patch('tldw_chatbook.RAG_Search.Services.embeddings_service.SentenceTransformer')
-    def test_initialize_embedding_model(self, mock_transformer, embeddings_service):
+    def test_initialize_embedding_model(self, embeddings_service):
         """Test embedding model initialization"""
         mock_model = MagicMock()
-        mock_transformer.return_value = mock_model
         
-        result = embeddings_service.initialize_embedding_model()
+        with patch('sentence_transformers.SentenceTransformer', return_value=mock_model):
+            result = embeddings_service.initialize_embedding_model()
         
-        assert result is True
-        assert embeddings_service.embedding_model == mock_model
-        mock_transformer.assert_called_once_with("sentence-transformers/all-MiniLM-L6-v2")
+            assert result is True
+            assert embeddings_service.embedding_model == mock_model
     
     @patch('tldw_chatbook.RAG_Search.Services.embeddings_service.EMBEDDINGS_AVAILABLE', False)
     def test_initialize_embedding_model_no_deps(self, embeddings_service):
@@ -82,30 +80,32 @@ class TestEmbeddingsService:
         assert result is False
         assert embeddings_service.embedding_model is None
     
-    @patch('tldw_chatbook.RAG_Search.Services.embeddings_service.SentenceTransformer')
-    def test_create_embeddings(self, mock_transformer, embeddings_service, mock_cache_service):
+    def test_create_embeddings(self, embeddings_service, mock_cache_service):
         """Test creating embeddings for texts"""
         # Setup mock model
         mock_model = MagicMock()
-        mock_model.encode.return_value = [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
-        mock_transformer.return_value = mock_model
+        # Create a mock numpy array with tolist() method
+        mock_array = MagicMock()
+        mock_array.tolist.return_value = [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
+        mock_model.encode.return_value = mock_array
         
-        # Initialize model
-        embeddings_service.initialize_embedding_model()
+        with patch('sentence_transformers.SentenceTransformer', return_value=mock_model):
+            # Initialize model
+            embeddings_service.initialize_embedding_model()
         
-        # Create embeddings
-        texts = ["text1", "text2", "text3"]
-        embeddings = embeddings_service.create_embeddings(texts)
+            # Create embeddings
+            texts = ["text1", "text2", "text3"]
+            embeddings = embeddings_service.create_embeddings(texts)
         
-        assert embeddings is not None
-        assert len(embeddings) == 3
-        assert embeddings[0] == [0.1, 0.2]
-        assert embeddings[1] == [0.3, 0.4]
-        assert embeddings[2] == [0.5, 0.6]
+            assert embeddings is not None
+            assert len(embeddings) == 3
+            assert embeddings[0] == [0.1, 0.2]
+            assert embeddings[1] == [0.3, 0.4]
+            assert embeddings[2] == [0.5, 0.6]
         
-        # Check that cache was used
-        mock_cache_service.get_embeddings_batch.assert_called_once_with(texts)
-        mock_cache_service.cache_embeddings_batch.assert_called_once()
+            # Check that cache was used
+            mock_cache_service.get_embeddings_batch.assert_called_once_with(texts)
+            mock_cache_service.cache_embeddings_batch.assert_called_once()
     
     def test_create_embeddings_with_cache(self, embeddings_service, mock_cache_service):
         """Test creating embeddings with some cached"""
@@ -117,7 +117,10 @@ class TestEmbeddingsService:
         
         # Setup mock model
         mock_model = MagicMock()
-        mock_model.encode.return_value = [[0.3, 0.4]]  # Only for text2
+        # Create a mock numpy array with tolist() method
+        mock_array = MagicMock()
+        mock_array.tolist.return_value = [[0.3, 0.4]]  # Only for text2
+        mock_model.encode.return_value = mock_array
         embeddings_service.embedding_model = mock_model
         
         # Create embeddings

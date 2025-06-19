@@ -50,7 +50,7 @@ class TestRAGIntegration:
     def media_db(self, temp_dirs):
         """Create a real media database with test data"""
         db_path = temp_dirs['media'] / "media.db"
-        db = MediaDatabase(str(db_path))
+        db = MediaDatabase(str(db_path), client_id="test_client")
         
         # Add test media items
         test_items = [

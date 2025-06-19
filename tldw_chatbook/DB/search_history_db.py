@@ -21,7 +21,7 @@ import sqlite3
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Union
 from loguru import logger
 
 class SearchHistoryDB:
@@ -32,20 +32,34 @@ class SearchHistoryDB:
     analytics data for the RAG system.
     """
     
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Union[str, Path], client_id: str = "default"):
         """
         Initialize the search history database.
         
         Args:
-            db_path: Path to the SQLite database file
+            db_path: Path to the SQLite database file or ':memory:'
+            client_id: Client identifier (for future multi-client support)
         """
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Handle path types consistently
+        if isinstance(db_path, Path):
+            self.is_memory_db = False
+            self.db_path = db_path.resolve()
+        else:
+            self.is_memory_db = (db_path == ':memory:')
+            self.db_path = Path(db_path).resolve() if not self.is_memory_db else Path(":memory:")
+        
+        self.db_path_str = str(self.db_path) if not self.is_memory_db else ':memory:'
+        self.client_id = client_id
+        
+        # Create directory if needed for file-based DB
+        if not self.is_memory_db:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        
         self._initialize_schema()
         
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with row factory."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(self.db_path_str)
         conn.row_factory = sqlite3.Row
         return conn
         

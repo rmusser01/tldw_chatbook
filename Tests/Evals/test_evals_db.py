@@ -219,7 +219,7 @@ class TestDatasetOperations:
         dataset = in_memory_db.get_dataset(dataset_id)
         assert dataset['id'] == dataset_id
         assert dataset['name'] == "test_dataset"
-        assert dataset['source_type'] == "local"
+        assert dataset['format'] == "local"
     
     def test_list_datasets(self, in_memory_db):
         """Test listing datasets."""
@@ -276,7 +276,7 @@ class TestRunOperations:
         """Test evaluation run creation."""
         # Create dependencies
         task_id = in_memory_db.create_task(
-            name="test_task", description="Test", task_type="qa",
+            name="test_task", description="Test", task_type="question_answer",
             config_format="custom", config_data={}
         )
         model_id = in_memory_db.create_model(
@@ -296,7 +296,7 @@ class TestRunOperations:
         """Test evaluation run retrieval."""
         # Create dependencies
         task_id = in_memory_db.create_task(
-            name="test_task", description="Test", task_type="qa",
+            name="test_task", description="Test", task_type="question_answer",
             config_format="custom", config_data={}
         )
         model_id = in_memory_db.create_model(
@@ -318,7 +318,7 @@ class TestRunOperations:
         """Test updating run status."""
         # Create dependencies and run
         task_id = in_memory_db.create_task(
-            name="test_task", description="Test", task_type="qa",
+            name="test_task", description="Test", task_type="question_answer",
             config_format="custom", config_data={}
         )
         model_id = in_memory_db.create_model(
@@ -344,7 +344,7 @@ class TestResultOperations:
         """Test storing evaluation results."""
         # Create dependencies
         task_id = in_memory_db.create_task(
-            name="test_task", description="Test", task_type="qa",
+            name="test_task", description="Test", task_type="question_answer",
             config_format="custom", config_data={}
         )
         model_id = in_memory_db.create_model(
@@ -372,7 +372,7 @@ class TestResultOperations:
         """Test retrieving results for a run."""
         # Create dependencies and run
         task_id = in_memory_db.create_task(
-            name="test_task", description="Test", task_type="qa",
+            name="test_task", description="Test", task_type="question_answer",
             config_format="custom", config_data={}
         )
         model_id = in_memory_db.create_model(
@@ -410,7 +410,7 @@ class TestMetricsOperations:
         """Test storing run-level metrics."""
         # Create dependencies and run
         task_id = in_memory_db.create_task(
-            name="test_task", description="Test", task_type="qa",
+            name="test_task", description="Test", task_type="question_answer",
             config_format="custom", config_data={}
         )
         model_id = in_memory_db.create_model(
@@ -441,7 +441,7 @@ class TestMetricsOperations:
         """Test retrieving run metrics."""
         # Create dependencies and run
         task_id = in_memory_db.create_task(
-            name="test_task", description="Test", task_type="qa",
+            name="test_task", description="Test", task_type="question_answer",
             config_format="custom", config_data={}
         )
         model_id = in_memory_db.create_model(
@@ -474,12 +474,12 @@ class TestSearchOperations:
         task_ids.append(in_memory_db.create_task(
             name="Math Problems",
             description="Arithmetic and algebra questions",
-            task_type="qa", config_format="custom", config_data={}
+            task_type="question_answer", config_format="custom", config_data={}
         ))
         task_ids.append(in_memory_db.create_task(
             name="Science Quiz",
             description="Physics and chemistry evaluation",
-            task_type="qa", config_format="custom", config_data={}
+            task_type="question_answer", config_format="custom", config_data={}
         ))
         
         # Search for math-related tasks
@@ -528,7 +528,7 @@ class TestErrorHandling:
             in_memory_db.create_task(
                 name="",  # Empty name should fail
                 description="Test",
-                task_type="qa",
+                task_type="question_answer",
                 config_format="custom",
                 config_data={}
             )
@@ -546,7 +546,7 @@ class TestErrorHandling:
         """Test handling of concurrent modifications."""
         # Create a task
         task_id = temp_db.create_task(
-            name="test_task", description="Test", task_type="qa",
+            name="test_task", description="Test", task_type="question_answer",
             config_format="custom", config_data={}
         )
         
@@ -575,7 +575,7 @@ class TestThreadSafety:
                 task_id = temp_db.create_task(
                     name=f"task_{index}",
                     description=f"Task {index}",
-                    task_type="qa",
+                    task_type="question_answer",
                     config_format="custom",
                     config_data={"index": index}
                 )
@@ -605,7 +605,7 @@ class TestThreadSafety:
         task_id = temp_db.create_task(
             name="concurrent_test",
             description="Initial description",
-            task_type="qa",
+            task_type="question_answer",
             config_format="custom", 
             config_data={}
         )
@@ -657,7 +657,7 @@ class TestPerformance:
             task_id = temp_db.create_task(
                 name=f"perf_task_{i}",
                 description=f"Performance test task {i}",
-                task_type="qa",
+                task_type="question_answer",
                 config_format="custom",
                 config_data={"index": i}
             )
@@ -676,7 +676,7 @@ class TestPerformance:
             temp_db.create_task(
                 name=f"task_{i}",
                 description=f"Task {i} with math problems and evaluation content",
-                task_type="qa",
+                task_type="question_answer",
                 config_format="custom", 
                 config_data={}
             )

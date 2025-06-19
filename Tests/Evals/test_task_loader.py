@@ -86,7 +86,7 @@ class TestTaskLoaderInitialization:
     def test_supported_formats(self):
         """Test that loader supports expected formats."""
         loader = TaskLoader()
-        expected_formats = ['eleuther', 'custom', 'csv', 'huggingface', 'auto']
+        expected_formats = ['eleuther', 'custom', 'csv', 'huggingface']
         
         for format_type in expected_formats:
             assert format_type in loader.supported_formats
@@ -118,7 +118,7 @@ class TestEleutherFormatLoading:
         config = loader.load_task(str(task_file), 'eleuther')
         
         assert config.name == "mmlu_sample"
-        assert config.task_type == "multiple_choice"
+        assert config.task_type == "classification"  # multiple_choice maps to classification
         assert config.dataset_name == "cais/mmlu"
         assert config.num_fewshot == 5
         assert config.generation_kwargs["temperature"] == 0.0

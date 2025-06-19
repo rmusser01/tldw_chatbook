@@ -229,8 +229,8 @@ class PromptsDatabase:
             if not self.is_memory_db:
                 self.db_path = Path(db_path).resolve()
             else:
-                # Even for memory, Path object can be useful internally, though str is ':memory:'
-                self.db_path = Path(":memory:")  # Represent in-memory path consistently
+                # For in-memory DB, we don't need a Path object
+                self.db_path = None
 
         # Store the path as a string for convenience/logging
         self.db_path_str = str(self.db_path) if not self.is_memory_db else ':memory:'
@@ -241,7 +241,7 @@ class PromptsDatabase:
         self.client_id = client_id
 
         # Ensure parent directory exists if it's a file-based DB
-        if not self.is_memory_db:
+        if not self.is_memory_db and self.db_path:
             try:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as e:
@@ -586,7 +586,17 @@ class PromptsDatabase:
             return
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
-        payload_json = json.dumps(payload, separators=(',', ':')) if payload else None
+        # Convert datetime objects to strings for JSON serialization
+        if payload and isinstance(payload, dict):
+            serializable_payload = {}
+            for key, value in payload.items():
+                if isinstance(value, datetime):
+                    serializable_payload[key] = value.isoformat()
+                else:
+                    serializable_payload[key] = value
+            payload_json = json.dumps(serializable_payload, separators=(',', ':'))
+        else:
+            payload_json = json.dumps(payload, separators=(',', ':')) if payload else None
         try:
             conn.execute("""
                          INSERT INTO sync_log (entity, entity_uuid, operation, timestamp, client_id, version, payload)

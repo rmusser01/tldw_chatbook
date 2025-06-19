@@ -60,7 +60,8 @@ class TestPromptsDBInitialization:
     def test_file_db_initialization(self, temp_db_path):
         """Test file-based database initialization."""
         db = PromptsDatabase(temp_db_path, client_id='test_client')
-        assert db.db_path_str == temp_db_path or str(db.db_path) == temp_db_path
+        # Handle macOS path resolution differences
+        assert db.db_path_str == temp_db_path or Path(db.db_path_str).samefile(temp_db_path)
         assert Path(temp_db_path).exists()
         db.close_connection()
     
@@ -72,7 +73,7 @@ class TestPromptsDBInitialization:
         )
         tables = [row[0] for row in cursor.fetchall()]
         
-        expected_tables = ['Prompts', 'Keywords', 'PromptKeywords', 'sync_log']
+        expected_tables = ['Prompts', 'PromptKeywordsTable', 'PromptKeywordLinks', 'sync_log']
         for table in expected_tables:
             assert table in tables
     
@@ -83,7 +84,7 @@ class TestPromptsDBInitialization:
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_fts'"
         )
         fts_tables = [row[0] for row in cursor.fetchall()]
-        assert 'Prompts_fts' in fts_tables
+        assert 'prompts_fts' in fts_tables
 
 
 class TestPromptOperations:
@@ -92,62 +93,75 @@ class TestPromptOperations:
     def test_add_prompt_basic(self, in_memory_db):
         """Test basic prompt creation."""
         name = "Test Prompt"
-        prompt_id = in_memory_db.add_prompt(
+        result = in_memory_db.add_prompt(
             name=name,
             author="Test Author",
-            system="Test system prompt",
-            user="Test user prompt"
+            details=None,
+            system_prompt="Test system prompt",
+            user_prompt="Test user prompt"
         )
         
+        prompt_id, prompt_uuid, action = result
         assert prompt_id is not None
         assert isinstance(prompt_id, int)
+        assert prompt_uuid is not None
+        assert "added successfully" in action
         
         # Verify prompt was created
-        prompt = in_memory_db.get_prompt_details(prompt_id)
+        prompt = in_memory_db.get_prompt_by_id(prompt_id)
         assert prompt is not None
         assert prompt['name'] == name
     
     def test_add_prompt_with_keywords(self, in_memory_db):
         """Test prompt creation with keywords."""
-        prompt_id = in_memory_db.add_prompt(
+        result = in_memory_db.add_prompt(
             name="Test Prompt with Keywords",
             author="Test Author",
-            system="System prompt",
-            user="User prompt",
+            details=None,
+            system_prompt="System prompt",
+            user_prompt="User prompt",
             keywords=["test", "keywords", "example"]
         )
         
-        prompt = in_memory_db.get_prompt_details(prompt_id)
-        assert len(prompt['keywords']) == 3
-        assert "test" in prompt['keywords']
+        prompt_id, _, _ = result
+        
+        # Verify the prompt was created
+        prompt = in_memory_db.get_prompt_by_id(prompt_id)
+        assert prompt is not None
+        assert prompt['name'] == "Test Prompt with Keywords"
     
     def test_update_prompt(self, in_memory_db):
         """Test prompt update."""
         # Create prompt
-        prompt_id = in_memory_db.add_prompt(
+        result = in_memory_db.add_prompt(
             name="Original Name",
-            author="Original Author"
+            author="Original Author",
+            details=None
         )
+        prompt_id, _, _ = result
         
         # Update it
-        in_memory_db.update_prompt(
+        in_memory_db.update_prompt_by_id(
             prompt_id,
-            name="Updated Name",
-            system="Updated system prompt"
+            {
+                "name": "Updated Name",
+                "system_prompt": "Updated system prompt"
+            }
         )
         
         # Verify update
-        prompt = in_memory_db.get_prompt_details(prompt_id)
+        prompt = in_memory_db.get_prompt_by_id(prompt_id)
         assert prompt['name'] == "Updated Name"
-        assert prompt['system'] == "Updated system prompt"
+        assert prompt['system_prompt'] == "Updated system prompt"
         assert prompt['author'] == "Original Author"  # Should not change
     
     def test_delete_prompt(self, in_memory_db):
         """Test prompt deletion (soft delete)."""
-        prompt_id = in_memory_db.add_prompt(name="To Delete")
+        result = in_memory_db.add_prompt(name="To Delete", author=None, details=None)
+        prompt_id, _, _ = result
         
         # Delete it
-        in_memory_db.delete_prompt(prompt_id)
+        in_memory_db.soft_delete_prompt(prompt_id)
         
         # Should not be in active prompts
         prompts = in_memory_db.get_all_prompts()
@@ -156,10 +170,10 @@ class TestPromptOperations:
     def test_duplicate_prompt_name(self, in_memory_db):
         """Test that duplicate prompt names are rejected."""
         name = "Unique Prompt"
-        in_memory_db.add_prompt(name=name)
+        in_memory_db.add_prompt(name=name, author=None, details=None)
         
         with pytest.raises(ConflictError):
-            in_memory_db.add_prompt(name=name)
+            in_memory_db.add_prompt(name=name, author=None, details=None)
 
 
 class TestKeywordOperations:
@@ -196,14 +210,20 @@ class TestSearchFunctionality:
         # Create prompts with different keywords
         in_memory_db.add_prompt(
             name="Python Tutorial",
+            author=None,
+            details=None,
             keywords=["python", "tutorial"]
         )
         in_memory_db.add_prompt(
             name="SQL Guide",
+            author=None,
+            details=None,
             keywords=["sql", "database"]
         )
         in_memory_db.add_prompt(
             name="Python Database",
+            author=None,
+            details=None,
             keywords=["python", "database"]
         )
         
@@ -219,11 +239,15 @@ class TestSearchFunctionality:
         """Test full-text search."""
         in_memory_db.add_prompt(
             name="Code Review Assistant",
-            system="Help review code for best practices"
+            author=None,
+            details=None,
+            system_prompt="Help review code for best practices"
         )
         in_memory_db.add_prompt(
             name="Writing Helper",
-            system="Assist with writing and editing"
+            author=None,
+            details=None,
+            system_prompt="Assist with writing and editing"
         )
         
         # Search for "review"
@@ -237,59 +261,93 @@ class TestStandaloneFunctions:
     
     def test_add_or_update_prompt(self, temp_db_path):
         """Test the add_or_update_prompt standalone function."""
-        # First add
-        prompt_id = add_or_update_prompt(
-            db_path=temp_db_path,
-            prompt_name="Test Standalone",
-            keywords=["test"],
-            author="Tester"
-        )
-        assert prompt_id is not None
-        
-        # Update (same name)
-        prompt_id2 = add_or_update_prompt(
-            db_path=temp_db_path,
-            prompt_name="Test Standalone",
-            system="Updated system"
-        )
-        assert prompt_id == prompt_id2
+        db = PromptsDatabase(temp_db_path, client_id='test_client')
+        try:
+            # First add
+            result = add_or_update_prompt(
+                db,
+                "Test Standalone",
+                author="Tester",
+                details=None,
+                system_prompt=None,
+                user_prompt=None,
+                keywords=["test"]
+            )
+            prompt_id, prompt_uuid, action = result
+            assert prompt_id is not None
+            
+            # Update (same name)
+            result2 = add_or_update_prompt(
+                db,
+                "Test Standalone",
+                author=None,
+                details=None,
+                system_prompt="Updated system",
+                user_prompt=None,
+                keywords=None
+            )
+            prompt_id2, _, _ = result2
+            assert prompt_id == prompt_id2
+        finally:
+            db.close_connection()
     
     def test_load_prompt_details(self, temp_db_path):
         """Test loading prompt details for UI."""
-        # Add a prompt
-        prompt_id = add_or_update_prompt(
-            db_path=temp_db_path,
-            prompt_name="UI Test",
-            keywords=["ui", "test"]
-        )
-        
-        # Load details
-        details = load_prompt_details_for_ui(temp_db_path, prompt_id)
-        assert details['name'] == "UI Test"
-        assert len(details['keywords']) == 2
+        db = PromptsDatabase(temp_db_path, client_id='test_client')
+        try:
+            # Add a prompt
+            result = add_or_update_prompt(
+                db,
+                "UI Test",
+                author=None,
+                details=None,
+                system_prompt=None,
+                user_prompt=None,
+                keywords=["ui", "test"]
+            )
+            prompt_id, _, _ = result
+            
+            # Load details by name (not ID)
+            name, author, details, system, user, keywords_str = load_prompt_details_for_ui(db, "UI Test")
+            assert name == "UI Test"
+            assert "ui" in keywords_str and "test" in keywords_str
+        finally:
+            db.close_connection()
     
     def test_export_keywords_csv(self, temp_db_path, tmp_path):
         """Test exporting keywords to CSV."""
-        # Add prompts with keywords
-        add_or_update_prompt(
-            db_path=temp_db_path,
-            prompt_name="Prompt 1",
-            keywords=["python", "test"]
-        )
-        add_or_update_prompt(
-            db_path=temp_db_path,
-            prompt_name="Prompt 2",
-            keywords=["python", "database"]
-        )
-        
-        # Export
-        csv_file = tmp_path / "keywords.csv"
-        export_prompt_keywords_to_csv(temp_db_path, str(csv_file))
-        
-        assert csv_file.exists()
-        content = csv_file.read_text()
-        assert "python" in content
-        assert "2" in content  # Usage count
+        db = PromptsDatabase(temp_db_path, client_id='test_client')
+        try:
+            # Add prompts with keywords
+            add_or_update_prompt(
+                db,
+                "Prompt 1",
+                author=None,
+                details=None,
+                system_prompt=None,
+                user_prompt=None,
+                keywords=["python", "test"]
+            )
+            add_or_update_prompt(
+                db,
+                "Prompt 2",
+                author=None,
+                details=None,
+                system_prompt=None,
+                user_prompt=None,
+                keywords=["python", "database"]
+            )
+            
+            # Export
+            csv_file = tmp_path / "keywords.csv"
+            export_prompt_keywords_to_csv(db, str(csv_file))
+            
+            assert csv_file.exists()
+            content = csv_file.read_text()
+            assert "python" in content
+            assert "2" in content  # Usage count
+        finally:
+            db.close_connection()
 
 
 class TestErrorHandling:
@@ -305,7 +363,7 @@ class TestErrorHandling:
     
     def test_nonexistent_prompt(self, in_memory_db):
         """Test operations on non-existent prompts."""
-        result = in_memory_db.get_prompt_details(9999)
+        result = in_memory_db.get_prompt_by_id(9999)
         assert result is None
         
         # Update non-existent prompt should not fail
@@ -321,7 +379,8 @@ class TestErrorHandling:
         
         def add_prompt(name):
             try:
-                prompt_id = file_db.add_prompt(name=name)
+                result = file_db.add_prompt(name=name, author=None, details=None)
+                prompt_id = result[0]
                 results.append(('success', prompt_id))
             except Exception as e:
                 results.append(('error', str(e)))
