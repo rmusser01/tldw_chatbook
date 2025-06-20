@@ -3,6 +3,7 @@
 #
 # Imports
 import math
+from datetime import datetime
 from typing import TYPE_CHECKING, Dict, Any
 #
 # 3rd-party Libraries
@@ -285,8 +286,15 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
         else:
             for item in results:
                 title = item.get('title', 'Untitled')
-                ingestion_date_str = item.get('ingestion_date', '')
-                ingestion_date = ingestion_date_str.split('T')[0] if ingestion_date_str else 'N/A'
+                ingestion_date_raw = item.get('ingestion_date', '')
+                
+                # Handle both datetime objects and strings
+                if isinstance(ingestion_date_raw, datetime):
+                    ingestion_date = ingestion_date_raw.strftime('%Y-%m-%d')
+                elif isinstance(ingestion_date_raw, str) and ingestion_date_raw:
+                    ingestion_date = ingestion_date_raw.split('T')[0]
+                else:
+                    ingestion_date = 'N/A'
 
                 # Determine snippet based on view type
                 if type_slug == "analysis-review":
