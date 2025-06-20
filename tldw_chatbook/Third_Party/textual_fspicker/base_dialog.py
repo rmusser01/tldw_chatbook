@@ -339,7 +339,8 @@ class FileSystemPickerScreen(ModalScreen[Path | None]):
                 dir_nav = self.query_one(DirectoryNavigation)
                 path_input.value = str(dir_nav.location)
                 path_input.focus()
-                path_input.action_select_all()
+                # Select all text in the input
+                path_input.selection = (0, len(path_input.value))
             else:
                 path_container.add_class("hidden")
                 # Return focus to directory navigation
