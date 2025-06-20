@@ -20,25 +20,38 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static, ListView, ListItem
+from textual.binding import Binding
 from loguru import logger
 
 from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
+from .enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave, RecentLocations
 
 class EvalFilePickerDialog(ModalScreen):
     """Modal dialog for file selection in evaluation context."""
+    
+    BINDINGS = [
+        Binding("ctrl+h", "toggle_hidden", "Toggle hidden files"),
+        Binding("ctrl+r", "toggle_recent", "Show recent files"),
+        Binding("ctrl+f", "focus_search", "Search files"),
+        Binding("f5", "refresh", "Refresh directory"),
+        Binding("escape", "dismiss(None)", "Cancel"),
+    ]
     
     def __init__(self, 
                  title: str = "Select File",
                  filters: Optional[Filters] = None,
                  callback: Optional[Callable[[Optional[str]], None]] = None,
                  save_mode: bool = False,
+                 use_enhanced: bool = True,
                  **kwargs):
         super().__init__(**kwargs)
         self.title = title
         self.filters = filters or self._get_default_filters()
         self.callback = callback
         self.save_mode = save_mode
+        self.use_enhanced = use_enhanced
         self.selected_file: Optional[str] = None
+        self.recent_locations = RecentLocations() if use_enhanced else None
     
     def _get_default_filters(self) -> Filters:
         """Get default file filters for evaluation files."""
@@ -54,18 +67,34 @@ class EvalFilePickerDialog(ModalScreen):
         with Container(classes="file-picker-dialog"):
             yield Label(self.title, classes="dialog-title")
             
-            if self.save_mode:
-                yield FileSave(
-                    path=".",
-                    filters=self.filters,
-                    id="file-picker"
-                )
+            if self.use_enhanced:
+                # Use enhanced file picker with new features
+                if self.save_mode:
+                    yield EnhancedFileSave(
+                        path=".",
+                        filters=self.filters,
+                        id="file-picker"
+                    )
+                else:
+                    yield EnhancedFileOpen(
+                        path=".",
+                        filters=self.filters,
+                        id="file-picker"
+                    )
             else:
-                yield FileOpen(
-                    path=".",
-                    filters=self.filters,
-                    id="file-picker"
-                )
+                # Fallback to original file picker
+                if self.save_mode:
+                    yield FileSave(
+                        path=".",
+                        filters=self.filters,
+                        id="file-picker"
+                    )
+                else:
+                    yield FileOpen(
+                        path=".",
+                        filters=self.filters,
+                        id="file-picker"
+                    )
             
             with Horizontal(classes="dialog-buttons"):
                 yield Button("Cancel", id="cancel-button", variant="error")
@@ -73,10 +102,17 @@ class EvalFilePickerDialog(ModalScreen):
     
     @on(FileOpen.FileSelected)
     @on(FileSave.FileSelected)
+    @on(EnhancedFileOpen.FileSelected)
+    @on(EnhancedFileSave.FileSelected)
     def handle_file_selected(self, event):
         """Handle file selection."""
         self.selected_file = str(event.path)
         logger.info(f"File selected: {self.selected_file}")
+        
+        # Add to recent locations if using enhanced picker
+        if self.use_enhanced and self.recent_locations:
+            from pathlib import Path
+            self.recent_locations.add(Path(event.path))
     
     @on(Button.Pressed, "#select-button")
     def handle_select(self):
@@ -84,6 +120,42 @@ class EvalFilePickerDialog(ModalScreen):
         if self.selected_file and self.callback:
             self.callback(self.selected_file)
         self.dismiss(self.selected_file)
+    
+    def action_toggle_hidden(self) -> None:
+        """Forward toggle hidden action to file picker"""
+        try:
+            picker = self.query_one("#file-picker")
+            if hasattr(picker, 'action_toggle_hidden'):
+                picker.action_toggle_hidden()
+        except Exception:
+            pass
+    
+    def action_toggle_recent(self) -> None:
+        """Forward toggle recent action to file picker"""
+        try:
+            picker = self.query_one("#file-picker")
+            if hasattr(picker, 'action_toggle_recent'):
+                picker.action_toggle_recent()
+        except Exception:
+            pass
+    
+    def action_focus_search(self) -> None:
+        """Forward focus search action to file picker"""
+        try:
+            picker = self.query_one("#file-picker")
+            if hasattr(picker, 'action_focus_search'):
+                picker.action_focus_search()
+        except Exception:
+            pass
+    
+    def action_refresh(self) -> None:
+        """Forward refresh action to file picker"""
+        try:
+            picker = self.query_one("#file-picker")
+            if hasattr(picker, 'action_refresh'):
+                picker.action_refresh()
+        except Exception:
+            pass
     
     @on(Button.Pressed, "#cancel-button")
     def handle_cancel(self):
