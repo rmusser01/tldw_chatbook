@@ -2156,6 +2156,97 @@ UPDATE db_schema_version
             logger.error(f"Database error fetching conversations for character ID {character_id}: {e}")
             raise
 
+    def get_conversation_branches(self, root_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all conversation branches that share the same root.
+        
+        Args:
+            root_id: The root conversation ID
+            
+        Returns:
+            List of conversation dictionaries sharing the same root,
+            ordered by creation time descending.
+            
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = """
+            SELECT id, root_id, forked_from_message_id, parent_conversation_id,
+                   character_id, title, rating, created_at, last_modified, 
+                   version, client_id
+            FROM conversations
+            WHERE root_id = ? AND deleted = 0
+            ORDER BY created_at DESC
+        """
+        try:
+            cursor = self.execute_query(query, (root_id,))
+            branches = [dict(row) for row in cursor.fetchall()]
+            logger.info(f"Found {len(branches)} branches for root {root_id}")
+            return branches
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error getting branches for root {root_id}: {e}")
+            raise
+
+    def get_child_conversations(self, parent_conversation_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all direct child conversations of a given parent.
+        
+        Args:
+            parent_conversation_id: The parent conversation ID
+            
+        Returns:
+            List of child conversation dictionaries.
+            
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = """
+            SELECT id, root_id, forked_from_message_id, parent_conversation_id,
+                   character_id, title, rating, created_at, last_modified, 
+                   version, client_id
+            FROM conversations
+            WHERE parent_conversation_id = ? AND deleted = 0
+            ORDER BY created_at ASC
+        """
+        try:
+            cursor = self.execute_query(query, (parent_conversation_id,))
+            children = [dict(row) for row in cursor.fetchall()]
+            logger.debug(f"Found {len(children)} child conversations for parent {parent_conversation_id}")
+            return children
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error getting child conversations: {e}")
+            raise
+
+    def get_messages_with_branches(self, conversation_id: str) -> Dict[str, int]:
+        """
+        Get a count of child messages for each message in a conversation.
+        This helps identify which messages have branches.
+        
+        Args:
+            conversation_id: The conversation ID
+            
+        Returns:
+            Dictionary mapping parent_message_id to count of children
+            
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        query = """
+            SELECT parent_message_id, COUNT(*) as child_count
+            FROM messages
+            WHERE conversation_id = ? AND deleted = 0 AND parent_message_id IS NOT NULL
+            GROUP BY parent_message_id
+            HAVING COUNT(*) > 1
+        """
+        try:
+            cursor = self.execute_query(query, (conversation_id,))
+            branch_counts = {row['parent_message_id']: row['child_count'] for row in cursor.fetchall()}
+            logger.debug(f"Found {len(branch_counts)} messages with branches in conversation {conversation_id}")
+            return branch_counts
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error getting message branches: {e}")
+            raise
+
     def update_conversation(self, conversation_id: str, update_data: Dict[str, Any], expected_version: int) -> bool | None:
         """
         Updates an existing conversation using optimistic locking.
