@@ -86,20 +86,6 @@ class ChatWindow(Container):
         else:
             logger.warning(f"No handler found for button: {button_id}")
 
-    async def on_key(self, event) -> None:
-        """Handle key presses in the chat window."""
-        # Check if we're in the chat input area
-        if event.key == "enter" and self.app_instance.focused and self.app_instance.focused.id == "chat-input":
-            # Get the TextArea widget
-            chat_input = self.app_instance.query_one("#chat-input", TextArea)
-            # Check if it's empty or only whitespace
-            if chat_input.text.strip():
-                # Only send on Enter in single-line mode (when TextArea height is 1)
-                if chat_input.height <= 3:  # Accounting for borders
-                    # Simulate clicking the send button
-                    from ..Event_Handlers.Chat_Events import chat_events
-                    await chat_events.handle_chat_send_button_pressed(self.app_instance, None)
-                    event.stop()
 
     def compose(self) -> ComposeResult:
         logger.debug("Composing ChatWindow UI")
@@ -114,14 +100,14 @@ class ChatWindow(Container):
                     get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
                     id="toggle-chat-left-sidebar",
                     classes="sidebar-toggle",
-                    tooltip="Toggle left sidebar (Ctrl+[)"
+                    tooltip="Toggle left sidebar"
                 )
                 yield TextArea(id="chat-input", classes="chat-input")
                 yield Button(
                     get_char(EMOJI_SEND, FALLBACK_SEND), 
                     id="send-chat", 
                     classes="send-button",
-                    tooltip="Send message (Enter)"
+                    tooltip="Send message"
                 )
                 yield Button(
                     "💡", 
@@ -141,7 +127,7 @@ class ChatWindow(Container):
                     get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
                     id="toggle-chat-right-sidebar",
                     classes="sidebar-toggle",
-                    tooltip="Toggle right sidebar (Ctrl+])"
+                    tooltip="Toggle right sidebar"
                 )
 
         # Character Details Sidebar (Right)

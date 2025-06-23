@@ -21,27 +21,6 @@ This document outlines potential user experience improvements for the Chat Tab i
   - All tests passing ✅
 - **Status**: COMPLETE
 
-#### 2. Implemented Basic Keyboard Shortcuts (2025-06-23)
-- **Files Modified**: 
-  - `tldw_chatbook/app.py` - Added key bindings and action handlers
-  - `tldw_chatbook/UI/Chat_Window.py` - Added Enter key handler for sending messages
-  - `tldw_chatbook/css/tldw_cli.tcss` - Added styling for shortcuts modal
-- **Shortcuts Implemented**:
-  - **Ctrl+N**: New conversation
-  - **Ctrl+[**: Toggle left sidebar
-  - **Ctrl+]**: Toggle right sidebar  
-  - **Ctrl+K**: Search conversations
-  - **Ctrl+?** or **F1**: Show keyboard shortcuts help
-  - **Enter**: Send message (in single-line mode)
-- **Features Added**:
-  - Modal screen showing all keyboard shortcuts
-  - Smart Enter key handling (sends in single-line mode, newline in multi-line)
-  - Sidebar toggle functionality via keyboard
-- **Impact**: Significantly improved keyboard navigation and reduced reliance on mouse
-- **Tests Created**: 
-  - `Tests/UI/test_keyboard_shortcuts.py` - Verifies bindings, action methods, and CSS
-  - All tests passing ✅
-- **Status**: COMPLETE
 
 ## Current State Analysis
 
