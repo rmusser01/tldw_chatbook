@@ -1,5 +1,5 @@
 # settings_sidebar.py
-# Description: settings sidebar widget
+# Description: settings sidebar widget with enhanced UX features
 #
 # Imports
 #
@@ -7,8 +7,8 @@
 import logging
 
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
-from textual.widgets import Static, Select, TextArea, Input, Collapsible, Button, Checkbox, ListView
+from textual.containers import VerticalScroll, Horizontal, Container
+from textual.widgets import Static, Select, TextArea, Input, Collapsible, Button, Checkbox, ListView, Switch, Label
 #
 # Local Imports
 from ..config import get_cli_providers_and_models
@@ -23,22 +23,19 @@ SIDEBAR_WIDTH = "30%"
 
 
 def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
-    """Yield the widgets for the settings sidebar.
+    """Yield the widgets for the settings sidebar with enhanced UX.
 
-    The sidebar is divided into four collapsible groups:
-        1. General & Chat Settings  – existing controls
-        2. Character Chat Settings – placeholders for character‑specific UI
-        3. Media Settings          – placeholders for media configuration
-        4. Search & Tools Settings – placeholders for search / tool options
+    Enhanced features:
+        1. Mode toggle (Basic/Advanced) at the top
+        2. Search functionality for settings
+        3. Better organization with prominent RAG panel
+        4. All existing functionality preserved
     """
-    # The main container for this sidebar should have the ID that app.py is querying
-    # If you renamed it to "chat-left-sidebar", then the ID here must match.
-    # Assuming id_prefix will be "chat" when called from ChatWindow
-    sidebar_id = f"{id_prefix}-left-sidebar"  # Construct the ID
+    sidebar_id = f"{id_prefix}-left-sidebar"
 
     with VerticalScroll(id=sidebar_id, classes="sidebar"):
         # -------------------------------------------------------------------
-        # Retrieve defaults / provider information (used in Collapsible #1)
+        # Retrieve defaults / provider information
         # -------------------------------------------------------------------
         defaults = config.get(f"{id_prefix}_defaults", config.get("chat_defaults", {}))
         providers_models = get_cli_providers_and_models()
@@ -61,17 +58,32 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         default_top_k = str(defaults.get("top_k", 50))
 
         # -------------------------------------------------------------------
-        # Current Chat Settings Sidebar title (always visible)
+        # Enhanced Header with Mode Toggle and Search
         # -------------------------------------------------------------------
-        yield Static("Current Chat Settings", classes="sidebar-title")
-
-        # ===================================================================
-        # 1. General & Chat Settings
-        # ===================================================================
-        with Collapsible(title="Current Chat Settings", collapsed=True):
-            yield Static(
-                "Inference Endpoints & \nService Providers", classes="sidebar-label"
+        yield Static("Chat Settings", classes="sidebar-title")
+        
+        # Mode toggle container
+        with Horizontal(id=f"{id_prefix}-mode-toggle-container", classes="mode-toggle-container"):
+            yield Label("Basic", classes="mode-label")
+            yield Switch(
+                value=False,  # False = Basic, True = Advanced
+                id=f"{id_prefix}-settings-mode-toggle",
+                classes="settings-mode-toggle"
             )
+            yield Label("Advanced", classes="mode-label")
+        
+        # Search input
+        yield Input(
+            placeholder="Search settings...",
+            id=f"{id_prefix}-settings-search",
+            classes="settings-search-input"
+        )
+
+        # -------------------------------------------------------------------
+        # Quick Settings (Always visible)
+        # -------------------------------------------------------------------
+        with Collapsible(title="Quick Settings", collapsed=False, id=f"{id_prefix}-quick-settings", classes="settings-collapsible basic-mode advanced-mode"):
+            yield Static("Provider & Model", classes="sidebar-label")
             provider_options = [(provider, provider) for provider in available_providers]
             yield Select(
                 options=provider_options,
@@ -81,10 +93,6 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 value=default_provider,
             )
 
-            # ===================================================================
-            # ----------------------------- Model ---------------------------
-            # ===================================================================
-            yield Static("Model", classes="sidebar-label")
             initial_models = providers_models.get(default_provider, [])
             model_options = [(model, model) for model in initial_models]
             current_model_value = (
@@ -98,15 +106,15 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 value=current_model_value,
             )
 
-            # ===================================================================
-            # ------------------ Remaining numeric / text inputs ------------
-            # ===================================================================
-            yield Static(
-                "API Key (Set in config/env)",
-                classes="sidebar-label",
-                id=f"{id_prefix}-api-key-placeholder",
+            yield Static("Temperature", classes="sidebar-label")
+            yield Input(
+                placeholder="e.g., 0.7",
+                id=f"{id_prefix}-temperature",
+                value=default_temp,
+                classes="sidebar-input",
             )
-            yield Static("System prompt", classes="sidebar-label")
+            
+            yield Static("System Prompt", classes="sidebar-label")
             system_prompt_classes = "sidebar-textarea"
             if id_prefix == "chat":
                 system_prompt_classes += " chat-system-prompt-styling"
@@ -115,17 +123,56 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 text=default_system_prompt,
                 classes=system_prompt_classes,
             )
-            yield Static("Temperature", classes="sidebar-label")
+
+        # -------------------------------------------------------------------
+        # RAG Settings (Prominent Panel - Always visible)
+        # -------------------------------------------------------------------
+        with Collapsible(title="🔍 RAG Settings", collapsed=False, id=f"{id_prefix}-rag-panel", classes="settings-collapsible rag-settings-panel basic-mode advanced-mode"):
+            # Main RAG toggle with preset
+            with Horizontal(classes="rag-main-controls"):
+                yield Checkbox(
+                    "Enable RAG",
+                    id=f"{id_prefix}-rag-enable-checkbox",
+                    value=False,
+                    classes="rag-enable-toggle"
+                )
+                yield Select(
+                    options=[
+                        ("None", "none"),
+                        ("Light (BM25)", "light"),
+                        ("Full (Embeddings)", "full"),
+                        ("Custom", "custom")
+                    ],
+                    value="none",
+                    id=f"{id_prefix}-rag-preset",
+                    prompt="Preset",
+                    classes="rag-preset-select"
+                )
+            
+            # Search scope
+            yield Static("Search Scope", classes="sidebar-label")
+            with Container(classes="rag-scope-options"):
+                yield Checkbox("Media Items", id=f"{id_prefix}-rag-search-media-checkbox", value=True)
+                yield Checkbox("Conversations", id=f"{id_prefix}-rag-search-conversations-checkbox", value=False)
+                yield Checkbox("Notes", id=f"{id_prefix}-rag-search-notes-checkbox", value=False)
+            
+            # Basic RAG parameters
+            yield Static("Top Results", classes="sidebar-label")
             yield Input(
-                placeholder="e.g., 0.7",
-                id=f"{id_prefix}-temperature",
-                value=default_temp,
-                classes="sidebar-input",
+                id=f"{id_prefix}-rag-top-k",
+                value="5",
+                placeholder="Number of results",
+                classes="sidebar-input"
             )
+
+        # -------------------------------------------------------------------
+        # Advanced Model Parameters (Hidden in Basic Mode)
+        # -------------------------------------------------------------------
+        with Collapsible(title="Model Parameters", collapsed=True, id=f"{id_prefix}-model-params", classes="settings-collapsible advanced-mode advanced-only"):
             yield Static("Top P", classes="sidebar-label")
             yield Input(
                 placeholder="e.g., 0.95",
-                id=f"{id_prefix}-top-p", # This will create #chat-top-p
+                id=f"{id_prefix}-top-p",
                 value=default_top_p,
                 classes="sidebar-input",
             )
@@ -133,7 +180,7 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             yield Static("Min P", classes="sidebar-label")
             yield Input(
                 placeholder="e.g., 0.05",
-                id=f"{id_prefix}-min-p", # This will create #chat-min-p
+                id=f"{id_prefix}-min-p",
                 value=default_min_p,
                 classes="sidebar-input",
             )
@@ -141,123 +188,36 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             yield Static("Top K", classes="sidebar-label")
             yield Input(
                 placeholder="e.g., 50",
-                id=f"{id_prefix}-top-k", # This will create #chat-top-k
+                id=f"{id_prefix}-top-k",
                 value=default_top_k,
                 classes="sidebar-input",
             )
-            # ===================================================================
-            # NEW: Full Chat Settings
-            # ===================================================================
-            with Collapsible(title="Full Chat Settings", collapsed=True):
-                yield Static("LLM Max Tokens", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-max-tokens", value="2048", placeholder="e.g., 1024",
-                            classes="sidebar-input")
-                yield Checkbox("Fixed Tokens (Kobold)", id=f"{id_prefix}-llm-fixed-tokens-kobold", value=False, classes="sidebar-checkbox")
-                yield Static("LLM Seed", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-seed", value="0", placeholder="e.g., 42", classes="sidebar-input")
-                yield Static("LLM Stop Sequences (comma-sep)", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-stop", placeholder="e.g., <|endoftext|>,<|eot_id|>",
-                            classes="sidebar-input")
-                yield Static("LLM Response Format", classes="sidebar-label")
-                yield Select(options=[("text", "text"), ("json_object", "json_object")],
-                             id=f"{id_prefix}-llm-response-format", value="text", allow_blank=False)
-                yield Static("LLM N (Completions)", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-n", value="1", placeholder="e.g., 1", classes="sidebar-input")
-                yield Static("LLM User Identifier", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-user-identifier", placeholder="e.g., user-123",
-                            classes="sidebar-input")
-                yield Checkbox("LLM Logprobs", id=f"{id_prefix}-llm-logprobs", value=False)
-                yield Static("LLM Top Logprobs", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-top-logprobs", value="0", placeholder="e.g., 5 (if logprobs is true)",
-                            classes="sidebar-input")
-                yield Static("LLM Logit Bias (JSON)", classes="sidebar-label")
-                yield TextArea(id=f"{id_prefix}-llm-logit-bias", text="{}", classes="sidebar-textarea")
-                yield Static("LLM Presence Penalty", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-presence-penalty", value="0.0", placeholder="e.g., 0.0 to 2.0",
-                            classes="sidebar-input")
-                yield Static("LLM Frequency Penalty", classes="sidebar-label")
-                yield Input(id=f"{id_prefix}-llm-frequency-penalty", value="0.0", placeholder="e.g., 0.0 to 2.0",
-                            classes="sidebar-input")
+            
+            # Token Settings
+            yield Static("Max Tokens", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-llm-max-tokens", value="2048", placeholder="e.g., 1024",
+                        classes="sidebar-input")
+            yield Checkbox("Fixed Tokens (Kobold)", id=f"{id_prefix}-llm-fixed-tokens-kobold", value=False)
+            
+            # Generation Settings
+            yield Static("Seed", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-llm-seed", value="0", placeholder="e.g., 42", classes="sidebar-input")
+            yield Static("Stop Sequences (comma-sep)", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-llm-stop", placeholder="e.g., <|endoftext|>,<|eot_id|>",
+                        classes="sidebar-input")
+            yield Static("Response Format", classes="sidebar-label")
+            yield Select(options=[("text", "text"), ("json_object", "json_object")],
+                         id=f"{id_prefix}-llm-response-format", value="text", allow_blank=False)
 
-        # ===================================================================
-        # 3. Search & Load Conversations
-        # ===================================================================
-        with Collapsible(title="Search & Load Conversations", collapsed=True):
-            yield Input(
-                id=f"{id_prefix}-conversation-search-bar",
-                placeholder="Search all chats...",
-                classes="sidebar-input"
-            )
+        # -------------------------------------------------------------------
+        # Advanced RAG Settings (Hidden in Basic Mode)
+        # -------------------------------------------------------------------
+        with Collapsible(title="Advanced RAG", collapsed=True, id=f"{id_prefix}-advanced-rag", classes="settings-collapsible advanced-mode advanced-only"):
             yield Checkbox(
-                "Include Character Chats",
-                id=f"{id_prefix}-conversation-search-include-character-checkbox"
-                # value=False by default for Checkbox
-            )
-            yield Select(
-                [],  # Empty options initially
-                id=f"{id_prefix}-conversation-search-character-filter-select",
-                allow_blank=True,  # User can select nothing to clear filter
-                prompt="Filter by Character...",
-                classes="sidebar-select"  # Assuming a general class for selects or use default
-            )
-            yield Checkbox(
-                "All Characters",
-                id=f"{id_prefix}-conversation-search-all-characters-checkbox",
-                value=True  # Default to True
-            )
-            yield ListView(
-                id=f"{id_prefix}-conversation-search-results-list",
-                classes="sidebar-listview"  # Add specific styling if needed
-            )
-            # Set initial height for ListView via styles property if not handled by class
-            # Example: self.query_one(f"#{id_prefix}-conversation-search-results-list", ListView).styles.height = 10
-            yield Button(
-                "Load Selected Chat",
-                id=f"{id_prefix}-conversation-load-selected-button",
-                variant="default",  # Or "primary"
-                classes="sidebar-button"  # Use existing class or new one
-            )
-
-
-        # ===================================================================
-        # 4. RAG Settings
-        # ===================================================================
-        with Collapsible(title="RAG Settings", collapsed=True):
-            # RAG Enable Options
-            yield Checkbox(
-                "Perform RAG",
-                id=f"{id_prefix}-rag-enable-checkbox",
-                value=False,
-                classes="sidebar-checkbox"
-            )
-            yield Checkbox(
-                "Perform Plain RAG (BM25 only)",
+                "Plain RAG (BM25 only)",
                 id=f"{id_prefix}-rag-plain-enable-checkbox",
                 value=False,
                 classes="sidebar-checkbox"
-            )
-            
-            # RAG Source Selection
-            yield Static("RAG Sources", classes="sidebar-label")
-            yield Checkbox("Search Media Items", id=f"{id_prefix}-rag-search-media-checkbox", value=True)
-            yield Checkbox("Search Conversations", id=f"{id_prefix}-rag-search-conversations-checkbox", value=False)
-            yield Checkbox("Search Notes", id=f"{id_prefix}-rag-search-notes-checkbox", value=False)
-            
-            # RAG Parameters
-            yield Static("Top K Results", classes="sidebar-label")
-            yield Input(
-                id=f"{id_prefix}-rag-top-k",
-                value="5",
-                placeholder="e.g., 5",
-                classes="sidebar-input"
-            )
-            
-            yield Static("Max Context Length (chars)", classes="sidebar-label")
-            yield Input(
-                id=f"{id_prefix}-rag-max-context-length",
-                value="10000",
-                placeholder="e.g., 10000",
-                classes="sidebar-input"
             )
             
             # Re-ranking Options
@@ -298,6 +258,14 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 classes="sidebar-input"
             )
             
+            yield Static("Max Context Length (chars)", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-max-context-length",
+                value="10000",
+                placeholder="e.g., 10000",
+                classes="sidebar-input"
+            )
+            
             yield Checkbox(
                 "Include Context Metadata",
                 id=f"{id_prefix}-rag-include-metadata-checkbox",
@@ -305,20 +273,75 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 classes="sidebar-checkbox"
             )
 
-        # ===================================================================
-        # 5. Tool Settings
-        # ===================================================================
-        with Collapsible(title="Tool Settings", collapsed=True):
+        # -------------------------------------------------------------------
+        # Conversation Management (Always visible)
+        # -------------------------------------------------------------------
+        with Collapsible(title="Conversations", collapsed=False, id=f"{id_prefix}-conversations", classes="settings-collapsible basic-mode advanced-mode"):
+            yield Input(
+                id=f"{id_prefix}-conversation-search-bar",
+                placeholder="Search all chats...",
+                classes="sidebar-input"
+            )
+            yield Checkbox(
+                "Include Character Chats",
+                id=f"{id_prefix}-conversation-search-include-character-checkbox"
+            )
+            yield Select(
+                [],
+                id=f"{id_prefix}-conversation-search-character-filter-select",
+                allow_blank=True,
+                prompt="Filter by Character...",
+                classes="sidebar-select"
+            )
+            yield Checkbox(
+                "All Characters",
+                id=f"{id_prefix}-conversation-search-all-characters-checkbox",
+                value=True
+            )
+            yield ListView(
+                id=f"{id_prefix}-conversation-search-results-list",
+                classes="sidebar-listview"
+            )
+            yield Button(
+                "Load Selected Chat",
+                id=f"{id_prefix}-conversation-load-selected-button",
+                variant="default",
+                classes="sidebar-button"
+            )
+
+        # -------------------------------------------------------------------
+        # Advanced Settings (Hidden in Basic Mode)
+        # -------------------------------------------------------------------
+        with Collapsible(title="Advanced Settings", collapsed=True, id=f"{id_prefix}-advanced-settings", classes="settings-collapsible advanced-mode advanced-only"):
+            # More token parameters
+            yield Static("N (Completions)", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-llm-n", value="1", placeholder="e.g., 1", classes="sidebar-input")
+            yield Static("User Identifier", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-llm-user-identifier", placeholder="e.g., user-123",
+                        classes="sidebar-input")
+            yield Checkbox("Logprobs", id=f"{id_prefix}-llm-logprobs", value=False)
+            yield Static("Top Logprobs", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-llm-top-logprobs", value="0", placeholder="e.g., 5",
+                        classes="sidebar-input")
+            yield Static("Logit Bias (JSON)", classes="sidebar-label")
+            yield TextArea(id=f"{id_prefix}-llm-logit-bias", text="{}", classes="sidebar-textarea")
+            yield Static("Presence Penalty", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-llm-presence-penalty", value="0.0", placeholder="e.g., 0.0 to 2.0",
+                        classes="sidebar-input")
+            yield Static("Frequency Penalty", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-llm-frequency-penalty", value="0.0", placeholder="e.g., 0.0 to 2.0",
+                        classes="sidebar-input")
+
+        # -------------------------------------------------------------------
+        # Tools & Templates (Hidden in Basic Mode)
+        # -------------------------------------------------------------------
+        with Collapsible(title="Tools & Templates", collapsed=True, id=f"{id_prefix}-tools", classes="settings-collapsible advanced-mode advanced-only"):
             yield Static("Tool Usage", classes="sidebar-label")
             yield TextArea(id=f"{id_prefix}-llm-tools", text="[]", classes="sidebar-textarea")
             yield Static("Tool Choice", classes="sidebar-label")
             yield Input(id=f"{id_prefix}-llm-tool-choice", placeholder="e.g., auto, none, or specific tool",
                         classes="sidebar-input")
-
-        # ===================================================================
-        # 6. Search & Templates
-        # ===================================================================
-        with Collapsible(title="Search & Templates", collapsed=True):
+            
             yield Static("Chat Templates", classes="sidebar-label")
             yield Input(
                 id=f"{id_prefix}-template-search-input",
@@ -335,15 +358,6 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 "Apply Template",
                 id=f"{id_prefix}-apply-template-button",
                 classes="sidebar-button"
-            )
-
-        # ===================================================================
-        # 7. System Settings – placeholders
-        # ===================================================================
-        with Collapsible(title="Partial System Settings", collapsed=True):
-            yield Static(
-                "some key system settings will go here (placeholder)",
-                classes="sidebar-placeholder",
             )
 
 #

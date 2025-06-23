@@ -18,7 +18,7 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import (
-    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label
+    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch
 )
 
 from textual.containers import Container
@@ -838,6 +838,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _initial_media_view: Optional[str] = "media-view-video-audio"  # Default to the first sub-tab
     media_db: Optional[MediaDatabase] = None
     current_sidebar_media_item: Optional[Dict[str, Any]] = None # For chat sidebar media review
+
+    # Settings mode for chat sidebar
+    chat_settings_mode: reactive[str] = reactive("basic")  # "basic" or "advanced"
+    chat_settings_search_query: reactive[str] = reactive("")  # Search query for settings
 
     # Search Tab's active sub-view reactives
     search_active_sub_tab: reactive[Optional[str]] = reactive(None)
@@ -1911,6 +1915,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error(f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}", exc_info=True)
         # --- End DB Size Indicator Setup ---
 
+        # Initialize chat settings sidebar mode
+        try:
+            chat_sidebar = self.query_one("#chat-left-sidebar")
+            chat_sidebar.add_class("basic-mode")  # Start in basic mode
+            self.loguru_logger.debug("Initialized chat sidebar in basic mode")
+        except QueryError:
+            self.loguru_logger.warning("Could not find chat sidebar to set initial mode")
+            
         # CRITICAL: Set UI ready state after all bindings and initializations
         self._ui_ready = True
 
@@ -2878,6 +2890,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await chat_handlers.handle_chat_search_checkbox_changed(self, checkbox_id, event.value)
         # Add handlers for checkboxes in other tabs if any
 
+    async def on_switch_changed(self, event: Switch.Changed) -> None:
+        """Handles changes in Switch widgets."""
+        from textual.widgets import Switch
+        
+        switch_id = event.switch.id
+        current_active_tab = self.current_tab
+        
+        if switch_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
+            await self.handle_settings_mode_toggle(event)
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        """Handles changes in Input widgets."""
+        input_id = event.input.id
+        current_active_tab = self.current_tab
+        
+        if input_id == "chat-settings-search" and current_active_tab == TAB_CHAT:
+            await self.handle_settings_search(event.value)
+
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""
         select_id = event.select.id
@@ -2896,6 +2926,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
         elif select_id == "notes-sort-select" and current_active_tab == TAB_NOTES:
             await notes_handlers.handle_notes_sort_changed(self, event)
+        elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
+            await self.handle_rag_preset_changed(event)
 
     ##################################################################
     # --- Event Handlers for Streaming and Worker State Changes ---
@@ -2932,6 +2964,113 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     #####################################################################
     # --- End of Chat Event Handlers for Streaming & thinking tags ---
     #####################################################################
+
+    async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
+        """Handles the settings mode toggle between Basic and Advanced."""
+        try:
+            # Update reactive variable
+            self.chat_settings_mode = "advanced" if event.value else "basic"
+            
+            # Update sidebar class for CSS styling
+            sidebar = self.query_one("#chat-left-sidebar")
+            if self.chat_settings_mode == "basic":
+                sidebar.add_class("basic-mode")
+                sidebar.remove_class("advanced-mode")
+            else:
+                sidebar.add_class("advanced-mode") 
+                sidebar.remove_class("basic-mode")
+            
+            self.notify(f"Settings mode: {self.chat_settings_mode.title()}")
+            self.loguru_logger.info(f"Switched to {self.chat_settings_mode} settings mode")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error toggling settings mode: {e}")
+            self.notify("Error switching settings mode", severity="error")
+
+    async def handle_rag_preset_changed(self, event: Select.Changed) -> None:
+        """Handles RAG preset selection."""
+        try:
+            preset = event.value
+            
+            # Get RAG-related widgets
+            rag_enable = self.query_one("#chat-rag-enable-checkbox", Checkbox)
+            plain_rag = self.query_one("#chat-rag-plain-enable-checkbox", Checkbox) 
+            top_k = self.query_one("#chat-rag-top-k", Input)
+            
+            # Apply preset configurations
+            if preset == "none":
+                rag_enable.value = False
+                self.notify("RAG disabled")
+            elif preset == "light":
+                rag_enable.value = True
+                plain_rag.value = True
+                top_k.value = "3"
+                self.notify("Light RAG: BM25 only, top 3 results")
+            elif preset == "full":
+                rag_enable.value = True
+                plain_rag.value = False
+                top_k.value = "10"
+                # Try to enable reranking if in advanced mode
+                try:
+                    rerank = self.query_one("#chat-rag-rerank-enable-checkbox", Checkbox)
+                    rerank.value = True
+                except QueryError:
+                    pass  # Reranking is in advanced mode
+                self.notify("Full RAG: Embeddings + reranking, top 10 results")
+            elif preset == "custom":
+                rag_enable.value = True
+                self.notify("Custom RAG: Configure settings manually")
+                
+            self.loguru_logger.info(f"Applied RAG preset: {preset}")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error applying RAG preset: {e}")
+            self.notify("Error applying RAG preset", severity="error")
+
+    async def handle_settings_search(self, query: str) -> None:
+        """Handles search in settings sidebar."""
+        try:
+            query = query.lower().strip()
+            
+            # Get all settings elements
+            sidebar = self.query_one("#chat-left-sidebar")
+            
+            if not query:
+                # Clear search - show all settings based on current mode
+                for widget in sidebar.query(".sidebar-label, .section-header, .subsection-header"):
+                    widget.remove_class("search-highlight")
+                for collapsible in sidebar.query(Collapsible):
+                    # Respect the original collapsed state
+                    pass
+                return
+                
+            # Search through all labels and highlight matches
+            matches_found = 0
+            
+            for label in sidebar.query(".sidebar-label, .section-header, .subsection-header"):
+                if isinstance(label, (Static, Label)):
+                    label_text = str(label.renderable).lower()
+                    if query in label_text:
+                        label.add_class("search-highlight")
+                        matches_found += 1
+                        
+                        # Expand parent collapsibles to show match
+                        parent = label.parent
+                        while parent and parent != sidebar:
+                            if isinstance(parent, Collapsible):
+                                parent.collapsed = False
+                            parent = parent.parent
+                    else:
+                        label.remove_class("search-highlight")
+                        
+            if matches_found == 0:
+                self.notify(f"No settings found for '{query}'", severity="warning")
+            else:
+                self.notify(f"Found {matches_found} settings matching '{query}'")
+                
+        except Exception as e:
+            self.loguru_logger.error(f"Error in settings search: {e}")
+            self.notify("Error searching settings", severity="error")
 
 
     #####################################################################

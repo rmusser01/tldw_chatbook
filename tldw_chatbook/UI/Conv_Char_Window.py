@@ -61,7 +61,7 @@ class CCPWindow(Container):
                 yield Button("Load Selected Prompt", id="ccp-prompt-load-selected-button", classes="sidebar-button")
 
         yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), id="toggle-conv-char-left-sidebar",
-                     classes="cc-sidebar-toggle-button")
+                     classes="cc-sidebar-toggle-button", tooltip="Toggle left sidebar")
 
         # Center Pane
         logger.debug("Composing center pane")
@@ -138,7 +138,7 @@ class CCPWindow(Container):
 
         # Button to toggle the right sidebar for CCP tab
         yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
-                     id="toggle-conv-char-right-sidebar", classes="cc-sidebar-toggle-button")
+                     id="toggle-conv-char-right-sidebar", classes="cc-sidebar-toggle-button", tooltip="Toggle right sidebar")
 
         # Right Pane
         logger.debug("Composing right pane")
