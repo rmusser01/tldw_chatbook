@@ -1,0 +1,50 @@
+{
+  "dependencies": {
+    "chromadb": {
+      "status": "\u2705",
+      "description": "Vector database"
+    },
+    "sentence_transformers": {
+      "status": "\u2705",
+      "description": "Embeddings"
+    },
+    "flashrank": {
+      "status": "\u2705",
+      "description": "Reranking"
+    },
+    "tiktoken": {
+      "status": "\u2705",
+      "description": "Token counting"
+    },
+    "langdetect": {
+      "status": "\u2705",
+      "description": "Language detection"
+    },
+    "nltk": {
+      "status": "\u2705",
+      "description": "Text processing"
+    }
+  },
+  "database_checks": {
+    "media_db": {
+      "exists": true,
+      "error": "MediaDatabase.__init__() missing 1 required positional argument: 'client_id'"
+    },
+    "chachanotes_db": {
+      "exists": true,
+      "error": "CharactersRAGDB.__init__() missing 1 required positional argument: 'client_id'"
+    },
+    "chromadb": {
+      "path_exists": true
+    },
+    "rag_indexing": {
+      "exists": false
+    }
+  },
+  "search_tests": {},
+  "chunking_tests": {},
+  "performance": {},
+  "errors": [
+    "MediaDatabase.__init__() missing 1 required positional argument: 'client_id'"
+  ]
+}
