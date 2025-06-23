@@ -6,7 +6,9 @@
       "Bash(true)",
       "Bash(find:*)",
       "Bash(python test:*)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(source:*)",
+      "Bash(pytest:*)"
     ],
     "deny": []
   }

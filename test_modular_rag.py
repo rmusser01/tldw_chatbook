@@ -38,8 +38,14 @@ async def test_rag_search():
             from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
             
             # Use the actual database paths from config
-            self.media_db = MediaDatabase(Path.home() / ".local/share/tldw_cli/tldw_cli_media_v2.db")
-            self.rag_db = CharactersRAGDB(Path.home() / ".local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")
+            self.media_db = MediaDatabase(
+                str(Path.home() / ".local/share/tldw_cli/tldw_cli_media_v2.db"),
+                client_id="test_client"
+            )
+            self.rag_db = CharactersRAGDB(
+                str(Path.home() / ".local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"),
+                client_id="test_client"
+            )
             self.config = {}
     
     app = MockApp()
