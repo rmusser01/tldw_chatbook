@@ -86,6 +86,20 @@ class ChatWindow(Container):
         else:
             logger.warning(f"No handler found for button: {button_id}")
 
+    async def on_key(self, event) -> None:
+        """Handle key presses in the chat window."""
+        # Check if we're in the chat input area
+        if event.key == "enter" and self.app_instance.focused and self.app_instance.focused.id == "chat-input":
+            # Get the TextArea widget
+            chat_input = self.app_instance.query_one("#chat-input", TextArea)
+            # Check if it's empty or only whitespace
+            if chat_input.text.strip():
+                # Only send on Enter in single-line mode (when TextArea height is 1)
+                if chat_input.height <= 3:  # Accounting for borders
+                    # Simulate clicking the send button
+                    from ..Event_Handlers.Chat_Events import chat_events
+                    await chat_events.handle_chat_send_button_pressed(self.app_instance, None)
+                    event.stop()
 
     def compose(self) -> ComposeResult:
         logger.debug("Composing ChatWindow UI")
@@ -96,16 +110,39 @@ class ChatWindow(Container):
         with Container(id="chat-main-content"):
             yield VerticalScroll(id="chat-log")
             with Horizontal(id="chat-input-area"):
-                yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), id="toggle-chat-left-sidebar",
-                             classes="sidebar-toggle")
+                yield Button(
+                    get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
+                    id="toggle-chat-left-sidebar",
+                    classes="sidebar-toggle",
+                    tooltip="Toggle left sidebar (Ctrl+[)"
+                )
                 yield TextArea(id="chat-input", classes="chat-input")
-                yield Button(get_char(EMOJI_SEND, FALLBACK_SEND), id="send-chat", classes="send-button")
-                yield Button("💡", id="respond-for-me-button", classes="action-button suggest-button") # Suggest button
+                yield Button(
+                    get_char(EMOJI_SEND, FALLBACK_SEND), 
+                    id="send-chat", 
+                    classes="send-button",
+                    tooltip="Send message (Enter)"
+                )
+                yield Button(
+                    "💡", 
+                    id="respond-for-me-button", 
+                    classes="action-button suggest-button",
+                    tooltip="Suggest a response"
+                ) # Suggest button
                 logger.debug("'respond-for-me-button' composed.")
-                yield Button(get_char(EMOJI_STOP, FALLBACK_STOP), id="stop-chat-generation", classes="stop-button",
-                             disabled=True)
-                yield Button(get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), id="toggle-chat-right-sidebar",
-                             classes="sidebar-toggle")
+                yield Button(
+                    get_char(EMOJI_STOP, FALLBACK_STOP), 
+                    id="stop-chat-generation", 
+                    classes="stop-button",
+                    disabled=True,
+                    tooltip="Stop generation"
+                )
+                yield Button(
+                    get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
+                    id="toggle-chat-right-sidebar",
+                    classes="sidebar-toggle",
+                    tooltip="Toggle right sidebar (Ctrl+])"
+                )
 
         # Character Details Sidebar (Right)
         yield from create_chat_right_sidebar(

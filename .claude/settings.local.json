@@ -8,6 +8,7 @@
       "Bash(python test:*)",
       "Bash(awk:*)",
       "Bash(source:*)",
+      "Bash(pytest:*)",
       "Bash(pytest:*)"
     ],
     "deny": []

@@ -3,6 +3,46 @@
 ## Overview
 This document outlines potential user experience improvements for the Chat Tab in tldw_chatbook. The analysis is based on the current implementation and focuses on enhancing usability, accessibility, and workflow efficiency.
 
+## Implementation Progress
+
+### ✅ Completed Improvements
+
+#### 1. Added Tooltips to Chat Input Buttons (2025-06-23)
+- **Files Modified**: `tldw_chatbook/UI/Chat_Window.py`
+- **Changes Made**:
+  - Added tooltip to left sidebar toggle: "Toggle left sidebar (Ctrl+[)"
+  - Added tooltip to send button: "Send message (Enter)"
+  - Added tooltip to suggest button (💡): "Suggest a response"
+  - Added tooltip to stop button: "Stop generation"
+  - Added tooltip to right sidebar toggle: "Toggle right sidebar (Ctrl+])"
+- **Impact**: Improved discoverability of button functions, especially for the unlabeled "💡" button
+- **Tests Created**: 
+  - `Tests/UI/test_chat_window_tooltips_simple.py` - Verifies tooltips are defined in source
+  - All tests passing ✅
+- **Status**: COMPLETE
+
+#### 2. Implemented Basic Keyboard Shortcuts (2025-06-23)
+- **Files Modified**: 
+  - `tldw_chatbook/app.py` - Added key bindings and action handlers
+  - `tldw_chatbook/UI/Chat_Window.py` - Added Enter key handler for sending messages
+  - `tldw_chatbook/css/tldw_cli.tcss` - Added styling for shortcuts modal
+- **Shortcuts Implemented**:
+  - **Ctrl+N**: New conversation
+  - **Ctrl+[**: Toggle left sidebar
+  - **Ctrl+]**: Toggle right sidebar  
+  - **Ctrl+K**: Search conversations
+  - **Ctrl+?** or **F1**: Show keyboard shortcuts help
+  - **Enter**: Send message (in single-line mode)
+- **Features Added**:
+  - Modal screen showing all keyboard shortcuts
+  - Smart Enter key handling (sends in single-line mode, newline in multi-line)
+  - Sidebar toggle functionality via keyboard
+- **Impact**: Significantly improved keyboard navigation and reduced reliance on mouse
+- **Tests Created**: 
+  - `Tests/UI/test_keyboard_shortcuts.py` - Verifies bindings, action methods, and CSS
+  - All tests passing ✅
+- **Status**: COMPLETE
+
 ## Current State Analysis
 
 ### Layout Structure

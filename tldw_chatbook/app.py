@@ -710,7 +710,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli.tcss")
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),
-        Binding("ctrl+p", "command_palette", "Palette Menu", show=True)
+        Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
+        # Chat shortcuts
+        Binding("ctrl+n", "new_conversation", "New Conversation", show=True),
+        Binding("ctrl+\\[", "toggle_left_sidebar", "Toggle Left Sidebar", show=True),
+        Binding("ctrl+\\]", "toggle_right_sidebar", "Toggle Right Sidebar", show=True),
+        Binding("ctrl+k", "search_conversations", "Search Conversations", show=True),
+        Binding("ctrl+?", "show_shortcuts", "Show Shortcuts", show=True),
+        Binding("f1", "show_shortcuts", "Show Shortcuts", show=False)
     ]
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
@@ -3540,6 +3547,76 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Always call the parent quit method
         self.exit()
+
+    def action_new_conversation(self) -> None:
+        """Create a new conversation in chat tab."""
+        if self.active_tab == "chat":
+            # Simulate clicking the new conversation button
+            from .Event_Handlers.Chat_Events import chat_events
+            self.call_from_thread(chat_events.handle_chat_new_conversation_button_pressed, self, None)
+
+    def action_toggle_left_sidebar(self) -> None:
+        """Toggle the left sidebar in current tab."""
+        try:
+            sidebar = self.query_one(f"#{self.active_tab}-left-sidebar")
+            sidebar.toggle_class("collapsed")
+        except QueryError:
+            loguru_logger.debug(f"No left sidebar found for tab: {self.active_tab}")
+
+    def action_toggle_right_sidebar(self) -> None:
+        """Toggle the right sidebar in current tab."""
+        try:
+            sidebar = self.query_one(f"#{self.active_tab}-right-sidebar")
+            sidebar.toggle_class("collapsed")
+        except QueryError:
+            loguru_logger.debug(f"No right sidebar found for tab: {self.active_tab}")
+
+    def action_search_conversations(self) -> None:
+        """Open conversation search dialog."""
+        if self.active_tab == "chat":
+            # Focus on the conversation search input
+            try:
+                search_input = self.query_one("#chat-conversation-search-input")
+                search_input.focus()
+            except QueryError:
+                self.notify("Search not available in this view", severity="warning")
+
+    def action_show_shortcuts(self) -> None:
+        """Show keyboard shortcuts help."""
+        shortcuts_text = """
+# Keyboard Shortcuts
+
+## General
+- **Ctrl+Q**: Quit application
+- **Ctrl+P**: Open command palette
+
+## Chat Tab
+- **Ctrl+N**: New conversation
+- **Ctrl+[**: Toggle left sidebar
+- **Ctrl+]**: Toggle right sidebar
+- **Ctrl+K**: Search conversations
+- **Enter**: Send message (in single-line mode)
+- **Ctrl+Enter**: Send message (in multi-line mode)
+
+## Help
+- **Ctrl+?** or **F1**: Show this help
+"""
+        from textual.widgets import Markdown
+        from textual.containers import ScrollableContainer
+        from textual.screen import ModalScreen
+        
+        class ShortcutsScreen(ModalScreen):
+            def compose(self):
+                yield ScrollableContainer(
+                    Markdown(shortcuts_text),
+                    id="shortcuts-container"
+                )
+            
+            def on_key(self, event):
+                if event.key in ("escape", "ctrl+?", "f1"):
+                    self.dismiss()
+        
+        self.push_screen(ShortcutsScreen())
 
     ########################################################
     # --- End of Watchers and Helper Methods ---

@@ -87,6 +87,26 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* --- End of Sidebar Styling --- */
 /* ----------------------------- ************************* ----------------------------- */
 
+/* Keyboard shortcuts modal styling */
+ShortcutsScreen {
+    align: center middle;
+}
+
+#shortcuts-container {
+    width: 80%;
+    height: 80%;
+    max-width: 100;
+    max-height: 40;
+    background: $boost;
+    border: thick $primary;
+    padding: 2;
+}
+
+#shortcuts-container Markdown {
+    margin: 1;
+}
+/* ----------------------------- ************************* ----------------------------- */
+
 
 
 /* ----------------------------- ************************* ----------------------------- */
