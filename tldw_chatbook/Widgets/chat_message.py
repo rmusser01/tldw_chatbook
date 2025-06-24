@@ -143,7 +143,7 @@ class ChatMessage(Widget):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(f"{self.role}", classes="message-header")
-            yield Static(self.message_text, classes="message-text")
+            yield Static(self.message_text, classes="message-text", markup=False)
             actions_class = "message-actions"
             # Logic for the '-generating' class on the actions container
             # This should only apply if it's an AI message AND generation is not complete

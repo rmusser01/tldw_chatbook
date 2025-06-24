@@ -1328,6 +1328,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one("#ccp-card-personality-display", TextArea).text = details.get("personality", "")
                         self.query_one("#ccp-card-scenario-display", TextArea).text = details.get("scenario", "")
                         self.query_one("#ccp-card-first-message-display", TextArea).text = details.get("first_message", "")
+                        
+                        # Populate V2 Character Card fields
+                        self.query_one("#ccp-card-creator-notes-display", TextArea).text = details.get("creator_notes") or ""
+                        self.query_one("#ccp-card-system-prompt-display", TextArea).text = details.get("system_prompt") or ""
+                        self.query_one("#ccp-card-post-history-instructions-display", TextArea).text = details.get("post_history_instructions") or ""
+                        
+                        # Handle alternate greetings (array to text)
+                        alternate_greetings = details.get("alternate_greetings", [])
+                        self.query_one("#ccp-card-alternate-greetings-display", TextArea).text = "\n".join(alternate_greetings) if alternate_greetings else ""
+                        
+                        # Handle tags (array to comma-separated)
+                        tags = details.get("tags", [])
+                        self.query_one("#ccp-card-tags-display", Static).update(", ".join(tags) if tags else "None")
+                        
+                        self.query_one("#ccp-card-creator-display", Static).update(details.get("creator") or "N/A")
+                        self.query_one("#ccp-card-version-display", Static).update(details.get("character_version") or "N/A")
+                        
+                        # Handle keywords (array to comma-separated)
+                        keywords = details.get("keywords", [])
+                        self.query_one("#ccp-card-keywords-display", Static).update(", ".join(keywords) if keywords else "None")
 
                         image_placeholder = self.query_one("#ccp-card-image-placeholder", Static)
                         if self.current_ccp_character_image:
@@ -1345,6 +1365,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one("#ccp-card-personality-display", TextArea).text = ""
                         self.query_one("#ccp-card-scenario-display", TextArea).text = ""
                         self.query_one("#ccp-card-first-message-display", TextArea).text = ""
+                        
+                        # Clear V2 Character Card fields
+                        self.query_one("#ccp-card-creator-notes-display", TextArea).text = ""
+                        self.query_one("#ccp-card-system-prompt-display", TextArea).text = ""
+                        self.query_one("#ccp-card-post-history-instructions-display", TextArea).text = ""
+                        self.query_one("#ccp-card-alternate-greetings-display", TextArea).text = ""
+                        self.query_one("#ccp-card-tags-display", Static).update("None")
+                        self.query_one("#ccp-card-creator-display", Static).update("N/A")
+                        self.query_one("#ccp-card-version-display", Static).update("N/A")
+                        self.query_one("#ccp-card-keywords-display", Static).update("None")
+                        
                         self.query_one("#ccp-card-image-placeholder", Static).update("No character loaded")
                         loguru_logger.debug("Character card widgets cleared.")
                     except QueryError as qe:

@@ -301,26 +301,32 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                     classes="sidebar-button",
                     variant="warning" # Optional: different styling
                 )
+                yield Label("Character Name:", classes="sidebar-label")
                 yield Input(
                     id="chat-character-name-edit",
                     placeholder="Name"
                 )
+                yield Label("Description:", classes="sidebar-label")
                 description_edit_ta = TextArea(id="chat-character-description-edit")
                 description_edit_ta.styles.height = 30
                 yield description_edit_ta
 
+                yield Label("Personality:", classes="sidebar-label")
                 personality_edit_ta = TextArea(id="chat-character-personality-edit")
                 personality_edit_ta.styles.height = 30
                 yield personality_edit_ta
 
+                yield Label("Scenario:", classes="sidebar-label")
                 scenario_edit_ta = TextArea(id="chat-character-scenario-edit")
                 scenario_edit_ta.styles.height = 30
                 yield scenario_edit_ta
 
+                yield Label("System Prompt:", classes="sidebar-label")
                 system_prompt_edit_ta = TextArea(id="chat-character-system-prompt-edit")
                 system_prompt_edit_ta.styles.height = 30
                 yield system_prompt_edit_ta
 
+                yield Label("First Message:", classes="sidebar-label")
                 first_message_edit_ta = TextArea(id="chat-character-first-message-edit")
                 first_message_edit_ta.styles.height = 30
                 yield first_message_edit_ta

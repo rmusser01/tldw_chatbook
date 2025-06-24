@@ -634,7 +634,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         try:
             text_widget = action_widget.query_one(".message-text", Static)
             original_display = text_widget.renderable  # Store to restore
-            text_widget.update(Text.from_markup(f"[italic]Speaking: {escape_markup(message_text)}[/]"))
+            text_widget.update(f"Speaking: {message_text}")
             # After TTS simulation/actual call:
             # app.set_timer(3, lambda: text_widget.update(original_display)) # Example restore
         except QueryError:

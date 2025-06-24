@@ -552,6 +552,12 @@ Collapsible > .collapsible--header {
     height: 2;
 }
 
+/* Half height for RAG Settings collapsible header */
+#chat-rag-panel > .collapsible--header,
+#character-rag-panel > .collapsible--header {
+    height: 1;
+}
+
 .chat-system-prompt-styling {
     width: 100%;
     height: auto;

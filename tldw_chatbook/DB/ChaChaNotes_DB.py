@@ -1952,6 +1952,40 @@ UPDATE db_schema_version
                 exc_info=True)
             raise
 
+    def delete_character_card(self, character_id: int) -> bool:
+        """
+        Soft-deletes a character card with version checking.
+        
+        This method retrieves the current version of the character and performs
+        a soft delete. It's a convenience wrapper around soft_delete_character_card.
+        
+        Args:
+            character_id: The ID of the character card to delete.
+            
+        Returns:
+            True if the deletion was successful, False otherwise.
+            
+        Raises:
+            CharactersRAGDBError: For database-related errors.
+        """
+        try:
+            # Get current character to find its version
+            character = self.get_character_card_by_id(character_id)
+            if not character:
+                logger.warning(f"Character card ID {character_id} not found for deletion.")
+                return False
+                
+            # Use the current version for optimistic locking
+            current_version = character.get('version', 1)
+            return self.soft_delete_character_card(character_id, current_version)
+            
+        except ConflictError as e:
+            logger.error(f"Conflict error deleting character card ID {character_id}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error deleting character card ID {character_id}: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Error deleting character card: {e}") from e
+
     def search_character_cards(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
         Searches character cards using Full-Text Search (FTS).
