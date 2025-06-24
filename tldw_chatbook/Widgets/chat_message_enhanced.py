@@ -124,6 +124,39 @@ class ChatMessageEnhanced(Widget):
     ChatMessageEnhanced.-ai .message-actions.-generating {
         display: none;
     }
+    
+    /* Branch-related styles */
+    .branch-indicator {
+        color: $accent;
+        margin: 0 1;
+        text-style: bold;
+    }
+    
+    .branch-controls {
+        height: auto;
+        width: 100%;
+        padding: 0 1;
+        border-top: solid $surface-lighten-1;
+        display: none;  /* Hidden by default */
+    }
+    
+    .branch-controls.visible {
+        display: block;
+    }
+    
+    .branch-controls Button {
+        min-width: 10;
+        height: 1;
+        margin: 0 1 0 0;
+        border: none;
+        background: $accent-lighten-1;
+        color: $text;
+    }
+    
+    .branch-controls Button:hover {
+        background: $accent;
+        color: white;
+    }
     """
     
     # Reactive properties
@@ -139,6 +172,12 @@ class ChatMessageEnhanced(Widget):
     image_data: reactive[Optional[bytes]] = reactive(None)
     image_mime_type: reactive[Optional[str]] = reactive(None)
     
+    # Branch-related state
+    has_branches: reactive[bool] = reactive(False)
+    branch_count: reactive[int] = reactive(0)
+    is_branch_point: reactive[bool] = reactive(False)
+    parent_message_id: reactive[Optional[str]] = reactive(None)
+    
     def __init__(
         self,
         message: str,
@@ -149,6 +188,9 @@ class ChatMessageEnhanced(Widget):
         timestamp: Optional[str] = None,
         image_data: Optional[bytes] = None,
         image_mime_type: Optional[str] = None,
+        parent_message_id: Optional[str] = None,
+        has_branches: bool = False,
+        branch_count: int = 0,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -161,6 +203,12 @@ class ChatMessageEnhanced(Widget):
         self.image_data = image_data
         self.image_mime_type = image_mime_type
         self._image_widget = None
+        
+        # Branch-related properties
+        self.parent_message_id = parent_message_id
+        self.has_branches = has_branches
+        self.branch_count = branch_count
+        self.is_branch_point = self.branch_count > 0
         
         # Add role-specific class
         if role.lower() == "user":
@@ -175,11 +223,16 @@ class ChatMessageEnhanced(Widget):
     
     def compose(self) -> ComposeResult:
         with Vertical():
-            # Message header
-            header_text = f"{self.role}"
-            if self.timestamp:
-                header_text += f" - {self.timestamp}"
-            yield Label(header_text, classes="message-header")
+            # Message header with branch indicator
+            with Horizontal(classes="message-header"):
+                header_text = f"{self.role}"
+                if self.timestamp:
+                    header_text += f" - {self.timestamp}"
+                yield Label(header_text)
+                
+                # Add branch indicator if this message has branches
+                if self.is_branch_point:
+                    yield Static(f"🔀 {self.branch_count}", classes="branch-indicator")
             
             # Message content
             yield Static(self.message_text, classes="message-text")
@@ -215,8 +268,17 @@ class ChatMessageEnhanced(Widget):
                     yield Button("🔄", classes="action-button regenerate-button", id="regenerate")
                     yield Button("↪️", id="continue-response-button", classes="action-button continue-button")
                 
+                # Branch button - show for all messages
+                yield Button("🔀", classes="action-button branch-button", id="branch-from-here")
+                
                 # Delete button
                 yield Button("🗑️", classes="action-button delete-button")
+            
+            # Branch navigation controls (hidden by default)
+            with Horizontal(classes="branch-controls", id=f"branch-controls-{self.message_id_internal or 'new'}"):
+                yield Button("← Previous", id="branch-prev", classes="branch-nav-button")
+                yield Static("Branch 1 of 1", id="branch-info", classes="branch-info")
+                yield Button("Next →", id="branch-next", classes="branch-nav-button")
     
     def on_mount(self) -> None:
         """Render image when widget is mounted."""
@@ -363,6 +425,24 @@ Preview: {preview}...
             logging.error(f"Error saving image: {e}")
             self.app.notify(f"Error saving image: {e}", severity="error")
     
+    @on(Button.Pressed, "#branch-from-here")
+    async def handle_branch_from_here(self) -> None:
+        """Handle branch creation from this message."""
+        # This will be handled by the parent container via the Action message
+        pass
+    
+    @on(Button.Pressed, "#branch-prev")
+    async def handle_branch_prev(self) -> None:
+        """Navigate to previous branch."""
+        # This will be handled by the parent container via the Action message
+        pass
+    
+    @on(Button.Pressed, "#branch-next")
+    async def handle_branch_next(self) -> None:
+        """Navigate to next branch."""
+        # This will be handled by the parent container via the Action message
+        pass
+    
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Called when a button inside this message is pressed."""
         # Post our custom Action message
@@ -381,6 +461,32 @@ Preview: {preview}...
         """Appends a chunk of text to an AI message during streaming."""
         if self.has_class("-ai") and not self._generation_complete_internal:
             self.message_text += chunk
+    
+    def show_branch_controls(self, show: bool = True) -> None:
+        """Show or hide branch navigation controls."""
+        try:
+            branch_controls = self.query_one(f"#branch-controls-{self.message_id_internal or 'new'}")
+            if show:
+                branch_controls.add_class("visible")
+            else:
+                branch_controls.remove_class("visible")
+        except QueryError:
+            logging.debug("Branch controls not found")
+    
+    def update_branch_info(self, current_branch: int, total_branches: int) -> None:
+        """Update the branch navigation info display."""
+        try:
+            branch_info = self.query_one("#branch-info", Static)
+            branch_info.update(f"Branch {current_branch} of {total_branches}")
+            
+            # Update button states
+            prev_button = self.query_one("#branch-prev", Button)
+            next_button = self.query_one("#branch-next", Button)
+            
+            prev_button.disabled = current_branch <= 1
+            next_button.disabled = current_branch >= total_branches
+        except QueryError:
+            logging.debug("Branch info elements not found")
 
 #
 #
