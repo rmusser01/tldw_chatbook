@@ -2153,7 +2153,8 @@ class MetricsDashboard(Container):
 Since tldw_chatbook is a single-user TUI application, we can optimize for:
 
 1. **Lazy Loading**: Load models only when needed
-2. **Model Caching**: Keep frequently used models in memory
+2. **Modlef
+ Caching**: Keep frequently used models in memory
 3. **Local Storage**: Use SQLite and local ChromaDB efficiently
 4. **Async Operations**: Non-blocking UI during long operations
 5. **Resource Limits**: Configurable memory and CPU limits
