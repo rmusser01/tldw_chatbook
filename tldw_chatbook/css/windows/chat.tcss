@@ -1,0 +1,170 @@
+/* chat.tcss - Chat window specific styles */
+
+/* Chat window main content area */
+#chat-main-content {
+    layout: vertical;
+    height: 100%;
+    width: 1fr; /* Takes up remaining horizontal space after sidebars */
+}
+
+/* Chat message log container */
+#chat-log {
+    height: 1fr; /* Takes remaining vertical space */
+    width: 100%;
+    padding: 0 1; /* Padding around messages */
+}
+
+/* Chat input area */
+#chat-input-area {
+    height: auto;
+    max-height: 12;
+    width: 100%;
+    align: left top;
+    padding: 1;
+    border-top: round $surface;
+}
+
+/* Specific chat input styling (extends component) */
+#chat-input-area .chat-input {
+    /* Inherits from .chat-input in inputs.tcss */
+    /* Additional chat-specific overrides here if needed */
+}
+
+/* Chat-specific button positioning */
+#chat-input-area .send-button,
+#chat-input-area .stop-button {
+    /* Inherits from buttons.tcss */
+    /* Chat-specific positioning if needed */
+}
+
+/* Chat right sidebar specific overrides */
+#chat-right-sidebar {
+    /* Base styles from sidebars.tcss */
+}
+
+/* Chat conversation title */
+#chat-right-sidebar #chat-conversation-title-input {
+    /* Inherits from .sidebar-input */
+}
+
+/* Chat keywords textarea */
+#chat-right-sidebar .chat-keywords-textarea {
+    height: 4; /* Chat-specific height */
+    /* Inherits other styles from .sidebar-textarea */
+}
+
+/* Chat-specific save buttons */
+#chat-right-sidebar .save-chat-button {
+    margin-top: 2;
+}
+
+#chat-right-sidebar .save-details-button {
+    margin-top: 1;
+}
+
+/* Chat prompts section */
+#chat-prompts-collapsible {
+    /* Inherits from sidebar Collapsible styles */
+}
+
+#chat-prompts-collapsible Input,
+#chat-prompts-collapsible ListView,
+#chat-prompts-collapsible Button {
+    margin-bottom: 1;
+}
+
+/* Chat prompt list */
+#chat-prompt-list-view {
+    height: 8;
+    /* Inherits other styles from lists.tcss */
+}
+
+/* Loaded prompt display area */
+#chat-right-sidebar .loaded-prompt-area {
+    margin-top: 1;
+    padding: 0 1;
+    background: $surface;
+    border: round $primary-background-lighten-1;
+}
+
+/* Chat-specific collapsible sections */
+#chat-rag-collapsible,
+#chat-llm-settings-collapsible,
+#chat-prompts-collapsible {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* RAG settings in chat */
+#chat-rag-collapsible Checkbox {
+    margin-bottom: 1;
+}
+
+#chat-rag-collapsible Input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#chat-rag-collapsible Select {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* LLM settings in chat */
+#chat-llm-settings-collapsible Input,
+#chat-llm-settings-collapsible Select,
+#chat-llm-settings-collapsible TextArea {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* Chat message styling overrides */
+#chat-log ChatMessage {
+    /* Inherits from messages.tcss */
+    /* Chat-specific message styling if needed */
+}
+
+/* Streaming indicator in chat */
+#chat-log .message-streaming {
+    /* Chat-specific streaming styles */
+}
+
+/* Chat mode indicators */
+.chat-mode-indicator {
+    padding: 0 1;
+    margin-bottom: 1;
+    background: $surface;
+    border: round $accent;
+}
+
+.chat-mode-ephemeral {
+    border-color: $warning;
+}
+
+.chat-mode-persistent {
+    border-color: $success;
+}
+
+/* Chat status bar */
+.chat-status-bar {
+    dock: bottom;
+    height: 1;
+    padding: 0 1;
+    background: $surface-darken-1;
+    color: $text-muted;
+}
+
+/* Chat action bar */
+.chat-action-bar {
+    layout: horizontal;
+    padding: 1;
+    border-top: solid $surface;
+}
+
+.chat-action-bar Button {
+    margin-right: 1;
+}
+
+.chat-action-bar Button:last-child {
+    margin-right: 0;
+}

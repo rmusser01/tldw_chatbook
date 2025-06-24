@@ -1,0 +1,47 @@
+/* variables.tcss - CSS Variables and Design Tokens */
+/* 
+ * This file contains all CSS variables used throughout the application.
+ * These are inherited from Textual's theme system but documented here for reference.
+ * 
+ * Textual provides these CSS variables:
+ * - $background: Main background color
+ * - $surface: Surface color for panels
+ * - $panel: Panel background color
+ * - $boost: Boosted/highlighted background
+ * - $primary: Primary accent color
+ * - $secondary: Secondary accent color
+ * - $accent: Accent color
+ * - $text: Primary text color
+ * - $text-muted: Muted text color
+ * - $text-disabled: Disabled text color
+ * - $error: Error color
+ * - $warning: Warning color
+ * - $success: Success color
+ * 
+ * Modifiers:
+ * - -lighten-1, -lighten-2, -lighten-3: Lighter variants
+ * - -darken-1, -darken-2, -darken-3: Darker variants
+ */
+
+/* Custom spacing scale */
+/* Note: In Textual, these are typically integers representing cell units */
+$spacing-xs: 0.5;
+$spacing-sm: 1;
+$spacing-md: 2;
+$spacing-lg: 3;
+$spacing-xl: 4;
+
+/* Common dimensions */
+$sidebar-width: 25%;
+$sidebar-min-width: 20;
+$sidebar-max-width: 80;
+
+/* Border styles */
+$border-style: round;
+$border-thick: thick;
+
+/* Z-index scale */
+$z-base: 1;
+$z-dropdown: 10;
+$z-modal: 100;
+$z-tooltip: 1000;

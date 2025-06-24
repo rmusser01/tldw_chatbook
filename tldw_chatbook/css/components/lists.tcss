@@ -1,0 +1,191 @@
+/* lists.tcss - ListView and ListItem component styles */
+
+/* Base ListView styles */
+ListView {
+    border: round $surface;
+    background: $panel;
+    scrollbar-size: 1 1;
+}
+
+/* Base ListItem styles */
+ListItem {
+    padding: 0 1;
+    height: auto;
+}
+
+ListItem:hover {
+    background: $boost;
+}
+
+ListItem.--highlight {
+    background: $accent;
+    color: $text;
+}
+
+/* Specific list patterns from original CSS */
+
+/* Chat prompt list */
+#chat-prompt-list-view {
+    height: 8;
+    border: round $surface;
+    margin-bottom: 1;
+}
+
+/* CCP prompts list */
+#ccp-prompts-listview {
+    height: 10;
+    border: round $surface;
+    margin-bottom: 1;
+}
+
+/* Media list specific */
+#media-list {
+    height: 1fr;
+    border: round $surface;
+    margin: 1 0;
+}
+
+#media-list ListItem {
+    padding: 1;
+}
+
+#media-list ListItem.--highlight {
+    background: $accent-darken-1;
+}
+
+/* Search results list */
+.search-results-list {
+    height: 1fr;
+    margin-top: 1;
+    border: round $primary-lighten-2;
+}
+
+/* History list */
+#search-history-list {
+    max-height: 15;
+    border: round $surface;
+    background: $panel;
+}
+
+/* Conversation list specific */
+.conversation-list {
+    height: 1fr;
+    margin-bottom: 1;
+    border: round $surface;
+}
+
+.conversation-list ListItem {
+    padding: 1;
+    border-bottom: solid $surface;
+}
+
+.conversation-list ListItem:last-child {
+    border-bottom: none;
+}
+
+/* Character list specific */
+.character-list {
+    height: 1fr;
+    margin-bottom: 1;
+    border: round $surface;
+}
+
+/* Notes list specific */
+.notes-list {
+    height: 1fr;
+    border: round $surface;
+    margin: 1 0;
+}
+
+.notes-list ListItem {
+    padding: 1;
+    min-height: 3;
+}
+
+/* Compact list style */
+.list-compact ListItem {
+    padding: 0 1;
+    height: 1;
+    min-height: 1;
+}
+
+/* Dense list style */
+.list-dense {
+    scrollbar-size: 1 1;
+}
+
+.list-dense ListItem {
+    padding: 0 1;
+    height: 2;
+}
+
+/* List with dividers */
+.list-divided ListItem {
+    border-bottom: solid $surface;
+}
+
+.list-divided ListItem:last-child {
+    border-bottom: none;
+}
+
+/* List item states */
+ListItem:disabled {
+    opacity: 0.6;
+    color: $text-disabled;
+}
+
+ListItem.selected {
+    background: $primary;
+    color: $text;
+}
+
+ListItem.active {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
+
+/* List item with metadata */
+.list-item-with-meta {
+    layout: horizontal;
+    padding: 1;
+}
+
+.list-item-title {
+    width: 1fr;
+    text-style: bold;
+}
+
+.list-item-meta {
+    width: auto;
+    color: $text-muted;
+    text-align: right;
+}
+
+/* Empty list message */
+.empty-list-message {
+    align: center middle;
+    height: 10;
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* List loading state */
+.list-loading {
+    align: center middle;
+    height: 10;
+}
+
+/* Filterable list container */
+.filterable-list-container {
+    layout: vertical;
+    height: 100%;
+}
+
+.filterable-list-container Input {
+    margin-bottom: 1;
+}
+
+.filterable-list-container ListView {
+    height: 1fr;
+}

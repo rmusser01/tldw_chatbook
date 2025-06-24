@@ -9,7 +9,8 @@
       "Bash(awk:*)",
       "Bash(source:*)",
       "Bash(pytest:*)",
-      "Bash(pytest:*)"
+      "Bash(pytest:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": []
   }

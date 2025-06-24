@@ -1,0 +1,102 @@
+/* typography.tcss - Font and text styles */
+
+/* Base text styles */
+* {
+    text-align: left;
+}
+
+/* Headings and titles */
+.title {
+    text-style: bold;
+    text-align: center;
+    width: 100%;
+}
+
+.subtitle {
+    text-style: italic;
+    text-align: center;
+    width: 100%;
+    color: $text-muted;
+}
+
+/* Section headers */
+.section-header {
+    text-style: bold underline;
+    margin-bottom: 1;
+    width: 100%;
+}
+
+/* Labels */
+.label {
+    text-style: bold;
+    margin-top: 1;
+}
+
+.label-muted {
+    color: $text-muted;
+}
+
+/* Text utilities */
+.text-bold {
+    text-style: bold;
+}
+
+.text-italic {
+    text-style: italic;
+}
+
+.text-underline {
+    text-style: underline;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.text-right {
+    text-align: right;
+}
+
+.text-muted {
+    color: $text-muted;
+}
+
+.text-disabled {
+    color: $text-disabled;
+}
+
+.text-error {
+    color: $error;
+}
+
+.text-warning {
+    color: $warning;
+}
+
+.text-success {
+    color: $success;
+}
+
+/* Specific text patterns from original CSS */
+.sidebar-title {
+    text-style: bold underline;
+    margin-bottom: 1;
+    width: 100%;
+    text-align: center;
+}
+
+.sidebar-label {
+    margin-top: 1;
+    text-style: bold;
+}
+
+.pane-title {
+    text-style: bold;
+    margin-bottom: 1;
+    text-align: center;
+    width: 100%;
+}
+
+.export-label {
+    margin-top: 2;
+}

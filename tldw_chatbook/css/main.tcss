@@ -1,0 +1,119 @@
+/* main.tcss - Main CSS import aggregator */
+/* 
+ * This file imports all modular CSS files in the correct order.
+ * Import order matters for CSS cascade and specificity.
+ */
+
+/* ============================= */
+/* Base Styles                   */
+/* ============================= */
+/* Variables and design tokens must come first */
+@import "./base/variables.tcss";
+
+/* Reset and normalize styles */
+@import "./base/reset.tcss";
+
+/* Typography and text utilities */
+@import "./base/typography.tcss";
+
+/* ============================= */
+/* Layout Systems                */
+/* ============================= */
+/* Main application layout structure */
+@import "./layouts/app-layout.tcss";
+
+/* Base window layout patterns */
+/* @import "./layouts/window-base.tcss"; */
+
+/* Grid and flexbox utilities */
+/* @import "./layouts/grid-layouts.tcss"; */
+
+/* ============================= */
+/* Components                    */
+/* ============================= */
+/* Reusable UI components - order from simple to complex */
+
+/* Basic form elements */
+@import "./components/buttons.tcss";
+@import "./components/inputs.tcss";
+
+/* List components */
+@import "./components/lists.tcss";
+
+/* Layout components */
+@import "./components/sidebars.tcss";
+/* @import "./components/containers.tcss"; */
+
+/* Complex components */
+@import "./components/messages.tcss";
+/* @import "./components/modals.tcss"; */
+
+/* ============================= */
+/* Window-Specific Styles        */
+/* ============================= */
+/* Each window's specific overrides and custom styles */
+
+/* Chat window */
+/* @import "./windows/chat.tcss"; */
+
+/* Media window */
+/* @import "./windows/media.tcss"; */
+
+/* Notes window */
+/* @import "./windows/notes.tcss"; */
+
+/* Conversations, Characters & Prompts window */
+/* @import "./windows/conv-char.tcss"; */
+
+/* Tools & Settings window */
+/* @import "./windows/tools.tcss"; */
+
+/* LLM Management window */
+/* @import "./windows/llm-mgmt.tcss"; */
+
+/* Evals window */
+/* @import "./windows/evals.tcss"; */
+
+/* Coding window */
+/* @import "./windows/coding.tcss"; */
+
+/* Logs window */
+/* @import "./windows/logs.tcss"; */
+
+/* ============================= */
+/* Widget-Specific Styles        */
+/* ============================= */
+/* Extracted from Python DEFAULT_CSS */
+
+/* Chat message widget */
+/* @import "./widgets/chat-message.tcss"; */
+
+/* Other widgets... */
+
+/* ============================= */
+/* Utility Classes               */
+/* ============================= */
+/* Helper classes that can override component styles */
+
+/* Spacing utilities */
+/* @import "./utilities/spacing.tcss"; */
+
+/* Visibility utilities */
+/* @import "./utilities/visibility.tcss"; */
+
+/* Animation utilities */
+/* @import "./utilities/animations.tcss"; */
+
+/* ============================= */
+/* Theme Overrides               */
+/* ============================= */
+/* Theme-specific customizations come last */
+/* Themes are loaded dynamically by the application */
+
+/* ============================= */
+/* Temporary - Original CSS      */
+/* ============================= */
+/* During migration, we include the original CSS last */
+/* This ensures all existing styles work while we migrate */
+/* TODO: Remove once migration is complete */
+@import "./tldw_cli.tcss";

@@ -1,0 +1,42 @@
+/* reset.tcss - Base resets and defaults */
+
+/* Screen base setup */
+Screen {
+    layout: vertical;
+}
+
+/* Default window setup */
+.window {
+    height: 100%;
+    width: 100%;
+    layout: horizontal; /* Default, can be overridden */
+    overflow: hidden;
+}
+
+/* Base container resets */
+Container {
+    overflow: hidden;
+}
+
+/* Base widget resets */
+Widget {
+    overflow: hidden;
+}
+
+/* ScrollView defaults */
+ScrollView {
+    width: 100%;
+    height: 100%;
+}
+
+/* VerticalScroll defaults */
+VerticalScroll {
+    width: 100%;
+    scrollbar-size: 1 1;
+}
+
+/* HorizontalScroll defaults */
+HorizontalScroll {
+    height: 100%;
+    scrollbar-size: 1 1;
+}

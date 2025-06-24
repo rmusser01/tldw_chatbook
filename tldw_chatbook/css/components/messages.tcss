@@ -1,0 +1,235 @@
+/* messages.tcss - Chat message component styles */
+
+/* Base ChatMessage styles */
+ChatMessage {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+ChatMessage > Vertical {
+    border: round $surface;
+    background: $panel;
+    padding: 0 1;
+    width: 100%;
+    height: auto;
+}
+
+/* User message variant */
+ChatMessage.-user > Vertical {
+    background: $boost;
+    border: round $accent;
+}
+
+/* System message variant */
+ChatMessage.-system > Vertical {
+    background: $surface-darken-1;
+    border: round $warning;
+}
+
+/* Error message variant */
+ChatMessage.-error > Vertical {
+    background: $error-darken-3;
+    border: round $error;
+}
+
+/* Success message variant */
+ChatMessage.-success > Vertical {
+    background: $success-darken-3;
+    border: round $success;
+}
+
+/* Message header */
+.message-header {
+    width: 100%;
+    padding: 0 1;
+    background: $surface-darken-1;
+    text-style: bold;
+}
+
+/* Message content */
+.message-text {
+    padding: 1;
+    width: 100%;
+}
+
+/* Message button container */
+.message-button-container {
+    layout: horizontal;
+    padding: 0 1 1 1;
+    width: 100%;
+    height: auto;
+}
+
+.message-button-container Button {
+    margin-right: 1;
+}
+
+/* Timestamp styling */
+.message-timestamp {
+    color: $text-muted;
+    text-align: right;
+    padding: 0 1;
+}
+
+/* Enhanced message with markdown support */
+.message-content {
+    padding: 1;
+    width: 100%;
+}
+
+.message-content Markdown {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* Code blocks in messages */
+.message-code {
+    background: $surface-darken-2;
+    border: round $primary-lighten-2;
+    padding: 1;
+    margin: 1 0;
+    font-family: monospace;
+}
+
+/* Message with images */
+.message-image-container {
+    padding: 1;
+    align: center middle;
+}
+
+.message-image {
+    max-width: 100%;
+    max-height: 20;
+    border: round $surface;
+}
+
+/* Message editing state */
+ChatMessage.editing > Vertical {
+    border: thick $accent;
+}
+
+.message-edit-area {
+    padding: 1;
+    width: 100%;
+}
+
+.message-edit-area TextArea {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    max-height: 10;
+}
+
+/* Message actions */
+.message-actions {
+    layout: horizontal;
+    padding: 0 1 1 1;
+    align: right middle;
+}
+
+.message-actions Button {
+    width: auto;
+    height: 1;
+    margin-left: 1;
+    padding: 0 1;
+}
+
+/* Streaming message indicator */
+.message-streaming {
+    padding: 0 1;
+    color: $text-muted;
+}
+
+.message-streaming::after {
+    content: "...";
+    animation: dots 1.5s steps(4, end) infinite;
+}
+
+/* Message selection */
+ChatMessage.selected > Vertical {
+    border: thick $primary;
+    background: $primary-darken-3;
+}
+
+/* Message hover effects */
+ChatMessage:hover > Vertical {
+    background: $panel-lighten-1;
+}
+
+ChatMessage.-user:hover > Vertical {
+    background: $boost-lighten-1;
+}
+
+/* Compact message style */
+.message-compact {
+    margin-bottom: 0;
+    padding: 0;
+}
+
+.message-compact .message-header {
+    display: none;
+}
+
+.message-compact .message-text {
+    padding: 0 1;
+}
+
+/* Message thread/reply styling */
+.message-reply {
+    margin-left: 2;
+    border-left: thick $accent;
+}
+
+.message-reply-to {
+    background: $surface-darken-1;
+    padding: 0 1;
+    margin-bottom: 1;
+    color: $text-muted;
+    font-size: 90%;
+}
+
+/* Message status indicators */
+.message-status {
+    layout: horizontal;
+    padding: 0 1;
+    align: right middle;
+}
+
+.message-status-icon {
+    width: 1;
+    height: 1;
+    margin-left: 1;
+}
+
+.message-status-sending {
+    color: $warning;
+}
+
+.message-status-sent {
+    color: $success;
+}
+
+.message-status-failed {
+    color: $error;
+}
+
+/* Message reactions */
+.message-reactions {
+    layout: horizontal;
+    padding: 0 1 1 1;
+    gap: 1;
+}
+
+.message-reaction {
+    background: $surface;
+    border: round $primary-lighten-2;
+    padding: 0 1;
+    height: 2;
+}
+
+.message-reaction:hover {
+    background: $surface-lighten-1;
+    border: round $accent;
+}

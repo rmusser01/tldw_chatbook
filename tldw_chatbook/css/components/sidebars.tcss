@@ -1,0 +1,194 @@
+/* sidebars.tcss - Sidebar component patterns */
+
+/* Base sidebar styles */
+.sidebar {
+    dock: left;
+    width: 25%;
+    min-width: 20;
+    max-width: 80;
+    background: $boost;
+    padding: 1 2;
+    border-right: thick $background-darken-1;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Right sidebar variant */
+.sidebar-right {
+    dock: right;
+    border-right: none;
+    border-left: thick $background-darken-1;
+}
+
+/* Specific named sidebars inherit base styles */
+#chat-right-sidebar {
+    dock: right;
+    width: 25%;
+    min-width: 20;
+    max-width: 80;
+    background: $boost;
+    padding: 1 2;
+    border-left: thick $background-darken-1;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Collapsed state for all sidebars */
+.sidebar.collapsed,
+#chat-right-sidebar.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-right: none !important;
+    border-left: none !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: none !important;
+}
+
+/* Sidebar content elements */
+.sidebar-title {
+    text-style: bold underline;
+    margin-bottom: 1;
+    width: 100%;
+    text-align: center;
+}
+
+.sidebar-label {
+    margin-top: 1;
+    text-style: bold;
+}
+
+.sidebar-section {
+    margin-bottom: 2;
+    width: 100%;
+}
+
+/* Sidebar list views */
+.sidebar-listview {
+    height: 10;
+    border: round $primary-lighten-2;
+    background: $primary-background;
+}
+
+/* Three-pane layout sidebars (Conv/Char/Prompts) */
+.cc-left-pane {
+    width: 25%;
+    min-width: 20;
+    height: 100%;
+    background: $boost;
+    padding: 1;
+    border-right: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.cc-right-pane {
+    width: 25%;
+    min-width: 20;
+    height: 100%;
+    background: $boost;
+    padding: 1;
+    border-left: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.cc-right-pane.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-left: none !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: none !important;
+}
+
+/* Center pane in three-pane layout */
+.cc-center-pane {
+    width: 1fr;
+    height: 100%;
+    padding: 1;
+    overflow-y: auto;
+}
+
+/* Sidebar widget spacing */
+.cc-left-pane Input,
+.cc-right-pane Input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.cc-left-pane ListView {
+    height: 1fr;
+    margin-bottom: 1;
+    border: round $surface;
+}
+
+.cc-left-pane Button,
+.cc-right-pane Button {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.cc-left-pane Select,
+.cc-right-pane Select {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* Collapsible sections in sidebars */
+.sidebar Collapsible {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* Prompts collapsible specific */
+#chat-prompts-collapsible Input,
+#chat-prompts-collapsible ListView,
+#chat-prompts-collapsible Button {
+    margin-bottom: 1;
+}
+
+/* Loaded content areas in sidebars */
+.loaded-prompt-area {
+    margin-top: 1;
+    padding: 0 1;
+    background: $surface;
+    border: round $primary-background-lighten-1;
+}
+
+/* Sidebar toggle buttons */
+.sidebar-toggle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 3;
+    height: 3;
+    background: $surface;
+    border: round $accent;
+    padding: 0;
+    margin: 1;
+    text-align: center;
+}
+
+/* Notes sidebar specific */
+.notes-sidebar-left {
+    /* Inherits from .sidebar */
+}
+
+.notes-sidebar-right {
+    /* Inherits from .sidebar-right */
+}
+
+/* Media sidebar specific */
+#media-sidebar {
+    width: 30%;
+    min-width: 25;
+}
+
+/* Tools sidebar specific */
+#tools-sidebar {
+    width: 35%;
+    min-width: 30;
+}
