@@ -121,26 +121,28 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         # RAG Settings (Prominent Panel - Always visible)
         # -------------------------------------------------------------------
         with Collapsible(title="🔍 RAG Settings", collapsed=True, id=f"{id_prefix}-rag-panel", classes="settings-collapsible rag-settings-panel basic-mode advanced-mode"):
-            # Main RAG toggle with preset
-            with Horizontal(classes="rag-main-controls"):
-                yield Checkbox(
-                    "Enable RAG",
-                    id=f"{id_prefix}-rag-enable-checkbox",
-                    value=False,
-                    classes="rag-enable-toggle"
-                )
-                yield Select(
-                    options=[
-                        ("None", "none"),
-                        ("Light (BM25)", "light"),
-                        ("Full (Embeddings)", "full"),
-                        ("Custom", "custom")
-                    ],
-                    value="none",
-                    id=f"{id_prefix}-rag-preset",
-                    prompt="Preset",
-                    classes="rag-preset-select"
-                )
+            # Main RAG toggle
+            yield Checkbox(
+                "Enable RAG",
+                id=f"{id_prefix}-rag-enable-checkbox",
+                value=False,
+                classes="rag-enable-toggle"
+            )
+            
+            # RAG preset selection
+            yield Static("RAG Preset", classes="sidebar-label")
+            yield Select(
+                options=[
+                    ("None", "none"),
+                    ("Light (BM25)", "light"),
+                    ("Full (Embeddings)", "full"),
+                    ("Custom", "custom")
+                ],
+                value="none",
+                id=f"{id_prefix}-rag-preset",
+                prompt="Select preset...",
+                classes="rag-preset-select sidebar-select"
+            )
             
             # Search scope
             yield Static("Search Scope", classes="sidebar-label")
