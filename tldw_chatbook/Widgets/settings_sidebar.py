@@ -71,13 +71,6 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 classes="settings-mode-toggle"
             )
             yield Label("Advanced", classes="mode-label")
-        
-        # Search input
-        yield Input(
-            placeholder="Search settings...",
-            id=f"{id_prefix}-settings-search",
-            classes="settings-search-input"
-        )
 
         # -------------------------------------------------------------------
         # Quick Settings (Always visible)
@@ -127,7 +120,7 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         # -------------------------------------------------------------------
         # RAG Settings (Prominent Panel - Always visible)
         # -------------------------------------------------------------------
-        with Collapsible(title="🔍 RAG Settings", collapsed=False, id=f"{id_prefix}-rag-panel", classes="settings-collapsible rag-settings-panel basic-mode advanced-mode"):
+        with Collapsible(title="🔍 RAG Settings", collapsed=True, id=f"{id_prefix}-rag-panel", classes="settings-collapsible rag-settings-panel basic-mode advanced-mode"):
             # Main RAG toggle with preset
             with Horizontal(classes="rag-main-controls"):
                 yield Checkbox(
@@ -276,7 +269,7 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         # -------------------------------------------------------------------
         # Conversation Management (Always visible)
         # -------------------------------------------------------------------
-        with Collapsible(title="Conversations", collapsed=False, id=f"{id_prefix}-conversations", classes="settings-collapsible basic-mode advanced-mode"):
+        with Collapsible(title="Conversations", collapsed=True, id=f"{id_prefix}-conversations", classes="settings-collapsible basic-mode advanced-mode"):
             yield Input(
                 id=f"{id_prefix}-conversation-search-bar",
                 placeholder="Search all chats...",

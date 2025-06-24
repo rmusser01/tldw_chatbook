@@ -25,6 +25,7 @@ from ..Widgets.chat_message import ChatMessage # If CCP tab displays ChatMessage
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..Prompt_Management import Prompts_Interop as prompts_interop
 from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError # For specific error handling
+from .Chat_Events.chat_events import load_branched_conversation_history_ui
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -743,7 +744,7 @@ async def handle_ccp_load_conversation_button_pressed(app: 'TldwCli', event: But
             return
 
         # FIXME/TODO - Conversation Branching
-        await app._load_branched_conversation_history(loaded_conversation_id, center_pane)
+        await load_branched_conversation_history_ui(app, loaded_conversation_id, center_pane)
 
         center_pane.scroll_end(animate=False)
         logger.info(f"Loaded messages into #conv-char-center-pane for conversation {loaded_conversation_id}.")

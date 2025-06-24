@@ -2908,8 +2908,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug("Dispatching to chat_events_sidebar.handle_media_item_selected")
             await chat_events_sidebar.handle_media_item_selected(self, event.item)
 
-        # Note: chat-conversation-search-results-list and conv-char-search-results-list selections
-        # are typically handled by their respective "Load Selected" buttons rather than direct on_list_view_selected.
+        elif list_view_id == "chat-conversation-search-results-list" and current_active_tab == TAB_CHAT:
+            self.loguru_logger.debug("Conversation selected in chat tab search results")
+            # Store the selected item for the Load Selected button, but don't load immediately
+            # This maintains the existing UX where users must click "Load Selected"
+            
+        # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
             self.loguru_logger.warning(
             f"No specific handler for ListView.Selected from list_view_id='{list_view_id}' on tab='{current_active_tab}'")
@@ -2960,6 +2964,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await notes_handlers.handle_notes_sort_changed(self, event)
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
+        elif select_id == "chat-conversation-search-character-filter-select" and current_active_tab == TAB_CHAT:
+            self.loguru_logger.debug("Character filter changed in chat tab, triggering conversation search")
+            await chat_handlers.perform_chat_conversation_search(self)
 
     ##################################################################
     # --- Event Handlers for Streaming and Worker State Changes ---

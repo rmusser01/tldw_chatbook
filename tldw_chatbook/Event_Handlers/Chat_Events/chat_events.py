@@ -1217,11 +1217,35 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
 
         loguru_logger.debug(
             f"Searching conversations. Term: '{search_term}', CharID for DB: {effective_character_id_for_search}, IncludeCharFlag: {include_character_chats}")
-        conversations = db.search_conversations_by_title(
-            title_query=search_term,
-            character_id=effective_character_id_for_search,  # This will be None if searching all/all_chars checked
-            limit=100
-        )
+        
+        # Handle different search scenarios
+        if not search_term:
+            # Empty search term - show all conversations based on filters
+            if effective_character_id_for_search is not None and effective_character_id_for_search != ccl.DEFAULT_CHARACTER_ID:
+                # Specific character selected - show all conversations for that character
+                conversations = db.get_conversations_for_character(
+                    character_id=effective_character_id_for_search,
+                    limit=100
+                )
+            elif search_all_characters and include_character_chats:
+                # "All Characters" checked - get all conversations (both regular and character chats)
+                conversations = db.list_all_active_conversations(limit=100)
+            elif effective_character_id_for_search == ccl.DEFAULT_CHARACTER_ID:
+                # Regular chats only (non-character chats)
+                # Get all conversations and filter for those without a character
+                all_conversations = db.list_all_active_conversations(limit=100)
+                conversations = [conv for conv in all_conversations 
+                               if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
+            else:
+                # No specific filter - still show all conversations
+                conversations = db.list_all_active_conversations(limit=100)
+        else:
+            # Search term provided - use the search function
+            conversations = db.search_conversations_by_title(
+                title_query=search_term,
+                character_id=effective_character_id_for_search,  # This will be None if searching all/all_chars checked
+                limit=100
+            )
 
         # If include_character_chats is False, and the DB query couldn't filter by "IS NULL"
         # we might need to filter here:
