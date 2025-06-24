@@ -4,10 +4,11 @@
 # Imports
 import json  # For export
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Any, List, Dict, cast
+from typing import TYPE_CHECKING, Optional, Any, List, Dict, cast, Tuple
 import yaml
 #
 # 3rd-Party Imports
@@ -24,8 +25,9 @@ from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters # For F
 from ..Widgets.chat_message import ChatMessage # If CCP tab displays ChatMessage widgets
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..Prompt_Management import Prompts_Interop as prompts_interop
-from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError # For specific error handling
+from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError # For specific error handling
 from .Chat_Events.chat_events import load_branched_conversation_history_ui
+from .worker_events import chat_wrapper_function
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -1991,6 +1993,476 @@ async def handle_ccp_card_edit_button_pressed(app: 'TldwCli', event: Button.Pres
         logger.error("Failed to find #ccp-editor-char-cancel-button to remove 'hidden' class.")
 
 
+# ##############################################################
+# --- AI Generation Handlers ---
+# ##############################################################
+
+def _get_llm_settings_for_generation(app: 'TldwCli') -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Helper to get LLM provider, model, and API key settings for AI generation."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    
+    try:
+        # Try to get from chat tab first if it's available
+        provider = app.query_one("#chat-api-provider", Select).value
+        model = app.query_one("#chat-api-model", Select).value
+        if provider == Select.BLANK:
+            provider = None
+    except QueryError:
+        # Fall back to config defaults
+        chat_defaults = app.app_config.get("chat_defaults", {})
+        provider = chat_defaults.get("provider", None)
+        model = chat_defaults.get("model", None)
+        logger.info(f"Using config defaults - provider: {provider}, model: {model}")
+    
+    # Get API key
+    api_key = None
+    if provider:
+        provider_settings_key = provider.lower().replace(" ", "_")
+        provider_config_settings = app.app_config.get("api_settings", {}).get(provider_settings_key, {})
+        
+        # Try direct API key first
+        if "api_key" in provider_config_settings:
+            config_api_key = provider_config_settings.get("api_key", "").strip()
+            if config_api_key and config_api_key != "<API_KEY_HERE>":
+                api_key = config_api_key
+                logger.debug(f"Using API key for '{provider}' from config file.")
+        
+        # Try environment variable
+        if not api_key:
+            env_var_name = provider_config_settings.get("api_key_env_var", "").strip()
+            if env_var_name:
+                env_api_key = os.environ.get(env_var_name, "").strip()
+                if env_api_key:
+                    api_key = env_api_key
+                    logger.debug(f"Using API key for '{provider}' from ENV var '{env_var_name}'.")
+    
+    return provider, model, api_key
+
+
+async def handle_ccp_generate_description_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character description using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Description button pressed.")
+    
+    # Get character name
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        # Get any existing description to build upon
+        existing_desc = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        
+        # Build prompt
+        if existing_desc:
+            prompt = f"Improve and expand this character description for '{char_name}': {existing_desc}\n\nMake it more vivid and detailed, keeping the core concept but enhancing it. 2-3 paragraphs."
+        else:
+            prompt = f"Generate a compelling character description for a character named '{char_name}'. Include their appearance, background, and key traits. Make it vivid and engaging. 2-3 paragraphs."
+        
+        # Get LLM settings
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        # Show thinking status
+        app.notify("Generating description...", severity="information")
+        
+        # Make API call using app's chat wrapper
+        response = await app.run_worker(
+            lambda: chat_wrapper_function(
+                app,
+                message=prompt,
+                history=[],
+                api_endpoint=provider,
+                model=model,
+                api_key=api_key,
+                temperature=0.8,  # More creative
+                system_message="You are a creative writing assistant helping to create compelling character descriptions. Be vivid and engaging.",
+                streaming=False,
+                strip_thinking_tags=True
+            ),
+            name="ai_generate_description",
+            group="ai_generation"
+        )
+        
+        if response and isinstance(response, str):
+            # Update the description field
+            description_field = app.query_one("#ccp-editor-char-description-textarea", TextArea)
+            description_field.text = response.strip()
+            app.notify("Description generated successfully!", severity="success")
+        else:
+            app.notify("Failed to generate description", severity="error")
+            
+    except QueryError as e:
+        logger.error(f"UI component not found: {e}")
+        app.notify("UI error generating description", severity="error")
+    except Exception as e:
+        logger.error(f"Error generating description: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+
+
+async def handle_ccp_generate_personality_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character personality using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Personality button pressed.")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        # Build context-aware prompt
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        
+        prompt = f"{context}\n\nGenerate a detailed personality profile for this character. Include their traits, quirks, likes/dislikes, fears, motivations, and behavioral patterns. Make it nuanced and interesting. 2-3 paragraphs."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating personality...", severity="information")
+        
+        response = await app.run_worker(
+            lambda: chat_wrapper_function(
+                app,
+                message=prompt,
+                history=[],
+                api_endpoint=provider,
+                model=model,
+                api_key=api_key,
+                temperature=0.8,
+                system_message="You are a creative writing assistant specializing in character development. Create nuanced, believable personalities.",
+                streaming=False,
+                strip_thinking_tags=True
+            ),
+            name="ai_generate_personality",
+            group="ai_generation"
+        )
+        
+        if response and isinstance(response, str):
+            personality_field = app.query_one("#ccp-editor-char-personality-textarea", TextArea)
+            personality_field.text = response.strip()
+            app.notify("Personality generated successfully!", severity="success")
+        else:
+            app.notify("Failed to generate personality", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error generating personality: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+
+
+async def handle_ccp_generate_scenario_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character scenario using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Scenario button pressed.")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        
+        prompt = f"{context}\n\nGenerate an engaging scenario/setting where the user would encounter and interact with this character. Set the scene and context. 1-2 paragraphs."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating scenario...", severity="information")
+        
+        response = await app.run_worker(
+            lambda: chat_wrapper_function(
+                app,
+                message=prompt,
+                history=[],
+                api_endpoint=provider,
+                model=model,
+                api_key=api_key,
+                temperature=0.8,
+                system_message="You are a creative writing assistant. Create engaging scenarios that set up interesting interactions.",
+                streaming=False,
+                strip_thinking_tags=True
+            ),
+            name="ai_generate_scenario",
+            group="ai_generation"
+        )
+        
+        if response and isinstance(response, str):
+            scenario_field = app.query_one("#ccp-editor-char-scenario-textarea", TextArea)
+            scenario_field.text = response.strip()
+            app.notify("Scenario generated successfully!", severity="success")
+        else:
+            app.notify("Failed to generate scenario", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error generating scenario: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+
+
+async def handle_ccp_generate_first_message_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character first message using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate First Message button pressed.")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        scenario = app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        if scenario:
+            context += f"\nScenario: {scenario}"
+        
+        prompt = f"{context}\n\nWrite the character's first message/greeting to the user. It should be in-character, engaging, and set the tone for the interaction. Include actions in *asterisks* or narrative description if appropriate."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating first message...", severity="information")
+        
+        response = await app.run_worker(
+            lambda: chat_wrapper_function(
+                app,
+                message=prompt,
+                history=[],
+                api_endpoint=provider,
+                model=model,
+                api_key=api_key,
+                temperature=0.8,
+                system_message=f"You are roleplaying as {char_name}. Write in first person as the character. Be true to their personality and scenario.",
+                streaming=False,
+                strip_thinking_tags=True
+            ),
+            name="ai_generate_first_message",
+            group="ai_generation"
+        )
+        
+        if response and isinstance(response, str):
+            first_message_field = app.query_one("#ccp-editor-char-first-message-textarea", TextArea)
+            first_message_field.text = response.strip()
+            app.notify("First message generated successfully!", severity="success")
+        else:
+            app.notify("Failed to generate first message", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error generating first message: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+
+
+async def handle_ccp_generate_system_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character system prompt using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate System Prompt button pressed.")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        scenario = app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        if scenario:
+            context += f"\nScenario: {scenario}"
+        
+        prompt = f"{context}\n\nGenerate a system prompt for an AI to roleplay as this character. Include instructions about personality, speech patterns, knowledge, and behavior. Make it clear and specific."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating system prompt...", severity="information")
+        
+        response = await app.run_worker(
+            lambda: chat_wrapper_function(
+                app,
+                message=prompt,
+                history=[],
+                api_endpoint=provider,
+                model=model,
+                api_key=api_key,
+                temperature=0.7,  # Slightly less creative for instructions
+                system_message="You are an expert at writing clear, effective system prompts for AI roleplay. Create prompts that result in consistent, engaging character portrayals.",
+                streaming=False,
+                strip_thinking_tags=True
+            ),
+            name="ai_generate_system_prompt",
+            group="ai_generation"
+        )
+        
+        if response and isinstance(response, str):
+            system_prompt_field = app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea)
+            system_prompt_field.text = response.strip()
+            app.notify("System prompt generated successfully!", severity="success")
+        else:
+            app.notify("Failed to generate system prompt", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error generating system prompt: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+
+
+async def handle_ccp_generate_all_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating all character fields using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate All button pressed.")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating complete character profile...", severity="information")
+        
+        # Generate all fields in one comprehensive prompt
+        prompt = f"""Create a complete character profile for a character named '{char_name}'.
+
+Please provide:
+1. Description (2-3 paragraphs about appearance, background, and key traits)
+2. Personality (2-3 paragraphs about traits, quirks, motivations, fears)
+3. Scenario (1-2 paragraphs setting up where/how the user meets this character)
+4. First Message (the character's greeting/introduction to the user, in-character)
+5. System Prompt (instructions for an AI to roleplay as this character)
+
+Format your response with clear headers for each section."""
+        
+        response = await app.run_worker(
+            lambda: chat_wrapper_function(
+                app,
+                message=prompt,
+                history=[],
+                api_endpoint=provider,
+                model=model,
+                api_key=api_key,
+                temperature=0.8,
+                system_message="You are a creative character designer. Create compelling, coherent characters with rich personalities and engaging scenarios.",
+                streaming=False,
+                strip_thinking_tags=True
+            ),
+            name="ai_generate_all",
+            group="ai_generation"
+        )
+        
+        if response and isinstance(response, str):
+            # Parse the response and fill in the fields
+            sections = {
+                'description': '',
+                'personality': '',
+                'scenario': '',
+                'first_message': '',
+                'system_prompt': ''
+            }
+            
+            current_section = None
+            current_content = []
+            
+            for line in response.split('\n'):
+                line_lower = line.lower().strip()
+                
+                # Check for section headers
+                if 'description' in line_lower and ':' in line:
+                    if current_section and current_content:
+                        sections[current_section] = '\n'.join(current_content).strip()
+                    current_section = 'description'
+                    current_content = []
+                elif 'personality' in line_lower and ':' in line:
+                    if current_section and current_content:
+                        sections[current_section] = '\n'.join(current_content).strip()
+                    current_section = 'personality'
+                    current_content = []
+                elif 'scenario' in line_lower and ':' in line:
+                    if current_section and current_content:
+                        sections[current_section] = '\n'.join(current_content).strip()
+                    current_section = 'scenario'
+                    current_content = []
+                elif 'first message' in line_lower and ':' in line:
+                    if current_section and current_content:
+                        sections[current_section] = '\n'.join(current_content).strip()
+                    current_section = 'first_message'
+                    current_content = []
+                elif 'system prompt' in line_lower and ':' in line:
+                    if current_section and current_content:
+                        sections[current_section] = '\n'.join(current_content).strip()
+                    current_section = 'system_prompt'
+                    current_content = []
+                elif current_section and line.strip():
+                    current_content.append(line)
+            
+            # Add the last section
+            if current_section and current_content:
+                sections[current_section] = '\n'.join(current_content).strip()
+            
+            # Update all fields
+            if sections['description']:
+                app.query_one("#ccp-editor-char-description-textarea", TextArea).text = sections['description']
+            if sections['personality']:
+                app.query_one("#ccp-editor-char-personality-textarea", TextArea).text = sections['personality']
+            if sections['scenario']:
+                app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = sections['scenario']
+            if sections['first_message']:
+                app.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = sections['first_message']
+            if sections['system_prompt']:
+                app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = sections['system_prompt']
+            
+            app.notify("Character profile generated successfully!", severity="success")
+        else:
+            app.notify("Failed to generate character profile", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error generating character profile: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+
+
 # --- Button Handler Map ---
 CCP_BUTTON_HANDLERS = {
     # Left Pane
@@ -2013,6 +2485,14 @@ CCP_BUTTON_HANDLERS = {
     "ccp-editor-char-delete-button": handle_ccp_editor_char_delete_button_pressed,
     "ccp-editor-char-clone-button": handle_ccp_editor_char_clone_button_pressed,
     "ccp-editor-char-cancel-button": handle_ccp_editor_char_cancel_button_pressed,
+    
+    # AI Generation Buttons
+    "ccp-generate-all-button": handle_ccp_generate_all_button_pressed,
+    "ccp-generate-description-button": handle_ccp_generate_description_button_pressed,
+    "ccp-generate-personality-button": handle_ccp_generate_personality_button_pressed,
+    "ccp-generate-scenario-button": handle_ccp_generate_scenario_button_pressed,
+    "ccp-generate-first-message-button": handle_ccp_generate_first_message_button_pressed,
+    "ccp-generate-system-prompt-button": handle_ccp_generate_system_prompt_button_pressed,
     "ccp-editor-prompt-save-button": handle_ccp_editor_prompt_save_button_pressed,
     "ccp-prompt-clone-button": handle_ccp_prompt_clone_button_pressed,
     "ccp-prompt-delete-button": handle_ccp_prompt_delete_button_pressed,

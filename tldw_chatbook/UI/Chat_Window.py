@@ -70,6 +70,8 @@ class ChatWindow(Container):
             "chat-load-character-button": chat_events.handle_chat_load_character_button_pressed,
             "chat-clear-active-character-button": chat_events.handle_chat_clear_active_character_button_pressed,
             "chat-apply-template-button": chat_events.handle_chat_apply_template_button_pressed,
+            # Notes expand/collapse handler
+            "chat-notes-expand-button": self.handle_notes_expand_button,
         }
 
         # Add sidebar button handlers
@@ -135,6 +137,32 @@ class ChatWindow(Container):
             "chat",
             initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
         )
+    
+    async def handle_notes_expand_button(self, app, event) -> None:
+        """Handle the notes expand/collapse button."""
+        try:
+            button = app.query_one("#chat-notes-expand-button", Button)
+            textarea = app.query_one("#chat-notes-content-textarea", TextArea)
+            
+            # Toggle between expanded and normal states
+            if "notes-textarea-expanded" in textarea.classes:
+                # Collapse
+                textarea.remove_class("notes-textarea-expanded")
+                textarea.add_class("notes-textarea-normal")
+                textarea.styles.height = 10
+                button.label = "⬆ Expand"
+            else:
+                # Expand
+                textarea.remove_class("notes-textarea-normal")
+                textarea.add_class("notes-textarea-expanded")
+                textarea.styles.height = 25
+                button.label = "⬇ Collapse"
+                
+            # Focus the textarea after expanding
+            textarea.focus()
+            
+        except Exception as e:
+            logger.error(f"Error handling notes expand button: {e}")
 
 #
 # End of Chat_Window.py

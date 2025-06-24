@@ -98,6 +98,8 @@ class ChatWindowEnhanced(Container):
             # New image-related handlers
             "attach-image": self.handle_attach_image_button,
             "clear-image": self.handle_clear_image_button,
+            # Notes expand/collapse handler
+            "chat-notes-expand-button": self.handle_notes_expand_button,
         }
 
         # Add sidebar button handlers
@@ -239,6 +241,32 @@ class ChatWindowEnhanced(Container):
     def get_pending_image(self) -> Optional[dict]:
         """Get the pending image attachment data."""
         return self.pending_image
+    
+    async def handle_notes_expand_button(self, app, event) -> None:
+        """Handle the notes expand/collapse button."""
+        try:
+            button = app.query_one("#chat-notes-expand-button", Button)
+            textarea = app.query_one("#chat-notes-content-textarea", TextArea)
+            
+            # Toggle between expanded and normal states
+            if "notes-textarea-expanded" in textarea.classes:
+                # Collapse
+                textarea.remove_class("notes-textarea-expanded")
+                textarea.add_class("notes-textarea-normal")
+                textarea.styles.height = 10
+                button.label = "⬆ Expand"
+            else:
+                # Expand
+                textarea.remove_class("notes-textarea-normal")
+                textarea.add_class("notes-textarea-expanded")
+                textarea.styles.height = 25
+                button.label = "⬇ Collapse"
+                
+            # Focus the textarea after expanding
+            textarea.focus()
+            
+        except Exception as e:
+            logger.error(f"Error handling notes expand button: {e}")
 
 #
 # End of Chat_Window_Enhanced.py
