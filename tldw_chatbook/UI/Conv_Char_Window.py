@@ -44,6 +44,8 @@ class CCPWindow(Container):
             with Collapsible(title="Characters", id="conv-char-characters-collapsible"):
                 yield Button("Import Character Card", id="ccp-import-character-button",
                              classes="sidebar-button")
+                yield Button("Create Character", id="ccp-create-character-button",
+                             classes="sidebar-button")
                 yield Select([], prompt="Select Character...", allow_blank=True, id="conv-char-character-select")
                 yield Button("Load Character", id="ccp-right-pane-load-character-button", classes="sidebar-button")
             with Collapsible(title="Conversations", id="conv-char-conversations-collapsible"):

@@ -277,6 +277,39 @@ async def handle_ccp_left_load_character_button_pressed(app: 'TldwCli', event: B
         app.notify("An unexpected error occurred while trying to load character view.", severity="error")
 
 
+async def handle_ccp_create_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles creating a new character from scratch in the CCP tab."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Create Character button pressed.")
+    
+    # Clear the character editor fields
+    await _helper_ccp_clear_center_pane_character_editor_fields(app)
+    
+    # Clear the current editing state
+    app.current_editing_character_id = None
+    app.current_editing_character_data = None
+    
+    # Switch to the character editor view
+    app.ccp_active_view = "character_editor_view"
+    
+    # Make the Cancel Edit button visible
+    try:
+        cancel_button = app.query_one("#ccp-editor-char-cancel-button", Button)
+        cancel_button.remove_class("hidden")
+    except QueryError:
+        logger.error("Failed to find #ccp-editor-char-cancel-button to remove 'hidden' class.")
+    
+    # Focus the character name input field
+    try:
+        name_input = app.query_one("#ccp-editor-char-name-input", Input)
+        name_input.focus()
+    except QueryError:
+        logger.error("Failed to find #ccp-editor-char-name-input to focus.")
+    
+    app.notify("Create a new character by filling in the details.", severity="information")
+    logger.info("Character editor cleared and ready for new character creation.")
+
+
 async def handle_ccp_card_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the Save Changes button press on the CCP Character Card view."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
@@ -448,13 +481,12 @@ async def handle_ccp_card_clone_button_pressed(app: 'TldwCli', event: Button.Pre
 
         db = app.chachanotes_db  # Already checked it's not None
 
-        new_character_details = db.add_character_card(cloned_character_data)
+        new_character_id = db.add_character_card(cloned_character_data)
 
-        if new_character_details and new_character_details.get("id"):
-            new_char_id = new_character_details.get("id")
-            app.notify(f"Character cloned as '{cloned_name}' successfully (ID: {new_char_id}).", severity="information")
+        if new_character_id:
+            app.notify(f"Character cloned as '{cloned_name}' successfully (ID: {new_character_id}).", severity="information")
             logger.info(
-                f"Character cloned from ID {current_details_value.get('id')} to new ID {new_char_id} with name '{cloned_name}'.")
+                f"Character cloned from ID {current_details_value.get('id')} to new ID {new_character_id} with name '{cloned_name}'.")
 
             await populate_ccp_character_select(app)  # Ensure this is imported/defined
         else:
@@ -1494,12 +1526,16 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
 
         if current_editing_id is None:  # New character
             logger.info(f"Attempting to add new character: {char_name}")
-            saved_character_details = db.add_character_card(character_data=character_data_for_db_op)
-            if saved_character_details and saved_character_details.get("id"):
-                logger.info(f"New character '{char_name}' added. ID: {saved_character_details['id']}")
+            new_character_id = db.add_character_card(card_data=character_data_for_db_op)
+            if new_character_id:
+                logger.info(f"New character '{char_name}' added. ID: {new_character_id}")
                 app.notify(f"Character '{char_name}' saved successfully.", severity="information")
+                # Update the app state with the new character ID
+                app.current_editing_character_id = str(new_character_id)
+                app.current_editing_character_data = character_data_for_db_op
+                app.current_editing_character_data["id"] = str(new_character_id)
             else:
-                logger.error(f"Failed to save new character '{char_name}'. DB response: {saved_character_details}")
+                logger.error(f"Failed to save new character '{char_name}'. DB response: {new_character_id}")
                 app.notify(f"Failed to save new character '{char_name}'.", severity="error")
                 return
         else:  # Existing character
@@ -1697,19 +1733,18 @@ async def handle_ccp_editor_char_clone_button_pressed(app: 'TldwCli', event: But
         logger.info(f"Attempting to clone character '{original_name}' as '{cloned_name}' from editor state.")
         db = app.chachanotes_db # Already checked
 
-        saved_clone_details = db.add_character_card(
-            character_data=cloned_character_data_for_db
+        new_cloned_char_id = db.add_character_card(
+            card_data=cloned_character_data_for_db
         )
 
-        if saved_clone_details and saved_clone_details.get("id"):
-            new_cloned_char_id = saved_clone_details["id"]
+        if new_cloned_char_id:
             logger.info(f"Character cloned successfully. New ID: {new_cloned_char_id}")
             app.notify(f"Character cloned as '{cloned_name}'.", severity="information")
 
-            await _helper_ccp_load_character_into_center_pane_editor(app, new_cloned_char_id)
+            await _helper_ccp_load_character_into_center_pane_editor(app, str(new_cloned_char_id))
             await populate_ccp_character_select(app)
         else:
-            logger.error(f"Failed to save cloned character '{cloned_name}'. DB returned: {saved_clone_details}")
+            logger.error(f"Failed to save cloned character '{cloned_name}'. DB returned: {new_cloned_char_id}")
             app.notify(f"Failed to clone character '{original_name}'.", severity="error")
 
     except CharactersRAGDBError as e_db:
@@ -1912,6 +1947,7 @@ async def handle_ccp_card_edit_button_pressed(app: 'TldwCli', event: Button.Pres
 CCP_BUTTON_HANDLERS = {
     # Left Pane
     "ccp-import-character-button": handle_ccp_import_character_button_pressed,
+    "ccp-create-character-button": handle_ccp_create_character_button_pressed,
     "ccp-import-conversation-button": handle_ccp_import_conversation_button_pressed,
     "ccp-import-prompt-button": handle_ccp_import_prompt_button_pressed,
     "conv-char-conversation-search-button": handle_ccp_conversation_search_button_pressed,

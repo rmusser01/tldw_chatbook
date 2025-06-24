@@ -34,6 +34,7 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
+# from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
 #
 # --- Local API library Imports ---
 from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_management_events_mlx_lm,
@@ -706,7 +707,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     """A Textual app for interacting with LLMs."""
     #TITLE = "🧠📝🔍  tldw CLI"
     TITLE = f"{get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}{get_char(EMOJI_TITLE_NOTE, FALLBACK_TITLE_NOTE)}{get_char(EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH)}  tldw CLI"
-    # Use forward slashes for paths, works cross-platform
+    # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli.tcss")
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),

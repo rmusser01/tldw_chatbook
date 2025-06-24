@@ -2107,7 +2107,7 @@ AppFooterStatus {
 }
 
 .search-input-wrapper {
-    position: relative;
+    /* position: relative; - not supported in TCSS */
 }
 
 .search-bar-enhanced {
@@ -2672,7 +2672,7 @@ AppFooterStatus {
 }
 
 .maintenance-actions {
-    position: relative;
+    /* position: relative; - not supported in TCSS */
 }
 
 .action-button {
@@ -3621,9 +3621,21 @@ AppFooterStatus {
 /* RAG Settings Panel - Prominent styling */
 .rag-settings-panel {
     padding: 1;
+    border: round $surface;  /* Changed from $accent to match other panels */
+    background: $panel;      /* Changed from $boost to standard panel background */
+    margin-bottom: 1;
+}
+
+/* Highlight RAG panel when focused */
+.rag-settings-panel:focus-within {
     border: round $accent;
     background: $boost;
-    margin-bottom: 1;
+}
+
+/* Remove highlight when collapsed */
+.rag-settings-panel.collapsed {
+    border: round $surface !important;
+    background: $panel !important;
 }
 
 .rag-settings-panel-advanced {
@@ -3746,9 +3758,21 @@ AppFooterStatus {
 /* RAG Settings Panel - Prominent styling */
 .rag-settings-panel {
     padding: 1;
+    border: round $surface;  /* Changed to match other panels */
+    background: $panel;      /* Changed to standard panel background */
+    margin-bottom: 1;
+}
+
+/* Highlight RAG panel when focused */
+.rag-settings-panel:focus-within {
     border: round $primary-lighten-2;
     background: $boost;
-    margin-bottom: 1;
+}
+
+/* Remove highlight when collapsed */
+.rag-settings-panel.collapsed {
+    border: round $surface !important;
+    background: $panel !important;
 }
 
 /* RAG panel header with icon */

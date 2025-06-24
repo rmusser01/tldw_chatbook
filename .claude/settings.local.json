@@ -10,7 +10,8 @@
       "Bash(source:*)",
       "Bash(pytest:*)",
       "Bash(pytest:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(python3:*)"
     ],
     "deny": []
   }

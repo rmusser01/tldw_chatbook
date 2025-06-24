@@ -3,6 +3,8 @@
 ## Overview
 This guide provides step-by-step instructions for migrating from the monolithic `tldw_cli.tcss` to the new modular CSS architecture.
 
+**IMPORTANT UPDATE**: Textual does not support CSS @import directives. We've implemented a custom CSS loader that concatenates modular files at runtime.
+
 ## What's Changed
 
 ### Old Structure
@@ -16,7 +18,8 @@ css/
 ### New Structure
 ```
 css/
-├── main.tcss (import aggregator)
+├── css_loader.py (Custom loader for concatenating CSS files)
+├── main.tcss (DEPRECATED - not used due to lack of @import support)
 ├── base/
 │   ├── reset.tcss
 │   ├── variables.tcss
@@ -30,7 +33,10 @@ css/
 ├── layouts/
 │   └── app-layout.tcss
 ├── windows/
-│   └── chat.tcss
+│   ├── chat.tcss
+│   ├── media.tcss
+│   ├── notes.tcss
+│   └── conv-char.tcss
 ├── utilities/
 │   ├── spacing.tcss
 │   └── visibility.tcss
@@ -42,14 +48,19 @@ css/
 
 ### 1. Update Application CSS Loading
 
-In `app.py`, update the CSS loading to use the new main.tcss:
+Due to Textual's lack of @import support, we use a custom CSS loader. In `app.py`:
 
 ```python
-# Old
-CSS_PATH = "css/tldw_cli.tcss"
-
-# New
+# Old approach (doesn't work with Textual)
 CSS_PATH = "css/main.tcss"
+
+# New approach - using CSS loader
+from tldw_chatbook.css.css_loader import load_modular_css
+from pathlib import Path
+
+class TldwCli(App[None]):
+    # Load modular CSS at class definition time
+    CSS = load_modular_css(Path(__file__).parent / "css", use_fallback=True)
 ```
 
 ### 2. Update Widget CSS References
@@ -83,17 +94,31 @@ If you have custom styles, migrate them to appropriate modules:
 
 ### 4. Theme Compatibility
 
-Themes remain compatible. Update theme files to override modular styles:
+Themes remain compatible through Textual's built-in theme system. Themes do not need to import the main CSS as they are applied as overrides automatically by Textual.
 
-```css
-/* In theme file */
-@import "../main.tcss";
+## CSS Loader Implementation
 
-/* Theme overrides */
-Button {
-    background: $my-theme-button-color;
-}
+The `css_loader.py` module provides the functionality to concatenate modular CSS files:
+
+```python
+from tldw_chatbook.css.css_loader import CSSLoader
+from pathlib import Path
+
+# Create loader instance
+loader = CSSLoader(Path("css"))
+
+# Load all CSS files in correct order
+css_content = loader.load_css_files(use_fallback=True)
+
+# Or save combined CSS for debugging
+loader.save_combined_css(Path("combined.tcss"))
 ```
+
+The loader:
+- Maintains correct import order (variables → base → components → windows → utilities)
+- Includes helpful comments showing which file each section comes from
+- Optionally includes the original CSS as fallback
+- Logs which files are loaded successfully
 
 ## Benefits of Migration
 
@@ -103,9 +128,9 @@ Button {
    - Clear organization
 
 2. **Better Performance**
-   - Smaller file sizes
-   - Potential for lazy loading
-   - Easier caching
+   - Smaller file sizes per module
+   - Only load what's needed
+   - Easier to optimize
 
 3. **Team Collaboration**
    - Work on different modules
@@ -116,6 +141,7 @@ Button {
    - Logical organization
    - Easy to update
    - Clear dependencies
+   - Easier to identify and fix Textual compatibility issues
 
 ## Common Patterns
 
@@ -175,17 +201,20 @@ Button {
 
 ## Rollback Plan
 
-The migration includes the original CSS as a fallback:
+The CSS loader includes the original CSS as a fallback by default:
 
-```css
-/* In main.tcss */
-@import "./tldw_cli.tcss"; /* Temporary during migration */
+```python
+# In css_loader.py
+css_content = loader.load_css_files(use_fallback=True)
 ```
 
 To rollback:
-1. Change CSS_PATH back to "css/tldw_cli.tcss"
-2. Remove modular CSS imports
-3. Revert widget changes
+1. Change app.py back to use CSS_PATH:
+   ```python
+   CSS_PATH = str(Path(__file__).parent / "css/tldw_cli.tcss")
+   ```
+2. Remove the CSS loader import and usage
+3. Revert any widget CSS extractions
 
 ## FAQ
 
@@ -213,11 +242,45 @@ For questions or issues during migration:
 3. Look at existing modules for examples
 4. Test in isolation first
 
+## Textual CSS Limitations
+
+During migration, we discovered several CSS features that Textual does not support:
+
+### Unsupported CSS Properties
+- `position` (absolute, relative, fixed)
+- `z-index` 
+- `pointer-events`
+- `white-space`
+- `font-family`
+- `font-size`
+- `gap` (use margin on children instead)
+- `clip`
+- `border-color` (use full `border` property)
+
+### Unsupported CSS Features
+- `@import` directives
+- `@keyframes` and animations
+- `@media` queries
+- CSS transitions
+- Pseudo-elements (::before, ::after)
+- Attribute selectors (`Input[type="number"]`)
+- Function notation in values (`rect()`, `calc()`)
+- `px` units (use integers for character-based units)
+- `margin: auto` (use `align` on parent container)
+- Negative margins
+
+### Workarounds
+- **For @import**: Use our custom CSS loader
+- **For animations**: Handle in Python code
+- **For attribute selectors**: Use CSS classes (`Input.number`)
+- **For border-color**: Use `border: solid $color`
+- **For centering**: Use `align: center middle` on parent
+
 ## Next Steps
 
 After migration:
-1. Remove old tldw_cli.tcss import from main.tcss
+1. Set `use_fallback=False` in CSS loader once all styles are migrated
 2. Delete or archive tldw_cli.tcss
 3. Update documentation
-4. Train team on new structure
-5. Set up CSS linting rules
+4. Complete extraction of remaining window styles
+5. Extract widget CSS from Python files
