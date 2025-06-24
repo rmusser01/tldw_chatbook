@@ -310,6 +310,20 @@ async def handle_ccp_create_character_button_pressed(app: 'TldwCli', event: Butt
     logger.info("Character editor cleared and ready for new character creation.")
 
 
+async def handle_ccp_refresh_character_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Refresh List button press to reload the character select dropdown."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Refresh Character List button pressed.")
+    
+    try:
+        await populate_ccp_character_select(app)
+        app.notify("Character list refreshed.", severity="information")
+        logger.info("Character list refreshed successfully.")
+    except Exception as e:
+        logger.error(f"Error refreshing character list: {e}", exc_info=True)
+        app.notify("Failed to refresh character list.", severity="error")
+
+
 async def handle_ccp_card_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the Save Changes button press on the CCP Character Card view."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
@@ -1501,6 +1515,17 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
         first_message = app.query_one("#ccp-editor-char-first-message-textarea", TextArea).text.strip()
         keywords_text = app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text.strip()
         keywords_list = [kw.strip() for kw in keywords_text.split(',') if kw.strip()]
+        
+        # V2 Character Card fields
+        creator_notes = app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text.strip()
+        system_prompt = app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text.strip()
+        post_history_instructions = app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text.strip()
+        alternate_greetings_text = app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text.strip()
+        alternate_greetings = [greeting.strip() for greeting in alternate_greetings_text.split('\n') if greeting.strip()]
+        tags_text = app.query_one("#ccp-editor-char-tags-input", Input).value.strip()
+        tags = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+        creator = app.query_one("#ccp-editor-char-creator-input", Input).value.strip()
+        character_version = app.query_one("#ccp-editor-char-version-input", Input).value.strip()
 
         if not char_name:
             app.notify("Character Name cannot be empty.", severity="error", timeout=4)
@@ -1515,9 +1540,15 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
             "first_message": first_message,
             "keywords": keywords_list,
             "image_path": avatar_path,  # Storing avatar path as image_path
-            # Ensure other relevant fields from your DB schema are included if needed
-            # e.g., "creator_notes", "system_prompt", "post_history_instructions",
-            # "alternate_greetings", "tags", "creator", "character_version", "extensions"
+            # V2 Character Card fields
+            "creator_notes": creator_notes,
+            "system_prompt": system_prompt,
+            "post_history_instructions": post_history_instructions,
+            "alternate_greetings": alternate_greetings,
+            "tags": tags,
+            "creator": creator,
+            "character_version": character_version,
+            "extensions": {}  # Empty dict for now, can be extended later
         }
 
         saved_character_details: Optional[Dict[str, Any]] = None
@@ -1611,8 +1642,14 @@ async def _helper_ccp_clear_center_pane_character_editor_fields(app: 'TldwCli') 
         app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = ""
         app.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = ""
         app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text = ""
-        # Add other fields if they exist in the center pane editor
-        # e.g., app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = ""
+        # V2 Character Card fields
+        app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-tags-input", Input).value = ""
+        app.query_one("#ccp-editor-char-creator-input", Input).value = ""
+        app.query_one("#ccp-editor-char-version-input", Input).value = ""
 
         loguru_logger.debug("Cleared character editor fields in CCP center pane.")
     except QueryError as e:
@@ -1655,6 +1692,16 @@ async def _helper_ccp_load_character_into_center_pane_editor(app: 'TldwCli', cha
             keywords_list = char_data.get("keywords", [])
             app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text = ", ".join(keywords_list) if keywords_list else ""
 
+            # Populate V2 Character Card fields
+            app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text = char_data.get("creator_notes", "")
+            app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = char_data.get("system_prompt", "")
+            app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text = char_data.get("post_history_instructions", "")
+            alternate_greetings = char_data.get("alternate_greetings", [])
+            app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text = "\n".join(alternate_greetings) if alternate_greetings else ""
+            tags_list = char_data.get("tags", [])
+            app.query_one("#ccp-editor-char-tags-input", Input).value = ", ".join(tags_list) if tags_list else ""
+            app.query_one("#ccp-editor-char-creator-input", Input).value = char_data.get("creator", "")
+            app.query_one("#ccp-editor-char-version-input", Input).value = char_data.get("character_version", "")
 
             app.query_one("#ccp-editor-char-name-input", Input).focus()
             app.notify(f"Character '{char_data.get('name', 'Unknown')}' loaded into center editor.", severity="information")
@@ -1948,6 +1995,7 @@ CCP_BUTTON_HANDLERS = {
     # Left Pane
     "ccp-import-character-button": handle_ccp_import_character_button_pressed,
     "ccp-create-character-button": handle_ccp_create_character_button_pressed,
+    "ccp-refresh-character-list-button": handle_ccp_refresh_character_list_button_pressed,
     "ccp-import-conversation-button": handle_ccp_import_conversation_button_pressed,
     "ccp-import-prompt-button": handle_ccp_import_prompt_button_pressed,
     "conv-char-conversation-search-button": handle_ccp_conversation_search_button_pressed,

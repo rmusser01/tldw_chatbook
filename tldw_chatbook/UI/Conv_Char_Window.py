@@ -48,6 +48,7 @@ class CCPWindow(Container):
                              classes="sidebar-button")
                 yield Select([], prompt="Select Character...", allow_blank=True, id="conv-char-character-select")
                 yield Button("Load Character", id="ccp-right-pane-load-character-button", classes="sidebar-button")
+                yield Button("Refresh List", id="ccp-refresh-character-list-button", classes="sidebar-button")
             with Collapsible(title="Conversations", id="conv-char-conversations-collapsible"):
                 yield Button("Import Conversation", id="ccp-import-conversation-button",
                              classes="sidebar-button")
@@ -109,6 +110,21 @@ class CCPWindow(Container):
                 yield TextArea(id="ccp-editor-char-first-message-textarea", classes="sidebar-textarea ccp-prompt-textarea")
                 yield Label("Keywords (comma-separated):", classes="sidebar-label")
                 yield TextArea(id="ccp-editor-char-keywords-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                # V2 Character Card Fields
+                yield Label("Creator Notes:", classes="sidebar-label")
+                yield TextArea(id="ccp-editor-char-creator-notes-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                yield Label("System Prompt:", classes="sidebar-label")
+                yield TextArea(id="ccp-editor-char-system-prompt-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                yield Label("Post History Instructions:", classes="sidebar-label")
+                yield TextArea(id="ccp-editor-char-post-history-instructions-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                yield Label("Alternate Greetings (one per line):", classes="sidebar-label")
+                yield TextArea(id="ccp-editor-char-alternate-greetings-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                yield Label("Tags (comma-separated):", classes="sidebar-label")
+                yield Input(id="ccp-editor-char-tags-input", placeholder="e.g., fantasy, anime, helpful", classes="sidebar-input")
+                yield Label("Creator:", classes="sidebar-label")
+                yield Input(id="ccp-editor-char-creator-input", placeholder="Creator name", classes="sidebar-input")
+                yield Label("Character Version:", classes="sidebar-label")
+                yield Input(id="ccp-editor-char-version-input", placeholder="e.g., 1.0", classes="sidebar-input")
                 with Horizontal(classes="ccp-prompt-action-buttons"):
                     yield Button("Save Character", id="ccp-editor-char-save-button", variant="success", classes="sidebar-button")
                     yield Button("Clone Character", id="ccp-editor-char-clone-button", classes="sidebar-button")
