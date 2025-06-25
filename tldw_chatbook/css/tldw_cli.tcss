@@ -44,10 +44,9 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* Right sidebar (chat-right-sidebar) */
 #chat-right-sidebar {
     dock: right;
-    /* width: 70;   <-- REMOVE fixed width */
-    width: 25%;  /* <-- CHANGE to percentage (match .sidebar or use a different one) */
-    min-width: 20; /* <-- ADD a minimum width */
-    max-width: 80; /* <-- ADD a maximum width (optional) */
+    width: 25%;  /* Default width, will be dynamically updated */
+    min-width: 15%; /* Minimum width - absolute units work better */
+    max-width: 50%; /* Maximum width */
     background: $boost;
     padding: 1 2;
     border-left: thick $background-darken-1; /* Border on the left */
@@ -68,10 +67,63 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 
 /* Common sidebar elements */
 .sidebar-title { text-style: bold underline; margin-bottom: 1; width: 100%; text-align: center; }
+
+/* Sidebar header with resize controls */
+.sidebar-header-with-resize {
+    height: 2;
+    align: left middle;
+    margin-bottom: 1;
+}
+
+.sidebar-header-with-resize .flex-grow {
+    width: 1fr;
+}
+
+/* Sidebar resize buttons */
+.sidebar-resize-button {
+    width: 3;
+    min-width: 3;
+    height: 2;
+    padding: 0;
+    margin: 0 1;
+}
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input { width: 100%; margin-bottom: 1; }
 .sidebar-textarea { width: 100%; border: round $surface; margin-bottom: 1; }
-.sidebar Select { width: 100%; margin-bottom: 1; }
+
+/* Notes content header and expand button */
+.notes-content-header {
+    height: 2;
+    align: left middle;
+    margin-bottom: 0;
+}
+
+.notes-content-label {
+    width: auto;
+}
+
+.notes-expand-button {
+    width: auto;
+    min-width: 8;
+    height: 2;
+    margin-left: 1;
+    padding: 0 1;
+}
+
+/* Notes textarea states */
+.notes-textarea-normal {
+    height: 10;
+}
+
+.notes-textarea-expanded {
+    height: 25;
+    border: round $accent;
+}
+.sidebar Select { 
+    width: 100%; 
+    margin-bottom: 1; 
+    border: round $primary-lighten-2;
+}
 
 .prompt-display-textarea {
     height: 7; /* Example height */
@@ -408,6 +460,33 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 }
 
 /* --- End of Prompts Sidebar Vertical --- */
+
+/* AI Generation Buttons for Character Editor */
+.field-with-ai-button {
+    layout: horizontal;
+    height: auto;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.field-with-ai-button TextArea {
+    width: 80%;
+    margin-right: 1;
+}
+
+.ai-generate-button {
+    width: 18%;
+    height: 3;
+    margin-top: 0;
+}
+
+.ai-generate-all-button {
+    width: 100%;
+    height: 3;
+    margin-bottom: 1;
+    margin-top: 1;
+}
+
 /* --- End of Conversations, Characters & Prompts Window specific layouts --- */
 /* ----------------------------- ************************* ----------------------------- */
 
@@ -546,6 +625,12 @@ ChatMessage.-ai .message-actions.-generating {
 /* Reduce height of Collapsible headers */
 Collapsible > .collapsible--header {
     height: 2;
+}
+
+/* Half height for RAG Settings collapsible header */
+#chat-rag-panel > .collapsible--header,
+#character-rag-panel > .collapsible--header {
+    height: 1;
 }
 
 .chat-system-prompt-styling {
@@ -2103,7 +2188,7 @@ AppFooterStatus {
 }
 
 .search-input-wrapper {
-    position: relative;
+    /* position: relative; - not supported in TCSS */
 }
 
 .search-bar-enhanced {
@@ -2668,7 +2753,7 @@ AppFooterStatus {
 }
 
 .maintenance-actions {
-    position: relative;
+    /* position: relative; - not supported in TCSS */
 }
 
 .action-button {
@@ -3575,3 +3660,261 @@ AppFooterStatus {
 }
 
 /* --- End Evaluation Window Styles ---*/
+
+/* ----------------------------- ************************* ----------------------------- */
+/* --- Chat Settings Mode Styles --- */
+
+/* Settings mode toggle container */
+.settings-mode-container {
+    layout: horizontal;
+    height: 3;
+    width: 100%;
+    align: center middle;
+    margin-bottom: 1;
+    padding: 0 1;
+}
+
+/* Mode labels */
+.mode-label {
+    margin: 0 1;
+    color: $text-muted;
+}
+
+/* Settings mode toggle switch */
+.settings-mode-toggle {
+    margin: 0 1;
+}
+
+/* Settings search input */
+.settings-search-input {
+    width: 100%;
+    margin-bottom: 2;
+    border: round $primary;
+}
+
+/* Quick settings section */
+.quick-settings-section {
+    padding: 1;
+    border: round $surface;
+    margin-bottom: 1;
+}
+
+/* RAG Settings Panel - Prominent styling */
+.rag-settings-panel {
+    padding: 1;
+    border: round $surface;  /* Changed from $accent to match other panels */
+    background: $panel;      /* Changed from $boost to standard panel background */
+    margin-bottom: 1;
+}
+
+/* Highlight RAG panel when focused */
+.rag-settings-panel:focus-within {
+    border: round $accent;
+    background: $boost;
+}
+
+/* Remove highlight when collapsed */
+.rag-settings-panel.collapsed {
+    border: round $surface !important;
+    background: $panel !important;
+}
+
+.rag-settings-panel-advanced {
+    padding: 1;
+    border: round $accent;
+    background: $boost;
+    margin-bottom: 1;
+}
+
+/* RAG panel header with icon */
+.rag-panel-header {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+/* RAG toggle row */
+.rag-toggle-row {
+    layout: horizontal;
+    height: 3;
+    align: left middle;
+    margin-bottom: 1;
+}
+
+/* RAG main toggle */
+.rag-main-toggle {
+    margin-right: 2;
+}
+
+/* RAG preset select */
+.rag-preset-select {
+    width: 50%;
+}
+
+/* RAG scope container */
+.rag-scope-container {
+    padding-left: 2;
+    margin-bottom: 1;
+}
+
+/* Section headers */
+.section-header {
+    text-style: bold underline;
+    color: $primary;
+    margin-bottom: 1;
+    margin-top: 1;
+}
+
+.subsection-header {
+    text-style: bold;
+    color: $secondary;
+    margin-bottom: 1;
+    margin-top: 1;
+}
+
+/* Info text */
+.info-text {
+    color: $text-muted;
+    text-style: italic;
+    margin-bottom: 1;
+}
+
+/* Hidden class for mode switching */
+.hidden {
+    display: none;
+}
+
+/* Search highlighting */
+.search-hidden {
+    display: none;
+}
+
+.search-highlighted {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+/* Settings containers for mode switching */
+#chat-basic-settings-container {
+    width: 100%;
+}
+
+#chat-advanced-settings-container {
+    width: 100%;
+}
+
+/* --- End Chat Settings Mode Styles ---*/
+
+/* ----------------------------- ************************* ----------------------------- */
+/* --- Enhanced Chat Settings Styles --- */
+
+/* Mode toggle container */
+.mode-toggle-container {
+    layout: horizontal;
+    height: 3;
+    width: 100%;
+    align: center middle;
+    margin-bottom: 1;
+}
+
+/* Mode labels */
+.mode-label {
+    margin: 0 1;
+    color: $text-muted;
+}
+
+/* Settings mode toggle switch */
+.settings-mode-toggle {
+    margin: 0 1;
+}
+
+/* Settings search input */
+.settings-search-input {
+    width: 100%;
+    margin-bottom: 2;
+    border: round $primary;
+}
+
+/* RAG Settings Panel - Prominent styling */
+.rag-settings-panel {
+    padding: 1;
+    border: round $surface;  /* Changed to match other panels */
+    background: $panel;      /* Changed to standard panel background */
+    margin-bottom: 1;
+}
+
+/* Remove extra padding from RAG panel content */
+.rag-settings-panel Container {
+    padding: 0;
+    height: auto;
+}
+
+/* Highlight RAG panel when focused */
+.rag-settings-panel:focus-within {
+    border: round $primary-lighten-2;
+    background: $boost;
+}
+
+/* Remove highlight when collapsed */
+.rag-settings-panel.collapsed {
+    border: round $surface !important;
+    background: $panel !important;
+}
+
+/* RAG panel header with icon */
+.rag-panel-header {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+/* RAG enable toggle */
+.rag-enable-toggle {
+    margin-bottom: 1;
+}
+
+/* RAG preset select */
+.rag-preset-select {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* RAG scope options */
+.rag-scope-options {
+    margin-bottom: 1;
+}
+
+.rag-scope-options Checkbox {
+    margin-bottom: 0;
+}
+
+/* Ensure proper spacing for sidebar labels in RAG panel */
+.rag-settings-panel .sidebar-label {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* Advanced only sections - hidden by default in basic mode */
+.advanced-only {
+    display: none;
+}
+
+/* Show advanced sections when in advanced mode */
+.sidebar.advanced-mode .advanced-only {
+    display: block;
+}
+
+/* Hide advanced-only when in basic mode */
+.sidebar.basic-mode .advanced-only {
+    display: none;
+}
+
+/* Search highlighting */
+.search-highlight {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+/* --- End Enhanced Chat Settings Styles ---*/

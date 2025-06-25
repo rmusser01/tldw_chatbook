@@ -18,10 +18,10 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import (
-    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label
+    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch
 )
 
-from textual.containers import Container
+from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
 from textual.worker import Worker, WorkerState
 from textual.binding import Binding
@@ -34,6 +34,7 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
+# from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
 #
 # --- Local API library Imports ---
 from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_management_events_mlx_lm,
@@ -706,7 +707,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     """A Textual app for interacting with LLMs."""
     #TITLE = "🧠📝🔍  tldw CLI"
     TITLE = f"{get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}{get_char(EMOJI_TITLE_NOTE, FALLBACK_TITLE_NOTE)}{get_char(EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH)}  tldw CLI"
-    # Use forward slashes for paths, works cross-platform
+    # CSS file path
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli.tcss")
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),
@@ -767,6 +768,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # Reactives for sidebar
     chat_sidebar_collapsed: reactive[bool] = reactive(False)
     chat_right_sidebar_collapsed: reactive[bool] = reactive(False)  # For character sidebar
+    # Load saved width from config, default to 25% if not set
+    _saved_width = settings.get("chat_defaults", {}).get("right_sidebar_width", 25)
+    chat_right_sidebar_width: reactive[int] = reactive(_saved_width)  # Width percentage for right sidebar
     notes_sidebar_left_collapsed: reactive[bool] = reactive(False)
     notes_sidebar_right_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
@@ -838,6 +842,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _initial_media_view: Optional[str] = "media-view-video-audio"  # Default to the first sub-tab
     media_db: Optional[MediaDatabase] = None
     current_sidebar_media_item: Optional[Dict[str, Any]] = None # For chat sidebar media review
+
+    # Settings mode for chat sidebar
+    chat_settings_mode: reactive[str] = reactive("basic")  # "basic" or "advanced"
+    chat_settings_search_query: reactive[str] = reactive("")  # Search query for settings
 
     # Search Tab's active sub-view reactives
     search_active_sub_tab: reactive[Optional[str]] = reactive(None)
@@ -1323,6 +1331,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one("#ccp-card-personality-display", TextArea).text = details.get("personality", "")
                         self.query_one("#ccp-card-scenario-display", TextArea).text = details.get("scenario", "")
                         self.query_one("#ccp-card-first-message-display", TextArea).text = details.get("first_message", "")
+                        
+                        # Populate V2 Character Card fields
+                        self.query_one("#ccp-card-creator-notes-display", TextArea).text = details.get("creator_notes") or ""
+                        self.query_one("#ccp-card-system-prompt-display", TextArea).text = details.get("system_prompt") or ""
+                        self.query_one("#ccp-card-post-history-instructions-display", TextArea).text = details.get("post_history_instructions") or ""
+                        
+                        # Handle alternate greetings (array to text)
+                        alternate_greetings = details.get("alternate_greetings", [])
+                        self.query_one("#ccp-card-alternate-greetings-display", TextArea).text = "\n".join(alternate_greetings) if alternate_greetings else ""
+                        
+                        # Handle tags (array to comma-separated)
+                        tags = details.get("tags", [])
+                        self.query_one("#ccp-card-tags-display", Static).update(", ".join(tags) if tags else "None")
+                        
+                        self.query_one("#ccp-card-creator-display", Static).update(details.get("creator") or "N/A")
+                        self.query_one("#ccp-card-version-display", Static).update(details.get("character_version") or "N/A")
+                        
+                        # Handle keywords (array to comma-separated)
+                        keywords = details.get("keywords", [])
+                        self.query_one("#ccp-card-keywords-display", Static).update(", ".join(keywords) if keywords else "None")
 
                         image_placeholder = self.query_one("#ccp-card-image-placeholder", Static)
                         if self.current_ccp_character_image:
@@ -1340,6 +1368,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one("#ccp-card-personality-display", TextArea).text = ""
                         self.query_one("#ccp-card-scenario-display", TextArea).text = ""
                         self.query_one("#ccp-card-first-message-display", TextArea).text = ""
+                        
+                        # Clear V2 Character Card fields
+                        self.query_one("#ccp-card-creator-notes-display", TextArea).text = ""
+                        self.query_one("#ccp-card-system-prompt-display", TextArea).text = ""
+                        self.query_one("#ccp-card-post-history-instructions-display", TextArea).text = ""
+                        self.query_one("#ccp-card-alternate-greetings-display", TextArea).text = ""
+                        self.query_one("#ccp-card-tags-display", Static).update("None")
+                        self.query_one("#ccp-card-creator-display", Static).update("N/A")
+                        self.query_one("#ccp-card-version-display", Static).update("N/A")
+                        self.query_one("#ccp-card-keywords-display", Static).update("None")
+                        
                         self.query_one("#ccp-card-image-placeholder", Static).update("No character loaded")
                         loguru_logger.debug("Character card widgets cleared.")
                     except QueryError as qe:
@@ -1911,6 +1950,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error(f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}", exc_info=True)
         # --- End DB Size Indicator Setup ---
 
+        # Initialize chat settings sidebar mode
+        try:
+            chat_sidebar = self.query_one("#chat-left-sidebar")
+            chat_sidebar.add_class("basic-mode")  # Start in basic mode
+            self.loguru_logger.debug("Initialized chat sidebar in basic mode")
+        except QueryError:
+            self.loguru_logger.warning("Could not find chat sidebar to set initial mode")
+            
         # CRITICAL: Set UI ready state after all bindings and initializations
         self._ui_ready = True
 
@@ -2169,6 +2216,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             sidebar.display = not collapsed
         except QueryError:
             logging.error("Character sidebar widget (#chat-right-sidebar) not found.")
+    
+    def watch_chat_right_sidebar_width(self, width: int) -> None:
+        """Update the width of the chat right sidebar."""
+        if not hasattr(self, "app") or not self.app:  # Check if app is ready
+            return
+        if not self._ui_ready:
+            return
+        try:
+            sidebar = self.query_one("#chat-right-sidebar", VerticalScroll)
+            sidebar.styles.width = f"{width}%"
+        except QueryError:
+            # Sidebar might not be created yet
+            pass
 
     def watch_notes_sidebar_left_collapsed(self, collapsed: bool) -> None:
         """Hide or show the notes left sidebar."""
@@ -2864,8 +2924,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug("Dispatching to chat_events_sidebar.handle_media_item_selected")
             await chat_events_sidebar.handle_media_item_selected(self, event.item)
 
-        # Note: chat-conversation-search-results-list and conv-char-search-results-list selections
-        # are typically handled by their respective "Load Selected" buttons rather than direct on_list_view_selected.
+        elif list_view_id == "chat-conversation-search-results-list" and current_active_tab == TAB_CHAT:
+            self.loguru_logger.debug("Conversation selected in chat tab search results")
+            # Store the selected item for the Load Selected button, but don't load immediately
+            # This maintains the existing UX where users must click "Load Selected"
+            
+        # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
             self.loguru_logger.warning(
             f"No specific handler for ListView.Selected from list_view_id='{list_view_id}' on tab='{current_active_tab}'")
@@ -2877,6 +2941,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if checkbox_id.startswith("chat-conversation-search-") and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_search_checkbox_changed(self, checkbox_id, event.value)
         # Add handlers for checkboxes in other tabs if any
+
+    async def on_switch_changed(self, event: Switch.Changed) -> None:
+        """Handles changes in Switch widgets."""
+        from textual.widgets import Switch
+        
+        switch_id = event.switch.id
+        current_active_tab = self.current_tab
+        
+        if switch_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
+            await self.handle_settings_mode_toggle(event)
+
+    async def on_input_changed(self, event: Input.Changed) -> None:
+        """Handles changes in Input widgets."""
+        input_id = event.input.id
+        current_active_tab = self.current_tab
+        
+        if input_id == "chat-settings-search" and current_active_tab == TAB_CHAT:
+            await self.handle_settings_search(event.value)
 
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""
@@ -2896,6 +2978,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
         elif select_id == "notes-sort-select" and current_active_tab == TAB_NOTES:
             await notes_handlers.handle_notes_sort_changed(self, event)
+        elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
+            await self.handle_rag_preset_changed(event)
+        elif select_id == "chat-conversation-search-character-filter-select" and current_active_tab == TAB_CHAT:
+            self.loguru_logger.debug("Character filter changed in chat tab, triggering conversation search")
+            await chat_handlers.perform_chat_conversation_search(self)
 
     ##################################################################
     # --- Event Handlers for Streaming and Worker State Changes ---
@@ -2932,6 +3019,113 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     #####################################################################
     # --- End of Chat Event Handlers for Streaming & thinking tags ---
     #####################################################################
+
+    async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
+        """Handles the settings mode toggle between Basic and Advanced."""
+        try:
+            # Update reactive variable
+            self.chat_settings_mode = "advanced" if event.value else "basic"
+            
+            # Update sidebar class for CSS styling
+            sidebar = self.query_one("#chat-left-sidebar")
+            if self.chat_settings_mode == "basic":
+                sidebar.add_class("basic-mode")
+                sidebar.remove_class("advanced-mode")
+            else:
+                sidebar.add_class("advanced-mode") 
+                sidebar.remove_class("basic-mode")
+            
+            self.notify(f"Settings mode: {self.chat_settings_mode.title()}")
+            self.loguru_logger.info(f"Switched to {self.chat_settings_mode} settings mode")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error toggling settings mode: {e}")
+            self.notify("Error switching settings mode", severity="error")
+
+    async def handle_rag_preset_changed(self, event: Select.Changed) -> None:
+        """Handles RAG preset selection."""
+        try:
+            preset = event.value
+            
+            # Get RAG-related widgets
+            rag_enable = self.query_one("#chat-rag-enable-checkbox", Checkbox)
+            plain_rag = self.query_one("#chat-rag-plain-enable-checkbox", Checkbox) 
+            top_k = self.query_one("#chat-rag-top-k", Input)
+            
+            # Apply preset configurations
+            if preset == "none":
+                rag_enable.value = False
+                self.notify("RAG disabled")
+            elif preset == "light":
+                rag_enable.value = True
+                plain_rag.value = True
+                top_k.value = "3"
+                self.notify("Light RAG: BM25 only, top 3 results")
+            elif preset == "full":
+                rag_enable.value = True
+                plain_rag.value = False
+                top_k.value = "10"
+                # Try to enable reranking if in advanced mode
+                try:
+                    rerank = self.query_one("#chat-rag-rerank-enable-checkbox", Checkbox)
+                    rerank.value = True
+                except QueryError:
+                    pass  # Reranking is in advanced mode
+                self.notify("Full RAG: Embeddings + reranking, top 10 results")
+            elif preset == "custom":
+                rag_enable.value = True
+                self.notify("Custom RAG: Configure settings manually")
+                
+            self.loguru_logger.info(f"Applied RAG preset: {preset}")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error applying RAG preset: {e}")
+            self.notify("Error applying RAG preset", severity="error")
+
+    async def handle_settings_search(self, query: str) -> None:
+        """Handles search in settings sidebar."""
+        try:
+            query = query.lower().strip()
+            
+            # Get all settings elements
+            sidebar = self.query_one("#chat-left-sidebar")
+            
+            if not query:
+                # Clear search - show all settings based on current mode
+                for widget in sidebar.query(".sidebar-label, .section-header, .subsection-header"):
+                    widget.remove_class("search-highlight")
+                for collapsible in sidebar.query(Collapsible):
+                    # Respect the original collapsed state
+                    pass
+                return
+                
+            # Search through all labels and highlight matches
+            matches_found = 0
+            
+            for label in sidebar.query(".sidebar-label, .section-header, .subsection-header"):
+                if isinstance(label, (Static, Label)):
+                    label_text = str(label.renderable).lower()
+                    if query in label_text:
+                        label.add_class("search-highlight")
+                        matches_found += 1
+                        
+                        # Expand parent collapsibles to show match
+                        parent = label.parent
+                        while parent and parent != sidebar:
+                            if isinstance(parent, Collapsible):
+                                parent.collapsed = False
+                            parent = parent.parent
+                    else:
+                        label.remove_class("search-highlight")
+                        
+            if matches_found == 0:
+                self.notify(f"No settings found for '{query}'", severity="warning")
+            else:
+                self.notify(f"Found {matches_found} settings matching '{query}'")
+                
+        except Exception as e:
+            self.loguru_logger.error(f"Error in settings search: {e}")
+            self.notify("Error searching settings", severity="error")
 
 
     #####################################################################
@@ -3034,6 +3228,154 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info(f"Ollama API worker '{event.worker.name}' finished with state {event.state}.")
             await llm_management_events_ollama.handle_ollama_worker_completion(self, event)
 
+        #######################################################################
+        # --- Handle AI Generation Workers (for character generation) ---
+        #######################################################################
+        elif worker_group == "ai_generation":
+            self.loguru_logger.info(f"AI generation worker '{event.worker.name}' state changed to {worker_state}.")
+            
+            if worker_state == WorkerState.SUCCESS:
+                self.loguru_logger.info(f"AI generation worker '{event.worker.name}' completed successfully.")
+                result = event.worker.result
+                
+                # Handle the response
+                if result and isinstance(result, dict) and 'choices' in result:
+                    try:
+                        content = result['choices'][0]['message']['content']
+                        
+                        # Determine which field to update based on worker name
+                        if event.worker.name == "ai_generate_description":
+                            text_area = self.query_one("#ccp-editor-char-description-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-description-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_personality":
+                            text_area = self.query_one("#ccp-editor-char-personality-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-personality-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_scenario":
+                            text_area = self.query_one("#ccp-editor-char-scenario-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-scenario-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_first_message":
+                            text_area = self.query_one("#ccp-editor-char-first-message-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-first-message-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_system_prompt":
+                            text_area = self.query_one("#ccp-editor-char-system-prompt-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-system-prompt-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_all":
+                            # Parse the comprehensive response
+                            sections = {
+                                'description': '',
+                                'personality': '',
+                                'scenario': '',
+                                'first_message': '',
+                                'system_prompt': ''
+                            }
+                            
+                            current_section = None
+                            current_content = []
+                            
+                            for line in content.split('\n'):
+                                line_stripped = line.strip()
+                                line_lower = line_stripped.lower()
+                                
+                                # Remove markdown formatting from potential headers
+                                line_clean = line_stripped.replace('**', '').replace('##', '').strip()
+                                line_clean_lower = line_clean.lower()
+                                
+                                # Check for section headers (handle both plain and markdown formatted)
+                                if 'description' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'description'
+                                    current_content = []
+                                elif 'personality' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'personality'
+                                    current_content = []
+                                elif 'scenario' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'scenario'
+                                    current_content = []
+                                elif 'first message' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'first_message'
+                                    current_content = []
+                                elif 'system prompt' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'system_prompt'
+                                    current_content = []
+                                elif current_section and line_stripped and not (line_stripped.startswith('#') and len(line_stripped) < 50):
+                                    # Skip pure header lines but keep content
+                                    current_content.append(line)
+                            
+                            # Add the last section
+                            if current_section and current_content:
+                                sections[current_section] = '\n'.join(current_content).strip()
+                            
+                            # Update all fields
+                            if sections['description']:
+                                self.query_one("#ccp-editor-char-description-textarea", TextArea).text = sections['description']
+                            if sections['personality']:
+                                self.query_one("#ccp-editor-char-personality-textarea", TextArea).text = sections['personality']
+                            if sections['scenario']:
+                                self.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = sections['scenario']
+                            if sections['first_message']:
+                                self.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = sections['first_message']
+                            if sections['system_prompt']:
+                                self.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = sections['system_prompt']
+                            
+                            # Re-enable the generate all button
+                            button = self.query_one("#ccp-generate-all-button", Button)
+                            button.disabled = False
+                            self.notify("Character profile generated successfully!", severity="success")
+                            
+                    except (KeyError, IndexError) as e:
+                        self.loguru_logger.error(f"Failed to extract content from AI response: {e}")
+                        self.notify("Failed to parse AI response", severity="error")
+                    except QueryError as e:
+                        self.loguru_logger.error(f"Could not find UI element to update: {e}")
+                        self.notify("UI error updating fields", severity="error")
+                else:
+                    self.notify("Failed to generate content", severity="error")
+                    
+            elif worker_state == WorkerState.ERROR:
+                self.loguru_logger.error(f"AI generation worker '{event.worker.name}' failed: {event.worker.error}")
+                self.notify(f"Generation failed: {str(event.worker.error)[:100]}", severity="error")
+                
+                # Re-enable the appropriate button on error
+                button_mapping = {
+                    "ai_generate_description": "#ccp-generate-description-button",
+                    "ai_generate_personality": "#ccp-generate-personality-button",
+                    "ai_generate_scenario": "#ccp-generate-scenario-button",
+                    "ai_generate_first_message": "#ccp-generate-first-message-button",
+                    "ai_generate_system_prompt": "#ccp-generate-system-prompt-button",
+                    "ai_generate_all": "#ccp-generate-all-button"
+                }
+                
+                button_id = button_mapping.get(event.worker.name)
+                if button_id:
+                    try:
+                        button = self.query_one(button_id, Button)
+                        button.disabled = False
+                    except QueryError:
+                        self.loguru_logger.warning(f"Could not find button {button_id} to re-enable")
 
         #######################################################################
         # --- Handle Llama.cpp Server Worker (identified by group) ---

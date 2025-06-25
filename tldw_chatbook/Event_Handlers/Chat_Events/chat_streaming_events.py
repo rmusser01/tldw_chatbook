@@ -105,8 +105,8 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             # Display partial text along with the error.
             error_message_content = event.full_text + f"\n\n[bold red]Stream Error:[/]\n{escape_markup(event.error)}"
 
-            ai_widget.message_text = event.full_text + f"\nStream Error: {event.error}"  # Update internal raw text
-            static_text_widget.update(Text.from_markup(error_message_content))
+            ai_widget.message_text = event.full_text + f"\n\nStream Error:\n{event.error}"  # Update internal raw text
+            static_text_widget.update(ai_widget.message_text)
             ai_widget.role = "System"  # Change role to "System" or "Error"
             try:
                 header_label = ai_widget.query_one(".message-header", Label)
@@ -141,7 +141,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                     self.loguru_logger.debug("Not stripping tags from stream: strip_thinking_tags setting is disabled.")
 
             ai_widget.message_text = event.full_text  # Ensure internal state has the final, complete text
-            static_text_widget.update(escape_markup(event.full_text))  # Update display with final, escaped text
+            static_text_widget.update(event.full_text)  # Update display with final text
 
             # Determine sender name for DB (already set on widget by handle_api_call_worker_state_changed)
             # This is just to ensure the correct name is used for DB saving if needed.

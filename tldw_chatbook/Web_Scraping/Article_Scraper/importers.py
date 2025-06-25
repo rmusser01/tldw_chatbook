@@ -1,4 +1,38 @@
-# article_scraper/importers.py
+"""
+article_scraper/importers.py
+============================
+
+Import URLs from bookmark files and CSV sources.
+
+This module provides unified functionality to load URLs from
+various bookmark formats and CSV files, making it easy to
+bulk-import URLs for scraping.
+
+Supported Formats:
+-----------------
+- Chrome/Edge bookmarks (JSON format)
+- Firefox bookmarks (HTML format)
+- CSV files with 'url' column
+
+Functions:
+----------
+- collect_urls_from_file(): Main entry point for URL import
+- _load_from_chromium_json(): Parse Chrome/Edge bookmarks
+- _load_from_firefox_html(): Parse Firefox bookmarks
+- _load_from_csv(): Parse CSV files
+
+Example:
+--------
+    # Import Chrome bookmarks
+    bookmarks = collect_urls_from_file("/path/to/Bookmarks")
+    
+    # Import from CSV
+    urls = collect_urls_from_file("/path/to/urls.csv")
+    
+    # Use imported URLs for scraping
+    for name, url in bookmarks.items():
+        print(f"Processing: {name} - {url}")
+"""
 #
 # Imports
 import json

@@ -187,7 +187,8 @@ class MediaWindow(Container):
             yield Button(
                 get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
                 id="media-sidebar-toggle-button",
-                classes="sidebar-toggle"
+                classes="sidebar-toggle",
+                tooltip="Toggle sidebar"
             )
 
             # Create views for "All Media" AND each specific media type using a loop

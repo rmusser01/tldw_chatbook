@@ -372,7 +372,7 @@ class TestConfigValidation:
     
     def test_rag_config_validation(self):
         """Test that invalid configs are caught by validation."""
-        from tldw_chatbook.RAG_Search.Services.config import RAGConfig
+        from tldw_chatbook.RAG_Search.Services.rag_service.config import RAGConfig
         
         # Create config with invalid values
         config = RAGConfig()

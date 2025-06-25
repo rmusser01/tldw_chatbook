@@ -28,7 +28,11 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
     initial_ephemeral_state determines the initial state of controls related to saving.
     """
     with VerticalScroll(id="chat-right-sidebar", classes="sidebar"): # Main ID for the whole sidebar
-        yield Static("Session & Character", classes="sidebar-title")
+        # Sidebar header with resize controls
+        with Horizontal(classes="sidebar-header-with-resize"):
+            yield Button("◀", id=f"{id_prefix}-sidebar-expand", classes="sidebar-resize-button", variant="default")
+            yield Static("Session & Character", classes="sidebar-title flex-grow")
+            yield Button("▶", id=f"{id_prefix}-sidebar-shrink", classes="sidebar-resize-button", variant="default")
 
         # Section for current chat session details (title, keywords, etc.)
         with Collapsible(title="Current Chat Details", collapsed=False, id=f"{id_prefix}-chat-details-collapsible"):
@@ -261,10 +265,19 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                     classes="sidebar-input"
                 )
 
-                yield Label("Note Content:", classes="sidebar-label")
+                # Note content with expand button
+                with Horizontal(classes="notes-content-header"):
+                    yield Label("Note Content:", classes="sidebar-label notes-content-label")
+                    yield Button(
+                        "⬆ Expand",
+                        id=f"{id_prefix}-notes-expand-button",
+                        classes="notes-expand-button",
+                        variant="default"
+                    )
+                
                 note_content_area = TextArea(
                     id=f"{id_prefix}-notes-content-textarea",
-                    classes="sidebar-textarea" # Assuming a general class, can be more specific
+                    classes="sidebar-textarea notes-textarea-normal"
                 )
                 note_content_area.styles.height = 10
                 yield note_content_area
@@ -301,26 +314,32 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                     classes="sidebar-button",
                     variant="warning" # Optional: different styling
                 )
+                yield Label("Character Name:", classes="sidebar-label")
                 yield Input(
                     id="chat-character-name-edit",
                     placeholder="Name"
                 )
+                yield Label("Description:", classes="sidebar-label")
                 description_edit_ta = TextArea(id="chat-character-description-edit")
                 description_edit_ta.styles.height = 30
                 yield description_edit_ta
 
+                yield Label("Personality:", classes="sidebar-label")
                 personality_edit_ta = TextArea(id="chat-character-personality-edit")
                 personality_edit_ta.styles.height = 30
                 yield personality_edit_ta
 
+                yield Label("Scenario:", classes="sidebar-label")
                 scenario_edit_ta = TextArea(id="chat-character-scenario-edit")
                 scenario_edit_ta.styles.height = 30
                 yield scenario_edit_ta
 
+                yield Label("System Prompt:", classes="sidebar-label")
                 system_prompt_edit_ta = TextArea(id="chat-character-system-prompt-edit")
                 system_prompt_edit_ta.styles.height = 30
                 yield system_prompt_edit_ta
 
+                yield Label("First Message:", classes="sidebar-label")
                 first_message_edit_ta = TextArea(id="chat-character-first-message-edit")
                 first_message_edit_ta.styles.height = 30
                 yield first_message_edit_ta

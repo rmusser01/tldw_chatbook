@@ -1,7 +1,49 @@
-# cookie_cloner.py
-#
-# Description: This script is used to clone cookies from the user's browser to be used in web scraping.
-#
+"""
+cookie_cloner.py
+================
+
+Browser cookie extraction for authenticated web scraping.
+
+This module provides cross-platform functionality to extract cookies
+from major web browsers, enabling scrapers to access authenticated
+content. Supports Chrome, Firefox, Edge, and Safari with automatic
+cookie decryption.
+
+Security Note:
+--------------
+This module accesses browser cookie stores which may contain
+sensitive authentication tokens. Use responsibly and only for
+legitimate purposes on sites you have permission to access.
+
+Supported Browsers:
+------------------
+- Chrome/Chromium (Windows, macOS, Linux)
+- Firefox (Windows, macOS, Linux)
+- Microsoft Edge (Windows, macOS, Linux)
+- Safari (macOS only)
+
+Main Functions:
+--------------
+- get_cookies(domain, browser): Extract cookies for a domain
+- get_chrome_cookies(): Chrome-specific extraction
+- get_firefox_cookies(): Firefox-specific extraction
+- get_edge_cookies(): Edge-specific extraction
+- get_safari_cookies(): Safari-specific extraction
+
+Example:
+--------
+    # Get cookies for a specific domain from Chrome
+    cookies = get_cookies("example.com", browser="chrome")
+    
+    # Get cookies from all browsers
+    all_cookies = get_cookies("example.com", browser="all")
+    
+    # Use with Playwright
+    browser_cookies = [
+        {"name": k, "value": v, "domain": ".example.com", "path": "/"}
+        for k, v in cookies.items()
+    ]
+"""
 # Imports
 from Cryptodome.Cipher import AES
 from Cryptodome.Protocol.KDF import PBKDF2
@@ -24,6 +66,23 @@ from loguru import logger
 # Chrome Cookies
 
 def get_chrome_cookies(domain_name):
+    """
+    Extract cookies from Chrome/Chromium browsers.
+    
+    Handles cookie decryption across different platforms:
+    - Windows: Uses DPAPI and/or AES decryption
+    - macOS: Uses Keychain for decryption key
+    - Linux: Uses default password 'peanuts'
+    
+    Args:
+        domain_name (str): Domain to filter cookies (e.g., 'example.com')
+        
+    Returns:
+        dict: Cookie names mapped to values
+        
+    Note:
+        Requires browser to be closed for database access
+    """
     global win32crypt
     if sys.platform == 'win32':
         import win32crypt
@@ -125,6 +184,21 @@ def decrypt_chrome_cookie(encrypted_value, key):
 # Firefox Cookies
 
 def get_firefox_cookies(domain_name):
+    """
+    Extract cookies from Firefox browser.
+    
+    Firefox stores cookies in an SQLite database without encryption,
+    making extraction simpler than Chromium-based browsers.
+    
+    Args:
+        domain_name (str): Domain to filter cookies
+        
+    Returns:
+        dict: Cookie names mapped to values
+        
+    Note:
+        Searches for default-release profile
+    """
     if sys.platform == 'win32':
         appdata_path = os.getenv('APPDATA')
         profile_path = os.path.join(appdata_path, 'Mozilla', 'Firefox', 'Profiles')
@@ -173,6 +247,21 @@ def get_firefox_cookies(domain_name):
 # MS Edge Cookies
 
 def get_edge_cookies(domain_name):
+    """
+    Extract cookies from Microsoft Edge browser.
+    
+    Uses similar decryption methods as Chrome since Edge is
+    Chromium-based, but with different storage locations.
+    
+    Args:
+        domain_name (str): Domain to filter cookies
+        
+    Returns:
+        dict: Cookie names mapped to values
+        
+    Raises:
+        FileNotFoundError: If Edge cookie files not found
+    """
     try:
         if sys.platform == 'win32':
             import win32crypt
@@ -286,6 +375,20 @@ def decrypt_edge_cookie(encrypted_value, key):
 # Safari Cookies
 
 def get_safari_cookies(domain_name):
+    """
+    Extract cookies from Safari browser (macOS only).
+    
+    Parses Safari's binary cookie format (.binarycookies).
+    
+    Args:
+        domain_name (str): Domain to filter cookies
+        
+    Returns:
+        dict: Cookie names mapped to values
+        
+    Note:
+        Only available on macOS
+    """
     cookie_file_paths = [
         os.path.expanduser('~/Library/Cookies/Cookies.binarycookies'),
         os.path.expanduser('~/Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies')
@@ -351,6 +454,34 @@ def parse_safari_cookie(data, domain_name):
 # Main Function
 
 def get_cookies(domain_name, browser='all'):
+    """
+    Extract cookies for a domain from specified browser(s).
+    
+    Main entry point for cookie extraction. Attempts to extract
+    cookies from specified browser(s) and combines results.
+    
+    Args:
+        domain_name (str): Domain to extract cookies for
+        browser (str): Browser to extract from:
+            - 'all': Try all available browsers
+            - 'chrome': Chrome/Chromium only
+            - 'firefox': Firefox only
+            - 'edge': Microsoft Edge only
+            - 'safari': Safari only (macOS)
+            
+    Returns:
+        dict: Combined cookies from all specified browsers
+            Format: {cookie_name: cookie_value, ...}
+            
+    Example:
+        >>> cookies = get_cookies("github.com", "chrome")
+        >>> print(f"Found {len(cookies)} cookies")
+        
+    Note:
+        - Errors are logged but don't stop execution
+        - Returns empty dict if no cookies found
+        - Browsers must be closed for reliable access
+    """
     cookies = {}
 
     if browser in ('all', 'chrome'):

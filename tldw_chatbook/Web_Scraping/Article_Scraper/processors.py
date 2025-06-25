@@ -1,4 +1,42 @@
-# article_scraper/processors.py
+"""
+article_scraper/processors.py
+=============================
+
+High-level processing pipeline for scraped content.
+
+This module provides the glue between scraping and downstream
+processing like summarization and database storage. It supports
+dependency injection for custom processing functions.
+
+Key Features:
+-------------
+- Concurrent processing of multiple articles
+- Pluggable summarization function
+- Optional database logging
+- Progress tracking with tqdm
+
+Types:
+------
+- Summarizer: Async function for content summarization
+- DBLogger: Async function for database storage
+
+Functions:
+----------
+- scrape_and_process_urls(): Main processing pipeline
+- default_summarizer(): Placeholder summarizer
+- default_db_logger(): Placeholder DB logger
+
+Example:
+--------
+    async with Scraper(config=scraper_config) as scraper:
+        results = await scrape_and_process_urls(
+            urls=urls_list,
+            proc_config=processor_config,
+            scraper=scraper,
+            summarizer=my_llm_summarizer,
+            db_logger=my_db_function
+        )
+"""
 import logging
 from typing import List, Dict, Any, Callable, Optional, Coroutine
 from tqdm.asyncio import tqdm_asyncio
@@ -45,15 +83,48 @@ async def scrape_and_process_urls(
         db_logger: Optional[DBLogger] = None
 ) -> List[Dict[str, Any]]:
     """
-    A high-level pipeline to scrape, optionally summarize, and log articles.
-
+    High-level pipeline to scrape, process, and optionally store articles.
+    
+    This function orchestrates the complete workflow:
+    1. Scrapes all URLs concurrently using the provided scraper
+    2. Filters successful extractions
+    3. Optionally summarizes content using the injected summarizer
+    4. Optionally logs to database using the injected logger
+    5. Returns all results including failures
+    
     Args:
-        urls: A list of URLs to process.
-        proc_config: Configuration for the processing step (e.g., summarization).
-        scraper: An initialized Scraper instance.
-        summarizer: An async function to call for summarization.
-        db_logger: An optional async function to log results to a database.
-    """
+        urls (List[str]): List of URLs to process
+        proc_config (ProcessorConfig): Configuration for processing:
+            - api_name: LLM API to use
+            - api_key: API authentication
+            - summarize: Whether to generate summaries
+            - custom_prompt: Prompt for summarization
+        scraper (Scraper): Initialized Scraper instance
+        summarizer (Summarizer): Async function for summarization
+            Signature: async (content: str, config: ProcessorConfig) -> str
+        db_logger (Optional[DBLogger]): Async function for DB storage
+            Signature: async (article_data: Dict[str, Any]) -> None
+            
+    Returns:
+        List[Dict[str, Any]]: All articles including:
+            - Successful extractions with optional summaries
+            - Failed extractions with error details
+            
+    Example:
+        >>> async def my_summarizer(content: str, config: ProcessorConfig) -> str:
+        ...     # Call your LLM API here
+        ...     return await llm_summarize(content, config.custom_prompt)
+        ...
+        >>> async def my_db_logger(article: Dict[str, Any]):
+        ...     await db.insert_article(article)
+        ...
+        >>> results = await scrape_and_process_urls(
+        ...     urls=["https://example.com/1", "https://example.com/2"],
+        ...     proc_config=ProcessorConfig(api_name="openai", summarize=True),
+        ...     scraper=scraper,
+        ...     summarizer=my_summarizer,
+        ...     db_logger=my_db_logger
+        ... )
     results = []
 
     # Scrape all URLs concurrently

@@ -109,7 +109,7 @@ class TestChunkingServiceProperties:
         assume(chunk_overlap < chunk_size)
         
         service = ChunkingService()
-        chunks = service.chunk_by_words(text, chunk_size, chunk_overlap)
+        chunks = service._chunk_by_words(text, chunk_size, chunk_overlap)
         
         if not text.strip():
             assert len(chunks) == 0
@@ -119,7 +119,7 @@ class TestChunkingServiceProperties:
         original_words = set(text.split())
         chunk_words = set()
         for chunk in chunks:
-            chunk_words.update(chunk.split())
+            chunk_words.update(chunk['text'].split())
         
         # All original words should be in chunks (allowing for word boundary issues)
         assert len(original_words - chunk_words) == 0 or len(chunks) > 0
@@ -135,15 +135,15 @@ class TestChunkingServiceProperties:
             text = text[:50] + '. ' + text[50:100] + '. ' + text[100:]
         
         service = ChunkingService()
-        chunks = service.chunk_by_sentences(text, chunk_size, overlap=10)
+        chunks = service._chunk_by_sentences(text, chunk_size, overlap_sentences=1)
         
         # Each chunk should end with sentence boundary or be the last chunk
         for i, chunk in enumerate(chunks):
             if i < len(chunks) - 1:  # Not the last chunk
                 # Should end with sentence marker
-                stripped = chunk.strip()
+                stripped = chunk['text'].strip()
                 if stripped:
-                    assert stripped[-1] in '.!?' or len(chunk) >= chunk_size
+                    assert stripped[-1] in '.!?' or chunk.get('word_count', 0) >= chunk_size
     
     @given(
         doc=st.fixed_dictionaries({
@@ -167,17 +167,17 @@ class TestChunkingServiceProperties:
             assert 'chunk_id' in chunk
             assert 'chunk_index' in chunk
             assert 'text' in chunk
-            assert 'metadata' in chunk
+            assert 'document_id' in chunk
+            assert 'document_title' in chunk
+            assert 'document_type' in chunk
             
             # Correct index
             assert chunk['chunk_index'] == i
             
-            # Metadata consistency
-            metadata = chunk['metadata']
-            assert metadata['source_id'] == doc['id']
-            assert metadata['source_title'] == doc['title']
-            assert metadata['chunk_size'] == chunk_size
-            assert metadata['chunk_overlap'] == chunk_overlap
+            # Document info consistency
+            assert chunk['document_id'] == doc['id']
+            assert chunk['document_title'] == doc['title']
+            assert chunk['document_type'] == doc['type']
     
     @given(
         text=st.text(min_size=0, max_size=50),
@@ -197,7 +197,7 @@ class TestChunkingServiceProperties:
         
         if text.strip():
             assert len(chunks) == 1
-            assert chunks[0]['text'] == text
+            assert chunks[0]['text'] == text.strip()
         else:
             assert len(chunks) == 0
 
@@ -265,12 +265,17 @@ class TestCacheServiceProperties:
             texts = [text for text, _ in embeddings_data]
             cached, uncached = cache_service.get_embeddings_batch(texts)
             
-            # All should be cached
+            # Handle duplicate texts in embeddings_data
+            unique_texts = {}
+            for text, embedding in embeddings_data:
+                unique_texts[text] = embedding
+            
+            # All unique texts should be cached
             assert len(uncached) == 0
-            assert len(cached) == len(embeddings_data)
+            assert len(cached) == len(unique_texts)
             
             # Values should match
-            for text, embedding in embeddings_data:
+            for text, embedding in unique_texts.items():
                 assert cached[text] == embedding
 
 
@@ -291,6 +296,7 @@ class CacheStateMachine(RuleBasedStateMachine):
     keys = Bundle('keys')
     
     @rule(
+        target=keys,
         key=st.text(min_size=1, max_size=20),
         value=st.lists(st.floats(), min_size=3, max_size=5)
     )

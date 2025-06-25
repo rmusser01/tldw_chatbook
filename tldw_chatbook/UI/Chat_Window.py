@@ -33,6 +33,11 @@ class ChatWindow(Container):
     """
     Container for the Chat Tab's UI.
     """
+    
+    BINDINGS = [
+        ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
+        ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),
+    ]
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
@@ -45,6 +50,7 @@ class ChatWindow(Container):
         """
         from ..Event_Handlers.Chat_Events import chat_events
         from ..Event_Handlers.Chat_Events import chat_events_sidebar
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
 
         button_id = event.button.id
         if not button_id:
@@ -70,10 +76,14 @@ class ChatWindow(Container):
             "chat-load-character-button": chat_events.handle_chat_load_character_button_pressed,
             "chat-clear-active-character-button": chat_events.handle_chat_clear_active_character_button_pressed,
             "chat-apply-template-button": chat_events.handle_chat_apply_template_button_pressed,
+            # Notes expand/collapse handler
+            "chat-notes-expand-button": self.handle_notes_expand_button,
         }
 
         # Add sidebar button handlers
         button_handlers.update(chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS)
+        # Add sidebar resize handlers
+        button_handlers.update(chat_events_sidebar_resize.CHAT_SIDEBAR_RESIZE_HANDLERS)
 
         # Check if we have a handler for this button
         handler = button_handlers.get(button_id)
@@ -96,22 +106,81 @@ class ChatWindow(Container):
         with Container(id="chat-main-content"):
             yield VerticalScroll(id="chat-log")
             with Horizontal(id="chat-input-area"):
-                yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), id="toggle-chat-left-sidebar",
-                             classes="sidebar-toggle")
+                yield Button(
+                    get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
+                    id="toggle-chat-left-sidebar",
+                    classes="sidebar-toggle",
+                    tooltip="Toggle left sidebar"
+                )
                 yield TextArea(id="chat-input", classes="chat-input")
-                yield Button(get_char(EMOJI_SEND, FALLBACK_SEND), id="send-chat", classes="send-button")
-                yield Button("💡", id="respond-for-me-button", classes="action-button suggest-button") # Suggest button
+                yield Button(
+                    get_char(EMOJI_SEND, FALLBACK_SEND), 
+                    id="send-chat", 
+                    classes="send-button",
+                    tooltip="Send message"
+                )
+                yield Button(
+                    "💡", 
+                    id="respond-for-me-button", 
+                    classes="action-button suggest-button",
+                    tooltip="Suggest a response"
+                ) # Suggest button
                 logger.debug("'respond-for-me-button' composed.")
-                yield Button(get_char(EMOJI_STOP, FALLBACK_STOP), id="stop-chat-generation", classes="stop-button",
-                             disabled=True)
-                yield Button(get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), id="toggle-chat-right-sidebar",
-                             classes="sidebar-toggle")
+                yield Button(
+                    get_char(EMOJI_STOP, FALLBACK_STOP), 
+                    id="stop-chat-generation", 
+                    classes="stop-button",
+                    disabled=True,
+                    tooltip="Stop generation"
+                )
+                yield Button(
+                    get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
+                    id="toggle-chat-right-sidebar",
+                    classes="sidebar-toggle",
+                    tooltip="Toggle right sidebar"
+                )
 
         # Character Details Sidebar (Right)
         yield from create_chat_right_sidebar(
             "chat",
             initial_ephemeral_state=self.app_instance.current_chat_is_ephemeral
         )
+    
+    async def handle_notes_expand_button(self, app, event) -> None:
+        """Handle the notes expand/collapse button."""
+        try:
+            button = app.query_one("#chat-notes-expand-button", Button)
+            textarea = app.query_one("#chat-notes-content-textarea", TextArea)
+            
+            # Toggle between expanded and normal states
+            if "notes-textarea-expanded" in textarea.classes:
+                # Collapse
+                textarea.remove_class("notes-textarea-expanded")
+                textarea.add_class("notes-textarea-normal")
+                textarea.styles.height = 10
+                button.label = "⬆ Expand"
+            else:
+                # Expand
+                textarea.remove_class("notes-textarea-normal")
+                textarea.add_class("notes-textarea-expanded")
+                textarea.styles.height = 25
+                button.label = "⬇ Collapse"
+                
+            # Focus the textarea after expanding
+            textarea.focus()
+            
+        except Exception as e:
+            logger.error(f"Error handling notes expand button: {e}")
+    
+    async def action_resize_sidebar_shrink(self) -> None:
+        """Action for keyboard shortcut to shrink sidebar."""
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+        await chat_events_sidebar_resize.handle_sidebar_shrink(self.app_instance, None)
+    
+    async def action_resize_sidebar_expand(self) -> None:
+        """Action for keyboard shortcut to expand sidebar."""
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+        await chat_events_sidebar_resize.handle_sidebar_expand(self.app_instance, None)
 
 #
 # End of Chat_Window.py
