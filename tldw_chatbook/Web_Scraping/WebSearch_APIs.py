@@ -741,7 +741,7 @@ def aggregate_results(
         """
 
     # Aggregation Prompt #2
-    analyze_search_results_prompt_2 = f"""INITIAL_QUERY: Here are some sources {concatenated_texts}. Read these carefully, as you will be asked a Query about them.
+    analyze_search_results_prompt_2 = rf"""INITIAL_QUERY: Here are some sources {concatenated_texts}. Read these carefully, as you will be asked a Query about them.
         # General Instructions
         
         Write an accurate, detailed, and comprehensive response to the user's query located at INITIAL_QUERY. Additional context is provided as "USER_INPUT" after specific questions. Your answer should be informed by the provided "Search results". Your answer must be precise, of high-quality, and written by an expert using an unbiased and journalistic tone. Your answer must be written in the same language as the query, even if language preference is different.

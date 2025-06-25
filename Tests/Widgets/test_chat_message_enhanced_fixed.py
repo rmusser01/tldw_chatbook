@@ -23,7 +23,7 @@ from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
 #
 # Test Fixtures
 
-class TestApp(App):
+class ChatTestApp(App):
     """Minimal test app for widget testing."""
     def compose(self):
         yield ChatMessageEnhanced(

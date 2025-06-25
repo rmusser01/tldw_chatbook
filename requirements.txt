@@ -1,6 +1,7 @@
 # Base
 chardet
 toml
+tomli
 rich
 textual
 psutil
@@ -16,6 +17,7 @@ jinja2
 pyperclip
 rich-pixels>=3.0.0
 pycryptodomex
+keyring
 # Chunk Library
 #tqdm
 #langdetect
