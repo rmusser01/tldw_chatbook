@@ -1,0 +1,31 @@
+# Test dependencies
+pytest
+pytest-asyncio
+pytest-mock
+hypothesis
+
+# Optional dependencies needed for tests
+numpy
+transformers
+torch
+chromadb
+sentence-transformers
+lxml
+beautifulsoup4
+pandas
+playwright
+trafilatura
+langdetect
+nltk
+scikit-learn
+jieba
+fugashi
+flashrank
+cohere
+textual-image[textual]>=0.6.0
+grep_ast
+pygments
+tqdm
+
+# Additional test utilities
+anyio

@@ -12,6 +12,10 @@ pyyaml
 httpx
 #pytest
 emoji
+jinja2
+pyperclip
+rich-pixels>=3.0.0
+pycryptodomex
 # Chunk Library
 #tqdm
 #langdetect
