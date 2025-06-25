@@ -35,6 +35,11 @@ class ChatWindowEnhanced(Container):
     Enhanced Container for the Chat Tab's UI with image support.
     """
     
+    BINDINGS = [
+        ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
+        ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),
+    ]
+    
     # CSS for hidden elements
     DEFAULT_CSS = """
     .hidden {
@@ -70,6 +75,7 @@ class ChatWindowEnhanced(Container):
         """
         from ..Event_Handlers.Chat_Events import chat_events
         from ..Event_Handlers.Chat_Events import chat_events_sidebar
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
 
         button_id = event.button.id
         if not button_id:
@@ -104,6 +110,8 @@ class ChatWindowEnhanced(Container):
 
         # Add sidebar button handlers
         button_handlers.update(chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS)
+        # Add sidebar resize handlers
+        button_handlers.update(chat_events_sidebar_resize.CHAT_SIDEBAR_RESIZE_HANDLERS)
 
         # Check if we have a handler for this button
         handler = button_handlers.get(button_id)
@@ -267,6 +275,16 @@ class ChatWindowEnhanced(Container):
             
         except Exception as e:
             logger.error(f"Error handling notes expand button: {e}")
+    
+    async def action_resize_sidebar_shrink(self) -> None:
+        """Action for keyboard shortcut to shrink sidebar."""
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+        await chat_events_sidebar_resize.handle_sidebar_shrink(self.app_instance, None)
+    
+    async def action_resize_sidebar_expand(self) -> None:
+        """Action for keyboard shortcut to expand sidebar."""
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+        await chat_events_sidebar_resize.handle_sidebar_expand(self.app_instance, None)
 
 #
 # End of Chat_Window_Enhanced.py

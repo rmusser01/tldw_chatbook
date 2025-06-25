@@ -27,7 +27,6 @@ from ..Character_Chat import Character_Chat_Lib as ccl
 from ..Prompt_Management import Prompts_Interop as prompts_interop
 from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError # For specific error handling
 from .Chat_Events.chat_events import load_branched_conversation_history_ui
-from .worker_events import chat_wrapper_function
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -2044,7 +2043,14 @@ async def handle_ccp_generate_description_button_pressed(app: 'TldwCli', event: 
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Generate Description button pressed.")
     
-    # Get character name
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-description-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate description button to disable")
+    
     try:
         char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
         if not char_name:
@@ -2068,33 +2074,31 @@ async def handle_ccp_generate_description_button_pressed(app: 'TldwCli', event: 
             return
             
         # Show thinking status
-        app.notify("Generating description...", severity="information")
+        app.notify("Generating description... This may take a moment.", severity="information")
         
         # Make API call using app's chat wrapper
-        response = await app.run_worker(
-            lambda: chat_wrapper_function(
-                app,
-                message=prompt,
-                history=[],
-                api_endpoint=provider,
-                model=model,
-                api_key=api_key,
-                temperature=0.8,  # More creative
-                system_message="You are a creative writing assistant helping to create compelling character descriptions. Be vivid and engaging.",
-                streaming=False,
-                strip_thinking_tags=True
-            ),
-            name="ai_generate_description",
-            group="ai_generation"
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,  # More creative
+            system_message="You are a creative writing assistant helping to create compelling character descriptions. Be vivid and engaging.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
         )
-        
-        if response and isinstance(response, str):
-            # Update the description field
-            description_field = app.query_one("#ccp-editor-char-description-textarea", TextArea)
-            description_field.text = response.strip()
-            app.notify("Description generated successfully!", severity="success")
-        else:
-            app.notify("Failed to generate description", severity="error")
+        app.run_worker(
+            worker_target,
+            name="ai_generate_description",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating description with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
             
     except QueryError as e:
         logger.error(f"UI component not found: {e}")
@@ -2102,12 +2106,23 @@ async def handle_ccp_generate_description_button_pressed(app: 'TldwCli', event: 
     except Exception as e:
         logger.error(f"Error generating description: {e}", exc_info=True)
         app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
 
 
 async def handle_ccp_generate_personality_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles generating character personality using AI."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Generate Personality button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-personality-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate personality button to disable")
     
     try:
         char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
@@ -2130,41 +2145,51 @@ async def handle_ccp_generate_personality_button_pressed(app: 'TldwCli', event: 
             app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
             return
             
-        app.notify("Generating personality...", severity="information")
+        app.notify("Generating personality... This may take a moment.", severity="information")
         
-        response = await app.run_worker(
-            lambda: chat_wrapper_function(
-                app,
-                message=prompt,
-                history=[],
-                api_endpoint=provider,
-                model=model,
-                api_key=api_key,
-                temperature=0.8,
-                system_message="You are a creative writing assistant specializing in character development. Create nuanced, believable personalities.",
-                streaming=False,
-                strip_thinking_tags=True
-            ),
-            name="ai_generate_personality",
-            group="ai_generation"
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative writing assistant specializing in character development. Create nuanced, believable personalities.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
         )
-        
-        if response and isinstance(response, str):
-            personality_field = app.query_one("#ccp-editor-char-personality-textarea", TextArea)
-            personality_field.text = response.strip()
-            app.notify("Personality generated successfully!", severity="success")
-        else:
-            app.notify("Failed to generate personality", severity="error")
+        app.run_worker(
+            worker_target,
+            name="ai_generate_personality",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating personality with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
         logger.error(f"Error generating personality: {e}", exc_info=True)
         app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
 
 
 async def handle_ccp_generate_scenario_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles generating character scenario using AI."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Generate Scenario button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-scenario-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate scenario button to disable")
     
     try:
         char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
@@ -2189,41 +2214,51 @@ async def handle_ccp_generate_scenario_button_pressed(app: 'TldwCli', event: But
             app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
             return
             
-        app.notify("Generating scenario...", severity="information")
+        app.notify("Generating scenario... This may take a moment.", severity="information")
         
-        response = await app.run_worker(
-            lambda: chat_wrapper_function(
-                app,
-                message=prompt,
-                history=[],
-                api_endpoint=provider,
-                model=model,
-                api_key=api_key,
-                temperature=0.8,
-                system_message="You are a creative writing assistant. Create engaging scenarios that set up interesting interactions.",
-                streaming=False,
-                strip_thinking_tags=True
-            ),
-            name="ai_generate_scenario",
-            group="ai_generation"
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative writing assistant. Create engaging scenarios that set up interesting interactions.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
         )
-        
-        if response and isinstance(response, str):
-            scenario_field = app.query_one("#ccp-editor-char-scenario-textarea", TextArea)
-            scenario_field.text = response.strip()
-            app.notify("Scenario generated successfully!", severity="success")
-        else:
-            app.notify("Failed to generate scenario", severity="error")
+        app.run_worker(
+            worker_target,
+            name="ai_generate_scenario",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating scenario with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
         logger.error(f"Error generating scenario: {e}", exc_info=True)
         app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
 
 
 async def handle_ccp_generate_first_message_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles generating character first message using AI."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Generate First Message button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-first-message-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate first message button to disable")
     
     try:
         char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
@@ -2251,41 +2286,51 @@ async def handle_ccp_generate_first_message_button_pressed(app: 'TldwCli', event
             app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
             return
             
-        app.notify("Generating first message...", severity="information")
+        app.notify("Generating first message... This may take a moment.", severity="information")
         
-        response = await app.run_worker(
-            lambda: chat_wrapper_function(
-                app,
-                message=prompt,
-                history=[],
-                api_endpoint=provider,
-                model=model,
-                api_key=api_key,
-                temperature=0.8,
-                system_message=f"You are roleplaying as {char_name}. Write in first person as the character. Be true to their personality and scenario.",
-                streaming=False,
-                strip_thinking_tags=True
-            ),
-            name="ai_generate_first_message",
-            group="ai_generation"
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message=f"You are roleplaying as {char_name}. Write in first person as the character. Be true to their personality and scenario.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
         )
-        
-        if response and isinstance(response, str):
-            first_message_field = app.query_one("#ccp-editor-char-first-message-textarea", TextArea)
-            first_message_field.text = response.strip()
-            app.notify("First message generated successfully!", severity="success")
-        else:
-            app.notify("Failed to generate first message", severity="error")
+        app.run_worker(
+            worker_target,
+            name="ai_generate_first_message",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating first message with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
         logger.error(f"Error generating first message: {e}", exc_info=True)
         app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
 
 
 async def handle_ccp_generate_system_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles generating character system prompt using AI."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Generate System Prompt button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-system-prompt-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate system prompt button to disable")
     
     try:
         char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
@@ -2313,41 +2358,51 @@ async def handle_ccp_generate_system_prompt_button_pressed(app: 'TldwCli', event
             app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
             return
             
-        app.notify("Generating system prompt...", severity="information")
+        app.notify("Generating system prompt... This may take a moment.", severity="information")
         
-        response = await app.run_worker(
-            lambda: chat_wrapper_function(
-                app,
-                message=prompt,
-                history=[],
-                api_endpoint=provider,
-                model=model,
-                api_key=api_key,
-                temperature=0.7,  # Slightly less creative for instructions
-                system_message="You are an expert at writing clear, effective system prompts for AI roleplay. Create prompts that result in consistent, engaging character portrayals.",
-                streaming=False,
-                strip_thinking_tags=True
-            ),
-            name="ai_generate_system_prompt",
-            group="ai_generation"
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.7,  # Slightly less creative for instructions
+            system_message="You are an expert at writing clear, effective system prompts for AI roleplay. Create prompts that result in consistent, engaging character portrayals.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
         )
-        
-        if response and isinstance(response, str):
-            system_prompt_field = app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea)
-            system_prompt_field.text = response.strip()
-            app.notify("System prompt generated successfully!", severity="success")
-        else:
-            app.notify("Failed to generate system prompt", severity="error")
+        app.run_worker(
+            worker_target,
+            name="ai_generate_system_prompt",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating system prompt with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
         logger.error(f"Error generating system prompt: {e}", exc_info=True)
         app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
 
 
 async def handle_ccp_generate_all_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles generating all character fields using AI."""
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Generate All button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-all-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate all button to disable")
     
     try:
         char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
@@ -2362,7 +2417,7 @@ async def handle_ccp_generate_all_button_pressed(app: 'TldwCli', event: Button.P
             app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
             return
             
-        app.notify("Generating complete character profile...", severity="information")
+        app.notify(f"Generating complete character profile... This may take up to a minute.", severity="information")
         
         # Generate all fields in one comprehensive prompt
         prompt = f"""Create a complete character profile for a character named '{char_name}'.
@@ -2376,91 +2431,36 @@ Please provide:
 
 Format your response with clear headers for each section."""
         
-        response = await app.run_worker(
-            lambda: chat_wrapper_function(
-                app,
-                message=prompt,
-                history=[],
-                api_endpoint=provider,
-                model=model,
-                api_key=api_key,
-                temperature=0.8,
-                system_message="You are a creative character designer. Create compelling, coherent characters with rich personalities and engaging scenarios.",
-                streaming=False,
-                strip_thinking_tags=True
-            ),
-            name="ai_generate_all",
-            group="ai_generation"
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative character designer. Create compelling, coherent characters with rich personalities and engaging scenarios.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
         )
-        
-        if response and isinstance(response, str):
-            # Parse the response and fill in the fields
-            sections = {
-                'description': '',
-                'personality': '',
-                'scenario': '',
-                'first_message': '',
-                'system_prompt': ''
-            }
-            
-            current_section = None
-            current_content = []
-            
-            for line in response.split('\n'):
-                line_lower = line.lower().strip()
-                
-                # Check for section headers
-                if 'description' in line_lower and ':' in line:
-                    if current_section and current_content:
-                        sections[current_section] = '\n'.join(current_content).strip()
-                    current_section = 'description'
-                    current_content = []
-                elif 'personality' in line_lower and ':' in line:
-                    if current_section and current_content:
-                        sections[current_section] = '\n'.join(current_content).strip()
-                    current_section = 'personality'
-                    current_content = []
-                elif 'scenario' in line_lower and ':' in line:
-                    if current_section and current_content:
-                        sections[current_section] = '\n'.join(current_content).strip()
-                    current_section = 'scenario'
-                    current_content = []
-                elif 'first message' in line_lower and ':' in line:
-                    if current_section and current_content:
-                        sections[current_section] = '\n'.join(current_content).strip()
-                    current_section = 'first_message'
-                    current_content = []
-                elif 'system prompt' in line_lower and ':' in line:
-                    if current_section and current_content:
-                        sections[current_section] = '\n'.join(current_content).strip()
-                    current_section = 'system_prompt'
-                    current_content = []
-                elif current_section and line.strip():
-                    current_content.append(line)
-            
-            # Add the last section
-            if current_section and current_content:
-                sections[current_section] = '\n'.join(current_content).strip()
-            
-            # Update all fields
-            if sections['description']:
-                app.query_one("#ccp-editor-char-description-textarea", TextArea).text = sections['description']
-            if sections['personality']:
-                app.query_one("#ccp-editor-char-personality-textarea", TextArea).text = sections['personality']
-            if sections['scenario']:
-                app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = sections['scenario']
-            if sections['first_message']:
-                app.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = sections['first_message']
-            if sections['system_prompt']:
-                app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = sections['system_prompt']
-            
-            app.notify("Character profile generated successfully!", severity="success")
-        else:
-            app.notify("Failed to generate character profile", severity="error")
+        app.run_worker(
+            worker_target,
+            name="ai_generate_all",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating complete character profile with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
         logger.error(f"Error generating character profile: {e}", exc_info=True)
         app.notify(f"Error: {str(e)}", severity="error")
+    finally:
+        # Re-enable the button
+        if generate_button:
+            generate_button.disabled = False
 
 
 # --- Button Handler Map ---

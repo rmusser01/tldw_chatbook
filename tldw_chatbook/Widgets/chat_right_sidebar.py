@@ -28,7 +28,11 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
     initial_ephemeral_state determines the initial state of controls related to saving.
     """
     with VerticalScroll(id="chat-right-sidebar", classes="sidebar"): # Main ID for the whole sidebar
-        yield Static("Session & Character", classes="sidebar-title")
+        # Sidebar header with resize controls
+        with Horizontal(classes="sidebar-header-with-resize"):
+            yield Button("◀", id=f"{id_prefix}-sidebar-expand", classes="sidebar-resize-button", variant="default")
+            yield Static("Session & Character", classes="sidebar-title flex-grow")
+            yield Button("▶", id=f"{id_prefix}-sidebar-shrink", classes="sidebar-resize-button", variant="default")
 
         # Section for current chat session details (title, keywords, etc.)
         with Collapsible(title="Current Chat Details", collapsed=False, id=f"{id_prefix}-chat-details-collapsible"):

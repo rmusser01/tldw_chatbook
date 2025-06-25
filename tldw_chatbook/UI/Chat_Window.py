@@ -33,6 +33,11 @@ class ChatWindow(Container):
     """
     Container for the Chat Tab's UI.
     """
+    
+    BINDINGS = [
+        ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
+        ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),
+    ]
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
@@ -45,6 +50,7 @@ class ChatWindow(Container):
         """
         from ..Event_Handlers.Chat_Events import chat_events
         from ..Event_Handlers.Chat_Events import chat_events_sidebar
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
 
         button_id = event.button.id
         if not button_id:
@@ -76,6 +82,8 @@ class ChatWindow(Container):
 
         # Add sidebar button handlers
         button_handlers.update(chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS)
+        # Add sidebar resize handlers
+        button_handlers.update(chat_events_sidebar_resize.CHAT_SIDEBAR_RESIZE_HANDLERS)
 
         # Check if we have a handler for this button
         handler = button_handlers.get(button_id)
@@ -163,6 +171,16 @@ class ChatWindow(Container):
             
         except Exception as e:
             logger.error(f"Error handling notes expand button: {e}")
+    
+    async def action_resize_sidebar_shrink(self) -> None:
+        """Action for keyboard shortcut to shrink sidebar."""
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+        await chat_events_sidebar_resize.handle_sidebar_shrink(self.app_instance, None)
+    
+    async def action_resize_sidebar_expand(self) -> None:
+        """Action for keyboard shortcut to expand sidebar."""
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+        await chat_events_sidebar_resize.handle_sidebar_expand(self.app_instance, None)
 
 #
 # End of Chat_Window.py

@@ -1,16 +1,34 @@
-# Article_Extractor_Lib.py
-#########################################
-# Article Extraction Library
-# This library is used to handle scraping and extraction of articles from web pages.
-#
-####################
-# Function List
-#
-# 1. get_page_title(url)
-# 2. get_article_text(url)
-# 3. get_article_title(article_url_arg)
-#
-####################
+"""
+Article_Extractor_Lib.py
+========================
+
+Article Extraction Library for web scraping and content processing.
+
+This module provides comprehensive functionality for:
+- Scraping articles from web pages using Playwright
+- Extracting content with Trafilatura
+- Processing multiple URLs with summarization
+- Handling sitemaps and crawling websites
+- Managing bookmarks from various browsers
+- Content metadata handling and deduplication
+
+Main Functions:
+--------------
+- get_page_title(url): Extract page title from URL
+- scrape_article(url, custom_cookies): Async scrape single article
+- scrape_and_summarize_multiple(): Process multiple URLs with optional summarization
+- scrape_entire_site(): Crawl and scrape entire website
+- collect_bookmarks(): Import bookmarks from browsers
+- ContentMetadataHandler: Manage content metadata
+
+Dependencies:
+------------
+- playwright: Browser automation
+- trafilatura: Content extraction
+- beautifulsoup4: HTML parsing
+- pandas: Data manipulation
+- asyncio: Asynchronous operations
+"""
 #
 # Import necessary libraries
 from concurrent.futures import ThreadPoolExecutor
@@ -62,6 +80,20 @@ web_scraping_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
 # Scraping-related functions:
 
 def get_page_title(url: str) -> str:
+    """
+    Extract the title from a web page.
+    
+    Args:
+        url (str): The URL of the page to extract title from
+        
+    Returns:
+        str: The page title, or "Untitled" if extraction fails
+        
+    Example:
+        >>> title = get_page_title("https://example.com")
+        >>> print(title)
+        "Example Domain"
+    """
     try:
         response = requests.get(url)
         if response.status_code == 200:
@@ -80,6 +112,34 @@ def get_page_title(url: str) -> str:
 
 
 async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """
+    Asynchronously scrape an article from a URL using Playwright.
+    
+    This function handles the complete scraping process including:
+    - Browser automation with optional stealth mode
+    - Cookie injection for authenticated scraping
+    - Content extraction with Trafilatura
+    - Metadata preservation
+    
+    Args:
+        url (str): The URL to scrape
+        custom_cookies (Optional[List[Dict[str, Any]]]): Browser cookies for authentication
+            Each cookie dict should have: name, value, domain, path, etc.
+            
+    Returns:
+        Dict[str, Any]: Article data containing:
+            - title: Article title
+            - author: Article author
+            - content: Extracted content in markdown
+            - date: Publication date
+            - url: Source URL
+            - extraction_successful: Success status
+            
+    Example:
+        >>> article = await scrape_article("https://example.com/article")
+        >>> if article['extraction_successful']:
+        ...     print(article['title'])
+    """
     logging.info(f"Scraping article from URL: {url}")
     async def fetch_html(url: str) -> str:
         # Load and log the configuration
@@ -233,6 +293,36 @@ async def scrape_and_summarize_multiple(
     custom_cookies: Optional[List[Dict[str, Any]]] = None,
     temperature: float = 0.7
 ) -> List[Dict[str, Any]]:
+    """
+    Scrape and optionally summarize multiple URLs concurrently.
+    
+    This function processes multiple URLs in parallel, extracting content
+    and optionally generating summaries using the specified LLM API.
+    
+    Args:
+        urls (str): Newline-separated string of URLs to process
+        custom_prompt_arg (Optional[str]): Custom prompt for summarization
+        api_name (str): Name of the LLM API to use (e.g., 'openai', 'anthropic')
+        api_key (Optional[str]): API key for the LLM service
+        keywords (str): Keywords for categorization
+        custom_article_titles (Optional[str]): Newline-separated custom titles
+        system_message (Optional[str]): System message for LLM
+        summarize_checkbox (bool): Whether to generate summaries
+        custom_cookies (Optional[List[Dict[str, Any]]]): Cookies for authentication
+        temperature (float): LLM temperature setting (0.0-1.0)
+        
+    Returns:
+        List[Dict[str, Any]]: List of processed articles with:
+            - All fields from scrape_article()
+            - summary: Generated summary (if enabled)
+            
+    Example:
+        =>>> results = await scrape_and_summarize_multiple(
+        ...     urls="https://example.com/1\nhttps://example.com/2",
+        ...     api_name="openai",
+        ...     summarize_checkbox=True
+        ... )
+    """
     urls_list = [url.strip() for url in urls.split('\n') if url.strip()]
     custom_titles = custom_article_titles.split('\n') if custom_article_titles else []
 
@@ -491,6 +581,23 @@ def scrape_from_sitemap(sitemap_url: str) -> list:
 
 
 def collect_internal_links(base_url: str) -> set:
+    """
+    Crawl a website and collect all internal links.
+    
+    This function performs a breadth-first crawl of a website,
+    discovering all internal links within the same domain.
+    
+    Args:
+        base_url (str): The starting URL for crawling
+        
+    Returns:
+        set: Set of discovered internal URLs
+        
+    Note:
+        - Only follows links within the same domain
+        - Handles relative URLs correctly
+        - Avoids infinite loops with visited tracking
+    """
     visited = set()
     to_visit = {base_url}
 
@@ -815,6 +922,30 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
 
 def collect_urls_from_file(file_path: str) -> Dict[str, Union[str, List[str]]]:
     """
+    Load URLs from bookmark files or CSV.
+    
+    Supports multiple file formats:
+    - Chrome/Edge bookmarks (JSON)
+    - Firefox bookmarks (HTML)
+    - CSV files with 'url' column
+    
+    Args:
+        file_path (str): Path to the bookmarks or CSV file
+        
+    Returns:
+        Dict[str, Union[str, List[str]]]: Dictionary mapping names to URLs
+            If duplicate names exist, value will be a list of URLs
+            
+    Supported Formats:
+        - .json: Chrome/Edge bookmarks
+        - .html/.htm: Firefox bookmarks  
+        - .csv: Must have 'url' column, optionally 'title' or 'name'
+        
+    Example:
+        >>> bookmarks = collect_urls_from_file("/path/to/Bookmarks")
+        >>> for name, url in bookmarks.items():
+        ...     print(f"{name}: {url}")
+
     Unified function to collect URLs from either bookmarks or CSV files.
 
     :param file_path: Path to the file (bookmarks or CSV)
@@ -860,7 +991,33 @@ def collect_urls_from_file(file_path: str) -> Dict[str, Union[str, List[str]]]:
 # Article Scraping Metadata Functions
 
 class ContentMetadataHandler:
-    """Handles the addition and parsing of metadata for scraped content."""
+    """
+    Handles metadata for scraped content.
+    
+    This class provides utilities for:
+    - Adding metadata headers to content
+    - Extracting metadata from content
+    - Content deduplication via hashing
+    - Change detection between versions
+    
+    Metadata includes:
+    - Source URL
+    - Ingestion date
+    - Content hash
+    - Scraping pipeline used
+    - Custom metadata fields
+    
+    The metadata is stored in a structured format at the beginning
+    of the content, making it easy to track content provenance.
+    
+    Example:
+        >>> handler = ContentMetadataHandler()
+        >>> content_with_meta = handler.format_content_with_metadata(
+        ...     url="https://example.com",
+        ...     content="Article text here...",
+        ...     pipeline="playwright-trafilatura"
+        ... )
+    """
 
     METADATA_START = "[METADATA]"
     METADATA_END = "[/METADATA]"

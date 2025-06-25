@@ -274,6 +274,7 @@ def load_settings() -> Dict:
     search_engines_section = get_toml_section('SearchEngines')
     search_settings_section = get_toml_section('SearchSettings')
     web_scraper_section = get_toml_section('WebScraper')
+    confluence_section = get_toml_section('Confluence')
     file_validation_section = get_toml_section('FileValidation')
     providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
 
@@ -802,6 +803,21 @@ def load_settings() -> Dict:
             'web_scraper_api_key': _get_typed_value(web_scraper_section, 'web_scraper_api_key', ''),
             'web_scraper_api_url': _get_typed_value(web_scraper_section, 'web_scraper_api_url', ''),
             # ... (all web scraper settings)
+        },
+        "confluence": {
+            'base_url': _get_typed_value(confluence_section, 'base_url', os.getenv('CONFLUENCE_BASE_URL', '')),
+            'auth_method': _get_typed_value(confluence_section, 'auth_method', os.getenv('CONFLUENCE_AUTH_METHOD', 'api_token')),
+            'username': _get_typed_value(confluence_section, 'username', os.getenv('CONFLUENCE_USERNAME', '')),
+            'api_token': _get_typed_value(confluence_section, 'api_token', os.getenv('CONFLUENCE_API_TOKEN', '')),
+            'oauth_token': _get_typed_value(confluence_section, 'oauth_token', os.getenv('CONFLUENCE_OAUTH_TOKEN', '')),
+            'password': _get_typed_value(confluence_section, 'password', os.getenv('CONFLUENCE_PASSWORD', '')),
+            'browser': _get_typed_value(confluence_section, 'browser', 'all'),
+            'space_keys': _get_typed_value(confluence_section, 'space_keys', [], list),
+            'max_pages_per_space': _get_typed_value(confluence_section, 'max_pages_per_space', 100, int),
+            'max_crawl_depth': _get_typed_value(confluence_section, 'max_crawl_depth', 5, int),
+            'include_attachments': _get_typed_value(confluence_section, 'include_attachments', False, bool),
+            'follow_links': _get_typed_value(confluence_section, 'follow_links', False, bool),
+            'rate_limit_delay': _get_typed_value(confluence_section, 'rate_limit_delay', 0.5, float),
         },
 
         # Configurations from hardcoded dicts (now from TOML or fallback to Python dicts)

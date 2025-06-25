@@ -1,6 +1,40 @@
-# WebSearch_APIs.py
-# Description: This file contains the functions that are used for performing queries against various Search Engine APIs
-#
+"""
+WebSearch_APIs.py
+=================
+
+Web Search API Integration Module
+
+This module provides a unified interface for performing web searches across
+multiple search engine APIs and processing the results with LLM-powered
+analysis and summarization.
+
+Supported Search Engines:
+------------------------
+- Google Custom Search
+- Bing Search  
+- DuckDuckGo
+- Brave Search
+- Kagi
+- Tavily
+- SearX
+- Baidu (partial support)
+- Yandex (partial support)
+
+Key Features:
+------------
+- Sub-query generation for comprehensive searches
+- Result relevance analysis with LLMs
+- Automatic summarization and aggregation
+- Standardized result format across engines
+- Rate limiting and error handling
+
+Main Functions:
+--------------
+- generate_and_search(): Generate sub-queries and perform searches
+- analyze_and_aggregate(): Analyze relevance and create final answer
+- perform_websearch(): Execute search on specified engine
+- search_result_relevance(): Evaluate result relevance using LLM
+"""
 # Imports
 import asyncio
 import json
@@ -75,6 +109,43 @@ def initialize_web_search_results_dict(search_params: Dict) -> Dict:
 
 def generate_and_search(question: str, search_params: Dict) -> Dict:
     """
+    Generate sub-queries and perform web searches.
+    
+    This function orchestrates the search process by:
+    1. Optionally generating sub-queries from the main question
+    2. Performing searches on all queries
+    3. Accumulating results in a standardized format
+    
+    Args:
+        question (str): The main search query/question
+        search_params (Dict): Search configuration containing:
+            - engine: Search engine name (google, bing, etc.)
+            - content_country: Country code for results
+            - search_lang: Language for search
+            - output_lang: Language for output
+            - result_count: Number of results per query
+            - subquery_generation: Enable sub-query generation
+            - subquery_generation_llm: LLM for generating sub-queries
+            - Additional engine-specific parameters
+            
+    Returns:
+        Dict: Contains:
+            - web_search_results_dict: All search results
+            - sub_query_dict: Generated sub-queries and metadata
+            
+    Raises:
+        ValueError: If parameters are invalid
+        
+    Example:
+        >>> params = {
+        ...     "engine": "google",
+        ...     "content_country": "US",
+        ...     "search_lang": "en",
+        ...     "result_count": 10,
+        ...     "subquery_generation": True
+        ... }
+        >>> results = generate_and_search("quantum computing", params)
+
     Generates sub-queries (if enabled) and performs web searches for each query.
 
     Args:
@@ -171,6 +242,36 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
 
 
 async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: Dict, search_params: Dict) -> Dict:
+    """
+    Analyze search results for relevance and create a final aggregated answer.
+    
+    This function:
+    1. Scores/filters results for relevance
+    2. Scrapes full content from relevant URLs
+    3. Summarizes relevant content
+    4. Aggregates into a comprehensive answer
+    
+    Args:
+        web_search_results_dict (Dict): Raw search results from generate_and_search
+        sub_query_dict (Dict): Sub-queries and metadata
+        search_params (Dict): Search configuration with:
+            - relevance_analysis_llm: LLM for relevance scoring
+            - final_answer_llm: LLM for final aggregation
+            - user_review: Enable manual result selection
+            
+    Returns:
+        Dict: Contains:
+            - final_answer: Aggregated answer with citations
+            - relevant_results: Filtered relevant results
+            - web_search_results_dict: Original search results
+            
+    Example:
+        >>> final_results = await analyze_and_aggregate(
+        ...     phase1_results["web_search_results_dict"],
+        ...     phase1_results["sub_query_dict"],
+        ...     search_params
+        ... )
+    """
     logging.info("Starting analyze_and_aggregate")
 
     # 4. Score/filter results
@@ -243,6 +344,33 @@ async def test_perplexity_pipeline():
 #
 #
 def analyze_question(question: str, api_endpoint) -> Dict:
+    """
+    Analyze a question and generate relevant sub-queries.
+    
+    Uses an LLM to break down complex questions into multiple
+    specific sub-queries for more comprehensive search coverage.
+    
+    Args:
+        question (str): The original question to analyze
+        api_endpoint (str): LLM API endpoint name (e.g., 'openai')
+        
+    Returns:
+        Dict: Contains:
+            - main_goal: Original question
+            - sub_questions: List of generated sub-queries
+            - search_queries: Same as sub_questions
+            - analysis_prompt: The prompt used
+            
+    Example:
+        >>> result = analyze_question(
+        ...     "What are the environmental impacts of electric vehicles?",
+        ...     "openai"
+        ... )
+        >>> print(result["sub_questions"])
+        ["carbon footprint of EV manufacturing",
+         "battery disposal environmental impact",
+         "electricity source for EV charging", ...]
+    """
     logging.debug(f"Analyzing question: {question} with API endpoint: {api_endpoint}")
     """
     Analyzes the input question and generates sub-questions
@@ -339,6 +467,30 @@ async def search_result_relevance(
     api_endpoint: str
 ) -> Dict[str, Dict]:
     """
+    Evaluate search results for relevance and extract key content.
+    
+    This function:
+    1. Uses LLM to score each result's relevance
+    2. Scrapes full content from relevant URLs
+    3. Summarizes the content focused on the question
+    
+    Args:
+        search_results (List[Dict]): List of search results to evaluate
+        original_question (str): The main question
+        sub_questions (List[str]): Related sub-questions
+        api_endpoint (str): LLM API to use for analysis
+        
+    Returns:
+        Dict[str, Dict]: Relevant results with:
+            - content: Summarized content
+            - original_content: Full scraped content
+            - reasoning: Why result was deemed relevant
+            
+    Note:
+        - Implements rate limiting to avoid API throttling
+        - Filters out expired or irrelevant results
+        - Preserves result metadata for citations
+
     Evaluate whether each search result is relevant to the original question and sub-questions.
 
     Args:
@@ -720,6 +872,41 @@ def aggregate_results(
 # FIXME
 def perform_websearch(search_engine, search_query, content_country, search_lang, output_lang, result_count, date_range=None,
                       safesearch=None, site_blacklist=None, exactTerms=None, excludeTerms=None, filter=None, geolocation=None, search_result_language=None, sort_results_by=None):
+    """
+    Execute a web search using the specified search engine.
+    
+    This is the main dispatcher function that routes searches to
+    the appropriate engine-specific implementation.
+    
+    Args:
+        search_engine (str): Engine name (google, bing, duckduckgo, etc.)
+        search_query (str): The search query
+        content_country (str): Country code for localized results
+        search_lang (str): Language code for search
+        output_lang (str): Language code for output
+        result_count (int): Number of results to return
+        date_range (str, optional): Time filter (e.g., 'y', 'w', 'm')
+        safesearch (str, optional): Safe search level
+        site_blacklist (list, optional): Sites to exclude
+        exactTerms (str, optional): Exact phrase to match
+        excludeTerms (str, optional): Terms to exclude
+        filter (str, optional): Additional filters
+        geolocation (str, optional): Geographic location
+        search_result_language (str, optional): Language filter
+        sort_results_by (str, optional): Sort order
+        
+    Returns:
+        Dict: Standardized search results or error dict
+        
+    Supported Engines:
+        - google: Google Custom Search API
+        - bing: Bing Search API
+        - brave: Brave Search API
+        - duckduckgo: DuckDuckGo (HTML scraping)
+        - kagi: Kagi Search API
+        - tavily: Tavily Search API
+        - searx: SearX instance
+    """
     try:
         if search_engine.lower() == "baidu":
             web_search_results = search_web_baidu(search_query, None, None)
@@ -934,6 +1121,41 @@ def test_perform_websearch_yandex():
 
 def process_web_search_results(search_results: Dict, search_engine: str) -> Dict:
     """
+    Process raw search results into standardized format.
+    
+    Converts engine-specific result formats into a common structure
+    for consistent handling across different search providers.
+    
+    Args:
+        search_results (Dict): Raw results from search engine
+        search_engine (str): Name of the search engine
+        
+    Returns:
+        Dict: Standardized results containing:
+            - search_engine: Engine used
+            - results: List of result items with:
+                - title: Result title
+                - url: Result URL
+                - content: Snippet/description
+                - metadata: Additional info (date, author, etc.)
+            - total_results_found: Total results available
+            - search_time: Search duration
+            - error: Any error messages
+            
+    Standard Result Structure:
+        {
+            "title": str,
+            "url": str, 
+            "content": str,
+            "metadata": {
+                "date_published": Optional[str],
+                "author": Optional[str],
+                "source": Optional[str],
+                "language": Optional[str],
+                "relevance_score": Optional[float],
+                "snippet": Optional[str]
+            }
+        }
     Processes search results from a search engine and formats them into a standardized dictionary structure.
 
     Args:
@@ -977,7 +1199,7 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
         "search_time": search_results.get("search_time", 0.0),
         "error": search_results.get("error", None),
         "processing_error": None
-    }
+        ]
     """
     # Validate input parameters
     if not isinstance(search_results, dict):
@@ -2118,8 +2340,7 @@ def test_search_yandex():
 
 def parse_yandex_results(yandex_search_results, web_search_results_dict):
     pass
-
-
+    
 #
 # End of WebSearch_APIs.py
 #######################################################################################################################

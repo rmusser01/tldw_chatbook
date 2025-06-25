@@ -21,7 +21,7 @@ from textual.widgets import (
     Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch
 )
 
-from textual.containers import Container
+from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
 from textual.worker import Worker, WorkerState
 from textual.binding import Binding
@@ -768,6 +768,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # Reactives for sidebar
     chat_sidebar_collapsed: reactive[bool] = reactive(False)
     chat_right_sidebar_collapsed: reactive[bool] = reactive(False)  # For character sidebar
+    # Load saved width from config, default to 25% if not set
+    _saved_width = settings.get("chat_defaults", {}).get("right_sidebar_width", 25)
+    chat_right_sidebar_width: reactive[int] = reactive(_saved_width)  # Width percentage for right sidebar
     notes_sidebar_left_collapsed: reactive[bool] = reactive(False)
     notes_sidebar_right_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
@@ -2213,6 +2216,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             sidebar.display = not collapsed
         except QueryError:
             logging.error("Character sidebar widget (#chat-right-sidebar) not found.")
+    
+    def watch_chat_right_sidebar_width(self, width: int) -> None:
+        """Update the width of the chat right sidebar."""
+        if not hasattr(self, "app") or not self.app:  # Check if app is ready
+            return
+        if not self._ui_ready:
+            return
+        try:
+            sidebar = self.query_one("#chat-right-sidebar", VerticalScroll)
+            sidebar.styles.width = f"{width}%"
+        except QueryError:
+            # Sidebar might not be created yet
+            pass
 
     def watch_notes_sidebar_left_collapsed(self, collapsed: bool) -> None:
         """Hide or show the notes left sidebar."""
@@ -3212,6 +3228,154 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info(f"Ollama API worker '{event.worker.name}' finished with state {event.state}.")
             await llm_management_events_ollama.handle_ollama_worker_completion(self, event)
 
+        #######################################################################
+        # --- Handle AI Generation Workers (for character generation) ---
+        #######################################################################
+        elif worker_group == "ai_generation":
+            self.loguru_logger.info(f"AI generation worker '{event.worker.name}' state changed to {worker_state}.")
+            
+            if worker_state == WorkerState.SUCCESS:
+                self.loguru_logger.info(f"AI generation worker '{event.worker.name}' completed successfully.")
+                result = event.worker.result
+                
+                # Handle the response
+                if result and isinstance(result, dict) and 'choices' in result:
+                    try:
+                        content = result['choices'][0]['message']['content']
+                        
+                        # Determine which field to update based on worker name
+                        if event.worker.name == "ai_generate_description":
+                            text_area = self.query_one("#ccp-editor-char-description-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-description-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_personality":
+                            text_area = self.query_one("#ccp-editor-char-personality-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-personality-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_scenario":
+                            text_area = self.query_one("#ccp-editor-char-scenario-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-scenario-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_first_message":
+                            text_area = self.query_one("#ccp-editor-char-first-message-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-first-message-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_system_prompt":
+                            text_area = self.query_one("#ccp-editor-char-system-prompt-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-system-prompt-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_all":
+                            # Parse the comprehensive response
+                            sections = {
+                                'description': '',
+                                'personality': '',
+                                'scenario': '',
+                                'first_message': '',
+                                'system_prompt': ''
+                            }
+                            
+                            current_section = None
+                            current_content = []
+                            
+                            for line in content.split('\n'):
+                                line_stripped = line.strip()
+                                line_lower = line_stripped.lower()
+                                
+                                # Remove markdown formatting from potential headers
+                                line_clean = line_stripped.replace('**', '').replace('##', '').strip()
+                                line_clean_lower = line_clean.lower()
+                                
+                                # Check for section headers (handle both plain and markdown formatted)
+                                if 'description' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'description'
+                                    current_content = []
+                                elif 'personality' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'personality'
+                                    current_content = []
+                                elif 'scenario' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'scenario'
+                                    current_content = []
+                                elif 'first message' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'first_message'
+                                    current_content = []
+                                elif 'system prompt' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'system_prompt'
+                                    current_content = []
+                                elif current_section and line_stripped and not (line_stripped.startswith('#') and len(line_stripped) < 50):
+                                    # Skip pure header lines but keep content
+                                    current_content.append(line)
+                            
+                            # Add the last section
+                            if current_section and current_content:
+                                sections[current_section] = '\n'.join(current_content).strip()
+                            
+                            # Update all fields
+                            if sections['description']:
+                                self.query_one("#ccp-editor-char-description-textarea", TextArea).text = sections['description']
+                            if sections['personality']:
+                                self.query_one("#ccp-editor-char-personality-textarea", TextArea).text = sections['personality']
+                            if sections['scenario']:
+                                self.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = sections['scenario']
+                            if sections['first_message']:
+                                self.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = sections['first_message']
+                            if sections['system_prompt']:
+                                self.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = sections['system_prompt']
+                            
+                            # Re-enable the generate all button
+                            button = self.query_one("#ccp-generate-all-button", Button)
+                            button.disabled = False
+                            self.notify("Character profile generated successfully!", severity="success")
+                            
+                    except (KeyError, IndexError) as e:
+                        self.loguru_logger.error(f"Failed to extract content from AI response: {e}")
+                        self.notify("Failed to parse AI response", severity="error")
+                    except QueryError as e:
+                        self.loguru_logger.error(f"Could not find UI element to update: {e}")
+                        self.notify("UI error updating fields", severity="error")
+                else:
+                    self.notify("Failed to generate content", severity="error")
+                    
+            elif worker_state == WorkerState.ERROR:
+                self.loguru_logger.error(f"AI generation worker '{event.worker.name}' failed: {event.worker.error}")
+                self.notify(f"Generation failed: {str(event.worker.error)[:100]}", severity="error")
+                
+                # Re-enable the appropriate button on error
+                button_mapping = {
+                    "ai_generate_description": "#ccp-generate-description-button",
+                    "ai_generate_personality": "#ccp-generate-personality-button",
+                    "ai_generate_scenario": "#ccp-generate-scenario-button",
+                    "ai_generate_first_message": "#ccp-generate-first-message-button",
+                    "ai_generate_system_prompt": "#ccp-generate-system-prompt-button",
+                    "ai_generate_all": "#ccp-generate-all-button"
+                }
+                
+                button_id = button_mapping.get(event.worker.name)
+                if button_id:
+                    try:
+                        button = self.query_one(button_id, Button)
+                        button.disabled = False
+                    except QueryError:
+                        self.loguru_logger.warning(f"Could not find button {button_id} to re-enable")
 
         #######################################################################
         # --- Handle Llama.cpp Server Worker (identified by group) ---

@@ -44,10 +44,9 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* Right sidebar (chat-right-sidebar) */
 #chat-right-sidebar {
     dock: right;
-    /* width: 70;   <-- REMOVE fixed width */
-    width: 25%;  /* <-- CHANGE to percentage (match .sidebar or use a different one) */
-    min-width: 20; /* <-- ADD a minimum width */
-    max-width: 80; /* <-- ADD a maximum width (optional) */
+    width: 25%;  /* Default width, will be dynamically updated */
+    min-width: 15%; /* Minimum width - absolute units work better */
+    max-width: 50%; /* Maximum width */
     background: $boost;
     padding: 1 2;
     border-left: thick $background-darken-1; /* Border on the left */
@@ -68,6 +67,26 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 
 /* Common sidebar elements */
 .sidebar-title { text-style: bold underline; margin-bottom: 1; width: 100%; text-align: center; }
+
+/* Sidebar header with resize controls */
+.sidebar-header-with-resize {
+    height: 2;
+    align: left middle;
+    margin-bottom: 1;
+}
+
+.sidebar-header-with-resize .flex-grow {
+    width: 1fr;
+}
+
+/* Sidebar resize buttons */
+.sidebar-resize-button {
+    width: 3;
+    min-width: 3;
+    height: 2;
+    padding: 0;
+    margin: 0 1;
+}
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input { width: 100%; margin-bottom: 1; }
 .sidebar-textarea { width: 100%; border: round $surface; margin-bottom: 1; }
