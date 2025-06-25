@@ -18,6 +18,7 @@ pyperclip
 rich-pixels>=3.0.0
 pycryptodomex
 keyring
+markdownify
 # Chunk Library
 #tqdm
 #langdetect
