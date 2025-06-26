@@ -17,72 +17,28 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
     handle_chat_media_copy_url_button_pressed,
 )
 
+# Import our comprehensive mock fixture
+from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock, create_widget_mock
+
 pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
 def mock_app():
-    """Provides a comprehensive mock of the TldwCli app."""
-    app = AsyncMock()
-
-    # Mock UI components
-    app.query_one = MagicMock()
-    mock_results_list = MagicMock(spec=ListView)  # ListView is not async
-    mock_results_list.clear = MagicMock()  # clear is sync
-    mock_results_list.append = MagicMock()  # append is sync
-    mock_review_display = MagicMock(spec=TextArea)  # TextArea is not async
-    mock_review_display.clear = MagicMock()  # clear is sync
-    mock_copy_title_btn = MagicMock(spec=Button)
-    mock_copy_content_btn = MagicMock(spec=Button)
-    mock_copy_author_btn = MagicMock(spec=Button)
-    mock_copy_url_btn = MagicMock(spec=Button)
-    mock_search_input = MagicMock(spec=Input)
-
-    # Configure query_one to return the correct mock widget
-    def query_one_side_effect(selector, _type):
-        if selector == "#chat-media-search-results-listview":
-            return mock_results_list
-        if selector == "#chat-media-content-display":
-            return mock_review_display
-        if selector == "#chat-media-title-display":
-            return MagicMock(spec=TextArea)
-        if selector == "#chat-media-author-display":
-            return MagicMock(spec=TextArea)
-        if selector == "#chat-media-url-display":
-            return MagicMock(spec=TextArea)
-        if selector == "#chat-media-copy-title-button":
-            return mock_copy_title_btn
-        if selector == "#chat-media-copy-content-button":
-            return mock_copy_content_btn
-        if selector == "#chat-media-copy-author-button":
-            return mock_copy_author_btn
-        if selector == "#chat-media-copy-url-button":
-            return mock_copy_url_btn
-        if selector == "#chat-media-search-input":
-            return mock_search_input
-        raise QueryError(f"Widget not found: {selector}")
-
-    app.query_one.side_effect = query_one_side_effect
-
-    # Mock DB and state
-    app.media_db = MagicMock()
-    app.current_sidebar_media_item = None
-
-    # Mock app methods
-    app.notify = AsyncMock()
-    app.copy_to_clipboard = MagicMock()
-    app.set_timer = MagicMock()
-    app.run_worker = MagicMock()
-
-    # For debouncing timer
-    app._media_sidebar_search_timer = None
-
+    """Use the base mock app with sidebar-specific overrides."""
+    # Get the base mock app from our fixtures
+    app = create_comprehensive_app_mock()
+    
+    # Override specific widgets for sidebar tests if needed
+    # (The base mock already includes all the media sidebar widgets)
+    
     return app
 
 
-async def test_clear_and_disable_media_display(mock_app):
+def test_clear_and_disable_media_display(mock_app):
     """Test that all copy buttons are disabled and the current item is cleared."""
-    await _clear_and_disable_media_display(mock_app)
+    # _clear_and_disable_media_display is synchronous, not async
+    _clear_and_disable_media_display(mock_app)
 
     assert mock_app.current_sidebar_media_item is None
     assert mock_app.query_one("#chat-media-copy-title-button", Button).disabled is True
@@ -104,9 +60,12 @@ async def test_perform_media_sidebar_search_with_results(mock_app):
                side_effect=ListItem) as mock_list_item_class:
         await perform_media_sidebar_search(mock_app, "test term")
 
+        # ListView.clear is async in the base mock
         mock_results_list.clear.assert_called_once()
+        # TextArea.clear is sync
         mock_app.query_one("#chat-media-content-display", TextArea).clear.assert_called_once()
         mock_app.media_db.search_media_db.assert_called_once()
+        # ListView.append is async in the base mock
         assert mock_results_list.append.call_count == 2
 
         # Check that ListItem was called with a Label containing the correct text
@@ -122,6 +81,7 @@ async def test_perform_media_sidebar_search_no_results(mock_app):
 
     await perform_media_sidebar_search(mock_app, "no results term")
 
+    # ListView.append is async in the base mock
     mock_results_list.append.assert_called_once()
     # The call argument is a ListItem, which contains a Label. We check the Label's content.
     call_arg = mock_results_list.append.call_args[0][0]

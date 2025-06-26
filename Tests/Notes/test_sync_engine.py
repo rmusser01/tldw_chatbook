@@ -160,19 +160,33 @@ class TestSyncEngine:
             content="Content from database 2"
         )
         
-        # Link notes to files
-        notes_service.link_note_to_file(
+        # Update sync metadata for notes
+        note1 = notes_service.get_note_by_id("test_user", note1_id)
+        notes_service.update_note_sync_metadata(
             user_id="test_user",
             note_id=note1_id,
-            file_path=sync_dir / "db_note1.md",
-            sync_root_folder=sync_dir
+            sync_metadata={
+                'file_path_on_disk': str(sync_dir / "db_note1.md"),
+                'relative_file_path_on_disk': "db_note1.md",
+                'sync_root_folder': str(sync_dir),
+                'is_externally_synced': 1,
+                'file_extension': '.md'
+            },
+            expected_version=note1['version']
         )
         
-        notes_service.link_note_to_file(
+        note2 = notes_service.get_note_by_id("test_user", note2_id)
+        notes_service.update_note_sync_metadata(
             user_id="test_user",
             note_id=note2_id,
-            file_path=sync_dir / "subdir" / "db_note2.md",
-            sync_root_folder=sync_dir
+            sync_metadata={
+                'file_path_on_disk': str(sync_dir / "subdir" / "db_note2.md"),
+                'relative_file_path_on_disk': "subdir/db_note2.md",
+                'sync_root_folder': str(sync_dir),
+                'is_externally_synced': 1,
+                'file_extension': '.md'
+            },
+            expected_version=note2['version']
         )
         
         # Run sync
@@ -209,11 +223,18 @@ class TestSyncEngine:
         )
         
         file_path = sync_dir / "conflict_test.md"
-        notes_service.link_note_to_file(
+        note = notes_service.get_note_by_id("test_user", note_id)
+        notes_service.update_note_sync_metadata(
             user_id="test_user",
             note_id=note_id,
-            file_path=file_path,
-            sync_root_folder=sync_dir
+            sync_metadata={
+                'file_path_on_disk': str(file_path),
+                'relative_file_path_on_disk': "conflict_test.md",
+                'sync_root_folder': str(sync_dir),
+                'is_externally_synced': 1,
+                'file_extension': '.md'
+            },
+            expected_version=note['version']
         )
         
         # Create the file with initial content

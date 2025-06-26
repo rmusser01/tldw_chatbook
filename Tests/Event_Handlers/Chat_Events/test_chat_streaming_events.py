@@ -14,49 +14,55 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import (
     handle_stream_done
 )
 
+# Import base mock but create custom fixture for streaming-specific needs
+from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock
+
 pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
 def mock_app():
-    """Provides a mock app instance ('self' for the handlers)."""
-    app = AsyncMock()
+    """Provides a mock app instance for streaming tests."""
+    # Get base mock and customize for streaming
+    app = create_comprehensive_app_mock()
     
-    # Add thread lock for chat state management
-    app._chat_state_lock = MagicMock()
-
-    # Mock logger and config
-    app.loguru_logger = MagicMock()
-    app.app_config = {"chat_defaults": {"strip_thinking_tags": True}}
-
-    # Mock UI state and components
+    # Override current_tab for streaming tests
     app.current_tab = TAB_CHAT
-    mock_static_text = MagicMock(spec=Static)  # Not async
-    mock_chat_message_widget = MagicMock()  # Not AsyncMock - this is a regular widget
+    
+    # Create a custom chat message widget for streaming
+    mock_static_text = MagicMock(spec=Static)
+    mock_static_text.update = MagicMock()  # Static.update is sync
+    
+    mock_chat_message_widget = MagicMock()
     mock_chat_message_widget.is_mounted = True
     mock_chat_message_widget.message_text = ""
+    mock_chat_message_widget.role = "AI"
     mock_chat_message_widget.query_one = MagicMock(return_value=mock_static_text)
-    mock_chat_message_widget.mark_generation_complete = MagicMock()
+    mock_chat_message_widget.mark_generation_complete = MagicMock()  # This is sync
     
-    # Thread-safe methods are synchronous
-    app.get_current_ai_message_widget = MagicMock(return_value=mock_chat_message_widget)
-    app.set_current_ai_message_widget = MagicMock()
+    # Set the current AI message widget
+    app.get_current_ai_message_widget.return_value = mock_chat_message_widget
     app.current_ai_message_widget = mock_chat_message_widget  # For backward compatibility
-
-    mock_chat_log = AsyncMock(spec=VerticalScroll)
-    mock_chat_input = AsyncMock(spec=TextArea)
-
-    app.query_one = MagicMock(side_effect=lambda sel, type: mock_chat_log if sel == "#chat-log" else mock_chat_input)
-
-    # Mock DB and state
-    app.chachanotes_db = MagicMock()
+    
+    # Override query_one for specific streaming needs
+    original_query_one = app.query_one.side_effect
+    
+    def streaming_query_one(sel, widget_type=None):
+        if sel == "#chat-log" and widget_type == VerticalScroll:
+            mock_chat_log = MagicMock(spec=VerticalScroll)
+            mock_chat_log.scroll_end = AsyncMock()  # scroll_end is async
+            return mock_chat_log
+        elif sel == "#chat-input" and widget_type == TextArea:
+            return MagicMock(spec=TextArea, disabled=False)
+        else:
+            return original_query_one(sel, widget_type)
+    
+    app.query_one.side_effect = streaming_query_one
+    
+    # Set non-ephemeral chat for streaming tests
     app.current_chat_conversation_id = "conv_123"
     app.current_chat_is_ephemeral = False
-
-    # Mock app methods
-    app.notify = AsyncMock()
-    app.call_from_thread = MagicMock(side_effect=lambda func, *args: func(*args))
-
+    
     return app
 
 

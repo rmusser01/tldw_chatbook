@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 import asyncio
+from io import BytesIO
 
 # 3rd-party Libraries
 from PIL import Image as PILImage
@@ -237,7 +238,6 @@ class TestChatMessageImageIntegration:
         """Test creating ChatMessage from database with image data."""
         # Simulate database record with image
         img = PILImage.new('RGB', (100, 100), color='red')
-        from io import BytesIO
         buffer = BytesIO()
         img.save(buffer, format='PNG')
         image_data = buffer.getvalue()

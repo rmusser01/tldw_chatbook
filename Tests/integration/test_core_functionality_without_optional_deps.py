@@ -14,7 +14,7 @@ def test_core_imports_without_optional_deps():
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
     
     # Test core chat functionality  
-    from tldw_chatbook.Chat.Chat_Functions import get_chat_completion
+    from tldw_chatbook.Chat.Chat_Functions import chat, chat_api_call
     
     # Test core utils
     from tldw_chatbook.Utils.Utils import sanitize_filename
@@ -38,7 +38,7 @@ def test_notes_functionality_without_optional_deps():
 def test_character_chat_without_optional_deps():
     """Test character chat functionality without optional dependencies."""
     from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
-        parse_character_card_file, validate_character_card_data
+        load_character_card_from_file, validate_character_card_data
     )
     
     # Basic character card parsing should work without embeddings

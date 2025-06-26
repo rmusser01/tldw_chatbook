@@ -260,7 +260,7 @@ class NotesSyncEngine:
             now = datetime.now(timezone.utc).isoformat()
             new_version = version + 1
             
-            conn.execute("""
+            cursor = conn.execute("""
                 UPDATE notes
                 SET file_path_on_disk = ?,
                     relative_file_path_on_disk = ?,
@@ -276,7 +276,7 @@ class NotesSyncEngine:
                   str(root_path), file_info.content_hash, file_info.mtime,
                   file_info.extension, now, new_version, note_id, version))
             
-            if conn.changes() == 0:
+            if cursor.rowcount == 0:
                 raise ConflictError(f"Version mismatch updating sync metadata for note {note_id}")
     
     def _unlink_note_from_sync(self, note_id: str, version: int):
@@ -285,7 +285,7 @@ class NotesSyncEngine:
             now = datetime.now(timezone.utc).isoformat()
             new_version = version + 1
             
-            conn.execute("""
+            cursor = conn.execute("""
                 UPDATE notes
                 SET file_path_on_disk = NULL,
                     relative_file_path_on_disk = NULL,
@@ -297,7 +297,7 @@ class NotesSyncEngine:
                 WHERE id = ? AND version = ?
             """, (now, new_version, note_id, version))
             
-            if conn.changes() == 0:
+            if cursor.rowcount == 0:
                 raise ConflictError(f"Version mismatch unlinking note {note_id}")
     
     def cancel_sync(self, session_id: str):

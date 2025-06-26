@@ -41,9 +41,14 @@ class TestNotesInteropService(unittest.TestCase):
 
         self.mock_db_instance = MagicMock(spec=CharactersRAGDB)
         self.MockCharactersRAGDB_class.return_value = self.mock_db_instance
+        
+        # Create a mock global DB template
+        self.mock_global_db = MagicMock(spec=CharactersRAGDB)
+        self.mock_global_db.db_path_str = str(self.base_db_dir / "unified.db")
 
         self.service = NotesInteropService(base_db_directory=str(self.base_db_dir),
-                                           api_client_id=self.api_client_id)
+                                           api_client_id=self.api_client_id,
+                                           global_db_to_use=self.mock_global_db)
 
     def tearDown(self):
         if hasattr(self, 'service') and self.service:
@@ -74,9 +79,9 @@ class TestNotesInteropService(unittest.TestCase):
     def test_get_db_new_instance(self):
         user_id = "user1"
         db_instance = self.service._get_db(user_id)
-        expected_db_path = (self.base_db_dir / f"user_{user_id}.sqlite").resolve()
+        # The new implementation creates a DB instance with the unified DB path and user_id as client_id
         self.MockCharactersRAGDB_class.assert_called_once_with(
-            db_path=expected_db_path, client_id=self.api_client_id
+            db_path=self.mock_global_db.db_path_str, client_id=user_id
         )
         self.assertIs(db_instance, self.mock_db_instance)
 
@@ -114,7 +119,7 @@ class TestNotesInteropService(unittest.TestCase):
         self.assertIs(cm.exception, db_error_instance)
 
         # Expecting the log message from the except (CharactersRAGDBError, SchemaError, sqlite3.Error) block
-        expected_log_message = f"Failed to initialize DB for user_id '{user_id}' at {self.base_db_dir / f'user_{user_id}.sqlite'}: {db_error_message}"
+        expected_log_message = f"Failed to initialize dynamic CharactersRAGDB instance for user '{user_id}': {db_error_message}"
         self.mock_notes_library_logger.error.assert_called_once_with(
             expected_log_message, exc_info=True
         )
@@ -129,8 +134,7 @@ class TestNotesInteropService(unittest.TestCase):
         self.assertIs(cm.exception, sqlite_error_instance)
 
         # Expecting the log message from the except (CharactersRAGDBError, SchemaError, sqlite3.Error) block
-        expected_db_path = self.base_db_dir / f"user_{user_id}.sqlite"
-        expected_log_message = f"Failed to initialize DB for user_id '{user_id}' at {expected_db_path}: {sqlite_error_message}"
+        expected_log_message = f"Failed to initialize dynamic CharactersRAGDB instance for user '{user_id}': {sqlite_error_message}"
         self.mock_notes_library_logger.error.assert_called_once_with(
             expected_log_message, exc_info=True
         )
@@ -139,11 +143,10 @@ class TestNotesInteropService(unittest.TestCase):
         self.MockCharactersRAGDB_class.side_effect = Exception("Unexpected boom")
         user_id = "user_generic_fail"
         with self.assertRaisesRegex(Actual_CharactersRAGDBError,
-                                    f"Unexpected error initializing DB for user {user_id}: Unexpected boom"):
+                                    f"Unexpected error initializing DB instance for user {user_id}: Unexpected boom"):
             self.service._get_db(user_id)
-        expected_db_path = self.base_db_dir / f"user_{user_id}.sqlite"
         self.mock_notes_library_logger.error.assert_called_once_with(
-            f"Unexpected error initializing DB for user_id '{user_id}' at {expected_db_path}: Unexpected boom",
+            f"Unexpected error initializing dynamic CharactersRAGDB for user '{user_id}': Unexpected boom",
             exc_info=True
         )
 
@@ -168,7 +171,7 @@ class TestNotesInteropService(unittest.TestCase):
                                     "Failed to create note, received None ID unexpectedly"):
             self.service.add_note(user_id, title, content)
         self.mock_notes_library_logger.error.assert_called_once_with(
-            f"add_note for user {user_id} returned None unexpectedly for title '{title}'."
+            f"add_note for user_id '{user_id}' (as client_id) returned None unexpectedly for title '{title}'."
         )
 
     def test_get_note_by_id(self):
@@ -279,7 +282,7 @@ class TestNotesInteropService(unittest.TestCase):
         mock_db_2_instance.close_connection.assert_called_once()
         self.assertEqual(len(self.service._db_instances), 0)
         self.mock_notes_library_logger.info.assert_any_call(
-            "All cached user DB connections have been processed for closure.")
+            "All cached user-context DB instances have been processed for closure.")
         self.MockCharactersRAGDB_class.side_effect = None
         self.MockCharactersRAGDB_class.return_value = self.mock_db_instance
 
@@ -291,7 +294,7 @@ class TestNotesInteropService(unittest.TestCase):
         self.service.close_user_connection(user_id)
         self.assertNotIn(user_id, self.service._db_instances)
         self.mock_notes_library_logger.error.assert_called_with(
-            f"Error closing DB connection for user_id '{user_id}': Failed to close", exc_info=True
+            f"Error closing DB instance for user context '{user_id}': Failed to close", exc_info=True
         )
 
 

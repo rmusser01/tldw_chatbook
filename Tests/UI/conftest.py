@@ -13,8 +13,8 @@ from textual.widget import Widget
 from textual.pilot import Pilot
 
 # Import test utilities
-from ..textual_test_utils import widget_pilot, app_pilot
-from ..textual_test_harness import (
+from Tests.textual_test_utils import widget_pilot, app_pilot
+from Tests.textual_test_harness import (
     isolated_widget_pilot, 
     enhanced_app_pilot,
     TestApp,

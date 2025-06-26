@@ -24,125 +24,18 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
     handle_chat_clear_active_character_button_pressed,
     # ... import other handlers as you write tests for them
 )
+from tldw_chatbook.Utils.Emoji_Handling import (
+    EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_EDIT, FALLBACK_EDIT
+)
 from tldw_chatbook.Widgets.chat_message import ChatMessage
+
+# Import our comprehensive mock fixture
+from Tests.fixtures.event_handler_mocks import mock_app
 
 pytestmark = pytest.mark.asyncio
 
 
-# A very comprehensive mock app fixture is needed here
-@pytest.fixture
-def mock_app():
-    app = AsyncMock()
-    
-    # Add thread lock for chat state management
-    app._chat_state_lock = MagicMock()
-
-    # Mock services and DBs
-    app.chachanotes_db = MagicMock()
-    app.notes_service = MagicMock()
-    app.notes_service._get_db.return_value = app.chachanotes_db
-    app.media_db = MagicMock()
-
-    # Mock core app properties
-    app.API_IMPORTS_SUCCESSFUL = True
-    app.app_config = {
-        "api_settings": {
-            "openai": {"streaming": True, "api_key_env_var": "OPENAI_API_KEY"},
-            "anthropic": {"streaming": False, "api_key": "xyz-key"}
-        },
-        "chat_defaults": {"system_prompt": "Default system prompt."},
-        "USERS_NAME": "Tester"
-    }
-
-    # Mock app state
-    app.current_chat_conversation_id = None
-    app.current_chat_is_ephemeral = True
-    app.current_chat_active_character_data = None
-    app.current_ai_message_widget = None
-
-    # Mock app methods
-    app.query_one = MagicMock()
-    app.notify = AsyncMock()
-    app.copy_to_clipboard = MagicMock()
-    app.set_timer = MagicMock()
-    app.run_worker = MagicMock()
-    app.chat_wrapper = AsyncMock()
-    
-    # Thread-safe methods are synchronous
-    app.get_current_ai_message_widget = MagicMock(return_value=None)
-    app.set_current_ai_message_widget = MagicMock()
-
-    # Timers
-    app._conversation_search_timer = None
-
-    # --- Set up mock widgets ---
-    # This is complex; a helper function simplifies it.
-    def setup_mock_widgets(q_one_mock):
-        # Create chat log with proper async mount method
-        mock_chat_log = MagicMock(spec=VerticalScroll, is_mounted=True)
-        mock_chat_log.mount = AsyncMock()  # mount is async
-        mock_chat_log.remove_children = AsyncMock()  # remove_children is async
-        mock_chat_log.query = MagicMock(return_value=[])
-        
-        widgets = {
-            "#chat-input": MagicMock(spec=TextArea, text="User message", is_mounted=True),
-            "#chat-log": mock_chat_log,
-            "#chat-api-provider": MagicMock(spec=Select, value="OpenAI"),
-            "#chat-api-model": MagicMock(spec=Select, value="gpt-4"),
-            "#chat-system-prompt": MagicMock(spec=TextArea, text="UI system prompt"),
-            "#chat-temperature": MagicMock(spec=Input, value="0.7"),
-            "#chat-top-p": MagicMock(spec=Input, value="0.9"),
-            "#chat-min-p": MagicMock(spec=Input, value="0.1"),
-            "#chat-top-k": MagicMock(spec=Input, value="40"),
-            "#chat-llm-max-tokens": MagicMock(spec=Input, value="1024"),
-            "#chat-llm-seed": MagicMock(spec=Input, value=""),
-            "#chat-llm-stop": MagicMock(spec=Input, value=""),
-            "#chat-llm-response-format": MagicMock(spec=Select, value="text"),
-            "#chat-llm-n": MagicMock(spec=Input, value="1"),
-            "#chat-llm-user-identifier": MagicMock(spec=Input, value=""),
-            "#chat-llm-logprobs": MagicMock(spec=Checkbox, value=False),
-            "#chat-llm-top-logprobs": MagicMock(spec=Input, value=""),
-            "#chat-llm-logit-bias": MagicMock(spec=TextArea, text="{}"),
-            "#chat-llm-presence-penalty": MagicMock(spec=Input, value="0.0"),
-            "#chat-llm-frequency-penalty": MagicMock(spec=Input, value="0.0"),
-            "#chat-llm-tools": MagicMock(spec=TextArea, text="[]"),
-            "#chat-llm-tool-choice": MagicMock(spec=Input, value=""),
-            "#chat-llm-fixed-tokens-kobold": MagicMock(spec=Checkbox, value=False),
-            "#chat-strip-thinking-tags-checkbox": MagicMock(spec=Checkbox, value=True),
-            "#chat-character-search-results-list": AsyncMock(spec=ListView),
-            "#chat-character-name-edit": MagicMock(spec=Input),
-            "#chat-character-description-edit": MagicMock(spec=TextArea),
-            "#chat-character-personality-edit": MagicMock(spec=TextArea),
-            "#chat-character-scenario-edit": MagicMock(spec=TextArea),
-            "#chat-character-system-prompt-edit": MagicMock(spec=TextArea),
-            "#chat-character-first-message-edit": MagicMock(spec=TextArea),
-            "#chat-right-sidebar": MagicMock(),  # Mock container
-        }
-
-        def query_one_side_effect(selector, _type=None):
-            # Special case for querying within the sidebar
-            if isinstance(selector, MagicMock) and hasattr(selector, 'query_one'):
-                return selector.query_one(selector, _type)
-
-            if selector in widgets:
-                return widgets[selector]
-
-            # Allow querying for sub-widgets inside a container like the right sidebar
-            if widgets["#chat-right-sidebar"].query_one.call_args:
-                inner_selector = widgets["#chat-right-sidebar"].query_one.call_args[0][0]
-                if inner_selector in widgets:
-                    return widgets[inner_selector]
-
-            raise QueryError(f"Widget not found by mock: {selector}")
-
-        q_one_mock.side_effect = query_one_side_effect
-
-        # Make the sidebar mock also use the main query_one logic
-        widgets["#chat-right-sidebar"].query_one.side_effect = lambda sel, _type: widgets[sel]
-
-    setup_mock_widgets(app.query_one)
-
-    return app
+# The mock_app fixture is imported from Tests.fixtures.event_handler_mocks
 
 
 # Mock external dependencies used in chat_events.py
@@ -156,6 +49,7 @@ async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mo
     await handle_chat_send_button_pressed(mock_app, MagicMock())
 
     # Assert UI updates
+    # TextArea.clear is sync, not async
     mock_app.query_one("#chat-input").clear.assert_called_once()
     # Check that mount was called (it's async, so just check call count)
     assert mock_app.query_one("#chat-log").mount.call_count == 2  # User message and AI placeholder
@@ -244,33 +138,57 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
     mock_display_conv.assert_called_once_with(mock_app, "new_conv_id")
 
 
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.TextArea')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
-async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_app):
+async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_textarea_class, mock_app):
     """Test the edit->save workflow for a chat message."""
     mock_button = MagicMock(spec=Button, classes=["edit-button"])
-    mock_action_widget = AsyncMock(spec=ChatMessage)
+    
+    # Create a proper mock action widget using MagicMock, not AsyncMock
+    mock_action_widget = MagicMock(spec=ChatMessage)
     mock_action_widget.message_text = "Original text"
     mock_action_widget.message_id_internal = "msg_123"
     mock_action_widget.message_version_internal = 0
     mock_action_widget._editing = False  # Start in non-editing mode
-    mock_static_text = mock_action_widget.query_one.return_value
+    mock_action_widget.mount = AsyncMock()  # mount is async
+    mock_action_widget.remove = AsyncMock()  # remove is async
+    
+    # Create mock for the static text widget
+    mock_static_text = MagicMock(spec=Static)
+    mock_static_text.update = MagicMock()  # update is sync
+    mock_action_widget.query_one = MagicMock(return_value=mock_static_text)
 
     # --- 1. First press: Start editing ---
+    # Mock the TextArea creation
+    mock_editor = MagicMock(spec=TextArea)
+    mock_editor.styles = MagicMock()
+    mock_editor.focus = MagicMock()  # focus is sync
+    mock_textarea_class.return_value = mock_editor
+    
     await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
 
-    mock_action_widget.mount.assert_called_once()  # Mounts the TextArea
+    mock_action_widget.mount.assert_called_once_with(mock_editor, before=mock_static_text)
     assert mock_action_widget._editing is True
-    assert "💾" in mock_button.label  # Check for save emoji
+    # Check for save emoji or fallback text
+    assert EMOJI_SAVE_EDIT in mock_button.label or FALLBACK_SAVE_EDIT in mock_button.label
 
     # --- 2. Second press: Save edit ---
     mock_action_widget._editing = True  # Simulate being in editing mode
-    mock_edit_area = MagicMock(spec=TextArea, text="New edited text")
-    mock_action_widget.query_one.return_value = mock_edit_area
+    # Change what query_one returns for the edit area
+    mock_editor.text = "New edited text"
+    mock_editor.remove = AsyncMock()  # remove is async
+    
+    def query_one_side_effect(selector, widget_type=None):
+        if selector == "#edit-area":
+            return mock_editor
+        return mock_static_text
+    
+    mock_action_widget.query_one.side_effect = query_one_side_effect
     mock_ccl.edit_message_content.return_value = True
 
     await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
 
-    mock_edit_area.remove.assert_called_once()
+    mock_editor.remove.assert_called_once()
     assert mock_action_widget.message_text == "New edited text"
     assert isinstance(mock_static_text.update.call_args[0][0], Text)
     assert mock_static_text.update.call_args[0][0].plain == "New edited text"
@@ -279,7 +197,8 @@ async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_ap
         mock_app.chachanotes_db, "msg_123", "New edited text", 0
     )
     assert mock_action_widget.message_version_internal == 1  # Version incremented
-    assert "✏️" in mock_button.label  # Check for edit emoji
+    # Check for edit emoji or fallback text
+    assert EMOJI_EDIT in mock_button.label or FALLBACK_EDIT in mock_button.label
 
 
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.load_character_and_image')
@@ -298,8 +217,11 @@ async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app
     mock_list_item.character_id = 'char_abc'
     mock_app.query_one("#chat-character-search-results-list").highlighted_child = mock_list_item
 
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage',
-               new_callable=AsyncMock) as mock_chat_msg_class:
+    # Use MagicMock instead of AsyncMock for ChatMessage since it's not async
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage') as mock_chat_msg_class:
+        # Create a proper mock instance
+        mock_greeting_msg = MagicMock(spec=ChatMessage)
+        mock_chat_msg_class.return_value = mock_greeting_msg
         await handle_chat_load_character_button_pressed(mock_app, MagicMock())
 
         # Assert character data is loaded
@@ -311,4 +233,4 @@ async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app
             role='Greeter',
             generation_complete=True
         )
-        mock_app.query_one("#chat-log").mount.assert_called_once_with(mock_chat_msg_class.return_value)
+        mock_app.query_one("#chat-log").mount.assert_called_once_with(mock_greeting_msg)
