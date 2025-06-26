@@ -303,7 +303,7 @@ class ChatMessageEnhanced(Widget):
 📷 Image ({self.image_mime_type or 'unknown'})
 Size: {image_size:.1f} KB
 Preview: {preview}...
-[\\[Click "Save Image" to view in external viewer\\]]
+\\[Click "Save Image" to view in external viewer\\]
 [/dim]"""
         
         self._image_widget.mount(Static(fallback_text))

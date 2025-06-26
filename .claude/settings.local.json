@@ -20,7 +20,9 @@
       "Bash(python -m pytest Tests/UI/test_chat_window_tooltips.py::TestChatWindowTooltips::test_chat_input_buttons_have_tooltips -xvs)",
       "Bash(python -m pytest Tests/UI/test_chat_window_tooltips_fixed.py::TestChatWindowTooltips::test_chat_input_buttons_have_tooltips -xvs)",
       "Bash(python -m pytest Tests/Widgets/test_chat_message_enhanced_async.py -v)",
-      "Bash(python -m pytest Tests/Widgets/test_chat_message_enhanced_new.py -v --tb=short)"
+      "Bash(python -m pytest Tests/Widgets/test_chat_message_enhanced_new.py -v --tb=short)",
+      "Bash(python -m pytest test_chat_message_enhanced_new.py -v --tb=short)",
+      "Bash(python -m pytest test_chat_message_enhanced.py -k \"Initialization or Properties\" -v --tb=short)"
     ],
     "deny": []
   }
