@@ -57,10 +57,35 @@ import shutil
 import sqlite3
 import struct
 import sys
+import tempfile
 #
 # Third-Party Imports
 from loguru import logger
 #
+########################################################################################################################
+#
+# Helper functions for SQL safety
+
+def escape_sql_like_pattern(pattern: str) -> str:
+    """Escape special characters in SQL LIKE patterns to prevent injection.
+    
+    Args:
+        pattern: The pattern string to escape
+        
+    Returns:
+        str: The escaped pattern safe for use in LIKE queries
+    """
+    if not pattern:
+        return pattern
+    
+    # Escape special LIKE characters: % and _
+    # Also escape the escape character itself (backslash)
+    escaped = pattern.replace('\\', '\\\\')
+    escaped = escaped.replace('%', '\\%')
+    escaped = escaped.replace('_', '\\_')
+    
+    return escaped
+
 ########################################################################################################################
 #
 # Chrome Cookies
@@ -130,8 +155,9 @@ def get_chrome_cookies(domain_name):
         salt = b'saltysalt'
         key = PBKDF2(password.encode('utf-8'), salt, dkLen=16, count=iterations)
 
-    # Copy the Cookies file to avoid locking the database
-    temp_cookie_path = os.path.join(os.getcwd(), 'chrome_cookies_temp')
+    # Copy the Cookies file to a secure temporary location to avoid locking the database
+    temp_fd, temp_cookie_path = tempfile.mkstemp(prefix='chrome_cookies_', suffix='.db')
+    os.close(temp_fd)  # Close the file descriptor as we'll use the path
     shutil.copyfile(cookie_path, temp_cookie_path)
 
     conn = sqlite3.connect(temp_cookie_path)
@@ -139,8 +165,10 @@ def get_chrome_cookies(domain_name):
 
     cookies = {}
     try:
-        cursor.execute("SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE ?",
-                       ('%' + domain_name + '%',))
+        # Escape the domain name to prevent SQL injection in LIKE pattern
+        safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
+        cursor.execute("SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE ? ESCAPE '\\'",
+                       (safe_pattern,))
         for host_key, name, path, encrypted_value, expires_utc in cursor.fetchall():
             if sys.platform == 'win32':
                 try:
@@ -215,14 +243,18 @@ def get_firefox_cookies(domain_name):
         if not os.path.exists(cookie_db):
             continue
 
-        temp_cookie_db = os.path.join(os.getcwd(), 'firefox_cookies_temp')
+        # Copy to a secure temporary location
+        temp_fd, temp_cookie_db = tempfile.mkstemp(prefix='firefox_cookies_', suffix='.db')
+        os.close(temp_fd)  # Close the file descriptor as we'll use the path
         shutil.copyfile(cookie_db, temp_cookie_db)
 
         conn = sqlite3.connect(temp_cookie_db)
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT host, name, value, expiry FROM moz_cookies WHERE host LIKE ?",
-                           ('%' + domain_name + '%',))
+            # Escape the domain name to prevent SQL injection in LIKE pattern
+            safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
+            cursor.execute("SELECT host, name, value, expiry FROM moz_cookies WHERE host LIKE ? ESCAPE '\\'",
+                           (safe_pattern,))
             for host, name, value, expiry in cursor.fetchall():
                 expires = datetime.datetime.fromtimestamp(expiry)
                 if expires < datetime.datetime.now():
@@ -307,8 +339,9 @@ def get_edge_cookies(domain_name):
             salt = b'saltysalt'
             key = PBKDF2(password.encode('utf-8'), salt, dkLen=16, count=iterations)
 
-        # Copy the Cookies file to avoid database lock
-        temp_cookie_path = os.path.join(os.getcwd(), 'edge_cookies_temp')
+        # Copy the Cookies file to a secure temporary location to avoid database lock
+        temp_fd, temp_cookie_path = tempfile.mkstemp(prefix='edge_cookies_', suffix='.db')
+        os.close(temp_fd)  # Close the file descriptor as we'll use the path
         shutil.copyfile(cookie_path, temp_cookie_path)
 
         conn = sqlite3.connect(temp_cookie_path)
@@ -316,10 +349,12 @@ def get_edge_cookies(domain_name):
 
         cookies = {}
         try:
+            # Escape the domain name to prevent SQL injection in LIKE pattern
+            safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
             cursor.execute("""
                 SELECT host_key, name, path, encrypted_value, expires_utc
-                FROM cookies WHERE host_key LIKE ?
-            """, ('%' + domain_name + '%',))
+                FROM cookies WHERE host_key LIKE ? ESCAPE '\\'
+            """, (safe_pattern,))
 
             for host_key, name, path, encrypted_value, expires_utc in cursor.fetchall():
                 if sys.platform == 'win32':

@@ -5,6 +5,7 @@
 #
 # Standard Library
 import pytest
+import pytest_asyncio
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, AsyncMock
 import asyncio
@@ -46,7 +47,7 @@ def sample_image_data():
     return buffer.getvalue()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def app_with_message(sample_image_data):
     """Create a ChatMessageEnhanced instance within a proper app context."""
     app = TestApp()

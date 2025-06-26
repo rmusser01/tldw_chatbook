@@ -2,6 +2,7 @@
 #
 # Imports
 import pytest
+import pytest_asyncio
 from pytest_mock import MockerFixture  # For mocking
 from pathlib import Path
 #
@@ -31,7 +32,7 @@ async def get_ingest_window(pilot: Pilot) -> IngestWindow:
     return ingest_window_query.first()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def app_pilot() -> Pilot:
     app = TldwCli()
     async with app.run_test() as pilot:

@@ -11,7 +11,14 @@
       "Bash(pytest:*)",
       "Bash(pytest:*)",
       "Bash(mkdir:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(python -m pytest Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties::test_chunk_by_sentences_preserves_boundaries -xvs)",
+      "Bash(python -m pytest Tests/RAG/test_rag_properties.py -xvs)",
+      "Bash(python -m pytest Tests/RAG/test_rag_properties.py::TestCacheStateMachine -xvs -k \"CacheStateMachine\")",
+      "Bash(python -m pytest Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties -xvs)",
+      "Bash(python -m pytest Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties::test_chunk_document_metadata_consistency -xvs)",
+      "Bash(python -m pytest Tests/UI/test_chat_window_tooltips.py::TestChatWindowTooltips::test_chat_input_buttons_have_tooltips -xvs)",
+      "Bash(python -m pytest Tests/UI/test_chat_window_tooltips_fixed.py::TestChatWindowTooltips::test_chat_input_buttons_have_tooltips -xvs)"
     ],
     "deny": []
   }

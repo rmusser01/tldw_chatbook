@@ -1,14 +1,23 @@
-gf# CLAUDE.md
+# CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-**tldw_chatbook** is a Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. It provides conversation management, character/persona chat, notes, media ingestion, and RAG capabilities.
+**tldw_chatbook** is a sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. It provides a complete ecosystem for AI-powered interactions including conversation management, character/persona chat, notes with bidirectional file sync, media ingestion, and advanced RAG (Retrieval-Augmented Generation) capabilities.
+
+**Core Design Principles**:
+- **Modular Architecture**: Clear separation of concerns with dedicated modules for each feature
+- **Event-Driven Design**: Decoupled components communicate via Textual's event system
+- **Security-First**: Comprehensive input validation, path sanitization, and SQL injection prevention
+- **Extensibility**: Plugin-like system for adding new LLM providers and features
+- **Performance**: Async operations, worker threads, and memory management for large datasets
 
 **License**: AGPLv3+  
 **Python Version**: ≥3.11  
-**Main Framework**: Textual (≥3.3.0)
+**Main Framework**: Textual (≥3.3.0)  
+**Database**: SQLite with FTS5 for full-text search  
+**Key Dependencies**: httpx, loguru, rich, pydantic, toml
 
 ## Common Development Commands
 
@@ -73,84 +82,575 @@ pip install -e ".[dev,embeddings_rag,websearch]"
 
 ## Architecture Overview
 
-The codebase follows a modular architecture with clear separation of concerns:
+The codebase follows a sophisticated modular architecture with clear separation of concerns:
 
-### Core Structure
-- **`tldw_chatbook/app.py`** - Main entry point, initializes Textual app and global state
-- **`App_Functions/UI/`** - Main window components for different tabs (Chat, Character, Notes, etc.)
-- **`Widgets/`** - Reusable UI components (buttons, inputs, lists, etc.)
-- **`Event_Handlers/`** - Decoupled event handling logic for UI interactions
-- **`App_Functions/Chat/`** - Core chat functionality and conversation management
-- **`App_Functions/Character_Chat/`** - Character/persona management and chat
-- **`App_Functions/Notes/`** - Notes creation and management
-- **`App_Functions/LLM_Calls/`** - LLM provider integrations (commercial and local)
-- **`App_Functions/DB/`** - Database layer with SQLite implementations
+### Core Application Structure
 
-### Key Databases
-1. **ChaChaNotes_DB** - Characters, Chats, and Notes storage
-2. **Media_DB_v2** - Ingested media files and metadata
-3. **Prompts_DB** - User prompt templates
+#### Entry Points and Configuration
+- **`tldw_chatbook/app.py`** - Main entry point, initializes Textual app, manages global state, and coordinates all subsystems
+  - Implements `TldwCli` class extending Textual's `App`
+  - Manages application lifecycle, theme switching, and global event routing
+  - Coordinates worker threads for async operations
+- **`tldw_chatbook/config.py`** - Centralized configuration management
+  - TOML-based configuration with environment variable fallbacks
+  - Provider-specific settings and API key management
+  - Path resolution and database initialization
+- **`tldw_chatbook/Constants.py`** - Application-wide constants and identifiers
 
-### Configuration System
-- **Config File**: `~/.config/tldw_cli/config.toml` (created on first run)
-- **User Data**: `~/.share/tldw_cli/` directory
-- **Environment Variables**: Supported for API keys (e.g., `OPENAI_API_KEY`)
+#### UI Layer Architecture
+- **`UI/`** - Main window components implementing tab functionality
+  - `Chat_Window.py` / `Chat_Window_Enhanced.py` - Advanced chat interface with streaming support
+  - `Conv_Char_Window.py` - Conversation and character management
+  - `Notes_Window.py` - Notes interface with template support
+  - `SearchRAGWindow.py` - RAG search interface with real-time results
+  - `Ingest_Window.py` - Media ingestion with progress tracking
+  - `LLM_Management_Window.py` - Local LLM server management
+  - `Tools_Settings_Window.py` - Application settings and tools
+- **`Widgets/`** - Reusable UI components following Textual patterns
+  - `chat_message.py` / `chat_message_enhanced.py` - Rich message display with markdown
+  - `chat_right_sidebar.py` - Context-aware sidebar for chat
+  - `notes_sidebar_left/right.py` - Dual sidebar navigation for notes
+  - `enhanced_file_picker.py` - Advanced file selection with filtering
+  - Custom list items, dialogs, and specialized widgets
+
+#### Business Logic Layer
+- **`Event_Handlers/`** - Decoupled event handling with clear responsibilities
+  - `Chat_Events/` - Chat-specific events (streaming, images, RAG integration)
+  - `LLM_Management_Events/` - Provider-specific LLM management
+  - Tab-specific handlers for each major feature
+  - Worker event coordination for async operations
+- **`Chat/`** - Core chat engine
+  - `Chat_Functions.py` - Conversation management and persistence
+  - `prompt_template_manager.py` - Dynamic prompt template system
+  - Image handling and multimodal support
+- **`Character_Chat/`** - Character system implementation
+  - `Character_Chat_Lib.py` - Character CRUD operations
+  - `ccv3_parser.py` - Character card format parsing
+- **`Notes/`** - Advanced notes system
+  - `Notes_Library.py` - Notes management with template support
+  - `sync_engine.py` / `sync_service.py` - Bidirectional file synchronization
+
+#### Data Layer
+- **`DB/`** - Database abstraction with specialized implementations
+  - `base_db.py` - Common database patterns and utilities
+  - `ChaChaNotes_DB.py` - Primary database for characters, chats, and notes
+    - Optimistic locking with version fields
+    - Soft deletion pattern
+    - FTS5 full-text search
+    - Automated sync logging via triggers
+  - `Client_Media_DB_v2.py` - Media storage with metadata
+    - Chunking support for large documents
+    - Vector embedding storage (when RAG enabled)
+  - `RAG_Indexing_DB.py` - Specialized RAG index management
+  - `search_history_db.py` - Search query persistence
+  - `sql_validation.py` - SQL injection prevention
+
+#### Service Layer
+- **`LLM_Calls/`** - Unified LLM interface
+  - `LLM_API_Calls.py` - Commercial provider integrations
+  - `LLM_API_Calls_Local.py` - Local model integrations
+  - Streaming response handling
+  - Provider-specific parameter mapping
+- **`RAG_Search/`** - Advanced RAG implementation
+  - `Services/` - Modular service architecture
+    - `embeddings_service.py` - Vector embedding generation
+    - `chunking_service.py` - Intelligent text chunking
+    - `indexing_service.py` - Index management
+    - `memory_management_service.py` - RAM optimization
+    - `service_factory.py` - Service composition
+  - Hybrid search (keyword + semantic)
+  - Configurable retrieval strategies
+
+#### Supporting Systems
+- **`Utils/`** - Cross-cutting utilities
+  - `path_validation.py` - Security-focused path handling
+  - `input_validation.py` - Input sanitization
+  - `optional_deps.py` - Dynamic feature detection
+  - `secure_temp_files.py` - Safe temporary file handling
+- **`Metrics/`** - Application telemetry
+  - OpenTelemetry integration
+  - Performance monitoring
+  - Usage analytics (local only)
+- **`Web_Scraping/`** - Content extraction
+  - Article extraction with readability
+  - Confluence integration
+  - Cookie-based authentication support
+
+### Database Design
+
+#### Schema Versioning
+- All databases track schema version
+- Migration support via SQL scripts
+- Backward compatibility maintained
+
+#### Key Relationships
+1. **Conversations ↔ Messages**: One-to-many with ordering
+2. **Conversations ↔ Characters**: Optional many-to-one
+3. **Keywords ↔ Content**: Many-to-many via link tables
+4. **Media ↔ Chunks**: One-to-many for large documents
+5. **Notes ↔ Files**: One-to-one for sync tracking
 
 ### Event-Driven Architecture
-The app uses Textual's event system extensively:
-- UI components emit custom events
-- Event handlers in `Event_Handlers/` process these events
-- Clear separation between UI and business logic
+
+#### Event Flow
+1. **UI Interaction** → Widget emits custom event
+2. **Event Router** → App routes to appropriate handler
+3. **Event Handler** → Processes business logic
+4. **State Update** → Updates reactive attributes
+5. **UI Update** → Textual automatically refreshes
+
+#### Key Event Types
+- `ChatEvent` - Message sending, editing, deletion
+- `StreamingChunk` / `StreamDone` - LLM streaming
+- `RAGSearchEvent` - Search queries and results
+- `SyncEvent` - File synchronization status
+- `WorkerEvent` - Background task coordination
+
+### Security Architecture
+
+#### Input Validation
+- All user inputs sanitized via `input_validation.py`
+- Path traversal prevention in `path_validation.py`
+- SQL identifier validation in `sql_validation.py`
+
+#### Data Protection
+- API keys stored in config or environment only
+- Sensitive data never logged
+- Secure temporary file handling
+
+### Performance Optimizations
+
+#### Async Operations
+- LLM calls use httpx for async requests
+- Background workers for heavy operations
+- Streaming responses for real-time feedback
+
+#### Memory Management
+- Configurable cache sizes for embeddings
+- Chunk-based processing for large files
+- Lazy loading for database results
+
+#### Database Performance
+- FTS5 indexes for fast search
+- Prepared statements prevent SQL injection
+- Connection pooling via thread-local storage
 
 ## LLM Provider Integration
 
-The app supports multiple LLM providers through a unified interface:
+The app implements a sophisticated plugin-like system for LLM providers:
 
-### Commercial Providers
-Located in `App_Functions/LLM_Calls/Commercial_APIs/`:
-- OpenAI, Anthropic, Cohere, Google, Groq, Mistral, DeepSeek, HuggingFace, OpenRouter
+### Provider Architecture
 
-### Local Providers  
-Located in `App_Functions/LLM_Calls/Local_APIs/`:
-- Llama.cpp, Ollama, Kobold.cpp, vLLM, Aphrodite, Custom OpenAI-compatible
+#### Unified Interface
+All providers implement these core methods:
+```python
+def chat_with_provider(
+    messages: List[Dict],
+    api_key: str,
+    model: str,
+    temperature: float = 0.7,
+    max_tokens: int = 4096,
+    stream: bool = False,
+    system_prompt: Optional[str] = None,
+    **kwargs
+) -> Union[str, Generator[str, None, None]]
+```
 
-### Adding New Providers
-1. Create a new module in the appropriate directory
-2. Implement the standard interface methods (chat completion, streaming)
-3. Add provider configuration to the config system
-4. Update UI components to include the new provider
+#### Commercial Providers
+Located in `LLM_Calls/LLM_API_Calls.py`:
+- **OpenAI**: GPT-3.5/4 models with function calling support
+- **Anthropic**: Claude models with system prompt handling
+- **Google**: Gemini models with safety settings
+- **Cohere**: Command models with web search
+- **DeepSeek**: Specialized coding models
+- **Mistral**: Open-weight commercial models
+- **Groq**: High-speed inference
+- **HuggingFace**: Hub model access
+- **OpenRouter**: Multi-provider gateway
+
+#### Local Providers
+Located in `LLM_Calls/LLM_API_Calls_Local.py`:
+- **Llama.cpp**: Direct C++ inference
+- **Ollama**: Containerized local models
+- **Kobold.cpp**: Gaming-focused inference
+- **vLLM**: High-throughput serving
+- **Aphrodite**: vLLM fork with extensions
+- **MLX**: Apple Silicon optimized
+- **Custom OpenAI**: Any OpenAI-compatible endpoint
+
+### Provider Implementation Guide
+
+#### Adding a New Provider
+1. **Create Provider Function**:
+   ```python
+   def chat_with_newprovider(
+       messages, api_key, model, temperature=0.7,
+       max_tokens=4096, stream=False, **kwargs
+   ):
+       # Implementation
+   ```
+
+2. **Update Configuration**:
+   - Add to `API_MODELS_BY_PROVIDER` in `config.py`
+   - Add default models and endpoints
+   - Update config.toml template
+
+3. **Implement Streaming**:
+   ```python
+   if stream:
+       for chunk in response:
+           yield extract_content(chunk)
+   ```
+
+4. **Add UI Integration**:
+   - Update provider dropdowns
+   - Add to model selection logic
+   - Handle provider-specific parameters
+
+5. **Error Handling**:
+   - Implement retry logic
+   - Provide meaningful error messages
+   - Handle rate limits gracefully
+
+### Provider-Specific Features
+
+#### Streaming Implementation
+- Chunk-based yielding for real-time display
+- Proper cleanup on cancellation
+- Token counting for progress indication
+
+#### Parameter Mapping
+- Temperature scaling for different providers
+- Token limit adjustments
+- System prompt handling variations
+
+#### Authentication
+- API key validation
+- OAuth support where applicable
+- Custom header injection
+
+### Local Model Management
+
+#### Server Lifecycle
+1. **Startup**: Managed by LLM_Management_Window
+2. **Health Checks**: Periodic connectivity tests
+3. **Shutdown**: Graceful termination on app exit
+
+#### Model Loading
+- Automatic model discovery (Ollama)
+- Manual path specification (llama.cpp)
+- HuggingFace model downloading (MLX)
 
 ## Key Development Patterns
 
 ### Database Operations
-- All database operations use context managers for connection handling
-- FTS5 search capabilities for text search
-- Soft deletion pattern with `deleted_at` timestamps
-- Conversation versioning and forking support
+
+#### Connection Management
+```python
+# Thread-safe connection pattern
+with db.transaction() as cursor:
+    cursor.execute(query, params)
+    db.commit()
+```
+
+#### Common Patterns
+- **Optimistic Locking**: Version field prevents conflicts
+- **Soft Deletion**: `deleted_at` timestamp preserves history
+- **FTS5 Search**: Automatic indexing via triggers
+- **Sync Logging**: Change tracking for distributed sync
+- **Prepared Statements**: Parameterized queries only
 
 ### UI Component Structure
-- Components inherit from Textual's Widget classes
-- Use reactive attributes for state management
-- Emit custom events for decoupled communication
-- Follow Textual's CSS styling conventions
 
-### Error Handling
-- Comprehensive logging using loguru
-- User-friendly error messages in the UI
-- Fallback mechanisms for API failures
+#### Widget Lifecycle
+1. **Initialization**: Set up reactive attributes
+2. **Compose**: Define child widgets
+3. **Mount**: Post-initialization setup
+4. **Event Handling**: Process user interactions
+5. **State Updates**: Modify reactive attributes
+6. **Rendering**: Automatic via Textual
 
-### Testing Approach
-- Unit tests for core functionality
-- Use temporary in-memory SQLite databases for testing (not mocks)
-- Test fixtures in `Tests/fixtures/`
+#### Reactive Patterns
+```python
+class MyWidget(Widget):
+    data = reactive([], recompose=True)  # Triggers recompose
+    status = reactive("idle")  # Triggers refresh only
+    
+    def watch_data(self, old, new):
+        """Called when data changes"""
+        self.refresh()
+```
 
-## Important Notes
+#### Event Communication
+```python
+# Emit custom event
+self.post_message(MyCustomEvent(data=result))
 
-- **Development Branch**: Submit PRs to `dev` branch, not `main`
-- **Code Style**: No enforced linter/formatter currently - follow existing patterns
-- **Dependencies**: Keep core dependencies minimal, use optional dependencies for features
-- **Configuration**: Always check config.toml for feature flags and settings
-- **API Keys**: Never hardcode API keys - use environment variables or config file
-- **Database Migrations**: No formal migration system - handle schema changes carefully
-- **Entry Point**: Main CLI command is `tldw-cli` (defined in pyproject.toml)
-- **Package Structure**: Main package is `tldw_chatbook` with modular subpackages
+# Handle in parent
+@on(MyCustomEvent)
+def handle_custom(self, event: MyCustomEvent):
+    process_data(event.data)
+```
+
+### Error Handling Strategy
+
+#### Logging Hierarchy
+1. **DEBUG**: Detailed flow tracking (loguru)
+2. **INFO**: Key operations and state changes
+3. **WARNING**: Recoverable issues
+4. **ERROR**: Failures requiring attention
+5. **CRITICAL**: System-breaking issues
+
+#### User Feedback
+```python
+try:
+    result = risky_operation()
+except SpecificError as e:
+    # Log for debugging
+    logger.error(f"Operation failed: {e}")
+    # User-friendly message
+    self.notify("Unable to complete action. Please try again.", severity="error")
+    # Fallback behavior
+    return default_value
+```
+
+### Testing Philosophy
+
+#### Test Categories
+1. **Unit Tests**: Isolated component testing
+2. **Integration Tests**: Multi-component workflows
+3. **Property Tests**: Invariant verification
+4. **Security Tests**: Input validation and sanitization
+
+#### Database Testing
+```python
+@pytest.fixture
+def test_db():
+    """In-memory database for testing"""
+    db = ChaChaNotes_DB(":memory:", "test_client")
+    yield db
+    db.close()
+```
+
+#### Key Testing Principles
+- **No Mocking Databases**: Use real SQLite in-memory
+- **Property-Based Testing**: Find edge cases automatically
+- **Async Test Support**: For streaming operations
+- **Fixture Reuse**: Consistent test data
+
+### Security Patterns
+
+#### Input Validation
+```python
+# Text input validation
+validated = validate_text_input(
+    user_input,
+    min_length=1,
+    max_length=1000,
+    allow_special_chars=True
+)
+
+# Path validation
+safe_path = validate_path(user_path, base_dir)
+
+# SQL identifier validation
+safe_column = validate_sql_identifier(column_name)
+```
+
+#### Secure Defaults
+- Paths restricted to user data directory
+- SQL identifiers validated against whitelist
+- File uploads size-limited
+- API keys never in code or logs
+
+### Performance Patterns
+
+#### Async Operations
+```python
+# Background worker pattern
+def start_heavy_operation(self):
+    self.run_worker(
+        self._do_heavy_work,
+        name="heavy_op",
+        exclusive=True
+    )
+
+@work(thread=True)
+def _do_heavy_work(self):
+    # Long-running task
+    result = process_large_dataset()
+    self.call_from_thread(self.update_ui, result)
+```
+
+#### Memory Management
+- Chunk large files during processing
+- Clear caches when switching contexts
+- Use generators for streaming data
+- Limit result set sizes with pagination
+
+### Code Organization
+
+#### Module Structure
+```
+feature/
+├── __init__.py          # Public API
+├── models.py            # Data models
+├── services.py          # Business logic
+├── handlers.py          # Event handlers
+└── widgets.py           # UI components
+```
+
+#### Import Organization
+1. Standard library
+2. Third-party libraries
+3. Local imports (absolute)
+4. Type imports (if TYPE_CHECKING)
+
+#### Naming Conventions
+- **Classes**: PascalCase (`ChatWindow`)
+- **Functions**: snake_case (`send_message`)
+- **Constants**: UPPER_SNAKE (`MAX_TOKENS`)
+- **Private**: Leading underscore (`_internal_method`)
+
+## Important Development Guidelines
+
+### Code Standards
+- **Branch Strategy**: 
+  - Submit PRs to `dev` branch, not `main`
+  - Feature branches from `dev`
+  - Hotfixes from `main`
+- **Code Style**: 
+  - No enforced linter currently - follow existing patterns
+  - Prefer clarity over cleverness
+  - Document complex logic inline
+- **Type Hints**: 
+  - Use for public APIs and complex functions
+  - Import from `typing` for compatibility
+
+### Dependency Management
+- **Core Philosophy**: Minimal core, optional features
+- **Adding Dependencies**:
+  1. Evaluate if it should be optional
+  2. Add to appropriate group in `pyproject.toml`
+  3. Update `optional_deps.py` detection
+  4. Document in README feature table
+- **Version Pinning**: 
+  - Exact versions for security-critical packages
+  - Flexible ranges for stable packages
+
+### Configuration Best Practices
+- **Settings Hierarchy**:
+  1. Environment variables (highest priority)
+  2. Config file (`~/.config/tldw_cli/config.toml`)
+  3. Defaults in code (lowest priority)
+- **Feature Flags**: Check `get_cli_setting()` for runtime config
+- **API Keys**: 
+  - NEVER in code or version control
+  - Use `PROVIDER_API_KEY` env vars
+  - Or `[API]` section in config.toml
+
+### Database Guidelines
+- **Schema Changes**:
+  - Increment schema version
+  - Add migration in `DB/migrations/`
+  - Maintain backward compatibility
+  - Test with existing databases
+- **Query Patterns**:
+  - Always use parameterized queries
+  - Validate identifiers with `sql_validation.py`
+  - Use transactions for multi-step operations
+
+### Testing Requirements
+- **Before Submitting PRs**:
+  - Run full test suite: `pytest`
+  - Test with optional deps: `pytest -m "not optional"`
+  - Check specific feature: `pytest Tests/Feature/`
+- **Writing Tests**:
+  - Match existing test patterns
+  - Use fixtures for database setup
+  - Include edge cases and error paths
+  - Add security tests for new inputs
+
+### Performance Considerations
+- **UI Responsiveness**:
+  - Use workers for operations >100ms
+  - Stream LLM responses
+  - Debounce rapid user inputs
+- **Memory Usage**:
+  - Process large files in chunks
+  - Clear caches when switching contexts
+  - Monitor embedding cache size
+- **Database Performance**:
+  - Use FTS5 for text search
+  - Limit result sets with pagination
+  - Create indexes for frequent queries
+
+### Security Checklist
+- **User Input**: Always validate and sanitize
+- **File Paths**: Use `path_validation.py`
+- **SQL Queries**: Use `sql_validation.py`
+- **API Keys**: Never log or display
+- **Temporary Files**: Use `secure_temp_files.py`
+- **External Content**: Sanitize HTML/Markdown
+
+### Debugging Tools
+- **Logging**:
+  - Use loguru for structured logging
+  - Check `~/.share/tldw_cli/logs/`
+  - Adjust level in config.toml
+- **Textual Dev Console**: 
+  - Run with `textual console`
+  - Then `tldw-cli` in another terminal
+- **Performance Profiling**:
+  - Use `--profile` flag (if implemented)
+  - Check metrics in Stats tab
+
+### Common Patterns
+
+#### Adding a New Tab
+1. Create window class in `UI/`
+2. Add tab constant to `Constants.py`
+3. Register in `app.py` compose method
+4. Create event handlers in `Event_Handlers/`
+5. Update tab bar navigation
+
+#### Adding a New Database Table
+1. Design schema with version tracking
+2. Add creation in database `__init__`
+3. Implement CRUD methods
+4. Add FTS5 triggers if searchable
+5. Update sync_log triggers
+6. Write comprehensive tests
+
+#### Implementing a New Feature
+1. Check if it needs optional dependencies
+2. Create feature module structure
+3. Implement business logic separately from UI
+4. Create reusable widgets
+5. Use event-driven communication
+6. Add configuration options
+7. Write tests early
+8. Document in appropriate README
+
+### Release Process
+1. **Version Bump**: Update in `pyproject.toml`
+2. **Changelog**: Update with features/fixes
+3. **Test Suite**: Full pass on multiple platforms
+4. **Documentation**: Update README and guides
+5. **Tag Release**: Follow semantic versioning
+
+### Troubleshooting
+
+#### Common Issues
+- **Import Errors**: Check optional dependencies
+- **Database Locked**: Check for hanging processes
+- **UI Not Updating**: Verify reactive attributes
+- **Streaming Broken**: Check worker state
+- **Config Not Loading**: Validate TOML syntax
+
+#### Getting Help
+- Check existing issues on GitHub
+- Review test files for usage examples
+- Enable debug logging
+- Use Textual dev console
+- Ask in discussions with minimal reproduction

@@ -21,6 +21,9 @@ pytestmark = pytest.mark.asyncio
 def mock_app():
     """Provides a mock app instance ('self' for the handlers)."""
     app = AsyncMock()
+    
+    # Add thread lock for chat state management
+    app._chat_state_lock = MagicMock()
 
     # Mock logger and config
     app.loguru_logger = MagicMock()
@@ -28,12 +31,17 @@ def mock_app():
 
     # Mock UI state and components
     app.current_tab = TAB_CHAT
-    mock_static_text = AsyncMock(spec=Static)
-    mock_chat_message_widget = AsyncMock()
+    mock_static_text = MagicMock(spec=Static)  # Not async
+    mock_chat_message_widget = MagicMock()  # Not AsyncMock - this is a regular widget
     mock_chat_message_widget.is_mounted = True
     mock_chat_message_widget.message_text = ""
-    mock_chat_message_widget.query_one.return_value = mock_static_text
-    app.current_ai_message_widget = mock_chat_message_widget
+    mock_chat_message_widget.query_one = MagicMock(return_value=mock_static_text)
+    mock_chat_message_widget.mark_generation_complete = MagicMock()
+    
+    # Thread-safe methods are synchronous
+    app.get_current_ai_message_widget = MagicMock(return_value=mock_chat_message_widget)
+    app.set_current_ai_message_widget = MagicMock()
+    app.current_ai_message_widget = mock_chat_message_widget  # For backward compatibility
 
     mock_chat_log = AsyncMock(spec=VerticalScroll)
     mock_chat_input = AsyncMock(spec=TextArea)
@@ -47,6 +55,7 @@ def mock_app():
 
     # Mock app methods
     app.notify = AsyncMock()
+    app.call_from_thread = MagicMock(side_effect=lambda func, *args: func(*args))
 
     return app
 

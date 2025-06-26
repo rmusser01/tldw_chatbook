@@ -1,4 +1,5 @@
 import pytest
+import pytest_asyncio
 import toml
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -53,7 +54,7 @@ def mock_app_instance():
     return app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def settings_window(mock_app_instance, temp_config_path: Path) -> ToolsSettingsWindow:
     """
     Fixture to create ToolsSettingsWindow, mount it within a test app,
@@ -80,6 +81,7 @@ async def settings_window(mock_app_instance, temp_config_path: Path) -> ToolsSet
         yield window  # The window is now composed and ready
 
 
+@pytest.mark.asyncio
 async def test_tab_renaming(settings_window: ToolsSettingsWindow):
     """Test if the 'API Keys' tab has been correctly renamed."""
     nav_button = settings_window.query_one("#ts-nav-config-file-settings", Button)
@@ -91,6 +93,7 @@ async def test_tab_renaming(settings_window: ToolsSettingsWindow):
     assert isinstance(content_area.query_one("#config-text-area", TextArea), TextArea)
 
 
+@pytest.mark.asyncio
 async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path):
     """Test if configuration values are loaded and displayed correctly."""
     expected_config_content = {"general": {"model": "gpt-4"}, "api_keys": {"openai": "sk-..."}}
@@ -120,6 +123,7 @@ async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_con
     assert loaded_text_area_config == expected_config_content
 
 
+@pytest.mark.asyncio
 async def test_save_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance):
     """Test if configuration values can be saved correctly."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
@@ -139,6 +143,7 @@ async def test_save_config_values(settings_window: ToolsSettingsWindow, temp_con
     assert saved_content_on_disk == new_config_dict
 
 
+@pytest.mark.asyncio
 async def test_reload_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance):
     """Test if configuration values can be reloaded correctly."""
     # 1. Setup initial config on disk
@@ -168,6 +173,7 @@ async def test_reload_config_values(settings_window: ToolsSettingsWindow, temp_c
     assert toml.loads(config_text_area.text) == original_disk_config
 
 
+@pytest.mark.asyncio
 async def test_save_invalid_toml_format(settings_window: ToolsSettingsWindow, mock_app_instance):
     """Test saving invalid TOML data reports an error."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
@@ -183,6 +189,7 @@ async def test_save_invalid_toml_format(settings_window: ToolsSettingsWindow, mo
 
 # Test for save I/O error (conceptual - requires mocking 'open')
 @pytest.mark.skip(reason="Complex to mock built-in open reliably for this specific write operation only")
+@pytest.mark.asyncio
 async def test_save_io_error(settings_window: ToolsSettingsWindow, mock_app_instance, monkeypatch):
     """Test saving config when an IOError occurs."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)

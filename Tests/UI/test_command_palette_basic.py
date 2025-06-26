@@ -115,7 +115,8 @@ def test_provider_error_handling_basic():
         provider = ThemeProvider(mock_screen)
         mock_app = MagicMock()
         mock_app.notify = MagicMock()
-        mock_app.theme = MagicMock(side_effect=Exception("Test error"))
+        # Mock the theme setter to raise an exception
+        type(mock_app).theme = property(lambda self: None, lambda self, value: (_ for _ in ()).throw(Exception("Test error")))
         provider.app = mock_app
         
         # Should not raise exception

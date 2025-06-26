@@ -1,0 +1,232 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.0, pluggy-1.6.0 -- /Users/appledev/Working/tldw_chatbook_dev/.venv/bin/python3.12
+cachedir: .pytest_cache
+hypothesis profile 'default'
+metadata: {'Python': '3.12.11', 'Platform': 'macOS-15.5-arm64-arm-64bit', 'Packages': {'pytest': '8.4.0', 'pluggy': '1.6.0'}, 'Plugins': {'hypothesis': '6.135.10', 'anyio': '4.9.0', 'json-report': '1.5.0', 'metadata': '3.1.1', 'mock': '3.14.1', 'asyncio': '1.0.0'}}
+rootdir: /Users/appledev/Working/tldw_chatbook_dev
+configfile: pyproject.toml
+plugins: hypothesis-6.135.10, anyio-4.9.0, json-report-1.5.0, metadata-3.1.1, mock-3.14.1, asyncio-1.0.0
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 37 items
+
+Tests/integration/test_chat_image_integration.py::TestChatImageIntegration::test_attach_image_button_flow PASSED [  2%]
+Tests/integration/test_chat_image_integration.py::TestChatImageIntegration::test_image_path_submission_success PASSED [  5%]
+Tests/integration/test_chat_image_integration.py::TestChatImageIntegration::test_image_path_submission_invalid_file PASSED [  8%]
+Tests/integration/test_chat_image_integration.py::TestChatImageIntegration::test_clear_image_attachment PASSED [ 10%]
+Tests/integration/test_chat_image_integration.py::TestChatImageIntegration::test_send_with_image_clears_attachment PASSED [ 13%]
+Tests/integration/test_chat_image_integration.py::TestChatImageIntegration::test_get_pending_image PASSED [ 16%]
+Tests/integration/test_chat_image_integration.py::TestChatMessageImageIntegration::test_chat_message_with_database_image PASSED [ 18%]
+Tests/integration/test_chat_image_integration.py::TestChatMessageImageIntegration::test_image_render_mode_switching FAILED [ 21%]
+Tests/integration/test_chat_image_integration.py::TestImageProcessingIntegration::test_full_image_processing_pipeline PASSED [ 24%]
+Tests/integration/test_chat_image_integration.py::TestImageProcessingIntegration::test_large_image_handling_pipeline PASSED [ 27%]
+Tests/integration/test_chat_image_integration.py::TestTerminalCompatibilityIntegration::test_terminal_detection_integration PASSED [ 29%]
+Tests/integration/test_chat_image_integration.py::TestTerminalCompatibilityIntegration::test_image_support_availability PASSED [ 32%]
+Tests/integration/test_chat_image_integration.py::TestImageAttachmentErrorHandling::test_corrupted_image_handling PASSED [ 35%]
+Tests/integration/test_chat_image_integration.py::TestImageAttachmentErrorHandling::test_permission_denied_handling PASSED [ 37%]
+Tests/integration/test_core_functionality_without_optional_deps.py::test_core_imports_without_optional_deps FAILED [ 40%]
+Tests/integration/test_core_functionality_without_optional_deps.py::test_notes_functionality_without_optional_deps FAILED [ 43%]
+Tests/integration/test_core_functionality_without_optional_deps.py::test_character_chat_without_optional_deps FAILED [ 45%]
+Tests/integration/test_core_functionality_without_optional_deps.py::test_chunking_without_optional_deps PASSED [ 48%]
+Tests/integration/test_core_functionality_without_optional_deps.py::test_ui_components_with_disabled_features PASSED [ 51%]
+Tests/integration/test_core_functionality_without_optional_deps.py::test_search_window_chroma_manager_error_handling PASSED [ 54%]
+Tests/integration/test_core_functionality_without_optional_deps.py::test_optional_deps_module_functionality PASSED [ 56%]
+Tests/integration/test_core_functionality_without_optional_deps.py::test_core_app_import_without_torch FAILED [ 59%]
+Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_valid_path FAILED [ 62%]
+Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_invalid_path FAILED [ 64%]
+Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_path_traversal FAILED [ 67%]
+Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_from_file_object FAILED [ 70%]
+Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_valid_paths FAILED [ 72%]
+Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_invalid_paths FAILED [ 75%]
+Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_path_traversal FAILED [ 78%]
+Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_without_validation PASSED [ 81%]
+Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_cleanup_file_objects PASSED [ 83%]
+Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_cleanup_with_none PASSED [ 86%]
+Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_prepare_files_with_missing_files ERROR [ 89%]
+Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_prepare_files_error_recovery ERROR [ 91%]
+Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_hidden_file_validation ERROR [ 94%]
+Tests/integration/test_file_operations_with_validation.py::TestEndToEndFileUpload::test_complete_upload_workflow FAILED [ 97%]
+Tests/integration/test_file_operations_with_validation.py::TestEndToEndFileUpload::test_mixed_valid_invalid_paths FAILED [100%]
+
+==================================== ERRORS ====================================
+_ ERROR at setup of TestFileOperationErrorHandling.test_prepare_files_with_missing_files _
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py, line 235
+      def test_prepare_files_with_missing_files(self, temp_upload_dir):
+E       fixture 'temp_upload_dir' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, class_mocker, doctest_namespace, event_loop_policy, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, json_metadata, metadata, mocker, module_mocker, monkeypatch, package_mocker, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, session_mocker, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+/Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py:235
+_ ERROR at setup of TestFileOperationErrorHandling.test_prepare_files_error_recovery _
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py, line 251
+      def test_prepare_files_error_recovery(self, temp_upload_dir):
+E       fixture 'temp_upload_dir' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, class_mocker, doctest_namespace, event_loop_policy, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, json_metadata, metadata, mocker, module_mocker, monkeypatch, package_mocker, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, session_mocker, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+/Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py:251
+_ ERROR at setup of TestFileOperationErrorHandling.test_hidden_file_validation _
+file /Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py, line 272
+      def test_hidden_file_validation(self, temp_upload_dir):
+E       fixture 'temp_upload_dir' not found
+>       available fixtures: _class_event_loop, _function_event_loop, _module_event_loop, _package_event_loop, _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, class_mocker, doctest_namespace, event_loop_policy, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, include_metadata_in_junit_xml, json_metadata, metadata, mocker, module_mocker, monkeypatch, package_mocker, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, session_mocker, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+/Users/appledev/Working/tldw_chatbook_dev/Tests/integration/test_file_operations_with_validation.py:272
+=================================== FAILURES ===================================
+_______ TestChatMessageImageIntegration.test_image_render_mode_switching _______
+Tests/integration/test_chat_image_integration.py:262: in test_image_render_mode_switching
+    buffer = BytesIO()
+             ^^^^^^^
+E   NameError: name 'BytesIO' is not defined
+___________________ test_core_imports_without_optional_deps ____________________
+Tests/integration/test_core_functionality_without_optional_deps.py:17: in test_core_imports_without_optional_deps
+    from tldw_chatbook.Chat.Chat_Functions import get_chat_completion
+E   ImportError: cannot import name 'get_chat_completion' from 'tldw_chatbook.Chat.Chat_Functions' (/Users/appledev/Working/tldw_chatbook_dev/tldw_chatbook/Chat/Chat_Functions.py)
+________________ test_notes_functionality_without_optional_deps ________________
+Tests/integration/test_core_functionality_without_optional_deps.py:34: in test_notes_functionality_without_optional_deps
+    notes_service = NotesInteropService()
+                    ^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: NotesInteropService.__init__() missing 2 required positional arguments: 'base_db_directory' and 'api_client_id'
+__________________ test_character_chat_without_optional_deps ___________________
+Tests/integration/test_core_functionality_without_optional_deps.py:40: in test_character_chat_without_optional_deps
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+E   ImportError: cannot import name 'parse_character_card_file' from 'tldw_chatbook.Character_Chat.Character_Chat_Lib' (/Users/appledev/Working/tldw_chatbook_dev/tldw_chatbook/Character_Chat/Character_Chat_Lib.py)
+______________________ test_core_app_import_without_torch ______________________
+Tests/integration/test_core_functionality_without_optional_deps.py:160: in test_core_app_import_without_torch
+    from tldw_chatbook.config import get_cli_setting
+tldw_chatbook/config.py:5: in <module>
+    import copy
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/copy.py:51: in <module>
+    import types
+/opt/homebrew/Cellar/python@3.12/3.12.11/Frameworks/Python.framework/Versions/3.12/lib/python3.12/types.py:16: in <module>
+    SimpleNamespace = type(sys.implementation)
+                           ^^^^^^^^^^^^^^^^^^
+E   AttributeError: module 'sys' has no attribute 'implementation'
+____ TestCharacterChatFileOperations.test_load_chat_history_with_valid_path ____
+Tests/integration/test_file_operations_with_validation.py:68: in test_load_chat_history_with_valid_path
+    assert conv_id == "conv_123"
+E   AssertionError: assert None == 'conv_123'
+---------------------------- Captured stderr setup -----------------------------
+2025-06-25 10:02:58.549 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:950 - Initializing CharactersRAGDB for path: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/test.db [Client ID: test_client]
+2025-06-25 10:02:58.549 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:1009 - Opened/Reopened SQLite connection to /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/test.db (Journal: wal) for thread 8705548032
+2025-06-25 10:02:58.549 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__enter__:4045 - Transaction started (outermost) on thread 8705548032.
+2025-06-25 10:02:58.549 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:1361 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 5
+2025-06-25 10:02:58.549 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1280 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/test.db...
+2025-06-25 10:02:58.558 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1284 - [rag_char_chat_schema V4] Full schema script executed.
+2025-06-25 10:02:58.558 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1290 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/test.db.
+2025-06-25 10:02:58.558 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1315 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/test.db...
+2025-06-25 10:02:58.563 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1319 - [rag_char_chat_schema V4→V5] Migration script executed.
+2025-06-25 10:02:58.563 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1327 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/test.db.
+2025-06-25 10:02:58.563 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:1390 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 5.
+2025-06-25 10:02:58.563 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__exit__:4072 - Transaction (outermost) committed successfully on thread 8705548032.
+2025-06-25 10:02:58.563 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:954 - CharactersRAGDB initialization completed successfully for /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/test.db
+----------------------------- Captured stderr call -----------------------------
+2025-06-25 10:02:58.564 | DEBUG    | tldw_chatbook.Character_Chat.Character_Chat_Lib:load_chat_history_from_file_and_save_to_db:1843 - Validated chat history file path: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/chat_history.json
+2025-06-25 10:02:58.564 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:1159 - Executing SQL (script=False): SELECT * FROM character_cards WHERE name = ? AND deleted = 0... Params: ('TestCharacter',)...
+2025-06-25 10:02:58.564 | ERROR    | tldw_chatbook.Character_Chat.Character_Chat_Lib:load_chat_history_from_file_and_save_to_db:1908 - Character 'TestCharacter' from chat log '/private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpk9qjiktw/chat_history.json' not found in the database.
+___ TestCharacterChatFileOperations.test_load_chat_history_with_invalid_path ___
+Tests/integration/test_file_operations_with_validation.py:82: in test_load_chat_history_with_invalid_path
+    with pytest.raises(ValueError, match="outside the allowed directory"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+---------------------------- Captured stderr setup -----------------------------
+2025-06-25 10:02:58.567 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:950 - Initializing CharactersRAGDB for path: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpywaoc6vf/test.db [Client ID: test_client]
+2025-06-25 10:02:58.567 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:1009 - Opened/Reopened SQLite connection to /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpywaoc6vf/test.db (Journal: wal) for thread 8705548032
+2025-06-25 10:02:58.567 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__enter__:4045 - Transaction started (outermost) on thread 8705548032.
+2025-06-25 10:02:58.568 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:1361 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 5
+2025-06-25 10:02:58.568 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1280 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpywaoc6vf/test.db...
+2025-06-25 10:02:58.576 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1284 - [rag_char_chat_schema V4] Full schema script executed.
+2025-06-25 10:02:58.577 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1290 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpywaoc6vf/test.db.
+2025-06-25 10:02:58.577 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1315 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpywaoc6vf/test.db...
+2025-06-25 10:02:58.582 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1319 - [rag_char_chat_schema V4→V5] Migration script executed.
+2025-06-25 10:02:58.582 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1327 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpywaoc6vf/test.db.
+2025-06-25 10:02:58.582 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:1390 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 5.
+2025-06-25 10:02:58.583 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__exit__:4072 - Transaction (outermost) committed successfully on thread 8705548032.
+2025-06-25 10:02:58.583 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:954 - CharactersRAGDB initialization completed successfully for /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpywaoc6vf/test.db
+----------------------------- Captured stderr call -----------------------------
+2025-06-25 10:02:58.583 | WARNING  | tldw_chatbook.Utils.path_validation:validate_path:43 - Path traversal attempt detected: /var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpah0r_5g7.json -> /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpah0r_5g7.json
+2025-06-25 10:02:58.583 | ERROR    | tldw_chatbook.Utils.path_validation:validate_path:54 - Path validation error for '/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpah0r_5g7.json': Path '/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpah0r_5g7.json' is outside the allowed directory
+2025-06-25 10:02:58.583 | ERROR    | tldw_chatbook.Character_Chat.Character_Chat_Lib:load_chat_history_from_file_and_save_to_db:1845 - Invalid chat history file path '/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpah0r_5g7.json': Path '/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpah0r_5g7.json' is outside the allowed directory
+__ TestCharacterChatFileOperations.test_load_chat_history_with_path_traversal __
+Tests/integration/test_file_operations_with_validation.py:96: in test_load_chat_history_with_path_traversal
+    with pytest.raises(ValueError, match="outside the allowed directory"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+---------------------------- Captured stderr setup -----------------------------
+2025-06-25 10:02:58.586 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:950 - Initializing CharactersRAGDB for path: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpbhsreuik/test.db [Client ID: test_client]
+2025-06-25 10:02:58.586 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:1009 - Opened/Reopened SQLite connection to /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpbhsreuik/test.db (Journal: wal) for thread 8705548032
+2025-06-25 10:02:58.586 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__enter__:4045 - Transaction started (outermost) on thread 8705548032.
+2025-06-25 10:02:58.587 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:1361 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 5
+2025-06-25 10:02:58.587 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1280 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpbhsreuik/test.db...
+2025-06-25 10:02:58.595 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1284 - [rag_char_chat_schema V4] Full schema script executed.
+2025-06-25 10:02:58.595 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1290 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpbhsreuik/test.db.
+2025-06-25 10:02:58.595 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1315 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpbhsreuik/test.db...
+2025-06-25 10:02:58.601 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1319 - [rag_char_chat_schema V4→V5] Migration script executed.
+2025-06-25 10:02:58.601 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1327 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpbhsreuik/test.db.
+2025-06-25 10:02:58.601 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:1390 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 5.
+2025-06-25 10:02:58.601 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__exit__:4072 - Transaction (outermost) committed successfully on thread 8705548032.
+2025-06-25 10:02:58.601 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:954 - CharactersRAGDB initialization completed successfully for /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpbhsreuik/test.db
+----------------------------- Captured stderr call -----------------------------
+2025-06-25 10:02:58.601 | WARNING  | tldw_chatbook.Utils.path_validation:validate_path:43 - Path traversal attempt detected: ../../../etc/passwd -> /private/var/folders/qc/etc/passwd
+2025-06-25 10:02:58.601 | ERROR    | tldw_chatbook.Utils.path_validation:validate_path:54 - Path validation error for '../../../etc/passwd': Path '../../../etc/passwd' is outside the allowed directory
+2025-06-25 10:02:58.601 | ERROR    | tldw_chatbook.Character_Chat.Character_Chat_Lib:load_chat_history_from_file_and_save_to_db:1845 - Invalid chat history file path '../../../etc/passwd': Path '../../../etc/passwd' is outside the allowed directory
+___ TestCharacterChatFileOperations.test_load_chat_history_from_file_object ____
+Tests/integration/test_file_operations_with_validation.py:119: in test_load_chat_history_from_file_object
+    assert conv_id == "conv_123"
+E   AssertionError: assert None == 'conv_123'
+---------------------------- Captured stderr setup -----------------------------
+2025-06-25 10:02:58.604 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:950 - Initializing CharactersRAGDB for path: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpip7zyeid/test.db [Client ID: test_client]
+2025-06-25 10:02:58.605 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:1009 - Opened/Reopened SQLite connection to /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpip7zyeid/test.db (Journal: wal) for thread 8705548032
+2025-06-25 10:02:58.605 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__enter__:4045 - Transaction started (outermost) on thread 8705548032.
+2025-06-25 10:02:58.605 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:1361 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 5
+2025-06-25 10:02:58.605 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1280 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpip7zyeid/test.db...
+2025-06-25 10:02:58.613 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1284 - [rag_char_chat_schema V4] Full schema script executed.
+2025-06-25 10:02:58.613 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:1290 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpip7zyeid/test.db.
+2025-06-25 10:02:58.613 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1315 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpip7zyeid/test.db...
+2025-06-25 10:02:58.618 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1319 - [rag_char_chat_schema V4→V5] Migration script executed.
+2025-06-25 10:02:58.618 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:1327 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpip7zyeid/test.db.
+2025-06-25 10:02:58.618 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:1390 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 5.
+2025-06-25 10:02:58.618 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__exit__:4072 - Transaction (outermost) committed successfully on thread 8705548032.
+2025-06-25 10:02:58.618 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:954 - CharactersRAGDB initialization completed successfully for /private/var/folders/qc/m53gw5bs70q_xf10fz52dlmw0000gn/T/tmpip7zyeid/test.db
+----------------------------- Captured stderr call -----------------------------
+2025-06-25 10:02:58.619 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:1159 - Executing SQL (script=False): SELECT * FROM character_cards WHERE name = ? AND deleted = 0... Params: ('TestCharacter',)...
+2025-06-25 10:02:58.619 | ERROR    | tldw_chatbook.Character_Chat.Character_Chat_Lib:load_chat_history_from_file_and_save_to_db:1908 - Character 'TestCharacter' from chat log 'chat_log_stream' not found in the database.
+________ TestAPIUtilsFileOperations.test_prepare_files_with_valid_paths ________
+Tests/integration/test_file_operations_with_validation.py:143: in test_prepare_files_with_valid_paths
+    httpx_files = prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+_______ TestAPIUtilsFileOperations.test_prepare_files_with_invalid_paths _______
+Tests/integration/test_file_operations_with_validation.py:170: in test_prepare_files_with_invalid_paths
+    prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+______ TestAPIUtilsFileOperations.test_prepare_files_with_path_traversal _______
+Tests/integration/test_file_operations_with_validation.py:182: in test_prepare_files_with_path_traversal
+    prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+_____________ TestEndToEndFileUpload.test_complete_upload_workflow _____________
+Tests/integration/test_file_operations_with_validation.py:324: in test_complete_upload_workflow
+    httpx_files = prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+____________ TestEndToEndFileUpload.test_mixed_valid_invalid_paths _____________
+Tests/integration/test_file_operations_with_validation.py:364: in test_mixed_valid_invalid_paths
+    prepare_files_for_httpx(
+E   TypeError: prepare_files_for_httpx() got an unexpected keyword argument 'base_directory'
+=========================== short test summary info ============================
+FAILED Tests/integration/test_chat_image_integration.py::TestChatMessageImageIntegration::test_image_render_mode_switching
+FAILED Tests/integration/test_core_functionality_without_optional_deps.py::test_core_imports_without_optional_deps
+FAILED Tests/integration/test_core_functionality_without_optional_deps.py::test_notes_functionality_without_optional_deps
+FAILED Tests/integration/test_core_functionality_without_optional_deps.py::test_character_chat_without_optional_deps
+FAILED Tests/integration/test_core_functionality_without_optional_deps.py::test_core_app_import_without_torch
+FAILED Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_valid_path
+FAILED Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_invalid_path
+FAILED Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_with_path_traversal
+FAILED Tests/integration/test_file_operations_with_validation.py::TestCharacterChatFileOperations::test_load_chat_history_from_file_object
+FAILED Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_valid_paths
+FAILED Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_invalid_paths
+FAILED Tests/integration/test_file_operations_with_validation.py::TestAPIUtilsFileOperations::test_prepare_files_with_path_traversal
+FAILED Tests/integration/test_file_operations_with_validation.py::TestEndToEndFileUpload::test_complete_upload_workflow
+FAILED Tests/integration/test_file_operations_with_validation.py::TestEndToEndFileUpload::test_mixed_valid_invalid_paths
+ERROR Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_prepare_files_with_missing_files
+ERROR Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_prepare_files_error_recovery
+ERROR Tests/integration/test_file_operations_with_validation.py::TestFileOperationErrorHandling::test_hidden_file_validation
+=================== 14 failed, 20 passed, 3 errors in 1.23s ====================

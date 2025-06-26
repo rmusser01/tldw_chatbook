@@ -56,8 +56,9 @@ class TestNotesInteropService(unittest.TestCase):
     def test_initialization(self):
         self.assertTrue(self.base_db_dir.exists())
         self.assertEqual(self.service.api_client_id, self.api_client_id)
+        # Check for the actual log messages from the implementation
         self.mock_notes_library_logger.info.assert_any_call(
-            f"NotesInteropService initialized. Base DB directory: {self.base_db_dir}")
+            f"NotesInteropService: Ensured base directory exists: {self.base_db_dir}")
 
     @patch(f'{NOTES_LIBRARY_MODULE_PATH}.Path.mkdir')
     def test_initialization_failure_os_error(self, mock_mkdir):
@@ -257,14 +258,14 @@ class TestNotesInteropService(unittest.TestCase):
         self.mock_db_instance.close_connection.assert_called_once()
         self.assertNotIn(user_id, self.service._db_instances)
         self.mock_notes_library_logger.info.assert_any_call(
-            f"Closed and removed DB connection for user_id '{user_id}'.")
+            f"Closed and removed DB instance for user context '{user_id}'.")
 
     def test_close_user_connection_not_exist(self):
         user_id = "non_existent_user"
         self.service.close_user_connection(user_id)
         self.mock_db_instance.close_connection.assert_not_called()
         self.mock_notes_library_logger.debug.assert_any_call(
-            f"No active DB connection found in cache for user_id '{user_id}' to close.")
+            f"No active DB instance found in cache for user context '{user_id}' to close.")
 
     def test_close_all_user_connections(self):
         user1_id, user2_id = "user1_for_close_all", "user2_for_close_all"

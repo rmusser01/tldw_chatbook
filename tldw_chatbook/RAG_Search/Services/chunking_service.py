@@ -23,7 +23,18 @@ if CHUNKER_AVAILABLE:
         try:
             nltk.data.find('tokenizers/punkt')
         except LookupError:
-            nltk.download('punkt', quiet=True)
+            try:
+                nltk.data.find('tokenizers/punkt_tab')
+            except LookupError:
+                try:
+                    nltk.download('punkt', quiet=True)
+                except Exception as e:
+                    logger.warning(f"Failed to download punkt tokenizer: {e}")
+                    try:
+                        nltk.download('punkt_tab', quiet=True)
+                    except Exception as e2:
+                        logger.warning(f"Failed to download punkt_tab tokenizer: {e2}")
+                        CHUNKER_AVAILABLE = False
     except ImportError:
         CHUNKER_AVAILABLE = False
         logger.warning("Chunking dependencies import failed")

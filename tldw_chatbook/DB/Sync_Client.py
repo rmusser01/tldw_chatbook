@@ -13,7 +13,7 @@ from loguru import logger
 # Third-Party Imports
 #
 # Local Imports
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError, DatabaseError, InputError
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError, DatabaseError, InputError, DateTimeEncoder
 #
 #######################################################################################################################
 #
@@ -157,6 +157,11 @@ class ClientSyncEngine:
             full_url = f"{self.server_api_url}{SYNC_ENDPOINT_SEND}"
             logger.debug(f"Posting {len(local_changes)} changes to {full_url}")
 
+            # Convert payload to JSON string and back to ensure datetime serialization
+            # This converts datetime objects to ISO strings
+            json_str = json.dumps(payload, cls=DateTimeEncoder)
+            payload = json.loads(json_str)
+            
             response = requests.post(full_url, json=payload, headers=headers, timeout=45)
             response.raise_for_status() # Raises HTTPError for 4xx/5xx responses
 

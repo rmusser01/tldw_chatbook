@@ -82,6 +82,15 @@ class ConflictError(DatabaseError):
             details.append(f"ID: {self.identifier}")
         return f"{base} ({', '.join(details)})" if details else base
 
+# --- Custom JSON Encoder for DateTime ---
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            # Convert to ISO format string
+            return obj.isoformat()
+        return super().default(obj)
+
 # --- Database Class ---
 class MediaDatabase:
     """
@@ -872,7 +881,7 @@ class MediaDatabase:
                 del payload['vector_embedding']
             #  Add other fields to exclude if necessary
 
-        payload_json = json.dumps(payload, separators=(',', ':')) if payload else None  # Compact JSON
+        payload_json = json.dumps(payload, separators=(',', ':'), cls=DateTimeEncoder) if payload else None  # Compact JSON with datetime support
 
         try:
             conn.execute("""
@@ -1934,7 +1943,7 @@ class MediaDatabase:
                     (
                         media_id, ch["text"], idx, ch.get("start_char"), ch.get("end_char"), ch.get("chunk_type"),
                         created, created, False,
-                        json.dumps(ch.get("metadata")) if isinstance(ch.get("metadata"), dict) else None,
+                        json.dumps(ch.get("metadata"), cls=DateTimeEncoder) if isinstance(ch.get("metadata"), dict) else None,
                         chunk_uuid, created, 1, client_id, 0, None, None,
                     ),
                 )
@@ -2808,7 +2817,7 @@ class MediaDatabase:
                             'last_modified_orig': chunk_dict.get('last_modified_orig') or current_time,
                             'is_processed': chunk_dict.get('is_processed', False),
                             # Ensure metadata is JSON string
-                            'metadata': json.dumps(chunk_dict.get('metadata')) if chunk_dict.get('metadata') else None,
+                            'metadata': json.dumps(chunk_dict.get('metadata'), cls=DateTimeEncoder) if chunk_dict.get('metadata') else None,
                             'uuid': chunk_uuid,
                             'last_modified': current_time,  # Set sync last_modified
                             'version': new_sync_version, 'client_id': client_id, 'deleted': 0,

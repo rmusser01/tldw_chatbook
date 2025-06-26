@@ -95,7 +95,14 @@ async def widget_pilot():
     # Cleanup
     for app in created_apps:
         if hasattr(app, '_driver') and app._driver:
-            await app._driver.stop()
+            try:
+                # HeadlessDriver doesn't have stop method, but we can close the app
+                if hasattr(app._driver, 'stop'):
+                    await app._driver.stop()
+                elif hasattr(app, 'exit'):
+                    await app.exit()
+            except Exception:
+                pass  # Ignore cleanup errors
 
 
 @pytest_asyncio.fixture
@@ -120,7 +127,14 @@ async def app_pilot():
     # Cleanup
     for app in created_apps:
         if hasattr(app, '_driver') and app._driver:
-            await app._driver.stop()
+            try:
+                # HeadlessDriver doesn't have stop method, but we can close the app
+                if hasattr(app._driver, 'stop'):
+                    await app._driver.stop()
+                elif hasattr(app, 'exit'):
+                    await app.exit()
+            except Exception:
+                pass  # Ignore cleanup errors
 
 
 # Helper functions for common test operations

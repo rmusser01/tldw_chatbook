@@ -27,8 +27,11 @@ def mock_app():
 
     # Mock UI components
     app.query_one = MagicMock()
-    mock_results_list = AsyncMock(spec=ListView)
-    mock_review_display = AsyncMock(spec=TextArea)
+    mock_results_list = MagicMock(spec=ListView)  # ListView is not async
+    mock_results_list.clear = MagicMock()  # clear is sync
+    mock_results_list.append = MagicMock()  # append is sync
+    mock_review_display = MagicMock(spec=TextArea)  # TextArea is not async
+    mock_review_display.clear = MagicMock()  # clear is sync
     mock_copy_title_btn = MagicMock(spec=Button)
     mock_copy_content_btn = MagicMock(spec=Button)
     mock_copy_author_btn = MagicMock(spec=Button)
