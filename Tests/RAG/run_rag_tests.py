@@ -33,12 +33,27 @@ conftest.pytest.mark.requires_rag_deps = pytest.mark.skipif(False, reason="")
 sys.modules['Tests.RAG.conftest'] = conftest
 spec.loader.exec_module(conftest)
 
-# Now run pytest
-result = subprocess.run([
+# Parse command line arguments
+import argparse
+parser = argparse.ArgumentParser(description='Run RAG tests with proper dependencies')
+parser.add_argument('-t', '--timeout', type=int, default=60,
+                    help='Timeout for each test in seconds (default: 60)')
+parser.add_argument('-v', '--verbose', action='store_true',
+                    help='Verbose output')
+args = parser.parse_args()
+
+# Build pytest command
+pytest_cmd = [
     sys.executable, "-m", "pytest", 
-    "Tests/RAG/", 
-    "-v", 
-    "--tb=short"
-], capture_output=False)
+    "Tests/RAG/",
+    "--tb=short",
+    f"--timeout={args.timeout}"
+]
+
+if args.verbose:
+    pytest_cmd.append("-v")
+
+# Now run pytest
+result = subprocess.run(pytest_cmd, capture_output=False)
 
 sys.exit(result.returncode)

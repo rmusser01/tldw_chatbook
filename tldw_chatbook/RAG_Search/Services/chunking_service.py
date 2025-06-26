@@ -6,11 +6,68 @@ from typing import List, Dict, Any, Optional, Tuple
 import re
 from loguru import logger
 import hashlib
+import signal
+import functools
+from contextlib import contextmanager
 #
 # Local Imports
 from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 logger = logger.bind(module="chunking_service")
+
+# Timeout handling for NLTK operations
+class TimeoutError(Exception):
+    """Custom timeout error"""
+    pass
+
+@contextmanager
+def timeout(seconds):
+    """Context manager for timing out operations"""
+    def signal_handler(signum, frame):
+        raise TimeoutError(f"Operation timed out after {seconds} seconds")
+    
+    # Register signal handler
+    old_handler = signal.signal(signal.SIGALRM, signal_handler)
+    signal.alarm(seconds)
+    
+    try:
+        yield
+    finally:
+        # Reset alarm and handler
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+def safe_nltk_tokenize(text: str, timeout_seconds: int = 5):
+    """Safely tokenize text with timeout and validation"""
+    # Input validation
+    if not text or not isinstance(text, str):
+        return []
+    
+    # Limit text length to prevent hanging
+    if len(text) > 10000:
+        logger.warning(f"Text too long for NLTK ({len(text)} chars), truncating to 10000")
+        text = text[:10000]
+    
+    # Remove problematic characters that can cause NLTK to hang
+    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', text)
+    
+    try:
+        # Use timeout context manager (only works on Unix-like systems)
+        import platform
+        if platform.system() != 'Windows':
+            with timeout(timeout_seconds):
+                return nltk.sent_tokenize(text)
+        else:
+            # On Windows, just try with basic error handling
+            return nltk.sent_tokenize(text)
+    except TimeoutError:
+        logger.warning("NLTK tokenization timed out, using simple fallback")
+        # Simple sentence splitting fallback
+        return re.split(r'[.!?]+', text)
+    except Exception as e:
+        logger.warning(f"NLTK tokenization failed: {e}, using simple fallback")
+        # Simple sentence splitting fallback
+        return re.split(r'[.!?]+', text)
 
 # Check dependencies
 CHUNKER_AVAILABLE = DEPENDENCIES_AVAILABLE.get('chunker', False)
@@ -130,7 +187,7 @@ class ChunkingService:
             return self._chunk_by_words(text, target_size, 50)
             
         try:
-            sentences = nltk.sent_tokenize(text)
+            sentences = safe_nltk_tokenize(text)
             chunks = []
             
             i = 0

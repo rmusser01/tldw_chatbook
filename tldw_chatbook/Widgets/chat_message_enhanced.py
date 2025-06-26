@@ -285,7 +285,7 @@ class ChatMessageEnhanced(Widget):
         """Render image using textual-image or fallback."""
         if TEXTUAL_IMAGE_AVAILABLE:
             try:
-                image = TextualImage.from_bytes(self.image_data)
+                image = TextualImage(self.image_data)
                 self._image_widget.mount(image)
             except Exception as e:
                 logging.error(f"Error with textual-image rendering: {e}")
@@ -303,7 +303,7 @@ class ChatMessageEnhanced(Widget):
 📷 Image ({self.image_mime_type or 'unknown'})
 Size: {image_size:.1f} KB
 Preview: {preview}...
-[Click "Save Image" to view in external viewer]
+[\\[Click "Save Image" to view in external viewer\\]]
 [/dim]"""
         
         self._image_widget.mount(Static(fallback_text))

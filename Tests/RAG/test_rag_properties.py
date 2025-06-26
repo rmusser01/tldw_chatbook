@@ -140,6 +140,7 @@ class TestChunkingServiceProperties:
         assert len(original_words - chunk_words) == 0 or len(chunks) > 0
     
     @pytest.mark.skipif(not NLTK_AVAILABLE, reason="NLTK not available")
+    @pytest.mark.timeout(30)  # 30 second timeout for this test
     @given(
         # Use a simpler strategy that generates text with sentences already included
         base_text=st.text(min_size=20, max_size=100, alphabet=st.characters(categories=["Lu", "Ll", "Nd", "Pc"], whitelist_characters=" ")),

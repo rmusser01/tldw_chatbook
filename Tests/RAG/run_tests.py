@@ -22,12 +22,16 @@ TEST_CATEGORIES = {
     ]
 }
 
-def run_tests(category=None, verbose=False):
+def run_tests(category=None, verbose=False, timeout=None):
     """Run RAG tests"""
     cmd = ['pytest']
     
     if verbose:
         cmd.append('-v')
+    
+    # Add timeout if specified
+    if timeout:
+        cmd.extend(['--timeout', str(timeout)])
     
     # Add coverage if available
     try:
@@ -69,6 +73,12 @@ def main():
         action='store_true',
         help='Verbose output'
     )
+    parser.add_argument(
+        '-t', '--timeout',
+        type=int,
+        default=60,
+        help='Timeout for each test in seconds (default: 60)'
+    )
     
     args = parser.parse_args()
     
@@ -77,7 +87,7 @@ def main():
     else:
         category = args.category
     
-    exit_code = run_tests(category, args.verbose)
+    exit_code = run_tests(category, args.verbose, args.timeout)
     sys.exit(exit_code)
 
 if __name__ == '__main__':

@@ -88,6 +88,7 @@ local_mlx = ["mlx-lm"]
 local_transformers = ["transformers"]
 dev = [ # Example for development dependencies
     "pytest",
+    "pytest-timeout",  # For handling hanging tests
     "textual-dev", # For Textual development tools
     "hypothesis",
     "pytest_asyncio",
@@ -121,8 +122,13 @@ exclude = ["Tests*", ".venv*"]
 testpaths = ["Tests"]
 # Exclude server tests that don't belong in the TUI
 addopts = "--ignore=STests"
+# Default timeout for all tests (in seconds)
+timeout = 300
+# Timeout method: thread (default) or signal
+timeout_method = "thread"
 markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",
     "asyncio: marks tests as async",
+    "timeout: marks tests with custom timeout values",
 ]
