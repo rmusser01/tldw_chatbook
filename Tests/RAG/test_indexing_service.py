@@ -57,14 +57,16 @@ class TestIndexingService:
                     'title': 'Media Item 1',
                     'content': 'Content of media item 1',
                     'type': 'article',
-                    'author': 'Author 1'
+                    'author': 'Author 1',
+                    'ingestion_date': '2024-01-01T00:00:00'
                 },
                 {
                     'id': 2,
                     'title': 'Media Item 2',
                     'content': 'Content of media item 2',
                     'type': 'video',
-                    'author': 'Author 2'
+                    'author': 'Author 2',
+                    'ingestion_date': '2024-01-02T00:00:00'
                 }
             ],
             []  # Second page (empty - signals end)
@@ -100,6 +102,10 @@ class TestIndexingService:
     @pytest.mark.asyncio
     async def test_index_media_items(self, indexing_service, mock_media_db, mock_embeddings_service, mock_chunking_service):
         """Test indexing media items"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         result = await indexing_service.index_media_items(mock_media_db)
         
         assert result == 2  # Two items indexed
@@ -115,8 +121,13 @@ class TestIndexingService:
         
         # Check that documents were added to collection
         assert mock_embeddings_service.add_documents_to_collection.called
-        call_args = mock_embeddings_service.add_documents_to_collection.call_args
-        assert call_args[0][0] == "media_chunks"  # Collection name
+        # Check the keyword arguments
+        call_kwargs = mock_embeddings_service.add_documents_to_collection.call_args.kwargs
+        assert call_kwargs['collection_name'] == "media_chunks"
+        assert len(call_kwargs['documents']) == 4  # 2 items x 2 chunks each
+        assert len(call_kwargs['embeddings']) == 4
+        assert len(call_kwargs['metadatas']) == 4
+        assert len(call_kwargs['ids']) == 4
     
     @pytest.mark.asyncio
     async def test_index_media_items_with_progress(self, indexing_service, mock_media_db):
