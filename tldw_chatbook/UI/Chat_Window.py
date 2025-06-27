@@ -110,14 +110,14 @@ class ChatWindow(Container):
                     get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
                     id="toggle-chat-left-sidebar",
                     classes="sidebar-toggle",
-                    tooltip="Toggle left sidebar"
+                    tooltip="Toggle left sidebar (Ctrl+[)"
                 )
                 yield TextArea(id="chat-input", classes="chat-input")
                 yield Button(
                     get_char(EMOJI_SEND, FALLBACK_SEND), 
                     id="send-chat", 
                     classes="send-button",
-                    tooltip="Send message"
+                    tooltip="Send message (Enter)"
                 )
                 yield Button(
                     "💡", 
@@ -137,7 +137,7 @@ class ChatWindow(Container):
                     get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
                     id="toggle-chat-right-sidebar",
                     classes="sidebar-toggle",
-                    tooltip="Toggle right sidebar"
+                    tooltip="Toggle right sidebar (Ctrl+])"
                 )
 
         # Character Details Sidebar (Right)

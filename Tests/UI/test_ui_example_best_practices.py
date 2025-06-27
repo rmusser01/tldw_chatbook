@@ -192,17 +192,20 @@ class TestUIBestPractices:
     @pytest.mark.asyncio
     async def test_responsive_layout(self, isolated_widget_pilot):
         """Test widget behavior at different sizes."""
-        def compose():
-            with Container():
-                yield ChatWindow(MagicMock())
+        # Create a container with ChatWindow as a widget to test
+        container = Container(ChatWindow(MagicMock()))
         
-        async with isolated_widget_pilot(compose) as pilot:
+        async with isolated_widget_pilot(container) as pilot:
             app = pilot.app
             await pilot.pause()
             
             # Verify the container exists
-            container = app.query_one(Container)
-            assert container is not None
+            container_result = app.query_one(Container)
+            assert container_result is not None
+            
+            # Test that the ChatWindow exists within the container
+            chat_window = container_result.query_one(ChatWindow)
+            assert chat_window is not None
     
     @pytest.mark.asyncio
     async def test_focus_management(self, widget_pilot, mock_app_instance):
@@ -241,24 +244,17 @@ class TestComplexScenarios:
             {"role": "assistant", "content": "Test response 1"}
         ]
         
-        def compose():
-            with Container(id="test-container"):
-                for i, msg in enumerate(messages):
-                    # ChatMessage expects different parameters based on the widget implementation
-                    # Using a mock app instance to satisfy the requirements
-                    mock_app = MagicMock()
-                    mock_app.current_conversation_id = "test-conv"
-                    yield ChatMessage(
-                        app_instance=mock_app,
-                        message_dict={
-                            "role": msg["role"],
-                            "content": msg["content"],
-                            "id": f"msg-{i}"
-                        },
-                        message_id=f"msg-{i}"
-                    )
+        # Create container with chat messages
+        container = Container(id="test-container")
+        for i, msg in enumerate(messages):
+            # ChatMessage expects message and role as positional arguments
+            container.compose_add_child(ChatMessage(
+                message=msg["content"],
+                role=msg["role"],
+                id=f"chat-message-{i}"
+            ))
         
-        async with isolated_widget_pilot(compose) as pilot:
+        async with isolated_widget_pilot(container) as pilot:
             app = pilot.app
             await pilot.pause()
             
@@ -271,7 +267,8 @@ class TestComplexScenarios:
             for i, msg_widget in enumerate(rendered_messages):
                 # ChatMessage widget may store content differently
                 assert msg_widget is not None
-                assert hasattr(msg_widget, 'message_dict') or hasattr(msg_widget, 'content')
+                # ChatMessage has message and role attributes based on its __init__ parameters
+                assert hasattr(msg_widget, 'message') or hasattr(msg_widget, '_message')
     
     @pytest.mark.asyncio
     async def test_dynamic_content_update(self, widget_pilot, mock_app_instance):
@@ -285,15 +282,10 @@ class TestComplexScenarios:
             chat_log = app.query_one("#chat-log")
             
             # Add content dynamically
-            mock_app = chat_window.app_instance
             test_message = ChatMessage(
-                app_instance=mock_app,
-                message_dict={
-                    "role": "user",
-                    "content": "Dynamic test message",
-                    "id": "dynamic-1"
-                },
-                message_id="dynamic-1"
+                message="Test dynamic message",
+                role="user",
+                id="dynamic-1"
             )
             
             await chat_log.mount(test_message)

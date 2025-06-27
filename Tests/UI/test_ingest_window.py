@@ -103,7 +103,13 @@ class TestIngestWindowTLDWAPI:
         nav_button_id = f"ingest-nav-tldw-api-{media_type}"
         target_view_id = f"ingest-view-tldw-api-{media_type}"
 
-        await app_pilot.click(f"#{nav_button_id}")
+        # Click the navigation button - use offset to click on visible portion
+        try:
+            await app_pilot.click(f"#{nav_button_id}")
+        except Exception:
+            # If OutOfBounds, try clicking with offset
+            nav_button = ingest_window.query_one(f"#{nav_button_id}", Button)
+            await app_pilot.click(nav_button, offset=(5, 5))
         await app_pilot.pause()  # Allow watchers to update display properties
 
         # Verify target view is visible
@@ -172,7 +178,14 @@ class TestIngestWindowTLDWAPI:
 
         # Navigate to video tab by clicking its nav button
         nav_button_id = f"ingest-nav-tldw-api-{media_type}"
-        await app_pilot.click(f"#{nav_button_id}")
+        
+        # Click the navigation button - use offset to click on visible portion
+        try:
+            await app_pilot.click(f"#{nav_button_id}")
+        except Exception:
+            # If OutOfBounds, try clicking with offset
+            nav_button = ingest_window.query_one(f"#{nav_button_id}", Button)
+            await app_pilot.click(nav_button, offset=(5, 5))
         await app_pilot.pause()  # Allow UI to update
 
         target_view_id = f"ingest-view-tldw-api-{media_type}"

@@ -301,7 +301,8 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 "Load Selected Chat",
                 id=f"{id_prefix}-conversation-load-selected-button",
                 variant="default",
-                classes="sidebar-button"
+                classes="sidebar-button",
+                tooltip="Load the selected conversation"
             )
 
         # -------------------------------------------------------------------

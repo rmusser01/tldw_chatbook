@@ -140,8 +140,10 @@ class CacheService:
         result = self.embedding_cache.get(cache_key)
         
         if result:
+            self.stats['hits'] += 1
             self.stats['embedding_hits'] += 1
         else:
+            self.stats['misses'] += 1
             self.stats['embedding_misses'] += 1
             
         return result
@@ -181,8 +183,10 @@ class CacheService:
         result = self.search_cache.get(cache_key)
         
         if result:
+            self.stats['hits'] += 1
             self.stats['search_hits'] += 1
         else:
+            self.stats['misses'] += 1
             self.stats['search_misses'] += 1
             
         return result

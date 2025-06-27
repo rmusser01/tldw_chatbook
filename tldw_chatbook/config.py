@@ -1723,12 +1723,7 @@ def get_cli_setting(section: str, key: str, default: Any = None) -> Any:
     if isinstance(section_data, dict):
         return section_data.get(key, default)
     # If section is not a dict or not found, return default
-    if default is not None:
-        return default
-    # If no default and key/section not found, standard dict behavior would raise KeyError
-    # or return None if that's preferred for missing keys without defaults.
-    # For simplicity, returning None if not found and no default.
-    return None
+    return default
 
 
 # --- CLI Providers and Models Getter ---

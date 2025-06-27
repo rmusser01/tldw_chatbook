@@ -70,3 +70,70 @@ pytest Tests/RAG/test_rag_properties.py::TestChunkingServiceProperties -xvs
 ```
 
 All tests should now complete within reasonable time limits without hanging.
+
+---
+
+## Service Factory Test Fixes
+
+### Additional Issues Fixed
+
+#### 1. Async Test Configuration
+**Problem**: Tests using async functions were failing with "async def functions are not natively supported"
+**Solution**: Added `--asyncio-mode=auto` to pytest.ini configuration
+
+#### 2. Missing Import in service_factory.py
+**Problem**: `service_factory.py` was missing import for `DEPENDENCIES_AVAILABLE`
+**Solution**: Added `from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE`
+
+#### 3. Missing Methods in EmbeddingsService
+**Problem**: Tests expected three methods that weren't implemented
+**Solution**: Implemented the following methods in `embeddings_service.py`:
+- `clear_collection()` - Clears a collection by deleting and recreating it
+- `update_documents()` - Updates existing documents in a collection
+- `delete_documents()` - Deletes specific documents from a collection
+
+#### 4. Missing Factory Methods
+**Problem**: Tests expected several factory methods that weren't implemented
+**Solution**: Added the following methods to `service_factory.py`:
+- `create_chunking_service()`
+- `create_cache_service()`
+- `create_memory_management_service()`
+- `create_rag_service()`
+
+#### 5. Circular Reference Setup
+**Problem**: `test_memory_manager_circular_reference` expected the factory to set up circular reference
+**Solution**: Modified `create_memory_management_service()` to call `embeddings_service.set_memory_manager(memory_manager)`
+
+#### 6. Performance Configuration
+**Problem**: Test expected performance settings to be applied to embeddings service
+**Solution**: Added performance configuration logic in `create_embeddings_service()` to apply settings from RAG config
+
+#### 7. Error Handling
+**Problem**: Test expected graceful error handling when service creation fails
+**Solution**: Added try-except block in `create_embeddings_service()` to catch exceptions and return None
+
+#### 8. Custom Configuration Support
+**Problem**: Test expected ability to pass custom configurations
+**Solution**: Updated `create_complete_rag_services()` signature to accept custom `rag_config` and handle `embeddings_dir` alias
+
+### Additional Files Modified for Service Factory Tests
+
+1. `/Users/appledev/Working/tldw_chatbook_dev/pytest.ini`
+   - Added asyncio mode configuration
+
+2. `/Users/appledev/Working/tldw_chatbook_dev/tldw_chatbook/RAG_Search/Services/service_factory.py`
+   - Added missing import
+   - Implemented 4 missing factory methods
+   - Added circular reference setup
+   - Added performance configuration
+   - Added error handling
+   - Updated method signatures for custom config support
+
+3. `/Users/appledev/Working/tldw_chatbook_dev/tldw_chatbook/RAG_Search/Services/embeddings_service.py`
+   - Implemented 3 missing methods
+
+4. Multiple test files in `/Users/appledev/Working/tldw_chatbook_dev/Tests/RAG/`
+   - Added @pytest.mark.asyncio decorators to async test functions
+
+### Service Factory Test Results
+All 15 tests in `test_service_factory.py` are now passing. The fixes addressed both implementation gaps and test configuration issues, ensuring the RAG service factory works correctly with proper error handling, performance configuration, and circular reference management.

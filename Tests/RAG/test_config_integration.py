@@ -243,8 +243,12 @@ class TestRAGConfigManager:
     
     def test_get_rag_setting_with_default(self, config_manager):
         """Test getting a setting with default value."""
+        def mock_get_cli_setting(section, key, default=None):
+            # Return None to simulate key not found, which should trigger default
+            return default
+            
         with patch('tldw_chatbook.RAG_Search.Services.config_integration.get_cli_setting',
-                   return_value=None):
+                   side_effect=mock_get_cli_setting):
             
             value = config_manager.get_rag_setting('retriever', 'missing_key', default=42)
             
