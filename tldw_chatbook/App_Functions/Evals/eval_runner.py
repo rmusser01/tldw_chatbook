@@ -52,7 +52,7 @@ class EvalProgress:
         return (self.current / self.total * 100) if self.total > 0 else 0
 
 @dataclass
-class EvalResult:
+class EvalRunResult:
     """Result of an evaluation run."""
     task_name: str
     metrics: Dict[str, Any]
@@ -79,7 +79,7 @@ class EvalSample:
             self.metadata = {}
 
 @dataclass
-class EvalResult:
+class EvalSampleResult:
     """Result of evaluating a single sample."""
     sample_id: str
     input_text: str
@@ -485,7 +485,7 @@ class BaseEvalRunner(ABC):
         )
         
     @abstractmethod
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run evaluation on a single sample."""
         pass
     
@@ -538,7 +538,7 @@ class BaseEvalRunner(ABC):
 class QuestionAnswerRunner(BaseEvalRunner):
     """Runner for question-answer tasks."""
     
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run Q&A evaluation on a single sample."""
         start_time = time.time()
         
@@ -577,7 +577,7 @@ class QuestionAnswerRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -599,7 +599,7 @@ class QuestionAnswerRunner(BaseEvalRunner):
             logger.error(f"Error processing sample {sample.id} after retries: {e}")
             logger.error(f"Error classification: {error_info}")
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -660,7 +660,7 @@ class QuestionAnswerRunner(BaseEvalRunner):
 class ClassificationRunner(BaseEvalRunner):
     """Runner for classification/multiple-choice tasks."""
     
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run classification evaluation on a single sample."""
         start_time = time.time()
         
@@ -694,7 +694,7 @@ class ClassificationRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -717,7 +717,7 @@ class ClassificationRunner(BaseEvalRunner):
             logger.error(f"Error processing classification sample {sample.id} after retries: {e}")
             logger.error(f"Error classification: {error_info}")
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -801,7 +801,7 @@ class ClassificationRunner(BaseEvalRunner):
 class LogProbRunner(BaseEvalRunner):
     """Runner for log probability evaluation tasks."""
     
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run log probability evaluation on a single sample."""
         start_time = time.time()
         
@@ -848,7 +848,7 @@ class LogProbRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -867,7 +867,7 @@ class LogProbRunner(BaseEvalRunner):
             logger.error(f"Error processing logprob sample {sample.id} after retries: {e}")
             logger.error(f"Error classification: {error_info}")
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -906,7 +906,7 @@ class LogProbRunner(BaseEvalRunner):
 class GenerationRunner(BaseEvalRunner):
     """Runner for text generation tasks."""
     
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run text generation evaluation on a single sample."""
         start_time = time.time()
         
@@ -939,7 +939,7 @@ class GenerationRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -961,7 +961,7 @@ class GenerationRunner(BaseEvalRunner):
             logger.error(f"Error processing generation sample {sample.id} after retries: {e}")
             logger.error(f"Error classification: {error_info}")
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -1042,7 +1042,7 @@ class EvalRunner:
             raise ValueError(f"Unsupported task type: {task_config.task_type}")
     
     async def run_evaluation(self, max_samples: int = None, 
-                           progress_callback: callable = None) -> List[EvalResult]:
+                           progress_callback: callable = None) -> List[EvalSampleResult]:
         """Run evaluation on the task dataset."""
         logger.info(f"Starting evaluation: {self.task_config.name}")
         
@@ -1081,7 +1081,7 @@ class EvalRunner:
                 error_count += 1
                 
                 # Create error result
-                error_result = EvalResult(
+                error_result = EvalSampleResult(
                     sample_id=sample.id,
                     input_text=sample.input_text,
                     expected_output=sample.expected_output,
@@ -1103,7 +1103,7 @@ class EvalRunner:
         
         return results
     
-    def calculate_aggregate_metrics(self, results: List[EvalResult]) -> Dict[str, float]:
+    def calculate_aggregate_metrics(self, results: List[EvalSampleResult]) -> Dict[str, float]:
         """Calculate aggregate metrics across all results."""
         if not results:
             return {}

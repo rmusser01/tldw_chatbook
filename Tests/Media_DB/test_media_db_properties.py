@@ -136,7 +136,7 @@ class TestMediaItemProperties:
         assert retrieved['version'] == 1
         assert not retrieved['deleted']
 
-        linked_keywords = {kw.lower().strip() for kw in fetch_keywords_for_media(media_id, db_instance)}
+        linked_keywords = {kw.lower().strip() for kw in fetch_keywords_for_media(db_instance, media_id)}
         expected_keywords = {kw.lower().strip() for kw in media_data['keywords']}
         assert linked_keywords == expected_keywords
 

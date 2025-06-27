@@ -126,8 +126,8 @@ class ChunkingService:
         if not text or not text.strip():
             return []
             
-        chunk_size = chunk_size or self.default_chunk_size
-        overlap = overlap or self.default_overlap
+        chunk_size = chunk_size if chunk_size is not None else self.default_chunk_size
+        overlap = overlap if overlap is not None else self.default_overlap
         
         if method == "words":
             return self._chunk_by_words(text, chunk_size, overlap)
@@ -171,7 +171,8 @@ class ChunkingService:
             chunks.append(chunk)
             
             # Move forward with overlap
-            i += chunk_size - overlap
+            # Ensure we always move forward by at least 1 word
+            i += max(1, chunk_size - overlap)
             
         return chunks
     
@@ -239,7 +240,8 @@ class ChunkingService:
     def _chunk_by_paragraphs(
         self,
         text: str,
-        target_size: int
+        target_size: int,
+        overlap: int = 0
     ) -> List[Dict[str, Any]]:
         """Chunk text by paragraphs"""
         # Split by double newlines or common paragraph patterns
@@ -247,32 +249,39 @@ class ChunkingService:
         chunks = []
         
         current_chunk = []
-        current_word_count = 0
+        current_char_count = 0
         
         for para in paragraphs:
             para = para.strip()
             if not para:
                 continue
                 
-            para_words = len(para.split())
+            para_chars = len(para)
             
             # If adding this paragraph would exceed target, create chunk
-            if current_word_count + para_words > target_size and current_chunk:
+            if current_char_count + para_chars > target_size and current_chunk:
                 chunk_text = "\n\n".join(current_chunk)
                 chunk = {
                     "text": chunk_text,
                     "chunk_id": hashlib.md5(chunk_text.encode()).hexdigest()[:8],
-                    "word_count": current_word_count,
+                    "word_count": len(chunk_text.split()),
+                    "char_count": len(chunk_text),
                     "paragraph_count": len(current_chunk),
                     "chunk_index": len(chunks)
                 }
                 chunks.append(chunk)
                 
-                current_chunk = [para]
-                current_word_count = para_words
+                # Start new chunk with overlap if specified
+                if overlap > 0 and current_chunk:
+                    # Include last paragraph for overlap
+                    current_chunk = [current_chunk[-1], para]
+                    current_char_count = len(current_chunk[0]) + para_chars
+                else:
+                    current_chunk = [para]
+                    current_char_count = para_chars
             else:
                 current_chunk.append(para)
-                current_word_count += para_words
+                current_char_count += para_chars + (4 if current_chunk else 0)  # Account for \n\n separator
         
         # Add final chunk
         if current_chunk:
@@ -280,7 +289,8 @@ class ChunkingService:
             chunk = {
                 "text": chunk_text,
                 "chunk_id": hashlib.md5(chunk_text.encode()).hexdigest()[:8],
-                "word_count": current_word_count,
+                "word_count": len(chunk_text.split()),
+                "char_count": len(chunk_text),
                 "paragraph_count": len(current_chunk),
                 "chunk_index": len(chunks)
             }
@@ -288,19 +298,37 @@ class ChunkingService:
         
         return chunks
     
+    def chunk_by_words(self, text: str, chunk_size: int, overlap: int) -> List[str]:
+        """Public method for word-based chunking that returns text chunks"""
+        chunks = self._chunk_by_words(text, chunk_size, overlap)
+        return [chunk['text'] for chunk in chunks]
+    
+    def chunk_by_sentences(self, text: str, chunk_size: int, overlap: int) -> List[str]:
+        """Public method for sentence-based chunking that returns text chunks"""
+        chunks = self._chunk_by_sentences(text, chunk_size, overlap)
+        return [chunk['text'] for chunk in chunks]
+    
+    def chunk_by_paragraphs(self, text: str, chunk_size: int, overlap: int) -> List[str]:
+        """Public method for paragraph-based chunking that returns text chunks"""
+        chunks = self._chunk_by_paragraphs(text, chunk_size, overlap)
+        return [chunk['text'] for chunk in chunks]
+    
     def chunk_document(
         self,
         document: Dict[str, Any],
         chunk_size: int = None,
-        overlap: int = None
+        chunk_overlap: int = None,
+        method: str = None,
+        overlap: int = None  # Backward compatibility
     ) -> List[Dict[str, Any]]:
         """
-        Chunk a document based on its type
+        Chunk a document based on its type or specified method
         
         Args:
             document: Document dict with 'content', 'type', etc.
             chunk_size: Target chunk size
-            overlap: Chunk overlap
+            chunk_overlap: Chunk overlap
+            method: Optional chunking method override
             
         Returns:
             List of chunks with metadata
@@ -308,23 +336,38 @@ class ChunkingService:
         content = document.get('content', '')
         doc_type = document.get('type', 'text')
         doc_id = document.get('id', '')
+        doc_title = document.get('title', 'Untitled')
         
-        # Determine chunking method based on document type
-        if doc_type in ['article', 'blog', 'documentation']:
-            method = "paragraphs"
-        elif doc_type in ['transcript', 'conversation']:
-            method = "sentences"
-        else:
-            method = "words"
+        # Use chunk_overlap if provided, otherwise fall back to overlap parameter for backward compatibility
+        overlap_value = chunk_overlap if chunk_overlap is not None else overlap
+        
+        # Determine chunking method
+        if method is None:
+            # Auto-determine based on document type
+            if doc_type in ['article', 'blog', 'documentation']:
+                method = "paragraphs"
+            elif doc_type in ['transcript', 'conversation']:
+                method = "sentences"
+            else:
+                method = "words"
         
         # Chunk the content
-        chunks = self.chunk_text(content, chunk_size, overlap, method)
+        chunks = self.chunk_text(content, chunk_size, overlap_value, method)
         
         # Add document metadata to each chunk
         for chunk in chunks:
             chunk['document_id'] = doc_id
             chunk['document_type'] = doc_type
-            chunk['document_title'] = document.get('title', 'Untitled')
+            chunk['document_title'] = doc_title
+            
+            # Add metadata expected by tests
+            chunk['metadata'] = {
+                'source_id': doc_id,
+                'source_title': doc_title,
+                'chunk_method': method,
+                'chunk_size': chunk_size or self.default_chunk_size,
+                'chunk_overlap': overlap_value or self.default_overlap
+            }
             
         return chunks
     

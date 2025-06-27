@@ -1,0 +1,253 @@
+name: Tests
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  
+env:
+  PYTEST_TIMEOUT: 300
+  PYTHONDONTWRITEBYTECODE: 1
+  PYTHONUNBUFFERED: 1
+
+jobs:
+  unit-tests:
+    name: Unit Tests - Python ${{ matrix.python-version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+        exclude:
+          # Exclude Windows + Python 3.13 if not yet supported
+          - os: windows-latest
+            python-version: "3.13"
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install core dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+        pip install pytest-json-report pytest-cov
+    
+    - name: Run unit tests
+      run: |
+        pytest -m unit \
+          --json-report \
+          --json-report-file=unit-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
+          --cov=tldw_chatbook \
+          --cov-report=xml:coverage-unit-${{ matrix.os }}-${{ matrix.python-version }}.xml \
+          --cov-report=term-missing \
+          --timeout=${{ env.PYTEST_TIMEOUT }} \
+          -v
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: unit-test-results-${{ matrix.os }}-${{ matrix.python-version }}
+        path: |
+          unit-test-results-*.json
+          coverage-unit-*.xml
+    
+  integration-tests:
+    name: Integration Tests - Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install all dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+        pip install pytest-json-report pytest-cov
+        # Install optional dependencies for integration tests
+        pip install -e ".[embeddings_rag,websearch,chunker]"
+    
+    - name: Setup test environment
+      run: |
+        # Download NLTK data if needed
+        python -c "import nltk; nltk.download('punkt', quiet=True)"
+        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
+    
+    - name: Run integration tests
+      run: |
+        pytest -m integration \
+          --json-report \
+          --json-report-file=integration-test-results-${{ matrix.python-version }}.json \
+          --cov=tldw_chatbook \
+          --cov-report=xml:coverage-integration-${{ matrix.python-version }}.xml \
+          --cov-report=term-missing \
+          --timeout=${{ env.PYTEST_TIMEOUT }} \
+          -v
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: integration-test-results-${{ matrix.python-version }}
+        path: |
+          integration-test-results-*.json
+          coverage-integration-*.xml
+  
+  ui-tests:
+    name: UI Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+        pip install pytest-json-report
+        # Install textual dev tools for better debugging
+        pip install textual-dev
+    
+    - name: Run UI tests
+      run: |
+        pytest -m ui \
+          --json-report \
+          --json-report-file=ui-test-results.json \
+          --timeout=${{ env.PYTEST_TIMEOUT }} \
+          -v
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ui-test-results
+        path: ui-test-results.json
+  
+  all-tests:
+    name: All Tests (No Markers)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+    
+    - name: Install all dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+        pip install pytest-json-report pytest-cov
+        pip install -e ".[embeddings_rag,websearch,chunker]"
+    
+    - name: Setup test environment
+      run: |
+        python -c "import nltk; nltk.download('punkt', quiet=True)"
+        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
+    
+    - name: Run all tests
+      run: |
+        pytest ./Tests/ \
+          --json-report \
+          --json-report-file=all-test-results.json \
+          --cov=tldw_chatbook \
+          --cov-report=xml:coverage-all.xml \
+          --cov-report=html:htmlcov \
+          --cov-report=term-missing \
+          --timeout=${{ env.PYTEST_TIMEOUT }} \
+          -v
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: all-test-results
+        path: |
+          all-test-results.json
+          coverage-all.xml
+          htmlcov/
+    
+    - name: Upload coverage to Codecov
+      if: github.event_name == 'pull_request'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage-all.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+  
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, ui-tests]
+    if: always()
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all test results
+      uses: actions/download-artifact@v4
+      with:
+        pattern: '*-test-results*'
+        merge-multiple: true
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    
+    - name: Generate test summary
+      run: |
+        pip install pytest-json-report
+        python .github/scripts/generate_test_summary.py
+    
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const summary = fs.readFileSync('test-summary.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: summary
+          });

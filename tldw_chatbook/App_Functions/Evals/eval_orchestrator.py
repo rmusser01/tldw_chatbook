@@ -23,7 +23,7 @@ from pathlib import Path
 from loguru import logger
 
 from .task_loader import TaskLoader, TaskConfig
-from .eval_runner import EvalRunner, EvalResult
+from .eval_runner import EvalRunner, EvalSampleResult
 from ...DB.Evals_DB import EvalsDB
 
 class EvaluationOrchestrator:
@@ -169,7 +169,7 @@ class EvaluationOrchestrator:
             eval_runner = EvalRunner(task_config, model_data)
             
             # Create progress callback wrapper
-            def progress_wrapper(completed: int, total: int, result: EvalResult):
+            def progress_wrapper(completed: int, total: int, result: EvalSampleResult):
                 # Store individual result
                 self.db.store_result(
                     run_id=run_id,

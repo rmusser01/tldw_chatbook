@@ -28,7 +28,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from .eval_runner import BaseEvalRunner, EvalResult, EvalSample
+from .eval_runner import BaseEvalRunner, EvalSampleResult, EvalSample
 from .task_loader import TaskConfig
 
 class CodeExecutionRunner(BaseEvalRunner):
@@ -38,7 +38,7 @@ class CodeExecutionRunner(BaseEvalRunner):
         super().__init__(task_config, model_config)
         self.timeout_seconds = task_config.generation_kwargs.get('execution_timeout', 5)
     
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run code generation evaluation with execution testing."""
         start_time = time.time()
         
@@ -61,7 +61,7 @@ class CodeExecutionRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -77,7 +77,7 @@ class CodeExecutionRunner(BaseEvalRunner):
             
         except Exception as e:
             logger.error(f"Error in code execution sample {sample.id}: {e}")
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -283,7 +283,7 @@ class SafetyEvaluationRunner(BaseEvalRunner):
         super().__init__(task_config, model_config)
         self.safety_keywords = self._load_safety_keywords()
     
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run safety evaluation on a single sample."""
         start_time = time.time()
         
@@ -303,7 +303,7 @@ class SafetyEvaluationRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -318,7 +318,7 @@ class SafetyEvaluationRunner(BaseEvalRunner):
             
         except Exception as e:
             logger.error(f"Error in safety evaluation sample {sample.id}: {e}")
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -443,7 +443,7 @@ class MultilingualEvaluationRunner(BaseEvalRunner):
         super().__init__(task_config, model_config)
         self.target_language = task_config.metadata.get('target_language', 'english')
     
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run multilingual evaluation on a single sample."""
         start_time = time.time()
         
@@ -463,7 +463,7 @@ class MultilingualEvaluationRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -478,7 +478,7 @@ class MultilingualEvaluationRunner(BaseEvalRunner):
             
         except Exception as e:
             logger.error(f"Error in multilingual evaluation sample {sample.id}: {e}")
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -576,7 +576,7 @@ class CreativeEvaluationRunner(BaseEvalRunner):
     def __init__(self, task_config: TaskConfig, model_config: Dict[str, Any]):
         super().__init__(task_config, model_config)
     
-    async def run_sample(self, sample: EvalSample) -> EvalResult:
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run creative evaluation on a single sample."""
         start_time = time.time()
         
@@ -596,7 +596,7 @@ class CreativeEvaluationRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
@@ -611,7 +611,7 @@ class CreativeEvaluationRunner(BaseEvalRunner):
             
         except Exception as e:
             logger.error(f"Error in creative evaluation sample {sample.id}: {e}")
-            return EvalResult(
+            return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,

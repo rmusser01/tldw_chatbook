@@ -269,13 +269,8 @@ class ChatMessageEnhanced(Widget):
                 )
                 pil_image = pil_image.resize(new_size, PILImage.Resampling.LANCZOS)
             
-            # Save to temporary buffer
-            temp_buffer = BytesIO()
-            pil_image.save(temp_buffer, format='PNG')
-            temp_buffer.seek(0)
-            
-            # Create Pixels renderable
-            pixels = Pixels.from_image(temp_buffer)
+            # Create Pixels renderable directly from PIL image
+            pixels = Pixels.from_image(pil_image)
             self._image_widget.mount(Static(pixels))
         except Exception as e:
             logging.error(f"Error in pixelated rendering: {e}")
@@ -285,7 +280,9 @@ class ChatMessageEnhanced(Widget):
         """Render image using textual-image or fallback."""
         if TEXTUAL_IMAGE_AVAILABLE:
             try:
-                image = TextualImage(self.image_data)
+                # TextualImage expects a PIL image, not raw bytes
+                pil_image = PILImage.open(BytesIO(self.image_data))
+                image = TextualImage(pil_image)
                 self._image_widget.mount(image)
             except Exception as e:
                 logging.error(f"Error with textual-image rendering: {e}")
