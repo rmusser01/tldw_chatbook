@@ -12,7 +12,7 @@ authors = [
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "AGPL-3.0-or-later" }
+license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
 classifiers = [
@@ -24,7 +24,6 @@ classifiers = [
     "Topic :: Terminals",
     "Topic :: Communications :: Chat",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -88,7 +87,7 @@ embeddings_rag = [
 ]
 websearch = [
     "lxml",
-    "bs4",#beautifulsoup
+    "beautifulsoup4",  # BeautifulSoup HTML parser
     "pandas",
     "playwright",
     #"playwright_stealth",
@@ -155,3 +154,4 @@ markers = [
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
 ]
+
