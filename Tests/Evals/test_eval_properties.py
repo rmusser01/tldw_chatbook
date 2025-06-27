@@ -60,7 +60,7 @@ except ImportError:
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.App_Functions.Evals.task_loader import TaskConfig, TaskLoader
-from tldw_chatbook.App_Functions.Evals.eval_runner import EvalRunner, EvalResult
+from tldw_chatbook.App_Functions.Evals.eval_runner import EvalRunner, EvalSampleResult, MetricsCalculator
 
 # Custom strategies for evaluation system types
 @composite
@@ -94,12 +94,12 @@ def task_config_strategy(draw):
 
 @composite
 def eval_result_strategy(draw):
-    """Generate valid EvalResult instances."""
-    return EvalResult(
+    """Generate valid EvalSampleResult instances."""
+    return EvalSampleResult(
         sample_id=draw(st.text(min_size=1, max_size=100, alphabet=string.ascii_letters + string.digits + "_-")),
         input_text=draw(st.text(min_size=0, max_size=1000)),
         expected_output=draw(st.text(min_size=0, max_size=1000)),
-        model_output=draw(st.text(min_size=0, max_size=1000)),
+        actual_output=draw(st.text(min_size=0, max_size=1000)),
         metrics=draw(st.dictionaries(
             keys=st.text(min_size=1, max_size=50, alphabet=string.ascii_letters + "_"),
             values=st.floats(min_value=0.0, max_value=1.0),
@@ -278,8 +278,8 @@ class TestEvaluationProperties:
         """Test that exact match is symmetric."""
         runner = EvalRunner(llm_interface=AsyncMock())
         
-        score1 = runner._calculate_exact_match(text1, text2)
-        score2 = runner._calculate_exact_match(text2, text1)
+        score1 = MetricsCalculator.calculate_exact_match(text1, text2)
+        score2 = MetricsCalculator.calculate_exact_match(text2, text1)
         
         assert score1 == score2
     
@@ -289,7 +289,7 @@ class TestEvaluationProperties:
         """Test that exact match of text with itself is always 1.0."""
         runner = EvalRunner(llm_interface=AsyncMock())
         
-        score = runner._calculate_exact_match(text, text)
+        score = MetricsCalculator.calculate_exact_match(text, text)
         assert score == 1.0
     
     @given(st.text(), st.text())
@@ -347,11 +347,11 @@ class TestEvaluationProperties:
         # Sample ID should not be empty
         assert eval_result.sample_id.strip() != ""
         
-        # If there's an error, model_output might be None
-        if eval_result.error:
+        # If there's an error, actual_output might be None
+        if eval_result.error_info:
             # Error should be a non-empty string
-            assert isinstance(eval_result.error, str)
-            assert eval_result.error.strip() != ""
+            assert isinstance(eval_result.error_info, dict)
+            assert eval_result.error_info.get('error_message', '').strip() != ""
 
 class TestTaskConfigurationProperties:
     """Test task configuration validation properties."""
@@ -477,7 +477,7 @@ class TestFileHandlingProperties:
             assert isinstance(normalized, str)
             
             # Test metric calculations with potentially problematic text
-            exact_score = runner._calculate_exact_match(text_input, text_input)
+            exact_score = MetricsCalculator.calculate_exact_match(text_input, text_input)
             assert exact_score == 1.0
             
             contains_score = runner._calculate_contains_answer(text_input, text_input[:10])

@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Any
 import time
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -59,6 +60,7 @@ class MockNotesService:
         logger.debug(f"Mock notes search called with query: '{query}'")
         return []
 
+@pytest.mark.requires_rag_deps
 async def test_basic_search():
     """Test basic RAG search across all sources."""
     logger.info("\n=== Test 1: Basic RAG Search ===")
@@ -107,6 +109,7 @@ async def test_basic_search():
         except Exception as e:
             logger.error(f"❌ Search failed: {e}")
 
+@pytest.mark.requires_rag_deps
 async def test_source_filtering():
     """Test RAG search with specific source filtering."""
     logger.info("\n=== Test 2: Source Filtering ===")
@@ -160,6 +163,7 @@ async def test_source_filtering():
         except Exception as e:
             logger.error(f"❌ Search failed: {e}")
 
+@pytest.mark.requires_rag_deps
 async def test_context_length_limiting():
     """Test context length limiting."""
     logger.info("\n=== Test 3: Context Length Limiting ===")
@@ -197,6 +201,7 @@ async def test_context_length_limiting():
         except Exception as e:
             logger.error(f"❌ Search failed: {e}")
 
+@pytest.mark.requires_rag_deps
 async def test_reranking():
     """Test reranking functionality."""
     logger.info("\n=== Test 4: Reranking ===")
@@ -249,6 +254,7 @@ async def test_reranking():
     else:
         logger.info("ℹ️  FlashRank not available - skipping reranking test")
 
+@pytest.mark.requires_rag_deps
 async def test_caching():
     """Test caching functionality."""
     logger.info("\n=== Test 5: Caching ===")
@@ -299,6 +305,7 @@ async def test_caching():
     except Exception as e:
         logger.error(f"❌ Second search failed: {e}")
 
+@pytest.mark.requires_rag_deps
 async def test_error_handling():
     """Test error handling."""
     logger.info("\n=== Test 6: Error Handling ===")

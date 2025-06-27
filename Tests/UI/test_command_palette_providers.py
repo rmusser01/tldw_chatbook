@@ -121,9 +121,12 @@ class TestThemeProvider:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
         provider = ThemeProvider(screen=mock_screen)
-        provider.matcher = MagicMock()
-        provider.matcher.match = MagicMock(return_value=1.0)
-        provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Create a mock matcher object
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Set provider.matcher as a callable that returns the matcher object
+        provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
     
     @pytest.mark.asyncio
@@ -226,9 +229,12 @@ class TestTabNavigationProvider:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
         provider = TabNavigationProvider(screen=mock_screen)
-        provider.matcher = MagicMock()
-        provider.matcher.match = MagicMock(return_value=1.0)
-        provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Create a mock matcher object
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Set provider.matcher as a callable that returns the matcher object
+        provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
     
     @pytest.mark.asyncio
@@ -307,9 +313,12 @@ class TestQuickActionsProvider:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
         provider = QuickActionsProvider(screen=mock_screen)
-        provider.matcher = MagicMock()
-        provider.matcher.match = MagicMock(return_value=1.0)
-        provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Create a mock matcher object
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Set provider.matcher as a callable that returns the matcher object
+        provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
     
     @pytest.mark.asyncio
@@ -380,9 +389,12 @@ class TestLLMProviderProvider:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
         provider = LLMProviderProvider(screen=mock_screen)
-        provider.matcher = MagicMock()
-        provider.matcher.match = MagicMock(return_value=1.0)
-        provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Create a mock matcher object
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Set provider.matcher as a callable that returns the matcher object
+        provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
     
     @pytest.mark.asyncio
@@ -430,9 +442,12 @@ class TestSettingsProvider:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
         provider = SettingsProvider(screen=mock_screen)
-        provider.matcher = MagicMock()
-        provider.matcher.match = MagicMock(return_value=1.0)
-        provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Create a mock matcher object
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        # Set provider.matcher as a callable that returns the matcher object
+        provider.matcher = MagicMock(return_value=mock_matcher)
         return provider
     
     @pytest.mark.asyncio
@@ -516,9 +531,12 @@ class TestCommandPaletteIntegration:
         
         for provider in providers:
             provider.app = mock_app
-            provider.matcher = MagicMock()
-            provider.matcher.match = MagicMock(return_value=1.0)
-            provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+            # Create a mock matcher object
+            mock_matcher = MagicMock()
+            mock_matcher.match = MagicMock(return_value=1.0)
+            mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+            # Set provider.matcher as a callable that returns the matcher object
+            provider.matcher = MagicMock(return_value=mock_matcher)
             
             hits = []
             async for hit in provider.discover():
@@ -544,9 +562,12 @@ class TestCommandPaletteIntegration:
         
         for provider in providers:
             provider.app = mock_app
-            provider.matcher = MagicMock()
-            provider.matcher.match = MagicMock(return_value=1.0)
-            provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+            # Create a mock matcher object
+            mock_matcher = MagicMock()
+            mock_matcher.match = MagicMock(return_value=1.0)
+            mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+            # Set provider.matcher as a callable that returns the matcher object
+            provider.matcher = MagicMock(return_value=mock_matcher)
             
             for query in test_queries:
                 hits = []
@@ -610,9 +631,12 @@ class TestCommandPalettePerformance:
         
         for provider in providers:
             provider.app = mock_app
-            provider.matcher = MagicMock()
-            provider.matcher.match = MagicMock(return_value=1.0)
-            provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+            # Create a mock matcher object
+            mock_matcher = MagicMock()
+            mock_matcher.match = MagicMock(return_value=1.0)
+            mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+            # Set provider.matcher as a callable that returns the matcher object
+            provider.matcher = MagicMock(return_value=mock_matcher)
             
             start_time = time.time()
             hits = []
@@ -632,9 +656,12 @@ class TestCommandPalettePerformance:
         
         for provider in providers:
             provider.app = mock_app
-            provider.matcher = MagicMock()
-            provider.matcher.match = MagicMock(return_value=1.0)
-            provider.matcher.highlight = MagicMock(side_effect=lambda x: x)
+            # Create a mock matcher object
+            mock_matcher = MagicMock()
+            mock_matcher.match = MagicMock(return_value=1.0)
+            mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+            # Set provider.matcher as a callable that returns the matcher object
+            provider.matcher = MagicMock(return_value=mock_matcher)
             
             start_time = time.time()
             hits = []

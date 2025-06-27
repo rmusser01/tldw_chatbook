@@ -26,7 +26,7 @@ from loguru import logger
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.App_Functions.Evals.task_loader import TaskConfig, TaskLoader
-from tldw_chatbook.App_Functions.Evals.eval_runner import EvalRunner, EvalResult
+from tldw_chatbook.App_Functions.Evals.eval_runner import EvalRunner, EvalSampleResult
 from tldw_chatbook.App_Functions.Evals.eval_orchestrator import EvaluationOrchestrator
 from tldw_chatbook.App_Functions.Evals.llm_interface import LLMInterface
 
@@ -102,27 +102,27 @@ def sample_code_config():
 def sample_eval_results():
     """Create sample evaluation results."""
     return [
-        EvalResult(
+        EvalSampleResult(
             sample_id="sample_1",
             input_text="What is 2 + 2?",
             expected_output="4",
-            model_output="4",
+            actual_output="4",
             metrics={"exact_match": 1.0, "response_length": 1},
             metadata={"execution_time": 0.5}
         ),
-        EvalResult(
+        EvalSampleResult(
             sample_id="sample_2", 
             input_text="What is the capital of France?",
             expected_output="Paris",
-            model_output="Paris is the capital of France.",
+            actual_output="Paris is the capital of France.",
             metrics={"exact_match": 0.0, "contains_answer": 1.0, "response_length": 30},
             metadata={"execution_time": 0.8}
         ),
-        EvalResult(
+        EvalSampleResult(
             sample_id="sample_3",
             input_text="Write a function to add two numbers",
             expected_output="def add(a, b): return a + b",
-            model_output="def add(a, b):\n    return a + b",
+            actual_output="def add(a, b):\n    return a + b",
             metrics={"execution_pass_rate": 1.0, "syntax_valid": 1.0},
             metadata={"execution_time": 1.2}
         )
@@ -242,9 +242,15 @@ def task_loader():
     return TaskLoader()
 
 @pytest.fixture
-def eval_runner(mock_llm_interface):
+def eval_runner(sample_task_config, mock_llm_interface):
     """Create an EvalRunner instance with mock LLM."""
-    return EvalRunner(llm_interface=mock_llm_interface)
+    model_config = {
+        'provider': 'mock',
+        'model_id': 'mock-model',
+        'temperature': 0.0,
+        'max_tokens': 100
+    }
+    return EvalRunner(sample_task_config, model_config)
 
 @pytest.fixture
 def eval_orchestrator(temp_db):
@@ -327,11 +333,11 @@ def performance_test_samples():
     return samples
 
 # Test utilities
-def assert_eval_result_valid(result: EvalResult):
+def assert_eval_result_valid(result: EvalSampleResult):
     """Assert that an EvalResult is valid."""
     assert result.sample_id is not None
     assert result.input_text is not None
-    assert result.model_output is not None
+    assert result.actual_output is not None
     assert isinstance(result.metrics, dict)
     assert isinstance(result.metadata, dict)
 

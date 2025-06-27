@@ -26,7 +26,7 @@ except (NameError, IndexError):
     pass
 #
 # Local imports (from the main project)
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError\
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError
 #
 #######################################################################################################################
 #
@@ -131,6 +131,7 @@ def search_db(tmp_path_factory):
 # Test Classes
 #
 
+@pytest.mark.integration
 class TestDatabaseInitialization:
     def test_memory_db_creation(self, memory_db_factory):
         """Test creating an in-memory database."""
@@ -158,6 +159,7 @@ class TestDatabaseInitialization:
             Database(db_path=":memory:", client_id=None)
 
 
+@pytest.mark.integration
 class TestDatabaseTransactions:
     def test_transaction_commit(self, memory_db_factory):
         db = memory_db_factory()
@@ -192,6 +194,7 @@ class TestDatabaseTransactions:
         assert final_count_cursor.fetchone()[0] == initial_count
 
 
+@pytest.mark.integration
 class TestSearchFunctionality:
     # The 'search_db' fixture is now defined at the module level
     # and provides a shared database for all tests in this class.
@@ -204,6 +207,7 @@ class TestSearchFunctionality:
         pass  # Add actual search tests here
 
 
+@pytest.mark.integration
 class TestDatabaseCRUDAndSync:
     # The 'db_instance' fixture is now defined at the module level
     # and provides a fresh in-memory DB for each test in this class.
@@ -406,6 +410,7 @@ class TestDatabaseCRUDAndSync:
             )
 
 
+@pytest.mark.integration
 class TestSyncLogManagement:
     @pytest.fixture(autouse=True)
     def setup_db(self, db_instance):

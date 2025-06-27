@@ -222,7 +222,10 @@ class TestClientSyncEnginePullApply:
         assert row['keyword'] == kw_name
         assert row['version'] == 1
         assert row['client_id'] == "other_client" # Originating client ID stored
-        assert row['last_modified'] == "2023-10-28T10:00:00Z" # Server timestamp applied
+        # Server timestamp applied - check as datetime object
+        from datetime import datetime, timezone
+        expected_dt = datetime(2023, 10, 28, 10, 0, 0, tzinfo=timezone.utc)
+        assert row['last_modified'] == expected_dt
         assert not row['deleted']
         # Verify state update
         assert sync_engine.last_server_log_id_processed == 101

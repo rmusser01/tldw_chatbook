@@ -19,21 +19,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 
 from tldw_chatbook.App_Functions.Evals.eval_runner import (
-    EvalRunner, EvalResult, EvalProgress, EvalError
+    EvalRunner, EvalSampleResult, EvalProgress, EvalError, MetricsCalculator
 )
 from tldw_chatbook.App_Functions.Evals.task_loader import TaskConfig
 from tldw_chatbook.App_Functions.Evals.llm_interface import LLMInterface
 
-class TestEvalResult:
-    """Test EvalResult data class functionality."""
+class TestEvalSampleResult:
+    """Test EvalSampleResult data class functionality."""
     
     def test_eval_result_creation(self):
-        """Test basic EvalResult creation."""
-        result = EvalResult(
+        """Test basic EvalSampleResult creation."""
+        result = EvalSampleResult(
             sample_id="test_sample",
             input_text="What is 2+2?",
             expected_output="4",
-            model_output="4",
+            actual_output="4",
             metrics={"exact_match": 1.0},
             metadata={"execution_time": 0.5}
         )
@@ -43,19 +43,19 @@ class TestEvalResult:
         assert result.metadata["execution_time"] == 0.5
     
     def test_eval_result_with_error(self):
-        """Test EvalResult with error information."""
-        result = EvalResult(
+        """Test EvalSampleResult with error information."""
+        result = EvalSampleResult(
             sample_id="error_sample",
             input_text="Test input",
             expected_output="Expected",
-            model_output=None,
+            actual_output=None,
             metrics={},
             metadata={"error": "API timeout"},
             error="Request timeout after 30 seconds"
         )
         
-        assert result.error is not None
-        assert result.model_output is None
+        assert result.error_info is not None
+        assert result.actual_output is None
         assert result.metadata["error"] == "API timeout"
 
 class TestEvalProgress:
@@ -144,7 +144,7 @@ class TestBasicEvaluation:
         result = await runner.run_single_sample(sample_task_config, sample)
         
         assert result.sample_id == "sample_1"
-        assert result.model_output is not None
+        assert result.actual_output is not None
         assert "exact_match" in result.metrics
         mock_llm_interface.generate.assert_called_once()
     
@@ -164,7 +164,7 @@ class TestBasicEvaluation:
             results.append(result)
         
         assert len(results) == 3
-        assert all(isinstance(r, EvalResult) for r in results)
+        assert all(isinstance(r, EvalSampleResult) for r in results)
         assert all(r.sample_id.startswith("sample_") for r in results)
     
     @pytest.mark.asyncio
@@ -317,7 +317,7 @@ class TestMetricsCalculation:
         runner = EvalRunner(llm_interface=AsyncMock())
         
         # Exact match
-        score = runner._calculate_exact_match("Paris", "Paris")
+        score = MetricsCalculator.calculate_exact_match("Paris", "Paris")
         assert score == 1.0
         
         # No match
@@ -428,8 +428,8 @@ class TestErrorHandling:
         
         result = await runner.run_single_sample(sample_task_config, sample)
         
-        assert result.error is not None
-        assert result.model_output is None
+        assert result.error_info is not None
+        assert result.actual_output is None
         assert "error" in result.metadata
     
     @pytest.mark.asyncio
@@ -457,7 +457,7 @@ class TestErrorHandling:
         
         result = await runner.run_single_sample(sample_task_config, sample)
         
-        assert result.model_output == "Success response"
+        assert result.actual_output == "Success response"
         assert mock_llm.generate.call_count == 3
     
     @pytest.mark.asyncio
@@ -486,8 +486,8 @@ class TestErrorHandling:
             results.append(result)
         
         assert len(results) == 3
-        success_count = sum(1 for r in results if r.error is None)
-        failure_count = sum(1 for r in results if r.error is not None)
+        success_count = sum(1 for r in results if r.error_info is None)
+        failure_count = sum(1 for r in results if r.error_info is not None)
         
         assert success_count == 2
         assert failure_count == 1
@@ -550,7 +550,7 @@ class TestConcurrencyAndPerformance:
         async for result in runner.run_evaluation(sample_task_config, samples):
             processed_count += 1
             # Verify we can process without storing all results in memory
-            assert isinstance(result, EvalResult)
+            assert isinstance(result, EvalSampleResult)
         
         assert processed_count == large_sample_count
     
@@ -675,7 +675,7 @@ class TestAdvancedFeatures:
         result = await runner.run_single_sample(config, sample)
         
         # Response should be filtered to "paris"
-        assert result.model_output == "paris"
+        assert result.actual_output == "paris"
         assert result.metrics["exact_match"] == 1.0
 
 class TestSpecializedEvaluations:

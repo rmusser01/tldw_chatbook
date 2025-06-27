@@ -7,6 +7,8 @@ from unittest.mock import patch, MagicMock
 from tldw_chatbook.RAG_Search.Services.chunking_service import ChunkingService
 
 
+@pytest.mark.unit
+@pytest.mark.requires_rag_deps
 class TestChunkingService:
     """Test the document chunking service"""
     
@@ -207,7 +209,10 @@ class TestChunkingService:
         )
         
         # With overlap, we should have more chunks
-        assert len(chunks_with_overlap) > len(chunks_no_overlap)
+        # No overlap: 100 words / 10 words per chunk = 10 chunks
+        # With overlap: moving by (10-5)=5 words each time = ~20 chunks
+        assert len(chunks_no_overlap) == 10
+        assert len(chunks_with_overlap) == 20
         
         # Check that chunks actually overlap
         if len(chunks_with_overlap) > 1:

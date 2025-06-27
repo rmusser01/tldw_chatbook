@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Any
 import tempfile
 import shutil
+import pytest
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -59,6 +60,7 @@ class MockNotesService:
         """Mock notes search."""
         return []
 
+@pytest.mark.requires_rag_deps
 async def test_embeddings_service():
     """Test embeddings service initialization and basic functionality."""
     logger.info("\n=== Test 1: Embeddings Service ===")
@@ -135,6 +137,7 @@ async def test_embeddings_service():
         # Cleanup
         shutil.rmtree(temp_dir)
 
+@pytest.mark.requires_rag_deps
 async def test_chunking_service():
     """Test chunking service functionality."""
     logger.info("\n=== Test 2: Chunking Service ===")
@@ -196,6 +199,7 @@ async def test_chunking_service():
         logger.error(f"❌ Chunking service test failed: {e}")
         return False
 
+@pytest.mark.requires_rag_deps
 async def test_full_rag_pipeline():
     """Test full RAG pipeline with embeddings."""
     logger.info("\n=== Test 3: Full RAG Pipeline ===")
@@ -261,6 +265,7 @@ async def test_full_rag_pipeline():
             import traceback
             logger.debug(traceback.format_exc())
 
+@pytest.mark.requires_rag_deps
 async def test_hybrid_search():
     """Test hybrid search combining BM25 and vector search."""
     logger.info("\n=== Test 4: Hybrid Search ===")
@@ -315,6 +320,7 @@ async def test_hybrid_search():
         except Exception as e:
             logger.error(f"❌ Hybrid search failed: {e}")
 
+@pytest.mark.requires_rag_deps
 async def test_indexing():
     """Test document indexing for vector search."""
     logger.info("\n=== Test 5: Document Indexing ===")
