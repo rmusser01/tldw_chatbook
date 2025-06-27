@@ -12,20 +12,27 @@ authors = [
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file="LICENSE" }
-keywords = ["tui", "cli", "llm", "textual", "ai", "chat"]
+license = { text = "AGPL-3.0-or-later" }
+license-files = ["LICENSE"]
+keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Science/Research",
     "Topic :: Utilities",
     "Topic :: Terminals",
+    "Topic :: Communications :: Chat",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Environment :: Console",
     "Operating System :: OS Independent",
+    "Natural Language :: English",
+    "Typing :: Typed",
 ]
 
 # --- Dependencies ---
@@ -36,12 +43,19 @@ dependencies = [
     "textual>=3.3.0",
     "requests",
     "rich",
+    "rich-pixels>=3.0.0",
     "pillow",
     "PyYAML",
     "pydantic",
     "psutil",
     "toml",
+    "tomli; python_version < '3.11'",
     "pyperclip",
+    "emoji",
+    "jinja2",
+    "pycryptodomex",
+    "keyring",
+    "markdownify",
 ]
 
 # --- Optional Dependencies ---
@@ -86,18 +100,24 @@ websearch = [
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
 local_transformers = ["transformers"]
-dev = [ # Example for development dependencies
+dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests
     "textual-dev", # For Textual development tools
     "hypothesis",
-    "pytest_asyncio",
+    "pytest-asyncio",
+    "build",  # For building distributions
+    "twine",  # For uploading to PyPI
+    "wheel",  # For building wheel distributions
 ]
 
 
 [project.urls]
 "Homepage" = "https://github.com/rmusser01/tldw_chatbook"
 "Bug Tracker" = "https://github.com/rmusser01/tldw_chatbook/issues"
+"Documentation" = "https://github.com/rmusser01/tldw_chatbook#readme"
+"Source Code" = "https://github.com/rmusser01/tldw_chatbook"
+"Changelog" = "https://github.com/rmusser01/tldw_chatbook/blob/main/CHANGELOG.md"
 
 # This creates a command-line script called 'tldw-cli'
 [project.scripts]
@@ -113,8 +133,11 @@ exclude = ["Tests*", ".venv*"]
 
 [tool.setuptools.package-data]
 # Include .tcss files in the tldw_chatbook.css package/submodule
-# This assumes your CSS is in project_root/tldw_chatbook/css/*.tcss
 "tldw_chatbook.css" = ["*.tcss"]
+# Include theme files
+"tldw_chatbook.css.Themes" = ["*.tcss"]
+# Include JSON template files
+"tldw_chatbook.Config_Files" = ["*.json"]
 # If you have other assets inside your tldw_chatbook package (e.g., tldw_chatbook/assets/), add them here:
 # "tldw_chatbook.assets" = ["*"]
 

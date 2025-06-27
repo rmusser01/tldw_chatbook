@@ -1,0 +1,28 @@
+# Include license and documentation
+include LICENSE
+include README.md
+include CLAUDE.md
+include CHANGELOG.md
+
+# Include requirements file for reference
+include requirements.txt
+
+# Include all JSON template files
+recursive-include tldw_chatbook/Config_Files *.json
+
+# Include all CSS theme files
+recursive-include tldw_chatbook/css *.tcss
+
+# Include Third Party files with their licenses
+recursive-include tldw_chatbook/Third_Party *.py *.txt *.md
+
+# Exclude test files and development artifacts
+recursive-exclude Tests *
+recursive-exclude STests *
+exclude .gitignore
+exclude .env
+exclude .env.example
+prune .venv
+prune .git
+prune __pycache__
+prune *.egg-info
