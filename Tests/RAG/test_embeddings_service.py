@@ -263,7 +263,7 @@ class TestEmbeddingsService:
         result = embeddings_service.delete_collection("test_collection")
         
         assert result is True
-        embeddings_service.client.delete_collection.assert_called_once_with("test_collection")
+        embeddings_service.client.delete_collection.assert_called_once_with(name="test_collection")
     
     def test_delete_collection_no_client(self, embeddings_service):
         """Test deleting collection without client"""
@@ -274,11 +274,12 @@ class TestEmbeddingsService:
     
     def test_list_collections(self, embeddings_service):
         """Test listing collections"""
-        mock_collections = [
-            MagicMock(name="collection1"),
-            MagicMock(name="collection2")
-        ]
-        embeddings_service.client.list_collections.return_value = mock_collections
+        mock_collection1 = MagicMock()
+        mock_collection1.name = "collection1"
+        mock_collection2 = MagicMock()
+        mock_collection2.name = "collection2"
+        
+        embeddings_service.client.list_collections.return_value = [mock_collection1, mock_collection2]
         
         collections = embeddings_service.list_collections()
         
@@ -294,6 +295,7 @@ class TestEmbeddingsService:
     def test_get_collection_info(self, embeddings_service):
         """Test getting collection information"""
         mock_collection = MagicMock()
+        mock_collection.name = "test_collection"
         mock_collection.count.return_value = 100
         mock_collection.metadata = {"description": "Test"}
         
