@@ -25,6 +25,7 @@ logger.add(sys.stderr, level="INFO")
 import pytest
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_rag_search():
     """Test the RAG search functionality."""
     
@@ -95,6 +96,7 @@ async def test_rag_search():
     return True
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_modular_service():
     """Test direct instantiation of the modular RAG service."""
     

@@ -508,8 +508,12 @@ class TestCommandPaletteIntegration:
             MediaProvider, DeveloperProvider
         ]
         
+        # Create mock screen for provider initialization
+        mock_screen = MagicMock()
+        mock_screen.app = MagicMock()
+        
         for provider_class in providers:
-            provider = provider_class()
+            provider = provider_class(screen=mock_screen)
             
             # Check required async methods
             assert hasattr(provider, 'search')
@@ -523,14 +527,18 @@ class TestCommandPaletteIntegration:
     @pytest.mark.asyncio
     async def test_all_providers_return_hits_from_discover(self, mock_app):
         """Test that all providers return Hit objects from discover()."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        
         providers = [
-            ThemeProvider(), TabNavigationProvider(), LLMProviderProvider(),
-            QuickActionsProvider(), SettingsProvider(), CharacterProvider(),
-            MediaProvider(), DeveloperProvider()
+            ThemeProvider(screen=mock_screen), TabNavigationProvider(screen=mock_screen), 
+            LLMProviderProvider(screen=mock_screen), QuickActionsProvider(screen=mock_screen),
+            SettingsProvider(screen=mock_screen), CharacterProvider(screen=mock_screen),
+            MediaProvider(screen=mock_screen), DeveloperProvider(screen=mock_screen)
         ]
         
         for provider in providers:
-            provider.app = mock_app
+            # provider.app is accessed via provider.screen.app, no need to set directly
             # Create a mock matcher object
             mock_matcher = MagicMock()
             mock_matcher.match = MagicMock(return_value=1.0)
@@ -552,16 +560,20 @@ class TestCommandPaletteIntegration:
     @pytest.mark.asyncio
     async def test_search_consistency_across_providers(self, mock_app):
         """Test that search behaves consistently across providers."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        
         providers = [
-            ThemeProvider(), TabNavigationProvider(), LLMProviderProvider(),
-            QuickActionsProvider(), SettingsProvider(), CharacterProvider(),
-            MediaProvider(), DeveloperProvider()
+            ThemeProvider(screen=mock_screen), TabNavigationProvider(screen=mock_screen), 
+            LLMProviderProvider(screen=mock_screen), QuickActionsProvider(screen=mock_screen),
+            SettingsProvider(screen=mock_screen), CharacterProvider(screen=mock_screen),
+            MediaProvider(screen=mock_screen), DeveloperProvider(screen=mock_screen)
         ]
         
         test_queries = ["test", "switch", "open", "new"]
         
         for provider in providers:
-            provider.app = mock_app
+            # provider.app is accessed via provider.screen.app, no need to set directly
             # Create a mock matcher object
             mock_matcher = MagicMock()
             mock_matcher.match = MagicMock(return_value=1.0)
@@ -580,11 +592,14 @@ class TestCommandPaletteIntegration:
     
     def test_provider_error_handling(self, mock_app):
         """Test that providers handle errors gracefully."""
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        
         providers = [
-            (ThemeProvider(), "switch_theme", ["test-theme"]),
-            (TabNavigationProvider(), "switch_tab", [TAB_CHAT]),
-            (QuickActionsProvider(), "execute_quick_action", ["new_chat"]),
-            (SettingsProvider(), "handle_setting", ["open_settings"]),
+            (ThemeProvider(screen=mock_screen), "switch_theme", ["test-theme"]),
+            (TabNavigationProvider(screen=mock_screen), "switch_tab", [TAB_CHAT]),
+            (QuickActionsProvider(screen=mock_screen), "execute_quick_action", ["new_chat"]),
+            (SettingsProvider(screen=mock_screen), "handle_setting", ["open_settings"]),
         ]
         
         for provider, method_name, args in providers:
@@ -623,14 +638,18 @@ class TestCommandPalettePerformance:
         """Test that discover() methods complete quickly."""
         import time
         
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        
         providers = [
-            ThemeProvider(), TabNavigationProvider(), LLMProviderProvider(),
-            QuickActionsProvider(), SettingsProvider(), CharacterProvider(),
-            MediaProvider(), DeveloperProvider()
+            ThemeProvider(screen=mock_screen), TabNavigationProvider(screen=mock_screen), 
+            LLMProviderProvider(screen=mock_screen), QuickActionsProvider(screen=mock_screen),
+            SettingsProvider(screen=mock_screen), CharacterProvider(screen=mock_screen),
+            MediaProvider(screen=mock_screen), DeveloperProvider(screen=mock_screen)
         ]
         
         for provider in providers:
-            provider.app = mock_app
+            # provider.app is accessed via provider.screen.app, no need to set directly
             # Create a mock matcher object
             mock_matcher = MagicMock()
             mock_matcher.match = MagicMock(return_value=1.0)
@@ -652,10 +671,17 @@ class TestCommandPalettePerformance:
         """Test that search() methods complete quickly."""
         import time
         
-        providers = [TabNavigationProvider(), QuickActionsProvider(), SettingsProvider()]
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        
+        providers = [
+            TabNavigationProvider(screen=mock_screen), 
+            QuickActionsProvider(screen=mock_screen), 
+            SettingsProvider(screen=mock_screen)
+        ]
         
         for provider in providers:
-            provider.app = mock_app
+            # provider.app is accessed via provider.screen.app, no need to set directly
             # Create a mock matcher object
             mock_matcher = MagicMock()
             mock_matcher.match = MagicMock(return_value=1.0)

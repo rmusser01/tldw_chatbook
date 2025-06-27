@@ -11,6 +11,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
     _clear_and_disable_media_display,
     perform_media_sidebar_search,
     handle_chat_media_sidebar_input_changed,
+    handle_media_item_selected,
     handle_chat_media_copy_title_button_pressed,
     handle_chat_media_copy_content_button_pressed,
     handle_chat_media_copy_author_button_pressed,
@@ -79,14 +80,27 @@ async def test_perform_media_sidebar_search_no_results(mock_app):
     mock_app.media_db.search_media_db.return_value = ([], 0)
     mock_results_list = mock_app.query_one("#chat-media-search-results-listview", ListView)
 
-    await perform_media_sidebar_search(mock_app, "no results term")
+    # Track Label calls
+    label_calls = []
+    
+    def track_label_creation(*args, **kwargs):
+        label_calls.append((args, kwargs))
+        return Label(*args, **kwargs)
+    
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar.Label',
+               side_effect=track_label_creation):
+        await perform_media_sidebar_search(mock_app, "no results term")
 
     # ListView.append is async in the base mock
     mock_results_list.append.assert_called_once()
-    # The call argument is a ListItem, which contains a Label. We check the Label's content.
+    
+    # Check that Label was created with the correct text
+    assert len(label_calls) == 1
+    assert label_calls[0][0] == ("No media found.",)
+    
+    # The call argument is a ListItem containing a real Label
     call_arg = mock_results_list.append.call_args[0][0]
     assert isinstance(call_arg, ListItem)
-    assert call_arg.children[0].renderable == "No media found."
 
 
 async def test_perform_media_sidebar_search_empty_term(mock_app):
@@ -98,56 +112,94 @@ async def test_perform_media_sidebar_search_empty_term(mock_app):
 
 async def test_handle_chat_media_search_input_changed_debouncing(mock_app):
     """Test that input changes are debounced via set_timer."""
-    mock_timer = MagicMock()
-    mock_app._media_sidebar_search_timer = mock_timer
-    mock_input_widget = MagicMock(spec=Input, value=" new search ")
+    # handle_chat_media_sidebar_input_changed doesn't take input widget as parameter
+    await handle_chat_media_sidebar_input_changed(mock_app)
 
-    await handle_chat_media_search_input_changed(mock_app, mock_input_widget)
-
-    mock_timer.stop.assert_called_once()
+    # Check that set_timer was called with appropriate delay and callback
     mock_app.set_timer.assert_called_once()
-    # Check that run_worker is part of the callback, which calls perform_media_sidebar_search
-    callback_lambda = mock_app.set_timer.call_args[0][1]
-    # We can't easily execute the lambda here, but we can verify it's set.
-    assert callable(callback_lambda)
+    # First arg is delay, second is callback
+    delay = mock_app.set_timer.call_args[0][0]
+    callback = mock_app.set_timer.call_args[0][1]
+    assert delay == 0.5
+    assert callable(callback)
 
 
 async def test_handle_chat_media_load_selected_button_pressed(mock_app):
     """Test loading a selected media item into the display."""
-    media_data = {
-        'title': 'Loaded Title', 'author': 'Author Name', 'media_type': 'Article',
-        'url': 'http://example.com', 'content': 'This is the full content.'
+    # Mock the light data on the list item
+    media_data_light = {
+        'id': 123,
+        'title': 'Loaded Title', 
+        'author': 'Author Name', 
+        'media_type': 'Article',
+        'url': 'http://example.com'
     }
+    
+    # Mock the full data from DB
+    media_data_full = {
+        'id': 123,
+        'title': 'Loaded Title', 
+        'author': 'Author Name', 
+        'media_type': 'Article',
+        'url': 'http://example.com', 
+        'content': 'This is the full content.'
+    }
+    
     mock_list_item = MagicMock(spec=ListItem)
-    mock_list_item.media_data = media_data
+    setattr(mock_list_item, 'media_data', media_data_light)
 
-    mock_results_list = mock_app.query_one("#chat-media-search-results-listview", ListView)
-    mock_results_list.highlighted_child = mock_list_item
+    # Mock DB to return full data
+    mock_app.media_db.get_media_by_id.return_value = media_data_full
 
-    # Note: handle_chat_media_load_selected_button_pressed doesn't exist
-    # This test needs to be rewritten or the function needs to be added
-    pass  # Skipping for now
+    # Call the actual function
+    await handle_media_item_selected(mock_app, mock_list_item)
 
-    assert mock_app.current_sidebar_media_item == media_data
-    mock_app.query_one("#chat-media-content-display", TextArea).load_text.assert_called_once()
-    loaded_text = mock_app.query_one("#chat-media-content-display", TextArea).load_text.call_args[0][0]
-    assert "Title: Loaded Title" in loaded_text
-    assert "Author: Author Name" in loaded_text
-    assert "This is the full content." in loaded_text
+    # Verify DB was called with correct ID
+    mock_app.media_db.get_media_by_id.assert_called_once_with(123)
+    
+    # Verify current_sidebar_media_item was set
+    assert mock_app.current_sidebar_media_item == media_data_full
+    
+    # Verify TextAreas were updated with correct data
+    mock_app.query_one("#chat-media-title-display", TextArea).load_text.assert_called_once_with('Loaded Title')
+    mock_app.query_one("#chat-media-content-display", TextArea).load_text.assert_called_once_with('This is the full content.')
+    mock_app.query_one("#chat-media-author-display", TextArea).load_text.assert_called_once_with('Author Name')
+    mock_app.query_one("#chat-media-url-display", TextArea).load_text.assert_called_once_with('http://example.com')
 
+    # Verify copy buttons were enabled
     assert mock_app.query_one("#chat-media-copy-title-button", Button).disabled is False
+    assert mock_app.query_one("#chat-media-copy-content-button", Button).disabled is False
+    assert mock_app.query_one("#chat-media-copy-author-button", Button).disabled is False
+    assert mock_app.query_one("#chat-media-copy-url-button", Button).disabled is False
 
 
 async def test_handle_chat_media_load_selected_no_selection(mock_app):
     """Test load button when nothing is selected."""
-    mock_results_list = mock_app.query_one("#chat-media-search-results-listview", ListView)
-    mock_results_list.highlighted_child = None
+    # Create a list item without media_data attribute
+    mock_list_item = MagicMock(spec=ListItem)
+    # Don't set media_data attribute
 
-    # Note: handle_chat_media_load_selected_button_pressed doesn't exist
-    # This test needs to be rewritten or the function needs to be added
-    pass  # Skipping for now
-    mock_app.query_one("#chat-media-content-display", TextArea).clear.assert_called_once()
+    # Call the function
+    await handle_media_item_selected(mock_app, mock_list_item)
+
+    # Should notify user of the issue
+    mock_app.notify.assert_called_once_with("Selected item has no data.", severity="warning")
+    
+    # Should not attempt to load from DB
+    mock_app.media_db.get_media_by_id.assert_not_called()
+    
+    # The _clear_and_disable_media_display should have been called at the start
+    # which clears all the text areas
+    assert mock_app.query_one("#chat-media-title-display", TextArea).clear.called
+    assert mock_app.query_one("#chat-media-content-display", TextArea).clear.called
+    assert mock_app.query_one("#chat-media-author-display", TextArea).clear.called
+    assert mock_app.query_one("#chat-media-url-display", TextArea).clear.called
+    
+    # Copy buttons should be disabled
     assert mock_app.query_one("#chat-media-copy-title-button", Button).disabled is True
+    assert mock_app.query_one("#chat-media-copy-content-button", Button).disabled is True
+    assert mock_app.query_one("#chat-media-copy-author-button", Button).disabled is True
+    assert mock_app.query_one("#chat-media-copy-url-button", Button).disabled is True
 
 
 async def test_handle_copy_buttons_with_data(mock_app):

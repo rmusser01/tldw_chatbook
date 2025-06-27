@@ -38,6 +38,7 @@ class TestRAGServiceFactory:
         config.processor = Mock()
         config.generator = Mock()
         config.chroma = Mock()
+        config.chroma.persist_directory = None  # Will use default
         config.cache = Mock()
         return config
     
@@ -47,6 +48,7 @@ class TestRAGServiceFactory:
         config = Mock()
         config.max_total_size_mb = 1024.0
         config.enable_automatic_cleanup = True
+        config.memory_limit_bytes = 1024 * 1024 * 1024  # 1GB
         return config
     
     @pytest.fixture
@@ -113,7 +115,7 @@ class TestRAGServiceFactory:
         mock_get_rag.return_value = mock_rag_config
         mock_get_memory.return_value = mock_memory_config
         
-        service = factory.create_indexing_service(embeddings_dir=temp_embeddings_dir)
+        service = factory.create_indexing_service()
         
         assert service is not None
         assert service.embeddings_service is not None

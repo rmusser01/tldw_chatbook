@@ -40,13 +40,9 @@ class TestURLValidation:
         ]
         
         for url in invalid_urls:
-            if url is None:
-                with pytest.raises((TypeError, AttributeError)):
-                    await scrape_article(url)
-            else:
-                result = await scrape_article(url)
-                assert result['extraction_successful'] is False
-                assert 'Invalid URL' in result['title']
+            result = await scrape_article(url)
+            assert result['extraction_successful'] is False
+            assert 'Invalid URL' in result['title']
     
     @pytest.mark.asyncio
     async def test_scrape_article_valid_url(self):
@@ -59,22 +55,33 @@ class TestURLValidation:
             "https://192.168.1.1/page"
         ]
         
-        # Mock the actual scraping to avoid network calls
-        with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.async_playwright') as mock_playwright:
-            mock_browser = AsyncMock()
-            mock_context = AsyncMock()
-            mock_page = AsyncMock()
+        # Mock the config
+        with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.load_and_log_configs') as mock_config:
+            mock_config.return_value = {
+                'web_scraper': {
+                    'web_scraper_retry_count': 3,
+                    'web_scraper_request_timeout': 60,
+                    'web_scraper_stealth_mode': False
+                }
+            }
             
-            mock_playwright.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
-            mock_browser.new_context = AsyncMock(return_value=mock_context)
-            mock_context.new_page = AsyncMock(return_value=mock_page)
-            mock_page.goto = AsyncMock()
-            mock_page.content = AsyncMock(return_value="<html><body>Test content</body></html>")
-            
-            for url in valid_urls:
-                result = await scrape_article(url)
-                # Should at least attempt to scrape valid URLs
-                assert 'Invalid URL' not in result.get('title', '')
+            # Mock the actual scraping to avoid network calls
+            with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.async_playwright') as mock_playwright:
+                mock_browser = AsyncMock()
+                mock_context = AsyncMock()
+                mock_page = AsyncMock()
+                
+                mock_playwright.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
+                mock_browser.new_context = AsyncMock(return_value=mock_context)
+                mock_context.new_page = AsyncMock(return_value=mock_page)
+                mock_page.goto = AsyncMock()
+                mock_page.content = AsyncMock(return_value="<html><body>Test content</body></html>")
+                mock_page.wait_for_load_state = AsyncMock()
+                
+                for url in valid_urls:
+                    result = await scrape_article(url)
+                    # Should at least attempt to scrape valid URLs
+                    assert 'Invalid URL' not in result.get('title', '')
 
 
 class TestPageTitleExtraction:
@@ -110,7 +117,8 @@ class TestPageTitleExtraction:
     def test_get_page_title_network_error(self):
         """Test get_page_title with network error."""
         with patch('requests.get') as mock_get:
-            mock_get.side_effect = Exception("Network error")
+            import requests
+            mock_get.side_effect = requests.RequestException("Network error")
             
             title = get_page_title("https://example.com")
             assert title == "Untitled"
@@ -136,10 +144,9 @@ class TestSecurityMeasures:
         assert escape_sql_like_pattern("'; DROP TABLE cookies; --") == "'; DROP TABLE cookies; --"
         assert escape_sql_like_pattern("%' OR '1'='1") == "\\%' OR '1'='1"
     
-    @pytest.mark.asyncio
-    async def test_secure_temp_file_usage(self):
+    def test_secure_temp_file_usage(self):
         """Test that temporary files are created securely."""
-        with patch('tldw_chatbook.Utils.secure_temp_files.get_temp_manager') as mock_manager:
+        with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.get_temp_manager') as mock_manager:
             mock_temp_manager = Mock()
             mock_temp_manager.create_temp_file.return_value = "/secure/temp/file.xml"
             mock_manager.return_value = mock_temp_manager
@@ -148,11 +155,13 @@ class TestSecurityMeasures:
             # We're testing the pattern is followed
             from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import generate_temp_sitemap_from_links
             
-            with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.collect_internal_links') as mock_collect:
-                mock_collect.return_value = ["https://example.com/page1", "https://example.com/page2"]
-                
-                result = generate_temp_sitemap_from_links(["https://example.com"])
-                mock_temp_manager.create_temp_file.assert_called_once()
+            # Pass a set of links
+            links = {"https://example.com/page1", "https://example.com/page2"}
+            result = generate_temp_sitemap_from_links(links)
+            
+            # Check that temp file was created
+            mock_temp_manager.create_temp_file.assert_called_once()
+            assert result == "/secure/temp/file.xml"
 
 
 class TestContentMetadataHandler:
@@ -160,26 +169,13 @@ class TestContentMetadataHandler:
     
     def test_metadata_handler_initialization(self):
         """Test ContentMetadataHandler initialization."""
-        handler = ContentMetadataHandler()
-        assert hasattr(handler, 'content_hashes')
-        assert hasattr(handler, 'content_metadata')
+        # ContentMetadataHandler is a static class with no instance attributes
+        # Just verify it can be imported and has expected static methods
+        assert hasattr(ContentMetadataHandler, 'format_content_with_metadata')
+        assert hasattr(ContentMetadataHandler, 'extract_metadata')
+        assert hasattr(ContentMetadataHandler, 'has_metadata')
+        assert hasattr(ContentMetadataHandler, 'strip_metadata')
     
-    def test_is_duplicate_content(self):
-        """Test duplicate content detection."""
-        handler = ContentMetadataHandler()
-        
-        content1 = "This is test content"
-        content2 = "This is test content"  # Same content
-        content3 = "This is different content"
-        
-        # First content should not be duplicate
-        assert not handler.is_duplicate(content1)
-        
-        # Same content should be duplicate
-        assert handler.is_duplicate(content2)
-        
-        # Different content should not be duplicate
-        assert not handler.is_duplicate(content3)
 
 
 class TestErrorHandling:
@@ -188,20 +184,30 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_scrape_article_timeout(self):
         """Test handling of timeout errors."""
-        with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.async_playwright') as mock_playwright:
-            mock_browser = AsyncMock()
-            mock_context = AsyncMock()
-            mock_page = AsyncMock()
+        # Mock the config
+        with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.load_and_log_configs') as mock_config:
+            mock_config.return_value = {
+                'web_scraper': {
+                    'web_scraper_retry_count': 3,
+                    'web_scraper_request_timeout': 60,
+                    'web_scraper_stealth_mode': False
+                }
+            }
             
-            mock_playwright.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
-            mock_browser.new_context = AsyncMock(return_value=mock_context)
-            mock_context.new_page = AsyncMock(return_value=mock_page)
-            
-            # Simulate timeout
-            mock_page.goto = AsyncMock(side_effect=TimeoutError("Navigation timeout"))
-            
-            result = await scrape_article("https://example.com")
-            assert result['extraction_successful'] is False
+            with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.async_playwright') as mock_playwright:
+                mock_browser = AsyncMock()
+                mock_context = AsyncMock()
+                mock_page = AsyncMock()
+                
+                mock_playwright.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
+                mock_browser.new_context = AsyncMock(return_value=mock_context)
+                mock_context.new_page = AsyncMock(return_value=mock_page)
+                
+                # Simulate timeout
+                mock_page.goto = AsyncMock(side_effect=TimeoutError("Navigation timeout"))
+                
+                result = await scrape_article("https://example.com")
+                assert result['extraction_successful'] is False
     
     def test_scrape_and_no_summarize_invalid_url(self):
         """Test scrape_and_no_summarize_then_ingest with invalid URL."""
@@ -225,25 +231,38 @@ class TestConcurrentOperations:
             "https://example3.com"
         ]
         
-        with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.async_playwright') as mock_playwright:
-            # Mock the browser operations
-            mock_browser = AsyncMock()
-            mock_context = AsyncMock()
-            mock_page = AsyncMock()
+        # Mock the config
+        with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.load_and_log_configs') as mock_config:
+            mock_config.return_value = {
+                'web_scraper': {
+                    'web_scraper_retry_count': 3,
+                    'web_scraper_request_timeout': 60,
+                    'web_scraper_stealth_mode': False
+                }
+            }
             
-            mock_playwright.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
-            mock_browser.new_context = AsyncMock(return_value=mock_context)
-            mock_context.new_page = AsyncMock(return_value=mock_page)
-            mock_page.goto = AsyncMock()
-            mock_page.content = AsyncMock(return_value="<html><body>Test</body></html>")
-            
-            # Run multiple scrapes concurrently
-            tasks = [scrape_article(url) for url in urls]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Check that all completed without raising exceptions
-            for result in results:
-                assert not isinstance(result, Exception)
+            with patch('tldw_chatbook.Web_Scraping.Article_Extractor_Lib.async_playwright') as mock_playwright:
+                # Mock the browser operations
+                mock_browser = AsyncMock()
+                mock_context = AsyncMock()
+                mock_page = AsyncMock()
+                
+                mock_playwright.return_value.__aenter__.return_value.chromium.launch = AsyncMock(return_value=mock_browser)
+                mock_browser.new_context = AsyncMock(return_value=mock_context)
+                mock_context.new_page = AsyncMock(return_value=mock_page)
+                mock_page.goto = AsyncMock()
+                mock_page.content = AsyncMock(return_value="<html><body>Test</body></html>")
+                mock_page.wait_for_load_state = AsyncMock()
+                
+                # Run multiple scrapes concurrently
+                tasks = [scrape_article(url) for url in urls]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Check that all completed without raising exceptions
+                for result in results:
+                    # Result should be a dict, not an exception
+                    assert isinstance(result, dict)
+                    assert not isinstance(result, Exception)
 
 
 if __name__ == "__main__":

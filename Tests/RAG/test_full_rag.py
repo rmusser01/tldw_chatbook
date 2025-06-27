@@ -61,6 +61,7 @@ class MockNotesService:
         return []
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_embeddings_service():
     """Test embeddings service initialization and basic functionality."""
     logger.info("\n=== Test 1: Embeddings Service ===")
@@ -138,6 +139,7 @@ async def test_embeddings_service():
         shutil.rmtree(temp_dir)
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_chunking_service():
     """Test chunking service functionality."""
     logger.info("\n=== Test 2: Chunking Service ===")
@@ -200,6 +202,7 @@ async def test_chunking_service():
         return False
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_full_rag_pipeline():
     """Test full RAG pipeline with embeddings."""
     logger.info("\n=== Test 3: Full RAG Pipeline ===")
@@ -266,6 +269,7 @@ async def test_full_rag_pipeline():
             logger.debug(traceback.format_exc())
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_hybrid_search():
     """Test hybrid search combining BM25 and vector search."""
     logger.info("\n=== Test 4: Hybrid Search ===")
@@ -321,6 +325,7 @@ async def test_hybrid_search():
             logger.error(f"❌ Hybrid search failed: {e}")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_indexing():
     """Test document indexing for vector search."""
     logger.info("\n=== Test 5: Document Indexing ===")

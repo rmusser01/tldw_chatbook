@@ -222,8 +222,11 @@ class TestClientSyncEnginePullApply:
         assert row['keyword'] == kw_name
         assert row['version'] == 1
         assert row['client_id'] == "other_client" # Originating client ID stored
-        # Server timestamp applied - check as string (SQLite stores timestamps as strings)
-        assert row['last_modified'] == "2023-10-28T10:00:00Z"
+        # Server timestamp applied - SQLite might return as datetime due to PARSE_DECLTYPES
+        if isinstance(row['last_modified'], datetime):
+            assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == "2023-10-28T10:00:00Z"
+        else:
+            assert row['last_modified'] == "2023-10-28T10:00:00Z"
         assert not row['deleted']
         # Verify state update
         assert sync_engine.last_server_log_id_processed == 101
@@ -261,7 +264,10 @@ class TestClientSyncEnginePullApply:
         row = cursor.fetchone()
         assert row['keyword'] == "updated_name"
         assert row['version'] == 2
-        assert row['last_modified'] == "2023-10-28T11:00:00Z"
+        if isinstance(row['last_modified'], datetime):
+            assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == "2023-10-28T11:00:00Z"
+        else:
+            assert row['last_modified'] == "2023-10-28T11:00:00Z"
         assert sync_engine.last_server_log_id_processed == 102
 
     @patch('tldw_chatbook.DB.Sync_Client.requests.get')
@@ -294,7 +300,10 @@ class TestClientSyncEnginePullApply:
         row = cursor.fetchone()
         assert row['deleted'] == 1
         assert row['version'] == 2
-        assert row['last_modified'] == "2023-10-28T12:00:00Z"
+        if isinstance(row['last_modified'], datetime):
+            assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == "2023-10-28T12:00:00Z"
+        else:
+            assert row['last_modified'] == "2023-10-28T12:00:00Z"
         assert sync_engine.last_server_log_id_processed == 103
 
     @patch('tldw_chatbook.DB.Sync_Client.requests.get')
@@ -403,7 +412,11 @@ class TestClientSyncEngineConflict:
           assert row['keyword'] == "server_v2_wins"  # Server change applied
           # assert row['version'] == 2 # OLD Assertion: Expects version to stay 2
           assert row['version'] == 3  # NEW Assertion: Expects version to be incremented by force_apply logic
-          assert row['last_modified'] == ts_server_v2  # Server timestamp applied
+          # Server timestamp applied - check the actual value
+          if isinstance(row['last_modified'], datetime):
+              assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == ts_server_v2
+          else:
+              assert row['last_modified'] == ts_server_v2  # Server timestamp applied
           assert sync_engine.last_server_log_id_processed == 102
 
 
@@ -448,7 +461,11 @@ class TestClientSyncEngineConflict:
            row = cursor.fetchone()
            assert row['keyword'] == "local_v2_wins" # Local change retained
            assert row['version'] == 2
-           assert row['last_modified'] == ts_local_v2 # Local timestamp retained
+           # Local timestamp retained - check the actual value
+           if isinstance(row['last_modified'], datetime):
+               assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == ts_local_v2
+           else:
+               assert row['last_modified'] == ts_local_v2 # Local timestamp retained
            assert sync_engine.last_server_log_id_processed == 102 # State still advances
 
 #

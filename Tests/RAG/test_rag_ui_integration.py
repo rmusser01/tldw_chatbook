@@ -88,6 +88,7 @@ class MockApp:
         logger.info(f"[{severity.upper()}] {message}")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_get_rag_context_basic():
     """Test basic get_rag_context_for_chat functionality."""
     logger.info("\n=== Test 1: Basic get_rag_context_for_chat ===")
@@ -140,6 +141,7 @@ async def test_get_rag_context_basic():
     return True
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_source_selection():
     """Test different source selection combinations."""
     logger.info("\n=== Test 2: Source Selection ===")
@@ -191,6 +193,7 @@ async def test_source_selection():
             logger.info(f"   No results found for sources: {', '.join(active)}")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_ui_settings_parsing():
     """Test parsing of UI settings."""
     logger.info("\n=== Test 3: UI Settings Parsing ===")
@@ -236,6 +239,7 @@ async def test_ui_settings_parsing():
             logger.error("❌ Failed to get context with test settings")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_error_handling():
     """Test error handling in UI integration."""
     logger.info("\n=== Test 4: Error Handling ===")
@@ -282,6 +286,7 @@ async def test_error_handling():
             logger.error("❌ Should handle search errors gracefully")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_context_formatting():
     """Test context formatting for chat integration."""
     logger.info("\n=== Test 5: Context Formatting ===")

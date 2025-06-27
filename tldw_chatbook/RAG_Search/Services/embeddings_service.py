@@ -463,6 +463,99 @@ class EmbeddingsService:
             
         logger.info(f"Performance configured: workers={self.max_workers}, batch_size={self.batch_size}, parallel={self.enable_parallel_processing}")
     
+    def clear_collection(self, collection_name: str) -> bool:
+        """
+        Clear a collection by deleting and recreating it.
+        
+        Args:
+            collection_name: Name of the collection to clear
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.client:
+            logger.error("ChromaDB client not initialized")
+            return False
+            
+        try:
+            # Delete the collection
+            try:
+                self.client.delete_collection(name=collection_name)
+                logger.info(f"Deleted collection: {collection_name}")
+            except Exception:
+                # Collection might not exist, which is fine
+                pass
+            
+            # Recreate the collection
+            self.get_or_create_collection(collection_name)
+            logger.info(f"Recreated collection: {collection_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing collection {collection_name}: {e}")
+            return False
+    
+    def update_documents(
+        self,
+        collection_name: str,
+        documents: List[str],
+        embeddings: List[List[float]],
+        metadatas: List[Dict[str, Any]],
+        ids: List[str]
+    ) -> bool:
+        """
+        Update existing documents in a collection.
+        
+        Args:
+            collection_name: Name of the collection
+            documents: List of document texts
+            embeddings: List of embedding vectors
+            metadatas: List of metadata dicts
+            ids: List of document IDs to update
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        collection = self.get_or_create_collection(collection_name)
+        if not collection:
+            return False
+            
+        try:
+            # Update documents
+            collection.update(
+                documents=documents,
+                embeddings=embeddings,
+                metadatas=metadatas,
+                ids=ids
+            )
+            logger.info(f"Updated {len(documents)} documents in collection: {collection_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating documents in collection {collection_name}: {e}")
+            return False
+    
+    def delete_documents(self, collection_name: str, ids: List[str]) -> bool:
+        """
+        Delete specific documents from a collection.
+        
+        Args:
+            collection_name: Name of the collection
+            ids: List of document IDs to delete
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        collection = self.get_or_create_collection(collection_name)
+        if not collection:
+            return False
+            
+        try:
+            collection.delete(ids=ids)
+            logger.info(f"Deleted {len(ids)} documents from collection: {collection_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents from collection {collection_name}: {e}")
+            return False
+    
     def __enter__(self):
         """Context manager entry."""
         return self

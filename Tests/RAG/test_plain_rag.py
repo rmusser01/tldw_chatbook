@@ -61,6 +61,7 @@ class MockNotesService:
         return []
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_basic_search():
     """Test basic RAG search across all sources."""
     logger.info("\n=== Test 1: Basic RAG Search ===")
@@ -110,6 +111,7 @@ async def test_basic_search():
             logger.error(f"❌ Search failed: {e}")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_source_filtering():
     """Test RAG search with specific source filtering."""
     logger.info("\n=== Test 2: Source Filtering ===")
@@ -164,6 +166,7 @@ async def test_source_filtering():
             logger.error(f"❌ Search failed: {e}")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_context_length_limiting():
     """Test context length limiting."""
     logger.info("\n=== Test 3: Context Length Limiting ===")
@@ -202,6 +205,7 @@ async def test_context_length_limiting():
             logger.error(f"❌ Search failed: {e}")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_reranking():
     """Test reranking functionality."""
     logger.info("\n=== Test 4: Reranking ===")
@@ -255,6 +259,7 @@ async def test_reranking():
         logger.info("ℹ️  FlashRank not available - skipping reranking test")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_caching():
     """Test caching functionality."""
     logger.info("\n=== Test 5: Caching ===")
@@ -306,6 +311,7 @@ async def test_caching():
         logger.error(f"❌ Second search failed: {e}")
 
 @pytest.mark.requires_rag_deps
+@pytest.mark.asyncio
 async def test_error_handling():
     """Test error handling."""
     logger.info("\n=== Test 6: Error Handling ===")

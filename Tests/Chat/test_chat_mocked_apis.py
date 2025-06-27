@@ -90,21 +90,23 @@ class TestMockedChatAPIs:
         assert call_args[1]['headers']['x-api-key'] == 'test-key'
         assert call_args[1]['headers']['anthropic-version'] == '2023-06-01'
     
-    @patch('httpx.Client')
-    def test_openai_streaming_mocked(self, mock_client_class, mock_messages):
+    @patch('requests.Session')
+    def test_openai_streaming_mocked(self, mock_session_class, mock_messages):
         """Test OpenAI streaming with mocked response."""
-        # Setup mock client
-        mock_client = MagicMock()
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        # Setup mock session
+        mock_session = MagicMock()
+        mock_session_class.return_value.__enter__.return_value = mock_session
         
         # Setup streaming response
         mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
         mock_response.iter_lines.return_value = [
             'data: {"choices":[{"delta":{"content":"Hello"}}]}',
             'data: {"choices":[{"delta":{"content":" world"}}]}',
             'data: [DONE]'
         ]
-        mock_client.post.return_value = mock_response
+        mock_session.post.return_value = mock_response
         
         # Make the call
         result = chat_api_call(
@@ -112,11 +114,27 @@ class TestMockedChatAPIs:
             mock_messages,
             api_key="test-key",
             model="gpt-3.5-turbo",
-            stream=True
+            streaming=True
         )
         
         # Collect streamed content
-        content = list(result)
+        content = []
+        for chunk in result:
+            # The streaming response includes the full SSE lines
+            chunk_str = chunk.strip() if isinstance(chunk, str) else chunk
+            if chunk_str and chunk_str.startswith('data: ') and chunk_str != 'data: [DONE]':
+                try:
+                    import json
+                    json_str = chunk_str[6:]  # Remove 'data: ' prefix
+                    if json_str:
+                        data = json.loads(json_str)
+                        if 'choices' in data and data['choices']:
+                            delta = data['choices'][0].get('delta', {})
+                            if 'content' in delta:
+                                content.append(delta['content'])
+                except json.JSONDecodeError:
+                    pass  # Skip invalid JSON
+        
         assert content == ["Hello", " world"]
     
     @patch('httpx.post')
@@ -170,7 +188,7 @@ class TestMockedChatAPIs:
             "gpt-3.5-turbo",
             temperature=0.7,
             max_tokens=100,
-            stream=False
+            streaming=False
         )
     
     def test_provider_parameter_mapping(self):
@@ -196,12 +214,12 @@ class TestMockedChatAPIs:
 class TestMockedStreamingAPIs:
     """Test streaming functionality with mocks."""
     
-    @patch('httpx.Client')
-    def test_streaming_chunk_processing(self, mock_client_class):
+    @patch('requests.Session')
+    def test_streaming_chunk_processing(self, mock_session_class):
         """Test that streaming chunks are processed correctly."""
         # Setup
-        mock_client = MagicMock()
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_session = MagicMock()
+        mock_session_class.return_value.__enter__.return_value = mock_session
         
         # Create a more complex streaming response
         chunks = [
@@ -215,8 +233,12 @@ class TestMockedStreamingAPIs:
         ]
         
         mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
         mock_response.iter_lines.return_value = chunks
-        mock_client.post.return_value = mock_response
+        # Mock decode_unicode parameter
+        mock_response.iter_lines.side_effect = lambda decode_unicode=False: chunks
+        mock_session.post.return_value = mock_response
         
         # Make the call
         result = chat_api_call(
@@ -224,12 +246,28 @@ class TestMockedStreamingAPIs:
             [{"role": "user", "content": "What is the answer?"}],
             api_key="test-key",
             model="gpt-3.5-turbo",
-            stream=True
+            streaming=True
         )
         
         # Collect and verify
-        content = "".join(list(result))
-        assert content == "The answer is 42."
+        content = []
+        for chunk in result:
+            # The streaming response includes the full SSE lines
+            chunk_str = chunk.strip() if isinstance(chunk, str) else chunk
+            if chunk_str and chunk_str.startswith('data: ') and chunk_str != 'data: [DONE]':
+                try:
+                    import json
+                    json_str = chunk_str[6:]  # Remove 'data: ' prefix
+                    if json_str:
+                        data = json.loads(json_str)
+                        if 'choices' in data and data['choices']:
+                            delta = data['choices'][0].get('delta', {})
+                            if 'content' in delta:
+                                content.append(delta['content'])
+                except json.JSONDecodeError:
+                    pass  # Skip invalid JSON
+        
+        assert "".join(content) == "The answer is 42."
     
     @patch('httpx.Client')
     def test_streaming_error_handling(self, mock_client_class):
@@ -253,7 +291,7 @@ class TestMockedStreamingAPIs:
                 "openai",
                 [{"role": "user", "content": "test"}],
                 api_key="test-key",
-                stream=True
+                streaming=True
             )
             # Consume the generator to trigger the error
             list(result)

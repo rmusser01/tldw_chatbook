@@ -362,10 +362,12 @@ Preview: {preview}...
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Called when a button inside this message is pressed."""
-        # Post our custom Action message
-        self.post_message(self.Action(self, event.button))
-        # Stop the event from bubbling up
-        event.stop()
+        # Only handle buttons that don't have specific handlers
+        if event.button.id not in ["toggle-image-mode", "save-image"]:
+            # Post our custom Action message
+            self.post_message(self.Action(self, event.button))
+            # Stop the event from bubbling up
+            event.stop()
     
     def mark_generation_complete(self):
         """Marks the AI message generation as complete."""

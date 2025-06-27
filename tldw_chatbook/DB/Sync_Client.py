@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sqlite3 # For specific error types
+from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
 from loguru import logger
@@ -368,6 +369,13 @@ class ClientSyncEngine:
             local_ts_row = cursor.fetchone()
             # Use a very old timestamp if record somehow doesn't exist (shouldn't happen in conflict)
             local_timestamp = local_ts_row[0] if local_ts_row else '1970-01-01 00:00:00'
+            
+            # Convert both timestamps to strings for consistent comparison
+            # SQLite might return datetime objects due to PARSE_DECLTYPES
+            if isinstance(local_timestamp, datetime):
+                local_timestamp = local_timestamp.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            if isinstance(authoritative_timestamp, datetime):
+                authoritative_timestamp = authoritative_timestamp.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
             # Compare server's authoritative timestamp with the local record's timestamp
             if authoritative_timestamp >= local_timestamp:
