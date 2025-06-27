@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from loguru import logger
 
-from ...config import load_settings
+from tldw_chatbook.config import load_settings
 
 # Import functions at runtime to avoid circular imports
 def _get_llm_functions():

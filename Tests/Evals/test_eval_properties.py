@@ -59,8 +59,8 @@ except ImportError:
             return lambda: args[0]() if args else None
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.App_Functions.Evals.task_loader import TaskConfig, TaskLoader
-from tldw_chatbook.App_Functions.Evals.eval_runner import EvalRunner, EvalSampleResult, MetricsCalculator
+from tldw_chatbook.Evals.task_loader import TaskConfig, TaskLoader
+from tldw_chatbook.Evals.eval_runner import EvalRunner, EvalSampleResult, MetricsCalculator
 
 # Custom strategies for evaluation system types
 @composite

@@ -24,7 +24,7 @@ from loguru import logger
 
 from .task_loader import TaskLoader, TaskConfig
 from .eval_runner import EvalRunner, EvalSampleResult
-from ...DB.Evals_DB import EvalsDB
+from tldw_chatbook.DB.Evals_DB import EvalsDB
 
 class EvaluationOrchestrator:
     """Orchestrates evaluation runs from start to finish."""

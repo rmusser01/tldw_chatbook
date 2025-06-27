@@ -313,8 +313,9 @@ filter_list:
 ## Usage Examples
 
 ### Basic Evaluation
+
 ```python
-from tldw_chatbook.App_Functions.Evals.eval_orchestrator import quick_eval
+from tldw_chatbook.Evals.eval_orchestrator import quick_eval
 
 # Run a quick evaluation
 result = await quick_eval(
@@ -327,8 +328,9 @@ result = await quick_eval(
 ```
 
 ### Full Orchestration
+
 ```python
-from tldw_chatbook.App_Functions.Evals.eval_orchestrator import EvaluationOrchestrator
+from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 
 orchestrator = EvaluationOrchestrator()
 
@@ -338,7 +340,7 @@ task_id = await orchestrator.create_task_from_file("task.yaml", "eleuther")
 # Create model configuration
 model_id = orchestrator.create_model_config(
     name="GPT-4",
-    provider="openai", 
+    provider="openai",
     model_id="gpt-4"
 )
 

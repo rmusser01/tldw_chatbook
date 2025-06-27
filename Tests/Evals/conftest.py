@@ -25,10 +25,10 @@ import pytest
 from loguru import logger
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.App_Functions.Evals.task_loader import TaskConfig, TaskLoader
-from tldw_chatbook.App_Functions.Evals.eval_runner import EvalRunner, EvalSampleResult
-from tldw_chatbook.App_Functions.Evals.eval_orchestrator import EvaluationOrchestrator
-from tldw_chatbook.App_Functions.Evals.llm_interface import LLMInterface
+from tldw_chatbook.Evals.task_loader import TaskConfig, TaskLoader
+from tldw_chatbook.Evals.eval_runner import EvalRunner, EvalSampleResult
+from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
+from tldw_chatbook.Evals.llm_interface import LLMInterface
 
 # --- Database Fixtures ---
 

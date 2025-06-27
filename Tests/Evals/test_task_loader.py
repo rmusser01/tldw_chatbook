@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from tldw_chatbook.App_Functions.Evals.task_loader import (
+from tldw_chatbook.Evals.task_loader import (
     TaskLoader, TaskConfig, TaskLoadError, ValidationError
 )
 

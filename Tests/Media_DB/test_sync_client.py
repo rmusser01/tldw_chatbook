@@ -370,7 +370,8 @@ class TestClientSyncEngineConflict:
           assert get_entity_version(client_db, "Keywords", kw_uuid) == 1
 
           # 2. Simulate local concurrent change (V2 - Local)
-          ts_local_v2 = (datetime.fromisoformat(ts_v1.replace("Z","+00:00")) + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
+          # ts_v1 is a datetime object from SQLite, not a string
+          ts_local_v2 = (ts_v1 + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
           client_db.execute_query(
                "UPDATE Keywords SET keyword='local_v2', version=2, last_modified=?, client_id=? WHERE uuid=?",
                (ts_local_v2, sync_engine.client_id, kw_uuid), commit=True
@@ -378,7 +379,7 @@ class TestClientSyncEngineConflict:
           assert get_entity_version(client_db, "Keywords", kw_uuid) == 2
 
           # 3. Prepare conflicting server change (also V2, based on V1, but with later timestamp)
-          ts_server_v2 = (datetime.fromisoformat(ts_v1.replace("Z","+00:00")) + timedelta(seconds=20)).strftime('%Y-%m-%dT%H:%M:%SZ')
+          ts_server_v2 = (ts_v1 + timedelta(seconds=20)).strftime('%Y-%m-%dT%H:%M:%SZ')
           server_change = create_mock_log_entry(
                change_id=102, entity="Keywords", uuid=kw_uuid, op="update",
                client="other_client", version=2, # Based on V1
@@ -417,7 +418,7 @@ class TestClientSyncEngineConflict:
            assert get_entity_version(client_db, "Keywords", kw_uuid) == 1
 
            # 2. Simulate local concurrent change (V2 - Local) with later timestamp
-           ts_local_v2 = (datetime.fromisoformat(ts_v1.replace("Z","+00:00")) + timedelta(seconds=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+           ts_local_v2 = (ts_v1 + timedelta(seconds=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
            client_db.execute_query(
                "UPDATE Keywords SET keyword='local_v2_wins', version=2, last_modified=?, client_id=? WHERE uuid=?",
                (ts_local_v2, sync_engine.client_id, kw_uuid), commit=True
@@ -425,7 +426,7 @@ class TestClientSyncEngineConflict:
            assert get_entity_version(client_db, "Keywords", kw_uuid) == 2
 
            # 3. Prepare conflicting server change (also V2, based on V1, but with earlier timestamp)
-           ts_server_v2 = (datetime.fromisoformat(ts_v1.replace("Z","+00:00")) + timedelta(seconds=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+           ts_server_v2 = (ts_v1 + timedelta(seconds=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
            server_change = create_mock_log_entry(
                change_id=102, entity="Keywords", uuid=kw_uuid, op="update",
                client="other_client", version=2, # Based on V1

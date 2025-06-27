@@ -18,11 +18,11 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 
-from tldw_chatbook.App_Functions.Evals.eval_runner import (
+from tldw_chatbook.Evals.eval_runner import (
     EvalRunner, EvalSampleResult, EvalProgress, EvalError, MetricsCalculator
 )
-from tldw_chatbook.App_Functions.Evals.task_loader import TaskConfig
-from tldw_chatbook.App_Functions.Evals.llm_interface import LLMInterface
+from tldw_chatbook.Evals.task_loader import TaskConfig
+from tldw_chatbook.Evals.llm_interface import LLMInterface
 
 class TestEvalSampleResult:
     """Test EvalSampleResult data class functionality."""
