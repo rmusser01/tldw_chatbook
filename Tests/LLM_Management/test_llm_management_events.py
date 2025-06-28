@@ -9,8 +9,8 @@ from tldw_chatbook.app import TldwCli  # Assuming TldwCli is the app class
 # Import comprehensive mock but create custom fixture for LLM management
 from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock
 
-# Mark all tests in this file as asyncio
-pytestmark = pytest.mark.asyncio
+# Mark all tests in this file as asyncio and unit tests
+pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
 @pytest.fixture

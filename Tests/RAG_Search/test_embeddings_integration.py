@@ -1,5 +1,6 @@
 # test_embeddings_integration.py
 # Integration tests for embeddings service components working together
+# NOTE: This file uses MockEmbeddingProvider from conftest. For tests with real embeddings, see test_embeddings_real_integration.py
 
 import pytest
 import tempfile

@@ -441,7 +441,7 @@ class ChromaDBStore(VectorStore):
             try:
                 collection = self.client.get_or_create_collection(
                     name=collection_name,
-                    metadata={}
+                    metadata={"created_by": "tldw_chatbook"}
                 )
                 collection.add(
                     documents=documents,

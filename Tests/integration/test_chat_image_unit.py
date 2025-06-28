@@ -1,5 +1,6 @@
-# Tests/integration/test_chat_image_integration.py
-# Description: Integration tests for chat image attachment flow
+# Tests/integration/test_chat_image_unit.py
+# Description: Unit tests for chat image attachment flow (using mocks)
+# NOTE: For real integration tests, see test_chat_image_integration_real.py
 #
 # Imports
 #
@@ -20,6 +21,9 @@ from textual.widgets import Input, Button
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
 from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
+
+# Test marker for unit tests
+pytestmark = pytest.mark.unit
 
 #
 #######################################################################################################################

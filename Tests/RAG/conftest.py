@@ -97,6 +97,19 @@ class MockEmbeddingProvider:
     def cleanup(self):
         """Cleanup method for compatibility"""
         pass
+    
+    def encode(self, texts, *args, **kwargs):
+        """Encode method for compatibility with integration tests that expect it"""
+        # Convert single text to list if needed
+        if isinstance(texts, str):
+            texts = [texts]
+        
+        # Use the same logic as create_embeddings
+        embeddings = self.create_embeddings(texts)
+        
+        # Return as numpy array for compatibility
+        import numpy as np
+        return np.array(embeddings)
 
 
 # Global mock for sentence transformers
@@ -124,8 +137,13 @@ def mock_sentence_transformers():
 
 # Prevent auto-initialization of providers
 @pytest.fixture(autouse=True)
-def prevent_provider_init():
+def prevent_provider_init(request):
     """Prevent automatic provider initialization in tests"""
+    # Skip this fixture for integration tests
+    if "integration" in request.node.name or "integration" in str(request.fspath):
+        yield
+        return
+        
     from tldw_chatbook.RAG_Search.Services import embeddings_service
     
     # Save original methods

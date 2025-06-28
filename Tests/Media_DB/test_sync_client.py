@@ -1,5 +1,6 @@
 # tests/test_sync_client.py
 # Description: Unit tests for the ClientSyncEngine class, focusing on state management, push/pull operations, and conflict resolution.
+# NOTE: These are UNIT tests that mock network calls. For integration tests with a real test server, see test_sync_client_integration.py
 #
 # Imports
 from datetime import datetime, timedelta
@@ -14,7 +15,10 @@ import requests
 # Local Imports
 from .test_media_db_v2 import get_entity_version
 from tldw_chatbook.DB.Sync_Client import ClientSyncEngine
-#
+
+# Test marker for unit tests
+pytestmark = pytest.mark.unit
+
 #######################################################################################################################
 #
 # Functions:

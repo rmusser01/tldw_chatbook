@@ -1,23 +1,19 @@
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+import tempfile
+import os
+from pathlib import Path
 
-from textual.app import App
-from textual.widgets import Button, TextArea, Static, Select, Checkbox, Input, Label, ListView, ListItem, Collapsible
-from textual.containers import VerticalScroll
-from rich.text import Text  # Keep if ChatMessage or other components use it directly
+from textual.widgets import Button, TextArea, Input, Label, ListView, ListItem, Collapsible
+from rich.text import Text
 
-# Mocked app class (simplified)
+# Real app class for integration testing
 from tldw_chatbook.app import TldwCli
-
-# Test Dependencies:
-# - pytest-asyncio: Required for async test support
-# Install with: pip install pytest-asyncio
-# Assuming ccl might be needed if any underlying app logic touches it, otherwise can be removed if not directly relevant
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase  # For type hinting if needed
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
-# Event handlers to be tested (or called directly in tests)
+# Event handlers to be tested
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
     _clear_and_disable_media_display,
     perform_media_sidebar_search,
@@ -29,311 +25,233 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
 
 
 @pytest_asyncio.fixture
-async def mock_app_media_test(tmp_path):  # Renamed fixture for clarity
-    """A mock TldwCli app instance tailored for media search sidebar tests."""
+async def real_app_media_test(tmp_path):
+    """A real TldwCli app instance for integration testing media search sidebar."""
+    # Create temporary directories for databases
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    media_db_path = db_dir / "media.db"
+    chachanotes_db_path = db_dir / "chachanotes.db"
+    
+    # Create config file
     default_config_content = """
 [general]
 log_level = "DEBUG"
 default_tab = "chat"
 USERS_NAME = "TestUser"
+
 [chat_defaults]
-provider = "Ollama" # Minimal provider needed if LLM calls were involved
+provider = "Ollama"
 model = "test_model"
-"""
+
+[paths]
+data_dir = "{}"
+""".format(str(tmp_path))
+    
     config_path = tmp_path / "test_config_media.toml"
     with open(config_path, "w") as f:
         f.write(default_config_content)
 
-    with patch('tldw_chatbook.config.DEFAULT_CONFIG_PATH', new=config_path):
-        app = TldwCli()
-        app.API_IMPORTS_SUCCESSFUL = True
-
-        # Create persistent mocks that will be reused
-        mock_list_view = MagicMock(spec=ListView)
-        mock_list_view._nodes = []
-        type(mock_list_view).children = PropertyMock(side_effect=lambda: mock_list_view._nodes)
-        async def clear_nodes():
-            mock_list_view._nodes = []
-        mock_list_view.clear = AsyncMock(side_effect=clear_nodes)
-
-        def append_item(item):
-            if not isinstance(item, ListItem):
-                li = ListItem(Label(str(getattr(item, 'label', str(item)))))
-                if hasattr(item, 'media_data'):
-                    li.media_data = item.media_data
-                mock_list_view._nodes.append(li)
-            else:
-                # Mock the query_one method for ListItem to return the Label
-                if hasattr(item, 'children') and len(item.children) > 0:
-                    label = item.children[0]
-                    item.query_one = MagicMock(return_value=label)
-                mock_list_view._nodes.append(item)
-
-        async def async_append_item(item):
-            append_item(item)
-        mock_list_view.append = AsyncMock(side_effect=async_append_item)
-        mock_list_view.highlighted_child = None
-
-        # Create button mocks with mutable disabled property
-        mock_copy_title_button = MagicMock(spec=Button)
-        mock_copy_title_button.disabled = True
-        mock_copy_content_button = MagicMock(spec=Button)
-        mock_copy_content_button.disabled = True
-        mock_copy_author_button = MagicMock(spec=Button)
-        mock_copy_author_button.disabled = True
-        mock_copy_url_button = MagicMock(spec=Button)
-        mock_copy_url_button.disabled = True
-
-        # Create persistent text area mocks
-        mock_title_display = MagicMock(spec=TextArea)
-        mock_title_display.text = ""
-        mock_title_display.clear = MagicMock(side_effect=lambda: setattr(mock_title_display, 'text', ""))
-        mock_title_display.load_text = MagicMock(side_effect=lambda t: setattr(mock_title_display, 'text', t))
-        
-        mock_content_display = MagicMock(spec=TextArea)
-        mock_content_display.text = ""
-        mock_content_display.clear = MagicMock(side_effect=lambda: setattr(mock_content_display, 'text', ""))
-        mock_content_display.load_text = MagicMock(side_effect=lambda t: setattr(mock_content_display, 'text', t))
-        
-        mock_author_display = MagicMock(spec=TextArea)
-        mock_author_display.text = ""
-        mock_author_display.clear = MagicMock(side_effect=lambda: setattr(mock_author_display, 'text', ""))
-        mock_author_display.load_text = MagicMock(side_effect=lambda t: setattr(mock_author_display, 'text', t))
-        
-        mock_url_display = MagicMock(spec=TextArea)
-        mock_url_display.text = ""
-        mock_url_display.clear = MagicMock(side_effect=lambda: setattr(mock_url_display, 'text', ""))
-        mock_url_display.load_text = MagicMock(side_effect=lambda t: setattr(mock_url_display, 'text', t))
-
-        # Mock essential UI components that are queried globally or by these handlers
-        def side_effect_query_one(selector, *args, **kwargs):
-            # print(f"DEBUG: query_one called with selector: {selector}") # For debugging tests
-            if selector == "#chat-media-search-collapsible":
-                return MagicMock(spec=Collapsible)
-            elif selector == "#chat-media-search-input":
-                return MagicMock(spec=Input, value="")
-            elif selector == "#chat-media-search-results-listview":
-                return mock_list_view
-            elif selector == "#chat-media-load-selected-button":
-                return MagicMock(spec=Button)
-            elif selector == "#chat-media-review-display":
-                mock_text_area = MagicMock(spec=TextArea)
-                mock_text_area.text = ""
-                mock_text_area.clear = MagicMock(side_effect=lambda: setattr(mock_text_area, 'text', ""))
-                mock_text_area.load_text = AsyncMock(side_effect=lambda t: setattr(mock_text_area, 'text', t))
-                return mock_text_area
-            elif selector == "#chat-media-copy-title-button":
-                return mock_copy_title_button
-            elif selector == "#chat-media-copy-content-button":
-                return mock_copy_content_button
-            elif selector == "#chat-media-copy-author-button":
-                return mock_copy_author_button
-            elif selector == "#chat-media-copy-url-button":
-                return mock_copy_url_button
-            # Add fallbacks for other critical UI elements if handlers touch them
-            elif selector == "#chat-input":  # Example if some handler indirectly queries it
-                return MagicMock(spec=TextArea, text="")
-            elif selector == "#chat-media-title-display":
-                return mock_title_display
-            elif selector == "#chat-media-content-display":
-                return mock_content_display
-            elif selector == "#chat-media-author-display":
-                return mock_author_display
-            elif selector == "#chat-media-url-display":
-                return mock_url_display
-            else:
-                print(f"Warning: mock_app_media_test query_one unmocked: {selector}")
-                return MagicMock()
-
-        app.query_one = MagicMock(side_effect=side_effect_query_one)
-
-        app.notify = MagicMock()
-        app.copy_to_clipboard = MagicMock()
-
-        # Mock DB and services relevant to media search
-        app.notes_service = MagicMock()
-        mock_media_db_instance = MagicMock(spec=MediaDatabase)  # Use spec for better mocking
-        app.notes_service._get_db = MagicMock(return_value=mock_media_db_instance)
-        app.media_db = mock_media_db_instance  # For direct access in tests
-
-        # Initialize app attributes related to this feature
-        app.current_sidebar_media_item = None
-        app._media_sidebar_search_timer = None
-        app.notes_user_id = "test_user"  # Default user_id for tests
-        app._ui_ready = True  # Simulate UI is ready
-
-        yield app
-
-        # Teardown
-        app._ui_ready = False
-        app.current_sidebar_media_item = None
-        if hasattr(app, '_media_sidebar_search_timer') and app._media_sidebar_search_timer:
-            app._media_sidebar_search_timer.cancel()
-            app._media_sidebar_search_timer = None
+    # Set environment variables for test
+    os.environ['TLDW_CONFIG_PATH'] = str(config_path)
+    
+    # Create the app instance
+    app = TldwCli()
+    app.API_IMPORTS_SUCCESSFUL = True
+    
+    # Initialize real databases
+    app.media_db = MediaDatabase(str(media_db_path))
+    app.chachanotes_db = CharactersRAGDB(str(chachanotes_db_path), "test_user")
+    
+    # Set up the notes service to use real database
+    if hasattr(app, 'notes_service'):
+        app.notes_service._db = app.media_db
+        app.notes_service._get_db = lambda: app.media_db
+    
+    # Initialize app attributes
+    app.current_sidebar_media_item = None
+    app._media_sidebar_search_timer = None
+    app.notes_user_id = "test_user"
+    
+    # Insert test data into media database
+    app.media_db.insert_media_item(
+        title='Test Media One',
+        content='Content for one.',
+        media_type='article',
+        author='Author One',
+        url='http://example.com/one',
+        keywords=['test', 'one'],
+        notes='Notes for one',
+        publication_date='2023-01-01'
+    )
+    app.media_db.insert_media_item(
+        title='Test Media Two',
+        content='Content for two.',
+        media_type='video',
+        author='Author Two',
+        url='http://example.com/two',
+        keywords=['test', 'two'],
+        notes='Notes for two',
+        publication_date='2023-01-02'
+    )
+    
+    yield app
+    
+    # Cleanup
+    if hasattr(app, '_media_sidebar_search_timer') and app._media_sidebar_search_timer:
+        app._media_sidebar_search_timer.cancel()
+    app.media_db.close()
+    app.chachanotes_db.close()
 
 
-# --- Test Data ---
-MOCK_MEDIA_ITEM_1 = {
-    'id': 123, 'uuid': 'uuid123', 'title': 'Test Media One', 'content': 'Content for one.',
-    'author': 'Author One', 'url': 'http://example.com/one', 'media_type': 'article', 'keywords': ['test', 'one'],
-    'notes': 'Notes for one', 'publication_date': '2023-01-01'
-}
-MOCK_MEDIA_ITEM_2 = {
-    'id': 456, 'uuid': 'uuid456', 'title': 'Test Media Two', 'content': 'Content for two.',
-    'author': 'Author Two', 'url': 'http://example.com/two', 'media_type': 'video', 'keywords': ['test', 'two'],
-    'notes': 'Notes for two', 'publication_date': '2023-01-02'
-}
-MOCK_MEDIA_SEARCH_RESULTS = [MOCK_MEDIA_ITEM_1, MOCK_MEDIA_ITEM_2]
+# Test marker for integration tests
+pytestmark = pytest.mark.integration
 
 
 # --- Test Cases ---
 
 @pytest.mark.asyncio
-async def test_media_search_initial_state(mock_app_media_test: TldwCli):
-    app = mock_app_media_test
-
-    assert app.query_one("#chat-media-search-collapsible", Collapsible) is not None
-    assert app.query_one("#chat-media-search-input", Input) is not None
-    assert app.query_one("#chat-media-search-results-listview", ListView) is not None
-    assert app.query_one("#chat-media-load-selected-button", Button) is not None
-
-    review_display_mock = app.query_one("#chat-media-review-display", TextArea)
-    assert review_display_mock is not None
-    assert review_display_mock.text == ""
-
-    assert app.query_one("#chat-media-copy-title-button", Button).disabled is True
-    assert app.query_one("#chat-media-copy-content-button", Button).disabled is True
-    assert app.query_one("#chat-media-copy-author-button", Button).disabled is True
-    assert app.query_one("#chat-media-copy-url-button", Button).disabled is True
-    assert app.current_sidebar_media_item is None
+async def test_media_search_initial_state(real_app_media_test: TldwCli):
+    """Test that media search sidebar has correct initial state."""
+    app = real_app_media_test
+    
+    async with app.run_test() as pilot:
+        # Wait for UI to be ready
+        await pilot.pause(0.5)
+        
+        # Navigate to chat tab
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        
+        # Check that all required UI elements exist
+        collapsible = app.query_one("#chat-media-search-collapsible", Collapsible)
+        assert collapsible is not None
+        
+        search_input = app.query_one("#chat-media-search-input", Input)
+        assert search_input is not None
+        assert search_input.value == ""
+        
+        results_listview = app.query_one("#chat-media-search-results-listview", ListView)
+        assert results_listview is not None
+        
+        load_button = app.query_one("#chat-media-load-selected-button", Button)
+        assert load_button is not None
+        
+        # Check copy buttons are initially disabled
+        copy_title_btn = app.query_one("#chat-media-copy-title-button", Button)
+        copy_content_btn = app.query_one("#chat-media-copy-content-button", Button)
+        copy_author_btn = app.query_one("#chat-media-copy-author-button", Button)
+        copy_url_btn = app.query_one("#chat-media-copy-url-button", Button)
+        
+        assert copy_title_btn.disabled is True
+        assert copy_content_btn.disabled is True
+        assert copy_author_btn.disabled is True
+        assert copy_url_btn.disabled is True
+        
+        assert app.current_sidebar_media_item is None
 
 
 @pytest.mark.asyncio
-async def test_media_search_functionality(mock_app_media_test: TldwCli):
-    app = mock_app_media_test
-    app.media_db.search_media_db = MagicMock(return_value=(MOCK_MEDIA_SEARCH_RESULTS, len(MOCK_MEDIA_SEARCH_RESULTS)))
-
-    search_input_mock = app.query_one("#chat-media-search-input", Input)
-    results_list_view_mock = app.query_one("#chat-media-search-results-listview", ListView)
-
-    search_input_mock.value = "test"
-    await perform_media_sidebar_search(app, "test")  # Call handler directly, bypassing debounce for simplicity
-
-    # Debug: Check the mock was called
-    print(f"Mock append called {results_list_view_mock.append.call_count} times")
-    print(f"Mock append calls: {results_list_view_mock.append.call_args_list}")
-    print(f"Nodes in list view: {results_list_view_mock._nodes}")
-
-    app.media_db.search_media_db.assert_called_once_with(
-        search_query="test",
-        search_fields=['title', 'content', 'author', 'keywords', 'notes'],
-        media_types=None,
-        include_trash=False,
-        include_deleted=False,
-        page=1,
-        results_per_page=50
-    )
-    assert len(results_list_view_mock._nodes) == 2
-
-    item1_widget_mock = results_list_view_mock._nodes[0]
-    assert isinstance(item1_widget_mock, ListItem)
-    # Check the label was created with correct text
-    assert hasattr(item1_widget_mock, 'media_data')
-    assert item1_widget_mock.media_data == MOCK_MEDIA_ITEM_1
-    # Verify the label text from the ListItem's children
-    if hasattr(item1_widget_mock, 'children') and len(item1_widget_mock.children) > 0:
-        label = item1_widget_mock.children[0]
-        assert isinstance(label, Label)
-        assert str(label.renderable) == f"{MOCK_MEDIA_ITEM_1['title']} (ID: {MOCK_MEDIA_ITEM_1['id']})"
-
-    # Test no results
-    app.media_db.search_media_db.reset_mock()
-    app.media_db.search_media_db.return_value = ([], 0)
-    search_input_mock.value = "nomatch"
-    await perform_media_sidebar_search(app, "nomatch")
-
-    app.media_db.search_media_db.assert_called_once_with(
-        search_query="nomatch",
-        search_fields=['title', 'content', 'author', 'keywords', 'notes'],
-        media_types=None,
-        include_trash=False,
-        include_deleted=False,
-        page=1,
-        results_per_page=50
-    )
-    assert len(results_list_view_mock._nodes) == 1
-    no_results_item = results_list_view_mock._nodes[0]
-    assert isinstance(no_results_item, ListItem)
-    if hasattr(no_results_item, 'children') and len(no_results_item.children) > 0:
-        no_results_label_mock = no_results_item.children[0]
-        assert isinstance(no_results_label_mock, Label)
-        assert str(no_results_label_mock.renderable) == "No media found."
+async def test_media_search_functionality(real_app_media_test: TldwCli):
+    """Test media search functionality with real database."""
+    app = real_app_media_test
+    
+    async with app.run_test() as pilot:
+        # Wait for UI to be ready
+        await pilot.pause(0.5)
+        
+        # Navigate to chat tab
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        
+        # Get UI elements
+        search_input = app.query_one("#chat-media-search-input", Input)
+        results_listview = app.query_one("#chat-media-search-results-listview", ListView)
+        
+        # Clear any existing search results
+        await results_listview.clear()
+        
+        # Type search query
+        await pilot.click(search_input)
+        await pilot.pause(0.1)
+        search_input.value = "test"
+        
+        # Trigger search directly (bypassing debounce)
+        await perform_media_sidebar_search(app, "test")
+        await pilot.pause(0.2)
+        
+        # Check results
+        list_items = results_listview.query(ListItem)
+        assert len(list_items) == 2  # Should find both test items
+        
+        # Verify first result
+        first_item = list_items[0]
+        label = first_item.query_one(Label)
+        assert "Test Media One" in str(label.renderable)
+        
+        # Test search with no results
+        await results_listview.clear()
+        search_input.value = "nomatch"
+        await perform_media_sidebar_search(app, "nomatch")
+        await pilot.pause(0.2)
+        
+        # Check no results message
+        list_items = results_listview.query(ListItem)
+        assert len(list_items) == 1
+        no_results_label = list_items[0].query_one(Label)
+        assert "No media found" in str(no_results_label.renderable)
 
 
 @pytest.mark.asyncio
-async def test_media_load_for_review(mock_app_media_test: TldwCli):
-    app = mock_app_media_test
-
-    app.media_db.search_media_db = MagicMock(return_value=([MOCK_MEDIA_ITEM_1], 1))
-    await perform_media_sidebar_search(app, "item1")
-
-    results_list_view_mock = app.query_one("#chat-media-search-results-listview", ListView)
-    assert len(results_list_view_mock._nodes) == 1
-    results_list_view_mock.highlighted_child = results_list_view_mock._nodes[0]
-
-    app.media_db.get_media_by_id = MagicMock(return_value=MOCK_MEDIA_ITEM_1)
-    review_display_mock = app.query_one("#chat-media-review-display", TextArea)
-
-    # Mock the load functionality directly since the handler function is not imported
-    # This simulates what handle_chat_media_load_selected_button_pressed would do
-    selected_item = results_list_view_mock.highlighted_child
-    if selected_item and hasattr(selected_item, 'media_data'):
-        media_data = selected_item.media_data
-        full_media_data = app.media_db.get_media_by_id(media_data['id'])
+async def test_media_load_for_review(real_app_media_test: TldwCli):
+    """Test loading media item for review."""
+    app = real_app_media_test
+    
+    async with app.run_test() as pilot:
+        # Wait for UI to be ready
+        await pilot.pause(0.5)
         
-        # Format and display the media content
-        review_text_parts = [
-            f"Title: {full_media_data['title']}",
-            f"Author: {full_media_data['author']}",
-            f"Type: {full_media_data['media_type']}",
-            f"URL: {full_media_data['url']}",
-            f"Date: {full_media_data['publication_date']}",
-            "\n--- Content Snippet ---\n",
-            full_media_data['content']
-        ]
-        review_text = "\n".join(review_text_parts)
+        # Navigate to chat tab
+        await pilot.press("c")
+        await pilot.pause(0.1)
         
-        # Set the text directly
-        review_display_mock.text = review_text
+        # Search for first item
+        search_input = app.query_one("#chat-media-search-input", Input)
+        await pilot.click(search_input)
+        search_input.value = "One"
+        await perform_media_sidebar_search(app, "One")
+        await pilot.pause(0.2)
         
-        # Update app state
-        app.current_sidebar_media_item = full_media_data
+        # Get results and select first item
+        results_listview = app.query_one("#chat-media-search-results-listview", ListView)
+        list_items = results_listview.query(ListItem)
+        assert len(list_items) == 1
         
-        # Enable copy buttons
-        app.query_one("#chat-media-copy-title-button", Button).disabled = False
-        app.query_one("#chat-media-copy-content-button", Button).disabled = False
-        app.query_one("#chat-media-copy-author-button", Button).disabled = False
-        app.query_one("#chat-media-copy-url-button", Button).disabled = False
-
-    app.media_db.get_media_by_id.assert_called_once_with(MOCK_MEDIA_ITEM_1['id'])
-
-    expected_review_text_parts = [
-        f"Title: {MOCK_MEDIA_ITEM_1['title']}",
-        f"Author: {MOCK_MEDIA_ITEM_1['author']}",
-        f"Type: {MOCK_MEDIA_ITEM_1['media_type']}",
-        f"URL: {MOCK_MEDIA_ITEM_1['url']}",
-        f"Date: {MOCK_MEDIA_ITEM_1['publication_date']}",
-        "\n--- Content Snippet ---\n",
-        MOCK_MEDIA_ITEM_1['content']
-    ]
-    expected_review_text = "\n".join(expected_review_text_parts)
-    assert review_display_mock.text == expected_review_text
-
-    assert app.current_sidebar_media_item == MOCK_MEDIA_ITEM_1
-    assert app.query_one("#chat-media-copy-title-button", Button).disabled is False
-    assert app.query_one("#chat-media-copy-content-button", Button).disabled is False
-    assert app.query_one("#chat-media-copy-author-button", Button).disabled is False
-    assert app.query_one("#chat-media-copy-url-button", Button).disabled is False
+        # Click on the first item to highlight it
+        await pilot.click(list_items[0])
+        await pilot.pause(0.1)
+        
+        # Click load button
+        load_button = app.query_one("#chat-media-load-selected-button", Button)
+        await pilot.click(load_button)
+        await pilot.pause(0.2)
+        
+        # Check that media was loaded
+        review_display = app.query_one("#chat-media-review-display", TextArea)
+        assert review_display.text != ""
+        assert "Test Media One" in review_display.text
+        assert "Author One" in review_display.text
+        assert "Content for one." in review_display.text
+        
+        # Check copy buttons are now enabled
+        assert app.query_one("#chat-media-copy-title-button", Button).disabled is False
+        assert app.query_one("#chat-media-copy-content-button", Button).disabled is False
+        assert app.query_one("#chat-media-copy-author-button", Button).disabled is False
+        assert app.query_one("#chat-media-copy-url-button", Button).disabled is False
+        
+        # Verify app state
+        assert app.current_sidebar_media_item is not None
+        assert app.current_sidebar_media_item['title'] == 'Test Media One'
 
 
 @pytest.mark.asyncio
@@ -343,98 +261,160 @@ async def test_media_load_for_review(mock_app_media_test: TldwCli):
     ("chat-media-copy-author-button", "author", "Author copied to clipboard."),
     ("chat-media-copy-url-button", "url", "URL copied to clipboard."),
 ])
-async def test_media_copy_buttons(mock_app_media_test: TldwCli, button_id, field_key, expected_notification):
-    app = mock_app_media_test
-
-    handler_map = {
-        "chat-media-copy-title-button": handle_chat_media_copy_title_button_pressed,
-        "chat-media-copy-content-button": handle_chat_media_copy_content_button_pressed,
-        "chat-media-copy-author-button": handle_chat_media_copy_author_button_pressed,
-        "chat-media-copy-url-button": handle_chat_media_copy_url_button_pressed,
-    }
-    copy_handler = handler_map[button_id]
-
-    app.current_sidebar_media_item = MOCK_MEDIA_ITEM_1
-    app.query_one(f"#{button_id}", Button).disabled = False
-
-    app.copy_to_clipboard.reset_mock()
-    app.notify.reset_mock()
-
-    # Create a mock event
-    mock_event = MagicMock(spec=Button.Pressed)
-    mock_event.button = app.query_one(f"#{button_id}", Button)
+async def test_media_copy_buttons(real_app_media_test: TldwCli, button_id, field_key, expected_notification):
+    """Test copy buttons functionality."""
+    app = real_app_media_test
     
-    # Call the async handler
-    await copy_handler(app, mock_event)
-
-    app.copy_to_clipboard.assert_called_once_with(str(MOCK_MEDIA_ITEM_1[field_key]))
-    app.notify.assert_called_with(expected_notification)
+    async with app.run_test() as pilot:
+        # Wait for UI to be ready
+        await pilot.pause(0.5)
+        
+        # Navigate to chat tab
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        
+        # First load a media item
+        search_input = app.query_one("#chat-media-search-input", Input)
+        await pilot.click(search_input)
+        search_input.value = "One"
+        await perform_media_sidebar_search(app, "One")
+        await pilot.pause(0.2)
+        
+        # Select and load first item
+        results_listview = app.query_one("#chat-media-search-results-listview", ListView)
+        list_items = results_listview.query(ListItem)
+        await pilot.click(list_items[0])
+        await pilot.pause(0.1)
+        
+        load_button = app.query_one("#chat-media-load-selected-button", Button)
+        await pilot.click(load_button)
+        await pilot.pause(0.2)
+        
+        # Click the copy button
+        copy_button = app.query_one(f"#{button_id}", Button)
+        assert copy_button.disabled is False
+        
+        # Mock the clipboard and notify methods to verify they're called
+        from unittest.mock import MagicMock
+        app.copy_to_clipboard = MagicMock()
+        app.notify = MagicMock()
+        
+        await pilot.click(copy_button)
+        await pilot.pause(0.1)
+        
+        # Verify clipboard and notification
+        expected_value = {
+            'title': 'Test Media One',
+            'content': 'Content for one.',
+            'author': 'Author One',
+            'url': 'http://example.com/one'
+        }[field_key]
+        
+        app.copy_to_clipboard.assert_called_once_with(expected_value)
+        app.notify.assert_called_with(expected_notification)
 
 
 @pytest.mark.asyncio
-async def test_media_review_clearing_on_new_empty_search(mock_app_media_test: TldwCli):
-    app = mock_app_media_test
-
-    app.current_sidebar_media_item = MOCK_MEDIA_ITEM_1
+async def test_media_review_clearing_on_new_empty_search(real_app_media_test: TldwCli):
+    """Test that media review is cleared when performing new search with no results."""
+    app = real_app_media_test
     
-    # Set some text in the display areas
-    title_display = app.query_one("#chat-media-title-display", TextArea)
-    content_display = app.query_one("#chat-media-content-display", TextArea)
-    author_display = app.query_one("#chat-media-author-display", TextArea)
-    url_display = app.query_one("#chat-media-url-display", TextArea)
+    async with app.run_test() as pilot:
+        # Wait for UI to be ready
+        await pilot.pause(0.5)
+        
+        # Navigate to chat tab
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        
+        # First load a media item
+        search_input = app.query_one("#chat-media-search-input", Input)
+        await pilot.click(search_input)
+        search_input.value = "One"
+        await perform_media_sidebar_search(app, "One")
+        await pilot.pause(0.2)
+        
+        # Select and load first item
+        results_listview = app.query_one("#chat-media-search-results-listview", ListView)
+        list_items = results_listview.query(ListItem)
+        await pilot.click(list_items[0])
+        await pilot.pause(0.1)
+        
+        load_button = app.query_one("#chat-media-load-selected-button", Button)
+        await pilot.click(load_button)
+        await pilot.pause(0.2)
+        
+        # Verify content is loaded
+        review_display = app.query_one("#chat-media-review-display", TextArea)
+        assert review_display.text != ""
+        assert app.current_sidebar_media_item is not None
+        
+        # Verify copy buttons are enabled
+        assert app.query_one("#chat-media-copy-title-button", Button).disabled is False
+        
+        # Now search for something that returns no results
+        search_input.clear()
+        search_input.value = "nonexistent_search_term"
+        await perform_media_sidebar_search(app, "nonexistent_search_term")
+        await pilot.pause(0.2)
+        
+        # Check that display areas are cleared
+        title_display = app.query_one("#chat-media-title-display", TextArea)
+        content_display = app.query_one("#chat-media-content-display", TextArea)
+        author_display = app.query_one("#chat-media-author-display", TextArea)
+        url_display = app.query_one("#chat-media-url-display", TextArea)
+        
+        assert title_display.text == ""
+        assert content_display.text == ""
+        assert author_display.text == ""
+        assert url_display.text == ""
+        
+        # Check app state is cleared
+        assert app.current_sidebar_media_item is None
+        
+        # Check copy buttons are disabled again
+        assert app.query_one("#chat-media-copy-title-button", Button).disabled is True
+        assert app.query_one("#chat-media-copy-content-button", Button).disabled is True
+        assert app.query_one("#chat-media-copy-author-button", Button).disabled is True
+        assert app.query_one("#chat-media-copy-url-button", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_media_search_input_debounced(real_app_media_test: TldwCli):
+    """Test that search input is debounced."""
+    app = real_app_media_test
     
-    title_display.text = "Test Title"
-    content_display.text = "Test Content"
-    author_display.text = "Test Author"
-    url_display.text = "Test URL"
-
-    # Simulate buttons being enabled
-    app.query_one("#chat-media-copy-title-button", Button).disabled = False
-    app.query_one("#chat-media-copy-content-button", Button).disabled = False
-    app.query_one("#chat-media-copy-author-button", Button).disabled = False
-    app.query_one("#chat-media-copy-url-button", Button).disabled = False
-
-    app.media_db.search_media_db = MagicMock(return_value=([], 0))
-    await perform_media_sidebar_search(app, "newsearchterm_that_returns_nothing")
-
-    # Check all display areas are cleared
-    assert title_display.text == ""
-    assert content_display.text == ""
-    assert author_display.text == ""
-    assert url_display.text == ""
-    assert app.current_sidebar_media_item is None
-    assert app.query_one("#chat-media-copy-title-button", Button).disabled is True
-    assert app.query_one("#chat-media-copy-content-button", Button).disabled is True
-    assert app.query_one("#chat-media-copy-author-button", Button).disabled is True
-    assert app.query_one("#chat-media-copy-url-button", Button).disabled is True
-
-    # Example of testing the debounced search input if needed (more complex)
-    # @pytest.mark.asyncio
-    # async def test_media_search_input_debounced(mock_app_media_test: TldwCli, pilot):
-    #     app = mock_app_media_test
-    #     app.media_db.search_media_db = MagicMock(return_value=(MOCK_MEDIA_SEARCH_RESULTS, len(MOCK_MEDIA_SEARCH_RESULTS)))
-    #     search_input_mock = app.query_one("#chat-media-search-input", Input)
-
-    #     from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import handle_chat_media_search_input_changed
-
-    #     search_input_mock.value = "debounced_test"
-    #     # Instead of calling perform_media_sidebar_search directly, call the input handler
-    #     await handle_chat_media_search_input_changed(app, search_input_mock)
-
-    #     # Assert DB not called immediately
-    #     app.media_db.search_media_db.assert_not_called()
-
-    #     await pilot.pause(0.6) # Wait for debounce timer (default 0.5s in handler)
-
-    #     app.media_db.search_media_db.assert_called_once_with(
-    #         search_term="debounced_test",
-    #         search_fields=['title', 'content', 'author', 'keywords', 'notes'],
-    #         media_types=None,
-    #         include_trash=False,
-    #         include_deleted=False,
-    #         limit=50
-    #     )
-    #     results_list_view_mock = app.query_one("#chat-media-search-results-listview", ListView)
-    #     assert len(results_list_view_mock._nodes) == 2
+    async with app.run_test() as pilot:
+        # Wait for UI to be ready
+        await pilot.pause(0.5)
+        
+        # Navigate to chat tab
+        await pilot.press("c")
+        await pilot.pause(0.1)
+        
+        # Get search input
+        search_input = app.query_one("#chat-media-search-input", Input)
+        results_listview = app.query_one("#chat-media-search-results-listview", ListView)
+        
+        # Type quickly
+        await pilot.click(search_input)
+        await pilot.type("t")
+        await pilot.pause(0.1)
+        await pilot.type("e")
+        await pilot.pause(0.1)
+        await pilot.type("s")
+        await pilot.pause(0.1)
+        await pilot.type("t")
+        
+        # Check that results aren't updated immediately
+        list_items = results_listview.query(ListItem)
+        assert len(list_items) == 0  # No results yet due to debounce
+        
+        # Wait for debounce timer (typically 0.5s)
+        await pilot.pause(0.6)
+        
+        # Now results should be populated
+        list_items = results_listview.query(ListItem)
+        assert len(list_items) == 2  # Should find both test items
 
 # End of test_chat_sidebar_media_search.py

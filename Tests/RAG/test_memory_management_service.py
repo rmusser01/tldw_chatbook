@@ -1,5 +1,6 @@
 # test_memory_management_service.py
 # Description: Unit tests for ChromaDB memory management service
+# NOTE: These tests use mocked ChromaDB. For integration tests with real ChromaDB, see test_memory_management_service_integration.py
 #
 """
 test_memory_management_service.py
@@ -21,6 +22,8 @@ from tldw_chatbook.RAG_Search.Services.memory_management_service import (
     MemoryManagementService, MemoryManagementConfig, CollectionStats
 )
 
+# Test marker for unit tests
+pytestmark = pytest.mark.unit
 
 @pytest.mark.requires_rag_deps
 class TestMemoryManagementConfig:
