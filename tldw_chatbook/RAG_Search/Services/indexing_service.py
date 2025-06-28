@@ -36,7 +36,7 @@ class IndexingService:
         self.chunking_service = chunking_service
         
         # Initialize indexing tracking database
-        db_path = get_user_data_dir() / "databases" / "rag_indexing.db"
+        db_path = get_user_data_dir() / "default_user" / "rag_indexing.db"
         self.indexing_db = RAGIndexingDB(db_path)
         
         # Performance settings

@@ -15,6 +15,7 @@ from textual.message import Message
 # from textual.widget import Widget # Not used directly, can remove
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, TabbedContent, TabPane, Static, Label
+from textual.timer import Timer
 
 # Try to get the richer EMOJI_DATA from unicode_codes if available (recommended)
 try:
@@ -98,24 +99,56 @@ def _load_emojis() -> Tuple[List[ProcessedEmoji], Dict[str, List[ProcessedEmoji]
             if not name:
                 continue
             
-            # Try to guess category from name patterns
+            # Enhanced category detection with more patterns and Unicode ranges
             name_lower = name.lower()
-            if any(word in name_lower for word in ['face', 'smile', 'frown', 'cry', 'laugh', 'wink', 'kiss', 'tongue', 'angry', 'sad', 'happy']):
-                category = "Smileys & Emotion"
-            elif any(word in name_lower for word in ['person', 'man', 'woman', 'boy', 'girl', 'baby', 'hand', 'finger', 'body']):
-                category = "People & Body"
-            elif any(word in name_lower for word in ['cat', 'dog', 'animal', 'bird', 'fish', 'bug', 'monkey', 'horse', 'cow', 'pig']):
-                category = "Animals & Nature"
-            elif any(word in name_lower for word in ['food', 'fruit', 'vegetable', 'drink', 'coffee', 'tea', 'wine', 'beer', 'pizza']):
-                category = "Food & Drink"
-            elif any(word in name_lower for word in ['car', 'bus', 'train', 'plane', 'ship', 'travel', 'place', 'building', 'house']):
-                category = "Travel & Places"
-            elif any(word in name_lower for word in ['sport', 'ball', 'game', 'medal', 'trophy', 'music', 'art', 'paint']):
-                category = "Activities"
-            elif any(word in name_lower for word in ['heart', 'star', 'circle', 'square', 'flag', 'symbol', 'sign', 'arrow']):
-                category = "Symbols"
-            else:
-                category = "Objects"
+            
+            # Check Unicode ranges first for more accurate categorization
+            # Handle multi-character emojis (with variation selectors, etc.)
+            try:
+                # Get the first character's code point
+                char_code = ord(char[0])
+                
+                # Emoji Unicode blocks (approximate ranges)
+                if 0x1F600 <= char_code <= 0x1F64F:  # Emoticons
+                    category = "Smileys & Emotion"
+                elif 0x1F300 <= char_code <= 0x1F5FF:  # Misc Symbols and Pictographs
+                    if any(word in name_lower for word in ['weather', 'sun', 'moon', 'cloud', 'rain', 'snow', 'tree', 'flower', 'plant']):
+                        category = "Animals & Nature"
+                    elif any(word in name_lower for word in ['food', 'fruit', 'vegetable', 'meal', 'drink']):
+                        category = "Food & Drink"
+                    else:
+                        category = "Objects"
+                elif 0x1F680 <= char_code <= 0x1F6FF:  # Transport and Map
+                    category = "Travel & Places"
+                elif 0x1F1E6 <= char_code <= 0x1F1FF:  # Regional Indicator
+                    category = "Flags"
+                else:
+                    # Unicode range didn't match, fall through to name-based detection
+                    char_code = None
+            except (TypeError, IndexError):
+                # If ord() fails or char is empty, fall through to name-based detection
+                char_code = None
+            
+            if char_code is None:
+                # Fallback to name-based detection with expanded patterns
+                if any(word in name_lower for word in ['face', 'smile', 'frown', 'cry', 'laugh', 'wink', 'kiss', 'tongue', 'angry', 'sad', 'happy', 'joy', 'tear', 'sweat', 'think', 'neutral', 'expressionless', 'grin']):
+                    category = "Smileys & Emotion"
+                elif any(word in name_lower for word in ['person', 'man', 'woman', 'boy', 'girl', 'baby', 'hand', 'finger', 'body', 'people', 'family', 'couple', 'skin', 'tone', 'gesture']):
+                    category = "People & Body"
+                elif any(word in name_lower for word in ['cat', 'dog', 'animal', 'bird', 'fish', 'bug', 'monkey', 'horse', 'cow', 'pig', 'bear', 'panda', 'koala', 'tiger', 'lion', 'whale', 'dolphin', 'nature', 'tree', 'flower', 'plant', 'leaf']):
+                    category = "Animals & Nature"
+                elif any(word in name_lower for word in ['food', 'fruit', 'vegetable', 'drink', 'coffee', 'tea', 'wine', 'beer', 'pizza', 'burger', 'fries', 'sushi', 'cake', 'candy', 'chocolate', 'ice', 'cream', 'bread', 'cheese', 'meat', 'bacon']):
+                    category = "Food & Drink"
+                elif any(word in name_lower for word in ['car', 'bus', 'train', 'plane', 'ship', 'travel', 'place', 'building', 'house', 'city', 'mountain', 'beach', 'island', 'bridge', 'statue', 'fountain', 'castle', 'church', 'hospital', 'school', 'office', 'factory']):
+                    category = "Travel & Places"
+                elif any(word in name_lower for word in ['sport', 'ball', 'game', 'medal', 'trophy', 'music', 'art', 'paint', 'soccer', 'basketball', 'football', 'baseball', 'tennis', 'golf', 'ski', 'surf', 'swim', 'run', 'dance', 'sing', 'guitar', 'piano', 'drum']):
+                    category = "Activities"
+                elif any(word in name_lower for word in ['heart', 'star', 'circle', 'square', 'flag', 'symbol', 'sign', 'arrow', 'diamond', 'club', 'spade', 'cross', 'check', 'mark', 'x', 'exclamation', 'question', 'warning', 'prohibited']):
+                    category = "Symbols"
+                elif 'flag' in name_lower:
+                    category = "Flags"
+                else:
+                    category = "Objects"
             
             aliases = data.get('alias', [])
             if isinstance(aliases, str): 
@@ -149,24 +182,56 @@ def _load_emojis() -> Tuple[List[ProcessedEmoji], Dict[str, List[ProcessedEmoji]
                 else:
                     name = 'Emoji'
             
-            # Try to guess category from name patterns
+            # Enhanced category detection with more patterns and Unicode ranges
             name_lower = name.lower()
-            if any(word in name_lower for word in ['face', 'smile', 'frown', 'cry', 'laugh', 'wink', 'kiss', 'tongue', 'angry', 'sad', 'happy']):
-                category = "Smileys & Emotion"
-            elif any(word in name_lower for word in ['person', 'man', 'woman', 'boy', 'girl', 'baby', 'hand', 'finger', 'body']):
-                category = "People & Body"
-            elif any(word in name_lower for word in ['cat', 'dog', 'animal', 'bird', 'fish', 'bug', 'monkey', 'horse', 'cow', 'pig']):
-                category = "Animals & Nature"
-            elif any(word in name_lower for word in ['food', 'fruit', 'vegetable', 'drink', 'coffee', 'tea', 'wine', 'beer', 'pizza']):
-                category = "Food & Drink"
-            elif any(word in name_lower for word in ['car', 'bus', 'train', 'plane', 'ship', 'travel', 'place', 'building', 'house']):
-                category = "Travel & Places"
-            elif any(word in name_lower for word in ['sport', 'ball', 'game', 'medal', 'trophy', 'music', 'art', 'paint']):
-                category = "Activities"
-            elif any(word in name_lower for word in ['heart', 'star', 'circle', 'square', 'flag', 'symbol', 'sign', 'arrow']):
-                category = "Symbols"
-            else:
-                category = "Objects"
+            
+            # Check Unicode ranges first for more accurate categorization
+            # Handle multi-character emojis (with variation selectors, etc.)
+            try:
+                # Get the first character's code point
+                char_code = ord(char[0])
+                
+                # Emoji Unicode blocks (approximate ranges)
+                if 0x1F600 <= char_code <= 0x1F64F:  # Emoticons
+                    category = "Smileys & Emotion"
+                elif 0x1F300 <= char_code <= 0x1F5FF:  # Misc Symbols and Pictographs
+                    if any(word in name_lower for word in ['weather', 'sun', 'moon', 'cloud', 'rain', 'snow', 'tree', 'flower', 'plant']):
+                        category = "Animals & Nature"
+                    elif any(word in name_lower for word in ['food', 'fruit', 'vegetable', 'meal', 'drink']):
+                        category = "Food & Drink"
+                    else:
+                        category = "Objects"
+                elif 0x1F680 <= char_code <= 0x1F6FF:  # Transport and Map
+                    category = "Travel & Places"
+                elif 0x1F1E6 <= char_code <= 0x1F1FF:  # Regional Indicator
+                    category = "Flags"
+                else:
+                    # Unicode range didn't match, fall through to name-based detection
+                    char_code = None
+            except (TypeError, IndexError):
+                # If ord() fails or char is empty, fall through to name-based detection
+                char_code = None
+            
+            if char_code is None:
+                # Fallback to name-based detection with expanded patterns
+                if any(word in name_lower for word in ['face', 'smile', 'frown', 'cry', 'laugh', 'wink', 'kiss', 'tongue', 'angry', 'sad', 'happy', 'joy', 'tear', 'sweat', 'think', 'neutral', 'expressionless', 'grin']):
+                    category = "Smileys & Emotion"
+                elif any(word in name_lower for word in ['person', 'man', 'woman', 'boy', 'girl', 'baby', 'hand', 'finger', 'body', 'people', 'family', 'couple', 'skin', 'tone', 'gesture']):
+                    category = "People & Body"
+                elif any(word in name_lower for word in ['cat', 'dog', 'animal', 'bird', 'fish', 'bug', 'monkey', 'horse', 'cow', 'pig', 'bear', 'panda', 'koala', 'tiger', 'lion', 'whale', 'dolphin', 'nature', 'tree', 'flower', 'plant', 'leaf']):
+                    category = "Animals & Nature"
+                elif any(word in name_lower for word in ['food', 'fruit', 'vegetable', 'drink', 'coffee', 'tea', 'wine', 'beer', 'pizza', 'burger', 'fries', 'sushi', 'cake', 'candy', 'chocolate', 'ice', 'cream', 'bread', 'cheese', 'meat', 'bacon']):
+                    category = "Food & Drink"
+                elif any(word in name_lower for word in ['car', 'bus', 'train', 'plane', 'ship', 'travel', 'place', 'building', 'house', 'city', 'mountain', 'beach', 'island', 'bridge', 'statue', 'fountain', 'castle', 'church', 'hospital', 'school', 'office', 'factory']):
+                    category = "Travel & Places"
+                elif any(word in name_lower for word in ['sport', 'ball', 'game', 'medal', 'trophy', 'music', 'art', 'paint', 'soccer', 'basketball', 'football', 'baseball', 'tennis', 'golf', 'ski', 'surf', 'swim', 'run', 'dance', 'sing', 'guitar', 'piano', 'drum']):
+                    category = "Activities"
+                elif any(word in name_lower for word in ['heart', 'star', 'circle', 'square', 'flag', 'symbol', 'sign', 'arrow', 'diamond', 'club', 'spade', 'cross', 'check', 'mark', 'x', 'exclamation', 'question', 'warning', 'prohibited']):
+                    category = "Symbols"
+                elif 'flag' in name_lower:
+                    category = "Flags"
+                else:
+                    category = "Objects"
             aliases = data_val.get('alias', [])
             if isinstance(aliases, str): 
                 aliases = [aliases]
@@ -210,7 +275,15 @@ def _load_emojis() -> Tuple[List[ProcessedEmoji], Dict[str, List[ProcessedEmoji]
     return all_emojis_list, categorized_emojis, sorted_category_names
 
 
-ALL_EMOJIS, CATEGORIZED_EMOJIS, CATEGORY_NAMES = _load_emojis()
+# Lazy loading - will be initialized on first use
+_EMOJI_DATA_CACHE = None
+
+def get_emoji_data() -> Tuple[List[ProcessedEmoji], Dict[str, List[ProcessedEmoji]], List[str]]:
+    """Get emoji data, loading it lazily on first access."""
+    global _EMOJI_DATA_CACHE
+    if _EMOJI_DATA_CACHE is None:
+        _EMOJI_DATA_CACHE = _load_emojis()
+    return _EMOJI_DATA_CACHE
 
 
 # --- Textual Widgets ---
@@ -289,7 +362,20 @@ class EmojiGrid(VerticalScroll):
 
 
 class EmojiPickerScreen(ModalScreen[str]):
-    BINDINGS = [Binding("escape", "dismiss_picker", "Close Picker")]
+    BINDINGS = [
+        Binding("escape", "dismiss_picker", "Close Picker"),
+        Binding("1", "select_recent_1", "Recent Emoji 1", show=False),
+        Binding("2", "select_recent_2", "Recent Emoji 2", show=False),
+        Binding("3", "select_recent_3", "Recent Emoji 3", show=False),
+        Binding("4", "select_recent_4", "Recent Emoji 4", show=False),
+        Binding("5", "select_recent_5", "Recent Emoji 5", show=False),
+        Binding("6", "select_recent_6", "Recent Emoji 6", show=False),
+        Binding("7", "select_recent_7", "Recent Emoji 7", show=False),
+        Binding("8", "select_recent_8", "Recent Emoji 8", show=False),
+        Binding("9", "select_recent_9", "Recent Emoji 9", show=False),
+        Binding("ctrl+left", "prev_category", "Previous Category", show=False),
+        Binding("ctrl+right", "next_category", "Next Category", show=False),
+    ]
     CSS = """
     EmojiPickerScreen { align: center middle; }
     #dialog { 
@@ -371,9 +457,13 @@ class EmojiPickerScreen(ModalScreen[str]):
 
     def __init__(self, name: str | None = None, id: str | None = None, classes: str | None = None) -> None:
         super().__init__(name, id, classes)
-        self._all_emojis: List[ProcessedEmoji] = ALL_EMOJIS
-        self._categorized_emojis: Dict[str, List[ProcessedEmoji]] = CATEGORIZED_EMOJIS
-        self._category_names: List[str] = CATEGORY_NAMES
+        # Load emoji data lazily
+        all_emojis, categorized_emojis, category_names = get_emoji_data()
+        self._all_emojis: List[ProcessedEmoji] = all_emojis
+        self._categorized_emojis: Dict[str, List[ProcessedEmoji]] = categorized_emojis
+        self._category_names: List[str] = category_names
+        self._search_timer: Optional[Timer] = None
+        self._pending_search: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -414,7 +504,23 @@ class EmojiPickerScreen(ModalScreen[str]):
         return results
 
     async def on_input_changed(self, event: Input.Changed) -> None:
-        query = event.value.strip()
+        """Handle input changes with debouncing."""
+        self._pending_search = event.value.strip()
+        
+        # Cancel existing timer if any
+        if self._search_timer:
+            self._search_timer.stop()
+        
+        # Set up new timer for debouncing (300ms delay)
+        self._search_timer = self.set_timer(0.3, self._perform_search)
+    
+    def _perform_search(self) -> None:
+        """Actually perform the search after debounce delay."""
+        if self._pending_search is None:
+            return
+            
+        query = self._pending_search
+        self._pending_search = None
 
         search_grid = self.query_one("#search-results-grid", EmojiGrid)
 
@@ -486,6 +592,74 @@ class EmojiPickerScreen(ModalScreen[str]):
 
     def action_dismiss_picker(self) -> None:  # This is the action method bound to "escape"
         self.dismiss("")  # Dismiss with empty string for cancellation
+    
+    def _select_recent_emoji(self, index: int) -> None:
+        """Select a recent emoji by index (0-based)."""
+        if "Recently Used" in self._categorized_emojis:
+            recent_emojis = self._categorized_emojis["Recently Used"]
+            if index < len(recent_emojis):
+                emoji_char = recent_emojis[index]['char']
+                save_recent_emoji(emoji_char)
+                self.dismiss(emoji_char)
+    
+    def action_select_recent_1(self) -> None:
+        self._select_recent_emoji(0)
+    
+    def action_select_recent_2(self) -> None:
+        self._select_recent_emoji(1)
+    
+    def action_select_recent_3(self) -> None:
+        self._select_recent_emoji(2)
+    
+    def action_select_recent_4(self) -> None:
+        self._select_recent_emoji(3)
+    
+    def action_select_recent_5(self) -> None:
+        self._select_recent_emoji(4)
+    
+    def action_select_recent_6(self) -> None:
+        self._select_recent_emoji(5)
+    
+    def action_select_recent_7(self) -> None:
+        self._select_recent_emoji(6)
+    
+    def action_select_recent_8(self) -> None:
+        self._select_recent_emoji(7)
+    
+    def action_select_recent_9(self) -> None:
+        self._select_recent_emoji(8)
+    
+    def action_prev_category(self) -> None:
+        """Navigate to previous category tab."""
+        try:
+            tab_content = self.query_one("#emoji-tabs", TabbedContent)
+            # Get current tab index
+            current = tab_content.active
+            tabs = list(tab_content.children)
+            if tabs and current:
+                for i, tab in enumerate(tabs):
+                    if tab.id == current:
+                        prev_index = (i - 1) % len(tabs)
+                        tab_content.active = tabs[prev_index].id
+                        break
+        except QueryError:
+            pass
+    
+    def action_next_category(self) -> None:
+        """Navigate to next category tab."""
+        try:
+            tab_content = self.query_one("#emoji-tabs", TabbedContent)
+            # Get current tab index
+            current = tab_content.active
+            tabs = list(tab_content.children)
+            if tabs and current:
+                for i, tab in enumerate(tabs):
+                    if tab.id == current:
+                        next_index = (i + 1) % len(tabs)
+                        tab_content.active = tabs[next_index].id
+                        break
+        except QueryError:
+            pass
 
 #
 # End of emoji_picker.py

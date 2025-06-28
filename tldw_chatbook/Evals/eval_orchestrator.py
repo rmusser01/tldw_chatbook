@@ -42,7 +42,7 @@ class EvaluationOrchestrator:
             from ...config import load_settings
             settings = load_settings()
             user_data_dir = Path(settings.get('user_data_dir', '~/.local/share/tldw_cli')).expanduser()
-            db_path = user_data_dir / 'evals.db'
+            db_path = user_data_dir / 'default_user' / 'evals.db'
         
         self.db = EvalsDB(db_path=str(db_path), client_id=client_id)
         self.task_loader = TaskLoader()
