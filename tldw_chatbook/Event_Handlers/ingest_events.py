@@ -41,7 +41,8 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDBError
 # Character Chat Lib for parsing and importing character cards
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError  # For character import conflict
-from ..Third_Party.textual_fspicker import Filters, FileOpen
+from ..Third_Party.textual_fspicker import Filters
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 #
 if TYPE_CHECKING:
     from ..app import TldwCli

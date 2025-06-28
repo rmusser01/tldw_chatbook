@@ -24,7 +24,8 @@ from tldw_chatbook.Constants import LLAMA_CPP_SERVER_ARGS_HELP_TEXT, LLAMAFILE_S
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 #
 ########################################################################################################################
 #

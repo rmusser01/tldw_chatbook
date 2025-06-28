@@ -18,7 +18,7 @@ from ..Constants import TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_VIDEO_OPTIONS_ID, TL
     TLDW_API_EBOOK_OPTIONS_ID, TLDW_API_DOCUMENT_OPTIONS_ID, TLDW_API_XML_OPTIONS_ID, TLDW_API_MEDIAWIKI_OPTIONS_ID
 #
 # Local Imports
-from ..Third_Party.textual_fspicker.file_open import FileOpen
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from ..tldw_api.schemas import MediaType, ChunkMethod, PdfEngine  # Import Enums
 if TYPE_CHECKING:
     from ..app import TldwCli

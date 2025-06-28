@@ -18,7 +18,8 @@ import yaml
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
 from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
-from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
+from ..Third_Party.textual_fspicker import Filters
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
 #
 if TYPE_CHECKING:
     from ..app import TldwCli

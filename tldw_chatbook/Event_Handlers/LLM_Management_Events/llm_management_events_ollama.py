@@ -25,7 +25,8 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events im
 from tldw_chatbook.Local_Inference.ollama_model_mgmt import ollama_list_local_models, ollama_model_info, ollama_delete_model, \
     ollama_copy_model, ollama_create_model, ollama_push_model, ollama_pull_model, ollama_list_running_models, \
     ollama_generate_embeddings
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli

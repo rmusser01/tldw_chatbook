@@ -10,6 +10,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
+from textual.message import Message
 from textual.widgets import Button, Label, Static, ListView, ListItem, Input, Select
 from textual.reactive import reactive
 from textual.worker import Worker, get_current_worker
@@ -18,7 +19,7 @@ from loguru import logger
 from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.base_dialog import Dialog, InputBar
-from ..config import get_cli_setting, set_cli_setting
+from ..config import get_cli_setting
 
 
 class RecentLocations:
@@ -32,7 +33,7 @@ class RecentLocations:
     def load_from_config(self):
         """Load recent locations from config"""
         try:
-            recent_data = get_cli_setting("filepicker_recent_locations", [])
+            recent_data = get_cli_setting("general", "filepicker_recent_locations", [])
             self._recent = recent_data[:self.max_items]
         except Exception as e:
             logger.error(f"Failed to load recent locations: {e}")
@@ -40,10 +41,9 @@ class RecentLocations:
     
     def save_to_config(self):
         """Save recent locations to config"""
-        try:
-            set_cli_setting("filepicker_recent_locations", self._recent)
-        except Exception as e:
-            logger.error(f"Failed to save recent locations: {e}")
+        # Note: Currently disabled as set_cli_setting is not available
+        # Would need to implement proper config persistence
+        pass
     
     def add(self, path: Path, file_type: str = "file"):
         """Add a path to recent locations"""
@@ -98,7 +98,7 @@ class PathBreadcrumbs(Horizontal):
     }
     """
     
-    class PathChanged(ModalScreen.Message):
+    class PathChanged(Message):
         """Emitted when a breadcrumb is clicked"""
         def __init__(self, path: Path) -> None:
             self.path = path
@@ -169,31 +169,31 @@ class FilePickerToolbar(Horizontal):
     }
     """
     
-    class SearchChanged(ModalScreen.Message):
+    class SearchChanged(Message):
         """Emitted when search text changes"""
         def __init__(self, query: str) -> None:
             self.query = query
             super().__init__()
     
-    class SortChanged(ModalScreen.Message):
+    class SortChanged(Message):
         """Emitted when sort order changes"""
         def __init__(self, sort_by: str) -> None:
             self.sort_by = sort_by
             super().__init__()
     
-    class HiddenToggled(ModalScreen.Message):
+    class HiddenToggled(Message):
         """Emitted when hidden files toggle changes"""
         def __init__(self, show_hidden: bool) -> None:
             self.show_hidden = show_hidden
             super().__init__()
     
-    def __init__(self, show_hidden: bool = False):
-        super().__init__()
+    def __init__(self, show_hidden: bool = False, **kwargs):
+        super().__init__(**kwargs)
         self.show_hidden = show_hidden
     
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search files...", id="search-input")
-        yield Button("Clear", id="clear-search", variant="subtle")
+        yield Button("Clear", id="clear-search", variant="default")
         yield Button("Hidden Files", id="hidden-files-btn", variant="primary" if self.show_hidden else "default")
         yield Label("Sort by:")
         yield Select(
@@ -460,6 +460,27 @@ class EnhancedFileDialog(BaseFileDialog):
         dir_nav.show_hidden = event.show_hidden
         self.notify(f"Hidden files {'shown' if event.show_hidden else 'hidden'}", timeout=2)
     
+    def on_mount(self) -> None:
+        """Initialize on mount"""
+        # Don't call parent's on_mount as it expects widgets we don't have
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        
+        # Initialize toolbar state
+        toolbar = self.query_one(FilePickerToolbar)
+        dir_nav = self.query_one(DirectoryNavigation)
+        toolbar.show_hidden = dir_nav.show_hidden
+        
+        # Focus the directory navigation
+        dir_nav.focus()
+    
+    def _update_breadcrumbs(self, path: Path):
+        """Stub for parent's breadcrumb update"""
+        pass
+    
+    def _load_recent_locations(self):
+        """Stub for parent's recent locations"""
+        pass
+    
     def dismiss(self, result: Optional[Path]) -> None:
         """Override dismiss to save recent location"""
         if result:
@@ -469,6 +490,14 @@ class EnhancedFileDialog(BaseFileDialog):
 
 class EnhancedFileOpen(FileOpen):
     """Enhanced file open dialog"""
+    
+    DEFAULT_CSS = FileOpen.DEFAULT_CSS + """
+    #file-picker-toolbar {
+        height: 3;
+        margin-bottom: 1;
+        background: $surface;
+    }
+    """
     
     def __init__(
         self,
@@ -483,6 +512,32 @@ class EnhancedFileOpen(FileOpen):
         self.filters = filters
         self.must_exist = must_exist
     
+    def compose(self) -> ComposeResult:
+        """Override compose to add our toolbar"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation, DriveNavigation
+        import sys
+        
+        with Dialog() as dialog:
+            dialog.border_title = self._title
+            
+            # Add the path display that parent expects
+            yield Label("", id="current_path_display", classes="hidden")
+            
+            # Add our custom toolbar
+            yield FilePickerToolbar(id="file-picker-toolbar")
+            
+            # Main file browser
+            with Horizontal():
+                if sys.platform == "win32":
+                    yield DriveNavigation(self._location)
+                yield DirectoryNavigation(self._location)
+            
+            # Input bar with buttons
+            with InputBar():
+                yield from self._input_bar()
+                yield Button(self._label(self._select_button, "Select"), id="select")
+                yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
+    
     def _input_bar(self) -> ComposeResult:
         """Provide input widgets for file selection"""
         from textual.widgets import Input, Select
@@ -490,15 +545,98 @@ class EnhancedFileOpen(FileOpen):
         yield Input(placeholder="File name...")
         if self.filters:
             yield Select(
-                [(f.name, i) for i, f in enumerate(self.filters.filters)],
+                self.filters.selections,
                 prompt="File type",
                 value=0,
                 id="file-filter"
             )
+    
+    def watch_search_query(self, query: str) -> None:
+        """Filter directory entries based on search query"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        
+        try:
+            dir_nav = self.query_one(DirectoryNavigation)
+            dir_nav.search_filter = query
+        except Exception as e:
+            logger.error(f"Error filtering entries: {e}")
+    
+    @on(FilePickerToolbar.SearchChanged)
+    def handle_search_change(self, event: FilePickerToolbar.SearchChanged):
+        """Handle search query changes"""
+        self.search_query = event.query
+    
+    @on(FilePickerToolbar.SortChanged)
+    def handle_sort_change(self, event: FilePickerToolbar.SortChanged):
+        """Handle sort order changes"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        dir_nav = self.query_one(DirectoryNavigation)
+        dir_nav.sort_by = event.sort_by
+        self.notify(f"Sorting by {event.sort_by}", timeout=2)
+    
+    @on(FilePickerToolbar.HiddenToggled)
+    def handle_hidden_toggle(self, event: FilePickerToolbar.HiddenToggled):
+        """Handle hidden files toggle from toolbar"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        dir_nav = self.query_one(DirectoryNavigation)
+        dir_nav.show_hidden = event.show_hidden
+        self.notify(f"Hidden files {'shown' if event.show_hidden else 'hidden'}", timeout=2)
+    
+    def on_mount(self) -> None:
+        """Initialize on mount"""
+        # Don't call parent's on_mount as it expects widgets we don't have
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        
+        # Initialize toolbar state
+        toolbar = self.query_one(FilePickerToolbar)
+        dir_nav = self.query_one(DirectoryNavigation)
+        toolbar.show_hidden = dir_nav.show_hidden
+        
+        # Focus the directory navigation
+        dir_nav.focus()
+    
+    def _update_breadcrumbs(self, path: Path):
+        """Stub for parent's breadcrumb update"""
+        pass
+    
+    def _load_recent_locations(self):
+        """Stub for parent's recent locations"""
+        pass
+    
+    def on_mount(self) -> None:
+        """Initialize on mount"""
+        # Don't call parent's on_mount as it expects widgets we don't have
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        
+        # Initialize toolbar state
+        toolbar = self.query_one(FilePickerToolbar)
+        dir_nav = self.query_one(DirectoryNavigation)
+        toolbar.show_hidden = dir_nav.show_hidden
+        
+        # Focus the directory navigation
+        dir_nav.focus()
+    
+    def _update_breadcrumbs(self, path: Path):
+        """Stub for parent's breadcrumb update"""
+        pass
+    
+    def _load_recent_locations(self):
+        """Stub for parent's recent locations"""
+        pass
 
 
 class EnhancedFileSave(FileSave):
     """Enhanced file save dialog"""
+    
+    DEFAULT_CSS = FileSave.DEFAULT_CSS + """
+    #file-picker-toolbar {
+        height: 3;
+        margin-bottom: 1;
+        background: $surface;
+    }
+    """
+    
+    search_query = reactive("")
     
     def __init__(
         self,
@@ -513,6 +651,32 @@ class EnhancedFileSave(FileSave):
         self.filters = filters
         self.default_filename = default_filename
     
+    def compose(self) -> ComposeResult:
+        """Override compose to add our toolbar"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation, DriveNavigation
+        import sys
+        
+        with Dialog() as dialog:
+            dialog.border_title = self._title
+            
+            # Add the path display that parent expects
+            yield Label("", id="current_path_display", classes="hidden")
+            
+            # Add our custom toolbar
+            yield FilePickerToolbar(id="file-picker-toolbar")
+            
+            # Main file browser
+            with Horizontal():
+                if sys.platform == "win32":
+                    yield DriveNavigation(self._location)
+                yield DirectoryNavigation(self._location)
+            
+            # Input bar with buttons
+            with InputBar():
+                yield from self._input_bar()
+                yield Button(self._label(self._select_button, "Select"), id="select")
+                yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
+    
     def _input_bar(self) -> ComposeResult:
         """Provide input widgets for file saving"""
         from textual.widgets import Input, Select
@@ -520,8 +684,60 @@ class EnhancedFileSave(FileSave):
         yield Input(value=self.default_filename, placeholder="File name...")
         if self.filters:
             yield Select(
-                [(f.name, i) for i, f in enumerate(self.filters.filters)],
+                self.filters.selections,
                 prompt="File type",
                 value=0,
                 id="file-filter"
             )
+    
+    def watch_search_query(self, query: str) -> None:
+        """Filter directory entries based on search query"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        
+        try:
+            dir_nav = self.query_one(DirectoryNavigation)
+            dir_nav.search_filter = query
+        except Exception as e:
+            logger.error(f"Error filtering entries: {e}")
+    
+    @on(FilePickerToolbar.SearchChanged)
+    def handle_search_change(self, event: FilePickerToolbar.SearchChanged):
+        """Handle search query changes"""
+        self.search_query = event.query
+    
+    @on(FilePickerToolbar.SortChanged)
+    def handle_sort_change(self, event: FilePickerToolbar.SortChanged):
+        """Handle sort order changes"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        dir_nav = self.query_one(DirectoryNavigation)
+        dir_nav.sort_by = event.sort_by
+        self.notify(f"Sorting by {event.sort_by}", timeout=2)
+    
+    @on(FilePickerToolbar.HiddenToggled)
+    def handle_hidden_toggle(self, event: FilePickerToolbar.HiddenToggled):
+        """Handle hidden files toggle from toolbar"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        dir_nav = self.query_one(DirectoryNavigation)
+        dir_nav.show_hidden = event.show_hidden
+        self.notify(f"Hidden files {'shown' if event.show_hidden else 'hidden'}", timeout=2)
+    
+    def on_mount(self) -> None:
+        """Initialize on mount"""
+        # Don't call parent's on_mount as it expects widgets we don't have
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        
+        # Initialize toolbar state
+        toolbar = self.query_one(FilePickerToolbar)
+        dir_nav = self.query_one(DirectoryNavigation)
+        toolbar.show_hidden = dir_nav.show_hidden
+        
+        # Focus the directory navigation
+        dir_nav.focus()
+    
+    def _update_breadcrumbs(self, path: Path):
+        """Stub for parent's breadcrumb update"""
+        pass
+    
+    def _load_recent_locations(self):
+        """Stub for parent's recent locations"""
+        pass

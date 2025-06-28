@@ -21,7 +21,8 @@ from textual.css.query import QueryError
 from rich.text import Text # For displaying messages if needed
 #
 # Local Imports
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters # For File Picker
+from tldw_chatbook.Third_Party.textual_fspicker import Filters # For File Picker
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from ..Widgets.chat_message import ChatMessage # If CCP tab displays ChatMessage widgets
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..Prompt_Management import Prompts_Interop as prompts_interop
