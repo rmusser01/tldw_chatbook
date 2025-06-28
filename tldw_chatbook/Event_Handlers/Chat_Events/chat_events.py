@@ -528,10 +528,11 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         strategy="sorted_evenly", # Default or get from config/UI
         strip_thinking_tags=strip_thinking_tags_value # Pass the new setting
     )
-    app.run_worker(worker_target, name=f"API_Call_{prefix}",
+    worker = app.run_worker(worker_target, name=f"API_Call_{prefix}",
                    group="api_calls",
                    thread=True,
                    description=f"Calling {selected_provider}")
+    app.set_current_chat_worker(worker)
 
 
 async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, action_widget: ChatMessage) -> None:
@@ -878,8 +879,9 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             strip_thinking_tags=strip_thinking_tags_value_regen, # Pass for regeneration
             media_content={}, selected_parts=[], chatdict_entries=None, max_tokens=500, strategy="sorted_evenly"
         )
-        app.run_worker(worker_target_regen, name=f"API_Call_{prefix}_regenerate", group="api_calls", thread=True,
+        worker = app.run_worker(worker_target_regen, name=f"API_Call_{prefix}_regenerate", group="api_calls", thread=True,
                        description=f"Regenerating for {selected_provider_regen}")
+        app.set_current_chat_worker(worker)
 
     elif "continue-button" in button_classes and message_role == "AI":
         loguru_logger.info(
@@ -2771,13 +2773,14 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
         )
 
         # Run the LLM call in a worker
-        app.run_worker(
+        worker = app.run_worker(
             worker_target,
             name="respond_for_me_worker",
             group="llm_suggestions",
             thread=True,
             description="Generating suggestion for user response..."
         )
+        app.set_current_chat_worker(worker)
 
         # The response will be handled by a worker event (e.g., on_stream_done or a custom one).
         # So, remove direct processing of llm_response_text and UI population here.

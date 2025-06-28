@@ -1999,7 +1999,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             if media_size_str is None:
                 media_size_str = "N/A"
 
-            status_string = f"Prompts DB: {prompts_size_str}  |  Chats/Notes DB: {chachanotes_size_str}  |  Media DB: {media_size_str}"
+            status_string = f"P: {prompts_size_str} | C/N: {chachanotes_size_str} | M: {media_size_str}"
             self.loguru_logger.debug(f"DB size status string to display in AppFooterStatus: '{status_string}'")
             # Call the custom update method on the AppFooterStatus widget
             self._db_size_status_widget.update_db_sizes_display(status_string)

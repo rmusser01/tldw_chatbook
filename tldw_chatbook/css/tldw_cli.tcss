@@ -1907,7 +1907,7 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 AppFooterStatus {
     dock: bottom;
-    height: 2;  /* Increased height to ensure visibility */
+    height: 1;  /* Single row height */
     background: $primary-background-darken-1;
     width: 100%;
     layout: horizontal;

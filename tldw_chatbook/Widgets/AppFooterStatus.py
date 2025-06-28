@@ -17,7 +17,7 @@ from textual.widgets import Static
 class AppFooterStatus(Widget):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._key_quit = Static("Ctrl+Q (quit) / Ctrl+P or Cmd+P (palette menu)", id="footer-key-quit")
+        self._key_quit = Static("Ctrl+Q quit | Ctrl+P palette", id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
         self._token_count_display: Static = Static("Tokens: -- | ", id="footer-token-count")
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
