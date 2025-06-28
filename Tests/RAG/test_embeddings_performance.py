@@ -471,4 +471,4 @@ class TestEmbeddingsPerformance:
         print(f"  Time per batch: {duration/num_batches:.3f}s")
         
         # Should complete without deadlocks or errors
-        assert duration < 60  # Should complete within 1 minute
+        assert duration < 10.0  # Mock should be fast  # Should complete within 1 minute

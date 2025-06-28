@@ -26,9 +26,10 @@ conftest.CHROMADB_AVAILABLE = True
 
 # Update the markers
 import pytest
-conftest.pytest.mark.requires_embeddings = pytest.mark.skipif(False, reason="")
-conftest.pytest.mark.requires_chromadb = pytest.mark.skipif(False, reason="")
-conftest.pytest.mark.requires_rag_deps = pytest.mark.skipif(False, reason="")
+# Set the markers directly on pytest module
+pytest.mark.requires_embeddings = pytest.mark.skipif(False, reason="")
+pytest.mark.requires_chromadb = pytest.mark.skipif(False, reason="")
+pytest.mark.requires_rag_deps = pytest.mark.skipif(False, reason="")
 
 sys.modules['Tests.RAG.conftest'] = conftest
 spec.loader.exec_module(conftest)
