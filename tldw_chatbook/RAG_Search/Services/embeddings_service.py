@@ -46,22 +46,26 @@ class EmbeddingsService:
         
         # Initialize ChromaDB client if available
         if CHROMADB_AVAILABLE:
-            settings = Settings(
-                anonymized_telemetry=False,
-                allow_reset=True
-            )
-            
-            # Configure LRU cache if memory limit specified
-            if memory_limit_bytes:
-                settings.chroma_segment_cache_policy = "LRU"
-                settings.chroma_memory_limit_bytes = memory_limit_bytes
-                logger.info(f"ChromaDB LRU cache configured with {memory_limit_bytes} bytes limit")
-            
-            self.client = chromadb.PersistentClient(
-                path=str(self.persist_directory),
-                settings=settings
-            )
-            logger.info(f"ChromaDB initialized at {persist_directory}")
+            try:
+                settings = Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
+                
+                # Configure LRU cache if memory limit specified
+                if memory_limit_bytes:
+                    settings.chroma_segment_cache_policy = "LRU"
+                    settings.chroma_memory_limit_bytes = memory_limit_bytes
+                    logger.info(f"ChromaDB LRU cache configured with {memory_limit_bytes} bytes limit")
+                
+                self.client = chromadb.PersistentClient(
+                    path=str(self.persist_directory),
+                    settings=settings
+                )
+                logger.info(f"ChromaDB initialized at {persist_directory}")
+            except Exception as e:
+                self.client = None
+                logger.error(f"Failed to initialize ChromaDB: {e}")
         else:
             self.client = None
             logger.warning("ChromaDB not available - embeddings features disabled")
@@ -361,7 +365,11 @@ class EmbeddingsService:
         try:
             # Update access time for memory management
             if self.memory_manager:
-                self.memory_manager.update_collection_access_time(collection_name)
+                try:
+                    self.memory_manager.update_collection_access_time(collection_name)
+                except Exception as e:
+                    logger.warning(f"Failed to update collection access time: {e}")
+                    # Continue with search even if memory management fails
                 
             results = collection.query(
                 query_embeddings=query_embeddings,

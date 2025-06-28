@@ -406,7 +406,7 @@ class TestRAGIntegration:
             'chromadb': True
         }):
             # Mock the embeddings service for testing
-            with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.SentenceTransformer') as mock_transformer:
+            with patch('sentence_transformers.SentenceTransformer') as mock_transformer:
                 mock_model = MagicMock()
                 mock_model.encode.return_value = [[0.1, 0.2, 0.3]]
                 mock_transformer.return_value = mock_model

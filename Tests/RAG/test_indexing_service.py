@@ -80,8 +80,8 @@ class TestIndexingService:
         """Create a mock ChaChaNotes database"""
         mock = MagicMock()
         mock.list_conversations.return_value = [
-            {'id': 'conv1', 'title': 'Conversation 1', 'character_id': 'char1'},
-            {'id': 'conv2', 'title': 'Conversation 2', 'character_id': 'char2'}
+            {'id': 'conv1', 'title': 'Conversation 1', 'character_id': 'char1', 'created_at': '2024-01-01T00:00:00'},
+            {'id': 'conv2', 'title': 'Conversation 2', 'character_id': 'char2', 'created_at': '2024-01-02T00:00:00'}
         ]
         mock.get_messages_for_conversation.side_effect = [
             [  # Messages for conv1
@@ -94,8 +94,8 @@ class TestIndexingService:
             ]
         ]
         mock.list_notes.return_value = [
-            {'id': 'note1', 'title': 'Note 1', 'content': 'Note content 1', 'tags': ['tag1']},
-            {'id': 'note2', 'title': 'Note 2', 'content': 'Note content 2', 'tags': ['tag2']}
+            {'id': 'note1', 'title': 'Note 1', 'content': 'Note content 1', 'tags': ['tag1'], 'created_at': '2024-01-01T00:00:00'},
+            {'id': 'note2', 'title': 'Note 2', 'content': 'Note content 2', 'tags': ['tag2'], 'created_at': '2024-01-02T00:00:00'}
         ]
         return mock
     
@@ -121,17 +121,27 @@ class TestIndexingService:
         
         # Check that documents were added to collection
         assert mock_embeddings_service.add_documents_to_collection.called
-        # Check the keyword arguments
-        call_kwargs = mock_embeddings_service.add_documents_to_collection.call_args.kwargs
-        assert call_kwargs['collection_name'] == "media_chunks"
-        assert len(call_kwargs['documents']) == 4  # 2 items x 2 chunks each
-        assert len(call_kwargs['embeddings']) == 4
-        assert len(call_kwargs['metadatas']) == 4
-        assert len(call_kwargs['ids']) == 4
+        # Check that it was called once per item (2 items total)
+        assert mock_embeddings_service.add_documents_to_collection.call_count == 2
+        
+        # Verify each call
+        calls = mock_embeddings_service.add_documents_to_collection.call_args_list
+        for call in calls:
+            call_kwargs = call.kwargs
+            assert call_kwargs['collection_name'] == "media_chunks"
+            # Each item has 2 chunks
+            assert len(call_kwargs['documents']) == 2
+            assert len(call_kwargs['embeddings']) == 2
+            assert len(call_kwargs['metadatas']) == 2
+            assert len(call_kwargs['ids']) == 2
     
     @pytest.mark.asyncio
     async def test_index_media_items_with_progress(self, indexing_service, mock_media_db):
         """Test indexing with progress callback"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         progress_calls = []
         
         def progress_callback(type, current, total):
@@ -170,14 +180,18 @@ class TestIndexingService:
         
         # Check documents were added with correct metadata
         add_call = mock_embeddings_service.add_documents_to_collection.call_args
-        assert add_call[0][0] == "media_chunks"
-        metadatas = add_call[1]['metadatas']
+        assert add_call.kwargs['collection_name'] == "media_chunks"
+        metadatas = add_call.kwargs['metadatas']
         assert metadatas[0]['media_id'] == 1
         assert metadatas[0]['title'] == 'Test Item'
     
     @pytest.mark.asyncio
     async def test_index_conversations(self, indexing_service, mock_chachanotes_db):
         """Test indexing conversations"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         result = await indexing_service.index_conversations(mock_chachanotes_db)
         
         assert result == 2  # Two conversations indexed
@@ -191,6 +205,10 @@ class TestIndexingService:
     @pytest.mark.asyncio
     async def test_index_conversations_with_progress(self, indexing_service, mock_chachanotes_db):
         """Test indexing conversations with progress callback"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         progress_calls = []
         
         def progress_callback(type, current, total):
@@ -207,7 +225,7 @@ class TestIndexingService:
         assert progress_calls[-1] == ('conversations', 2, 2)
     
     @pytest.mark.asyncio
-    async def test_index_conversation_batch(self, indexing_service, mock_chachanotes_db, mock_embeddings_service):
+    async def test_index_conversation_batch(self, indexing_service, mock_chachanotes_db, mock_embeddings_service, mock_chunking_service):
         """Test indexing a batch of conversations"""
         conversations = [{'id': 'conv1', 'title': 'Test Conversation'}]
         
@@ -223,15 +241,23 @@ class TestIndexingService:
             conversation_id='conv1'
         )
         
-        # Check documents were created with conversation format
-        add_call = mock_embeddings_service.add_documents_to_collection.call_args
-        documents = add_call[1]['documents']
-        assert 'user:' in documents[0]
-        assert 'assistant:' in documents[0]
+        # Check that chunking was called with conversation content
+        chunk_call = mock_chunking_service.chunk_document.call_args
+        doc_arg = chunk_call.args[0]
+        assert doc_arg['type'] == 'conversation'
+        assert 'user:' in doc_arg['content']
+        assert 'assistant:' in doc_arg['content']
+        
+        # Check documents were added to collection
+        assert mock_embeddings_service.add_documents_to_collection.called
     
     @pytest.mark.asyncio
     async def test_index_notes(self, indexing_service, mock_chachanotes_db):
         """Test indexing notes"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         result = await indexing_service.index_notes(mock_chachanotes_db)
         
         assert result == 2  # Two notes indexed
@@ -255,14 +281,18 @@ class TestIndexingService:
         
         # Check documents were added with correct metadata
         add_call = mock_embeddings_service.add_documents_to_collection.call_args
-        assert add_call[0][0] == "notes_chunks"
-        metadatas = add_call[1]['metadatas']
+        assert add_call.kwargs['collection_name'] == "notes_chunks"
+        metadatas = add_call.kwargs['metadatas']
         assert metadatas[0]['note_id'] == 'note1'
         assert metadatas[0]['tags'] == ['test', 'example']
     
     @pytest.mark.asyncio
     async def test_index_all(self, indexing_service, mock_media_db, mock_chachanotes_db):
         """Test indexing all content types"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         result = await indexing_service.index_all(
             media_db=mock_media_db,
             chachanotes_db=mock_chachanotes_db
@@ -275,6 +305,10 @@ class TestIndexingService:
     @pytest.mark.asyncio
     async def test_index_all_with_progress(self, indexing_service, mock_media_db, mock_chachanotes_db):
         """Test indexing all content with progress callback"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         progress_calls = []
         
         def progress_callback(type, current, total):
@@ -295,6 +329,10 @@ class TestIndexingService:
     @pytest.mark.asyncio
     async def test_index_all_partial(self, indexing_service, mock_media_db):
         """Test indexing with only some databases provided"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         result = await indexing_service.index_all(
             media_db=mock_media_db,
             chachanotes_db=None
@@ -342,6 +380,10 @@ class TestIndexingService:
     @pytest.mark.asyncio
     async def test_chunk_parameters(self, indexing_service, mock_media_db, mock_chunking_service):
         """Test that chunk parameters are passed correctly"""
+        # Mock the indexing database to return no previously indexed items
+        indexing_service.indexing_db = MagicMock()
+        indexing_service.indexing_db.get_indexed_items_by_type.return_value = {}
+        
         chunk_size = 200
         chunk_overlap = 50
         

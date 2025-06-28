@@ -846,13 +846,13 @@ async def perform_hybrid_rag_search(
     for i, result in enumerate(all_results):
         # Format result with hybrid scores
         result_text = f"[{result['source'].upper()} - {result['title']}]\n"
-        if logger.level <= 10:  # DEBUG level
-            result_text += f"Scores - BM25: {result.get('bm25_score', 0):.3f}, "
-            result_text += f"Vector: {result.get('vector_score', 0):.3f}, "
-            result_text += f"Combined: {result['score']:.3f}"
-            if 'rerank_score' in result:
-                result_text += f", Rerank: {result['rerank_score']:.3f}"
-            result_text += "\n"
+        # Log debug information separately
+        logger.debug(
+            f"Result {i} scores - BM25: {result.get('bm25_score', 0):.3f}, "
+            f"Vector: {result.get('vector_score', 0):.3f}, "
+            f"Combined: {result['score']:.3f}" + 
+            (f", Rerank: {result['rerank_score']:.3f}" if 'rerank_score' in result else "")
+        )
         
         # Add content with character limit check
         remaining_chars = max_context_length - total_chars - len(result_text)
