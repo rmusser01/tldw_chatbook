@@ -92,25 +92,45 @@ def _load_emojis() -> Tuple[List[ProcessedEmoji], Dict[str, List[ProcessedEmoji]
     category_names_set: Set[str] = set()
 
     if EMOJI_SOURCE_TYPE == "unicode_codes.EMOJI_DATA":
-        for alias_code, data in EMOJI_METADATA.items():
-            char = data.get('emoji')
-            name = data.get('name', alias_code.strip(':').replace('_', ' '))
-            category = data.get('category', 'Unknown')
-            aliases = data.get('alias', [])  # Sometimes it's 'alias', sometimes 'aliases'
-            if isinstance(aliases, str): aliases = [aliases]
-
-            if not char: continue
+        for char, data in EMOJI_METADATA.items():
+            # The emoji character is the key now, not in data
+            name = data.get('en', '').strip(':').replace('_', ' ')
+            if not name:
+                continue
+            
+            # Try to guess category from name patterns
+            name_lower = name.lower()
+            if any(word in name_lower for word in ['face', 'smile', 'frown', 'cry', 'laugh', 'wink', 'kiss', 'tongue', 'angry', 'sad', 'happy']):
+                category = "Smileys & Emotion"
+            elif any(word in name_lower for word in ['person', 'man', 'woman', 'boy', 'girl', 'baby', 'hand', 'finger', 'body']):
+                category = "People & Body"
+            elif any(word in name_lower for word in ['cat', 'dog', 'animal', 'bird', 'fish', 'bug', 'monkey', 'horse', 'cow', 'pig']):
+                category = "Animals & Nature"
+            elif any(word in name_lower for word in ['food', 'fruit', 'vegetable', 'drink', 'coffee', 'tea', 'wine', 'beer', 'pizza']):
+                category = "Food & Drink"
+            elif any(word in name_lower for word in ['car', 'bus', 'train', 'plane', 'ship', 'travel', 'place', 'building', 'house']):
+                category = "Travel & Places"
+            elif any(word in name_lower for word in ['sport', 'ball', 'game', 'medal', 'trophy', 'music', 'art', 'paint']):
+                category = "Activities"
+            elif any(word in name_lower for word in ['heart', 'star', 'circle', 'square', 'flag', 'symbol', 'sign', 'arrow']):
+                category = "Symbols"
+            else:
+                category = "Objects"
+            
+            aliases = data.get('alias', [])
+            if isinstance(aliases, str): 
+                aliases = [aliases]
 
             emoji_obj: ProcessedEmoji = {
                 'char': char,
-                'name': name.capitalize(),
+                'name': name.replace('_', ' ').title(),
                 'category': category,
-                'aliases': [a.strip(':') for a in aliases] + [alias_code.strip(':')]
-                # Ensure original alias is included
+                'aliases': [a.strip(':') for a in aliases] if aliases else []
             }
             all_emojis_list.append(emoji_obj)
 
-            if category not in categorized_emojis: categorized_emojis[category] = []
+            if category not in categorized_emojis: 
+                categorized_emojis[category] = []
             categorized_emojis[category].append(emoji_obj)
             category_names_set.add(category)
 
@@ -118,21 +138,49 @@ def _load_emojis() -> Tuple[List[ProcessedEmoji], Dict[str, List[ProcessedEmoji]
         # Fallback: less feature-rich (e.g., no categories from this source directly)
         # import emoji # Already imported at the top if this path is taken
         for char, data_val in EMOJI_METADATA.items():  # Renamed data to data_val to avoid conflict
-            name_list = data_val.get('alias', [char])  # Get alias list
-            name = data_val.get('en', name_list[0] if name_list else char).strip(':').replace('_', ' ')
-            category = "All Emojis"  # Assign a default category
+            # Try to get a name from 'en' field or aliases
+            name = data_val.get('en', '').strip(':').replace('_', ' ')
+            if not name:
+                aliases = data_val.get('alias', [])
+                if isinstance(aliases, str):
+                    aliases = [aliases]
+                if aliases:
+                    name = aliases[0].strip(':').replace('_', ' ')
+                else:
+                    name = 'Emoji'
+            
+            # Try to guess category from name patterns
+            name_lower = name.lower()
+            if any(word in name_lower for word in ['face', 'smile', 'frown', 'cry', 'laugh', 'wink', 'kiss', 'tongue', 'angry', 'sad', 'happy']):
+                category = "Smileys & Emotion"
+            elif any(word in name_lower for word in ['person', 'man', 'woman', 'boy', 'girl', 'baby', 'hand', 'finger', 'body']):
+                category = "People & Body"
+            elif any(word in name_lower for word in ['cat', 'dog', 'animal', 'bird', 'fish', 'bug', 'monkey', 'horse', 'cow', 'pig']):
+                category = "Animals & Nature"
+            elif any(word in name_lower for word in ['food', 'fruit', 'vegetable', 'drink', 'coffee', 'tea', 'wine', 'beer', 'pizza']):
+                category = "Food & Drink"
+            elif any(word in name_lower for word in ['car', 'bus', 'train', 'plane', 'ship', 'travel', 'place', 'building', 'house']):
+                category = "Travel & Places"
+            elif any(word in name_lower for word in ['sport', 'ball', 'game', 'medal', 'trophy', 'music', 'art', 'paint']):
+                category = "Activities"
+            elif any(word in name_lower for word in ['heart', 'star', 'circle', 'square', 'flag', 'symbol', 'sign', 'arrow']):
+                category = "Symbols"
+            else:
+                category = "Objects"
             aliases = data_val.get('alias', [])
-            if isinstance(aliases, str): aliases = [aliases]
+            if isinstance(aliases, str): 
+                aliases = [aliases]
 
             emoji_obj: ProcessedEmoji = {
                 'char': char,
-                'name': name.capitalize(),
+                'name': name.replace('_', ' ').title(),
                 'category': category,
-                'aliases': [a.strip(':') for a in aliases]
+                'aliases': [a.strip(':') for a in aliases] if aliases else []
             }
             all_emojis_list.append(emoji_obj)
 
-            if category not in categorized_emojis: categorized_emojis[category] = []
+            if category not in categorized_emojis: 
+                categorized_emojis[category] = []
             categorized_emojis[category].append(emoji_obj)
             category_names_set.add(category)
 
@@ -183,7 +231,8 @@ class EmojiButton(Button):
 
 
 class EmojiGrid(VerticalScroll):
-    COLUMN_COUNT = 6  # Reduced for smaller dialog
+    COLUMN_COUNT = 12  # More columns for better use of space
+    MAX_DISPLAY = 180  # Limit initial display for performance
 
     def __init__(self, emojis: List[ProcessedEmoji], **kwargs):
         super().__init__(**kwargs)
@@ -199,18 +248,33 @@ class EmojiGrid(VerticalScroll):
             child.remove()
 
         current_emojis = emojis_to_display if emojis_to_display is not None else self.emojis
+        
+        # Limit the number of emojis displayed for performance
+        if len(current_emojis) > self.MAX_DISPLAY:
+            current_emojis = current_emojis[:self.MAX_DISPLAY]
 
-        row_container: Optional[Horizontal] = None
+        rows_to_mount = []
+        row_buttons = []
+        
         for i, emoji_data in enumerate(current_emojis):
-            if i % self.COLUMN_COUNT == 0:
-                if row_container: self.mount(row_container)
+            if i % self.COLUMN_COUNT == 0 and row_buttons:
+                # Create and populate the row container
                 row_container = Horizontal(classes="emoji_row")
-
+                rows_to_mount.append((row_container, row_buttons))
+                row_buttons = []
+            
             button = EmojiButton(emoji_data, classes="emoji_button")
-            if row_container:  # Should always be true after first check
-                row_container.mount(button)
-
-        if row_container and row_container.children: self.mount(row_container)
+            row_buttons.append(button)
+        
+        # Handle the last row if it has buttons
+        if row_buttons:
+            row_container = Horizontal(classes="emoji_row")
+            rows_to_mount.append((row_container, row_buttons))
+        
+        # Now mount all rows with their buttons
+        for row_container, buttons in rows_to_mount:
+            self.mount(row_container)
+            row_container.mount(*buttons)
 
         if not current_emojis:
             self.mount(Static("No emojis found.", classes="no_emojis_message"))
@@ -229,9 +293,10 @@ class EmojiPickerScreen(ModalScreen[str]):
     CSS = """
     EmojiPickerScreen { align: center middle; }
     #dialog { 
-        width: 40w; 
-        max-width: 40; 
-        height: 20; 
+        width: 80%; 
+        max-width: 120; 
+        height: 80%; 
+        max-height: 40;
         border: thick $primary; 
         background: $surface; 
         padding: 1;
@@ -264,7 +329,7 @@ class EmojiPickerScreen(ModalScreen[str]):
         margin: 0;
     }
     EmojiButton.emoji_button { 
-        width: 5; 
+        width: 4; 
         height: 3; 
         border: none; 
         background: transparent; 
@@ -275,11 +340,9 @@ class EmojiPickerScreen(ModalScreen[str]):
     }
     EmojiButton.emoji_button:hover { 
         background: $primary-background; 
-        border: tall $primary;
     }
     EmojiButton.emoji_button:focus { 
         background: $primary-background-lighten-1;
-        border: tall $accent;
     }
     .no_emojis_message { 
         width: 100%; 
@@ -318,8 +381,7 @@ class EmojiPickerScreen(ModalScreen[str]):
             yield Input(placeholder="Search emojis (e.g., smile, cat, :thumbsup:)", id="search-input")
 
             # Check if we have meaningful categories to create tabs
-            if self._category_names and not (
-                    len(self._category_names) == 1 and self._category_names[0] == "All Emojis"):
+            if self._category_names and len(self._category_names) > 1:
                 with TabbedContent(id="emoji-tabs"):  # ID for TabbedContent
                     for category_name in self._category_names:
                         emojis_in_category = self._categorized_emojis.get(category_name, [])

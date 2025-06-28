@@ -8,6 +8,7 @@ import logging
 import logging.handlers
 import subprocess
 import threading
+import time
 import traceback
 from typing import Union, Optional, Any, Dict, List, Callable
 #
@@ -35,6 +36,7 @@ from pathlib import Path
 from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
+from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_gauge, log_resource_usage
 #
 # --- Local API library Imports ---
 from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_management_events_mlx_lm,
@@ -905,12 +907,29 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _last_tldw_api_request_context: Dict[str, Any] = {}
 
     def __init__(self):
+        # Track startup timing
+        self._startup_start_time = time.perf_counter()
+        self._startup_phases = {}
+        
+        # Log initial memory usage
+        log_resource_usage()
+        log_counter("app_startup_initiated", 1, documentation="Application startup initiated")
+        
         super().__init__()
+        
+        # Phase 1: Basic initialization
+        phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
         self.loguru_logger = loguru_logger # Make loguru_logger an instance variable for handlers
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
+        self._startup_phases["basic_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
+                     labels={"phase": "basic_init"}, 
+                     documentation="Duration of startup phase in seconds")
 
+        # Phase 2: Attribute initialization
+        phase_start = time.perf_counter()
         self.parsed_prompts_for_preview = [] # <<< INITIALIZATION for prompts
         self.last_prompt_import_dir = None
 
@@ -936,7 +955,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.media_current_page = 1
         self.media_search_current_page = 1
         self.media_search_total_pages = 1
+        self._startup_phases["attribute_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["attribute_init"], 
+                     labels={"phase": "attribute_init"}, 
+                     documentation="Duration of startup phase in seconds")
 
+        # Phase 3: Notes service initialization
+        phase_start = time.perf_counter()
         # 1. Get the user name from the loaded settings
         # The fallback here should match what you expect if settings doesn't have it,
         # or what's defined as the ultimate default in config.py.
@@ -970,8 +995,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_notes_init:  # Catch any other unexpected error
             logger.error(f"Unexpected error during NotesInteropService initialization: {e_notes_init}", exc_info=True)
             self.notes_service = None
+        
+        self._startup_phases["notes_service_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["notes_service_init"], 
+                     labels={"phase": "notes_service_init"}, 
+                     documentation="Duration of startup phase in seconds")
+        log_resource_usage()  # Check memory after notes service
 
-        # --- Providers & Models ---
+        # Phase 4: Providers & Models
+        phase_start = time.perf_counter()
         logging.debug("__INIT__: Attempting to get providers and models...")
         try:
             # Call the function from the config module
@@ -981,6 +1013,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_providers:
             logging.error(f"__INIT__: Failed to get providers and models: {e_providers}", exc_info=True)
             self.providers_models = {}
+        self._startup_phases["providers_models"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["providers_models"], 
+                     labels={"phase": "providers_models"}, 
+                     documentation="Duration of startup phase in seconds")
 
         # --- Initial Tab ---
         initial_tab_from_config = get_cli_setting("general", "default_tab", TAB_CHAT)
@@ -992,7 +1028,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         self._rich_log_handler: Optional[RichLogHandler] = None # For the RichLog widget in Logs tab
 
-        # --- PromptsInteropService Initialization ---
+        # Phase 5: PromptsInteropService Initialization
+        phase_start = time.perf_counter()
         self.prompts_service_initialized = False
         try:
             prompts_db_path_str = get_cli_setting("database", "prompts_db_path", str(Path.home() / ".local/share/tldw_cli/tldw_cli_prompts_v2.db"))
@@ -1004,9 +1041,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_prompts:
             self.prompts_service_initialized = False
             logging.error(f"Failed to initialize Prompts Interop Service: {e_prompts}", exc_info=True)
+        self._startup_phases["prompts_service_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["prompts_service_init"], 
+                     labels={"phase": "prompts_service_init"}, 
+                     documentation="Duration of startup phase in seconds")
 
         self._prompt_search_timer = None  # Initialize here
 
+        # Phase 6: Media DB initialization
+        phase_start = time.perf_counter()
         try:
             media_db_path = get_media_db_path()  # From your config.py
             self.media_db = MediaDatabase(db_path=media_db_path,
@@ -1036,6 +1079,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_media_types_fetch:
             self.loguru_logger.critical(f"ULTRA EARLY APP INIT: CRITICAL ERROR fetching _media_types_for_ui: {e_media_types_fetch}", exc_info=True)
             self._media_types_for_ui = ["Error: Exception fetching media types"]
+        
+        self._startup_phases["media_db_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["media_db_init"], 
+                     labels={"phase": "media_db_init"}, 
+                     documentation="Duration of startup phase in seconds")
+        log_resource_usage()  # Check memory after media DB
 
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
@@ -1073,6 +1122,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
         self.button_handler_map = self._build_handler_map()
+        
+        # Log total initialization time
+        total_init_time = time.perf_counter() - self._startup_start_time
+        self._startup_phases["total_init"] = total_init_time
+        log_histogram("app_startup_total_duration_seconds", total_init_time, 
+                     documentation="Total application initialization time in seconds")
+        
+        # Log startup summary
+        logger.info(f"=== STARTUP TIMING SUMMARY ===")
+        logger.info(f"Total initialization time: {total_init_time:.3f} seconds")
+        for phase, duration in self._startup_phases.items():
+            if phase != "total_init":
+                percentage = (duration / total_init_time) * 100 if total_init_time > 0 else 0
+                logger.info(f"  {phase}: {duration:.3f}s ({percentage:.1f}%)")
+        logger.info(f"==============================")
+        
+        # Final memory check
+        log_resource_usage()
 
     def _build_handler_map(self) -> dict:
         """Constructs the master button handler map from all event modules."""
@@ -1218,19 +1285,49 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             configure_application_logging(self)
 
     def compose(self) -> ComposeResult:
+        compose_start = time.perf_counter()
         logging.debug("App composing UI...")
+        
+        # Track individual component creation
+        component_start = time.perf_counter()
         yield Header()
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "header"}, 
+                     documentation="Time to create UI component")
+        
         # Set up the main title bar with a static title
+        component_start = time.perf_counter()
         yield TitleBar()
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "titlebar"}, 
+                     documentation="Time to create UI component")
 
         # Use new TabBar widget
+        component_start = time.perf_counter()
         yield TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value)
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "tabbar"}, 
+                     documentation="Time to create UI component")
 
+        # Content area - all windows
+        content_area_start = time.perf_counter()
         yield from self.compose_content_area() # Call refactored content area composer
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - content_area_start,
+                     labels={"component": "content_area_all_windows"}, 
+                     documentation="Time to create UI component")
 
         # Yield the new AppFooterStatus widget instead of the old Footer
+        component_start = time.perf_counter()
         yield AppFooterStatus(id="app-footer-status")
-        logging.debug("App compose finished.")
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "footer"}, 
+                     documentation="Time to create UI component")
+        
+        compose_duration = time.perf_counter() - compose_start
+        log_histogram("app_compose_duration_seconds", compose_duration,
+                     documentation="Total time for compose() method")
+        logging.debug(f"App compose finished in {compose_duration:.3f} seconds")
+        log_resource_usage()  # Check memory after compose
 
     ############################################################
     #
@@ -1240,18 +1337,27 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def compose_content_area(self) -> ComposeResult:
         """Yields the main window component for each tab."""
         with Container(id="content"):
-            yield ChatWindow(self, id="chat-window", classes="window")
-            yield CCPWindow(self, id="conversations_characters_prompts-window", classes="window")
-            yield NotesWindow(self, id="notes-window", classes="window")
-            yield MediaWindow(self, id="media-window", classes="window")
-            yield SearchWindow(self, id="search-window", classes="window")
-            yield IngestWindow(self, id="ingest-window", classes="window")
-            yield ToolsSettingsWindow(self, id="tools_settings-window", classes="window")
-            yield LLMManagementWindow(self, id="llm_management-window", classes="window")
-            yield LogsWindow(self, id="logs-window", classes="window")
-            yield StatsWindow(self, id="stats-window", classes="window")
-            yield EvalsWindow(self, id="evals-window", classes="window")
-            yield CodingWindow(self, id="coding-window", classes="window")
+            windows = [
+                ("chat", ChatWindow, "chat-window"),
+                ("ccp", CCPWindow, "conversations_characters_prompts-window"),
+                ("notes", NotesWindow, "notes-window"),
+                ("media", MediaWindow, "media-window"),
+                ("search", SearchWindow, "search-window"),
+                ("ingest", IngestWindow, "ingest-window"),
+                ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
+                ("llm_management", LLMManagementWindow, "llm_management-window"),
+                ("logs", LogsWindow, "logs-window"),
+                ("stats", StatsWindow, "stats-window"),
+                ("evals", EvalsWindow, "evals-window"),
+                ("coding", CodingWindow, "coding-window"),
+            ]
+            
+            for window_name, window_class, window_id in windows:
+                window_start = time.perf_counter()
+                yield window_class(self, id=window_id, classes="window")
+                log_histogram("app_window_creation_duration_seconds", time.perf_counter() - window_start,
+                             labels={"window": window_name}, 
+                             documentation="Time to create individual window")
 
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
@@ -1853,16 +1959,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
+        mount_start = time.perf_counter()
+        
+        # Logging setup
+        logging_start = time.perf_counter()
         self._setup_logging()
         if self._rich_log_handler:
             self.loguru_logger.debug("Starting RichLogHandler processor task...")
             self._rich_log_handler.start_processor(self)
+        log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - logging_start,
+                     labels={"phase": "logging_setup"}, 
+                     documentation="Duration of on_mount phase in seconds")
 
         # Schedule setup to run after initial rendering
         self.call_after_refresh(self._post_mount_setup)
         self.call_after_refresh(self.hide_inactive_windows)
 
-        # Load up dem themes
+        # Theme registration
+        theme_start = time.perf_counter()
         for theme_name in ALL_THEMES:
             self.register_theme(theme_name)
         
@@ -1874,6 +1988,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e:
             self.loguru_logger.warning(f"Failed to apply default theme '{default_theme}', falling back to 'textual-dark': {e}")
             self.theme = "textual-dark"
+        
+        log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - theme_start,
+                     labels={"phase": "theme_registration"}, 
+                     documentation="Duration of on_mount phase in seconds")
+        
+        mount_duration = time.perf_counter() - mount_start
+        log_histogram("app_on_mount_duration_seconds", mount_duration,
+                     documentation="Total time for on_mount() method")
+        self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
 
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""
@@ -1890,10 +2013,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
+        post_mount_start = time.perf_counter()
         self.loguru_logger.info("App _post_mount_setup: Binding Select widgets and populating dynamic content...")
+        
         # Populate LLM help texts
+        phase_start = time.perf_counter()
         self.call_later(llm_management_events.populate_llm_help_texts, self)
+        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                     labels={"phase": "llm_help_texts"}, 
+                     documentation="Duration of post-mount phase in seconds")
 
+        # Widget binding
+        phase_start = time.perf_counter()
         try:
             chat_select = self.query_one(f"#{TAB_CHAT}-api-provider", Select)
             self.watch(chat_select, "value", self.update_chat_provider_reactive, init=False)
@@ -1912,19 +2043,34 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         #     self.loguru_logger.error(f"_post_mount_setup: Failed to find CCP provider select: #{TAB_CCP}-api-provider")
         # except Exception as e:
         #     self.loguru_logger.error(f"_post_mount_setup: Error binding CCP provider select: {e}", exc_info=True)
+        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                     labels={"phase": "widget_binding"}, 
+                     documentation="Duration of post-mount phase in seconds")
 
         # Set initial tab now that other bindings might be ready
         # self.current_tab = self._initial_tab_value # This triggers watchers
 
         # Populate dynamic selects and lists
         # These also might rely on the main tab windows being fully composed.
+        phase_start = time.perf_counter()
         self.call_later(chat_handlers.populate_chat_conversation_character_filter_select, self)
         self.call_later(ccp_handlers.populate_ccp_character_select, self)
         self.call_later(ccp_handlers.populate_ccp_prompts_list_view, self)
+        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                     labels={"phase": "populate_lists"}, 
+                     documentation="Duration of post-mount phase in seconds")
 
         # Crucially, set the initial tab *after* bindings and other setup that might depend on queries.
         # The _set_initial_tab will trigger watchers.
         self.call_later(self._set_initial_tab)
+        
+        post_mount_duration = time.perf_counter() - post_mount_start
+        log_histogram("app_post_mount_duration_seconds", post_mount_duration,
+                     documentation="Total time for _post_mount_setup() method")
+        self.loguru_logger.info(f"_post_mount_setup completed in {post_mount_duration:.3f} seconds")
+        
+        # Log final resource usage
+        log_resource_usage()
 
         # If initial tab is CCP, trigger its initial search.
         # This should happen *after* current_tab is set.
@@ -1970,6 +2116,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self._ui_ready = True
 
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
+        
+        # Log total startup time (from __init__ start to fully ready)
+        if hasattr(self, '_startup_start_time'):
+            total_startup_time = time.perf_counter() - self._startup_start_time
+            log_histogram("app_startup_complete_duration_seconds", total_startup_time,
+                         documentation="Total time from app initialization start to fully ready")
+            log_counter("app_startup_complete", 1, documentation="Application startup completed successfully")
+            
+            self.loguru_logger.info(f"=== APPLICATION STARTUP COMPLETE ===")
+            self.loguru_logger.info(f"Total startup time: {total_startup_time:.3f} seconds")
+            self.loguru_logger.info(f"===================================")
+            
+            # Final memory usage
+            log_resource_usage()
 
 
     async def update_db_sizes(self) -> None:
