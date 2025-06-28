@@ -1907,11 +1907,10 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 AppFooterStatus {
     dock: bottom;
-    height: 1;
+    height: 2;  /* Increased height to ensure visibility */
     background: $primary-background-darken-1;
     width: 100%;
     layout: horizontal;
-    overflow: hidden;
     padding: 0 1;
     /* Removed align: right middle; from parent, will control children individually */
 }
@@ -1927,6 +1926,7 @@ AppFooterStatus {
 
 #footer-key-quit {
     width: auto;
+    height: 1;
     padding: 0 1; /* Padding around each key binding */
     color: $text-muted;
     dock: left; /* Dock key bindings to the left */
@@ -1934,10 +1934,12 @@ AppFooterStatus {
 
 #footer-spacer {
     width: 1fr; /* Takes up remaining space in the middle */
+    height: 1;
 }
 
 #footer-word-count {
     width: auto;
+    height: 1;
     padding: 0 1;
     color: $text-muted;
     display: block;
@@ -1945,6 +1947,7 @@ AppFooterStatus {
 
 #footer-token-count {
     width: auto;
+    height: 1;
     padding: 0 1;
     color: $text-muted;
     display: block;
@@ -1952,6 +1955,7 @@ AppFooterStatus {
 
 #internal-db-size-indicator { /* This is for the DB sizes */
     width: auto;
+    height: 1;
     /* content-align: right; Textual doesn't have content-align for Static directly */
     /* dock: right; Docking within Horizontal might be tricky, align on parent is better */
     color: $text-muted;

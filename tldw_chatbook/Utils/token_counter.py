@@ -8,6 +8,15 @@ from typing import List, Dict, Any, Union, Optional, Tuple
 # 3rd-Party Imports
 from loguru import logger
 #
+# Local Imports - Import with error handling to avoid circular imports
+try:
+    from .custom_tokenizers import count_tokens_with_custom, count_messages_with_custom
+    CUSTOM_TOKENIZERS_AVAILABLE = True
+except ImportError:
+    CUSTOM_TOKENIZERS_AVAILABLE = False
+    count_tokens_with_custom = None
+    count_messages_with_custom = None
+#
 ########################################################################################################################
 #
 # Functions:
@@ -222,6 +231,13 @@ def count_tokens_chat_history(
             messages.append(item)
         else:
             logger.warning(f"Unknown history format: {type(item)}")
+    
+    # Try custom tokenizers first
+    if CUSTOM_TOKENIZERS_AVAILABLE and count_messages_with_custom:
+        custom_count = count_messages_with_custom(messages, model, provider)
+        if custom_count is not None:
+            logger.debug(f"Using custom tokenizer for {model} ({provider}): {custom_count} tokens")
+            return custom_count
     
     # Use provider-specific counting if available
     if provider == "openai" and TIKTOKEN_AVAILABLE:

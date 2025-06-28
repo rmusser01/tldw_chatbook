@@ -1947,8 +1947,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info("DB size update timer started for AppFooterStatus.")
             
             # Start token count updates
-            await self.update_token_count_display()  # Initial update
-            self._token_count_update_timer = self.set_interval(2, self.update_token_count_display) # Update every 2 seconds
+            # Initial update after a short delay to ensure UI is ready
+            self.set_timer(0.5, self.update_token_count_display)
+            # Set up periodic updates - using a lambda to ensure it's called correctly
+            self._token_count_update_timer = self.set_interval(3, lambda: self.call_after_refresh(self.update_token_count_display))
             self.loguru_logger.info("Token count update timer started.")
         except QueryError:
             self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
@@ -2016,12 +2018,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             return
             
         try:
-            # Simple test first
             if self._db_size_status_widget:
-                self._db_size_status_widget.update_token_count("🟢 Tokens: 0 / 4096 (0%)")
-                self.loguru_logger.info("Token count display updated with test value")
-                
-                # Now try the real update
+                # Do the real update
                 from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
                 await update_chat_token_counter(self)
         except Exception as e:
@@ -2927,6 +2925,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif input_id == "chat-template-search-input" and current_active_tab == TAB_CHAT:
             # No debouncer here, direct call for template search
             await chat_handlers.handle_chat_template_search_input_changed(self, event.value)
+        elif input_id == "chat-llm-max-tokens" and current_active_tab == TAB_CHAT:
+            # Update token counter when max tokens value changes
+            self.call_after_refresh(self.update_token_count_display)
+        elif input_id == "chat-custom-token-limit" and current_active_tab == TAB_CHAT:
+            # Update token counter when custom token limit changes
+            self.call_after_refresh(self.update_token_count_display)
+        elif input_id == "chat-settings-search" and current_active_tab == TAB_CHAT:
+            await self.handle_settings_search(event.value)
         # --- Chat Tab Media Search Input ---
         # elif input_id == "chat-media-search-input" and current_active_tab == TAB_CHAT:
         #     await handle_chat_media_search_input_changed(self, event.input)
@@ -2988,13 +2994,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if switch_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
             await self.handle_settings_mode_toggle(event)
 
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """Handles changes in Input widgets."""
-        input_id = event.input.id
-        current_active_tab = self.current_tab
-        
-        if input_id == "chat-settings-search" and current_active_tab == TAB_CHAT:
-            await self.handle_settings_search(event.value)
 
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""

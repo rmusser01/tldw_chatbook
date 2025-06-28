@@ -33,7 +33,6 @@ async def update_chat_token_counter(app: 'TldwCli') -> None:
     2. Counts tokens based on the selected model
     3. Updates the token counter display
     """
-    logger.info("update_chat_token_counter called")
     try:
         # Get current model and provider
         try:
@@ -77,13 +76,27 @@ async def update_chat_token_counter(app: 'TldwCli') -> None:
             system_prompt=system_prompt
         )
         
+        # Use max_tokens_response as the display limit instead of model's total limit
+        # This allows users to see how their conversation measures against their configured limit
+        display_limit = max_tokens_response
+        
+        # Check if there's a custom token limit setting (we'll add this later)
+        try:
+            custom_limit_widget = app.query_one("#chat-custom-token-limit", Input)
+            custom_limit = int(custom_limit_widget.value or "0")
+            if custom_limit > 0:
+                display_limit = custom_limit
+        except (QueryError, ValueError):
+            # No custom limit widget or invalid value, use max_tokens_response
+            pass
+        
         # Update the display in footer
         try:
             footer = app.query_one("AppFooterStatus")
             from ...Utils.token_counter import format_token_display
-            display_text = format_token_display(used_tokens, total_limit)
-            logger.info(f"Updating footer with token count: {display_text}")
+            display_text = format_token_display(used_tokens, display_limit)
             footer.update_token_count(display_text)
+            logger.debug(f"Token count updated: {used_tokens}/{display_limit} (model limit: {total_limit})")
         except QueryError as e:
             logger.error(f"Footer widget not found: {e}")
                 
@@ -164,11 +177,23 @@ async def update_chat_token_counter_with_pending(app: 'TldwCli', pending_text: s
             system_prompt=system_prompt
         )
         
+        # Use max_tokens_response as the display limit instead of model's total limit
+        display_limit = max_tokens_response
+        
+        # Check if there's a custom token limit setting
+        try:
+            custom_limit_widget = app.query_one("#chat-custom-token-limit", Input)
+            custom_limit = int(custom_limit_widget.value or "0")
+            if custom_limit > 0:
+                display_limit = custom_limit
+        except (QueryError, ValueError):
+            pass
+        
         # Update the display in footer with a pending indicator
         try:
             footer = app.query_one("AppFooterStatus")
             from ...Utils.token_counter import format_token_display
-            display_text = format_token_display(used_tokens, total_limit)
+            display_text = format_token_display(used_tokens, display_limit)
             # Add pending indicator
             if pending_text:
                 display_text = display_text.replace("Tokens:", "Tokens (typing):")

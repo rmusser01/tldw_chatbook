@@ -49,13 +49,11 @@ class AppFooterStatus(Widget):
     
     def update_token_count(self, display_text: str) -> None:
         """Update the token count display in the footer."""
-        print(f"AppFooterStatus.update_token_count called with: {display_text}")
         try:
             if display_text:
                 self._token_count_display.update(f"{display_text} | ")
             else:
                 self._token_count_display.update("")
-            print(f"Token count display updated successfully")
         except Exception as e:
             print(f"Error updating token count display: {e}")
 

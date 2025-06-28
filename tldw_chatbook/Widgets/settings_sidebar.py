@@ -192,6 +192,10 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             yield Static("Max Tokens", classes="sidebar-label")
             yield Input(id=f"{id_prefix}-llm-max-tokens", value="2048", placeholder="e.g., 1024",
                         classes="sidebar-input")
+            yield Static("Custom Token Limit (Display)", classes="sidebar-label")
+            yield Input(id=f"{id_prefix}-custom-token-limit", value="0", placeholder="0 = use Max Tokens",
+                        classes="sidebar-input", 
+                        tooltip="Set a custom limit for the token counter display. 0 = use Max Tokens value above.")
             yield Checkbox("Fixed Tokens (Kobold)", id=f"{id_prefix}-llm-fixed-tokens-kobold", value=False)
             
             # Generation Settings
