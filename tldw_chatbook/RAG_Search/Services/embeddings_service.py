@@ -112,8 +112,8 @@ class EmbeddingsService:
         with self._executor_lock:
             if self._executor:
                 try:
-                    # Try to shutdown gracefully with timeout
-                    self._executor.shutdown(wait=True, timeout=5.0)
+                    # Try to shutdown gracefully
+                    self._executor.shutdown(wait=True)
                 except Exception as e:
                     logger.warning(f"Error during executor shutdown: {e}")
                     # Force shutdown if graceful shutdown fails
@@ -146,13 +146,20 @@ class EmbeddingsService:
             # Use cache service to check for cached embeddings
             cached_embeddings, uncached_texts = self.cache_service.get_embeddings_batch(texts)
             
-            # Create mapping of text to index
-            text_to_idx = {text: i for i, text in enumerate(texts)}
+            # Create mapping of text to indices (handle duplicates)
+            text_to_indices = {}
+            for i, text in enumerate(texts):
+                if text not in text_to_indices:
+                    text_to_indices[text] = []
+                text_to_indices[text].append(i)
+            
             embeddings = [None] * len(texts)
             
             # Fill in cached embeddings
             for text, embedding in cached_embeddings.items():
-                embeddings[text_to_idx[text]] = embedding
+                if text in text_to_indices:
+                    for idx in text_to_indices[text]:
+                        embeddings[idx] = embedding
             
             # Generate embeddings for uncached texts
             if uncached_texts:
@@ -167,7 +174,9 @@ class EmbeddingsService:
                 
                 # Fill in the results
                 for text, embedding in text_embedding_pairs:
-                    embeddings[text_to_idx[text]] = embedding
+                    if text in text_to_indices:
+                        for idx in text_to_indices[text]:
+                            embeddings[idx] = embedding
             
             return embeddings
             

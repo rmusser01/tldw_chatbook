@@ -56,7 +56,16 @@
       "Bash(python -m pytest Tests/RAG/test_service_factory.py -xvs --tb=short)",
       "Bash(python -m pytest Tests/RAG/test_service_factory.py -xvs)",
       "Bash(python -m pytest Tests/RAG/test_service_factory.py::TestRAGServiceFactory::test_create_complete_rag_services -xvs)",
-      "Bash(python -m pytest Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_initial_tldw_api_nav_buttons_and_views -xvs)"
+      "Bash(python -m pytest Tests/UI/test_ingest_window.py::TestIngestWindowTLDWAPI::test_initial_tldw_api_nav_buttons_and_views -xvs)",
+      "Bash(python -m pytest Tests/RAG/test_embeddings_integration.py::TestEmbeddingsIntegration::test_resource_cleanup_integration -xvs --tb=short)",
+      "Bash(python -m pytest Tests/RAG/test_embeddings_integration.py::TestEmbeddingsIntegration::test_collection_persistence -xvs --tb=short)",
+      "Bash(python -m pytest Tests/RAG/test_embeddings_performance.py::TestEmbeddingsPerformance::test_memory_usage_patterns -xvs --tb=short)",
+      "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsProperties::test_unicode_text_handling -xvs --tb=short)",
+      "Bash(python -m pytest Tests/RAG/ -v --tb=no 2 >& 1)",
+      "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsStateMachine::runTest -xvs --tb=short)",
+      "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsStateMachine::runTest -vvs)",
+      "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsStateMachine::runTest -v)",
+      "Bash(python -m pytest Tests/RAG/ -v)"
     ],
     "deny": []
   }

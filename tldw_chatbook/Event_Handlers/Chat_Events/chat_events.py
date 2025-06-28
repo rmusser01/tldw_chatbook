@@ -359,6 +359,13 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         user_msg_widget_instance = ChatMessage(message_text_from_input, role="User")
         await chat_container.mount(user_msg_widget_instance)
         loguru_logger.debug(f"Mounted new user message to UI: '{message_text_from_input[:50]}...'")
+        
+        # Update token counter after adding user message
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(app)
+        except Exception as e:
+            loguru_logger.debug(f"Could not update token counter: {e}")
 
     # --- 7. Save User Message to DB (IF CHAT IS ALREADY PERSISTENT) ---
     if not app.current_chat_is_ephemeral and active_conversation_id and db:
@@ -914,6 +921,13 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
         loguru_logger.debug("Cleared character editing fields on new chat.")
     except QueryError as e:
         loguru_logger.warning(f"Could not clear all character edit fields on new chat: {e}")
+    
+    # Update token counter to show empty state
+    try:
+        from .chat_token_events import update_chat_token_counter
+        await update_chat_token_counter(app)
+    except Exception as e:
+        loguru_logger.debug(f"Could not update token counter: {e}")
 
     try:
         # Watcher should handle most of this, but explicit clearing is safer
@@ -1436,6 +1450,14 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
 
         app.query_one("#chat-input", TextArea).focus()
         app.notify(f"Chat '{conv_metadata.get('title', 'Untitled')}' loaded.", severity="information", timeout=3)
+        
+        # Update token counter after loading conversation
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(app)
+        except Exception as e:
+            loguru_logger.debug(f"Could not update token counter: {e}")
+            
     except QueryError as qe_disp_main:
         loguru_logger.error(f"UI component missing during display_conversation for {conversation_id}: {qe_disp_main}")
         app.notify("Error updating UI for loaded chat.", severity="error")

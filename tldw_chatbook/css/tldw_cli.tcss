@@ -1935,6 +1935,20 @@ AppFooterStatus {
     width: 1fr; /* Takes up remaining space in the middle */
 }
 
+#footer-word-count {
+    width: auto;
+    padding: 0 1;
+    color: $text-muted;
+    dock: right;
+}
+
+#footer-token-count {
+    width: auto;
+    padding: 0 1;
+    color: $text-muted;
+    dock: right;
+}
+
 #internal-db-size-indicator { /* This is for the DB sizes */
     width: auto;
     /* content-align: right; Textual doesn't have content-align for Static directly */

@@ -350,7 +350,13 @@ class TestEmbeddingsIntegration:
         
         # Verify both batches were added to same collection
         assert integrated_embeddings_service.client.get_or_create_collection.call_count >= 2
-        call_args = [call[0][0] for call in integrated_embeddings_service.client.get_or_create_collection.call_args_list]
+        # Handle both positional and keyword arguments
+        call_args = []
+        for call in integrated_embeddings_service.client.get_or_create_collection.call_args_list:
+            if call.args:
+                call_args.append(call.args[0])
+            elif 'name' in call.kwargs:
+                call_args.append(call.kwargs['name'])
         assert all(arg == collection_name for arg in call_args)
     
     def test_large_batch_stress_test(self, integrated_embeddings_service):

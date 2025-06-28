@@ -67,6 +67,11 @@ class ChatWindowEnhanced(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         logger.debug("ChatWindowEnhanced initialized.")
+    
+    async def on_mount(self) -> None:
+        """Called when the widget is mounted."""
+        # Token counter will be initialized when tab is switched to chat
+        pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """

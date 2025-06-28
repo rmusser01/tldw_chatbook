@@ -528,7 +528,7 @@ class TestEmbeddingsService:
         # Should have tried graceful then forced shutdown
         assert mock_executor.shutdown.call_count == 2
         calls = mock_executor.shutdown.call_args_list
-        assert calls[0] == call(wait=True, timeout=5.0)
+        assert calls[0] == call(wait=True)
         assert calls[1] == call(wait=False)
         assert embeddings_service._executor is None
     

@@ -764,6 +764,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # DB Size checker - now using AppFooterStatus
     _db_size_status_widget: Optional[AppFooterStatus] = None
     _db_size_update_timer: Optional[Timer] = None
+    _token_count_update_timer: Optional[Timer] = None
 
     # Reactives for sidebar
     chat_sidebar_collapsed: reactive[bool] = reactive(False)
@@ -1944,6 +1945,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await self.update_db_sizes()  # Initial population
             self._db_size_update_timer = self.set_interval(60, self.update_db_sizes) # Periodic updates
             self.loguru_logger.info("DB size update timer started for AppFooterStatus.")
+            
+            # Start token count updates
+            await self.update_token_count_display()  # Initial update
+            self._token_count_update_timer = self.set_interval(2, self.update_token_count_display) # Update every 2 seconds
+            self.loguru_logger.info("Token count update timer started.")
         except QueryError:
             self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
         except Exception as e_db_size:
@@ -2000,6 +2006,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error(f"Error updating DB sizes in AppFooterStatus: {e}", exc_info=True)
             if self._db_size_status_widget: # Check again in case it became None somehow
                 self._db_size_status_widget.update_db_sizes_display("Error loading DB sizes")
+    
+    async def update_token_count_display(self) -> None:
+        """Updates the token count in the footer when on Chat tab."""
+        if self.current_tab != TAB_CHAT:
+            # Clear token count when not on chat tab
+            if self._db_size_status_widget:
+                self._db_size_status_widget.update_token_count("")
+            return
+            
+        try:
+            # Simple test first
+            if self._db_size_status_widget:
+                self._db_size_status_widget.update_token_count("🟢 Tokens: 0 / 4096 (0%)")
+                self.loguru_logger.info("Token count display updated with test value")
+                
+                # Now try the real update
+                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                await update_chat_token_counter(self)
+        except Exception as e:
+            self.loguru_logger.error(f"Error updating token count: {e}", exc_info=True)
+            if self._db_size_status_widget:
+                self._db_size_status_widget.update_token_count("Token count error")
 
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
@@ -2079,7 +2107,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             new_window = self.query_one(f"#{new_tab}-window")
             new_window.display = True
             
-            # Update word count in footer based on tab
+            # Update word count and token count in footer based on tab
             try:
                 footer = self.query_one("AppFooterStatus")
                 if new_tab == "notes":
@@ -2091,9 +2119,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         footer.update_word_count(word_count)
                     except QueryError:
                         footer.update_word_count(0)
-                else:
-                    # Clear word count when not on notes tab
+                    # Clear token count when on notes tab
+                    footer.update_token_count("")
+                elif new_tab == TAB_CHAT:
+                    # Clear word count when on chat tab
                     footer.update_word_count(0)
+                    # Update token count immediately
+                    self.call_after_refresh(self.update_token_count_display)
+                else:
+                    # Clear both when on other tabs
+                    footer.update_word_count(0)
+                    footer.update_token_count("")
             except QueryError:
                 pass
 
@@ -2980,6 +3016,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await notes_handlers.handle_notes_sort_changed(self, event)
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
+        elif select_id == "chat-api-provider" and current_active_tab == TAB_CHAT:
+            # Update token counter when provider changes
+            try:
+                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                await update_chat_token_counter(self)
+            except Exception as e:
+                self.loguru_logger.debug(f"Could not update token counter on provider change: {e}")
+        elif select_id == "chat-api-model" and current_active_tab == TAB_CHAT:
+            # Update token counter when model changes
+            try:
+                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                await update_chat_token_counter(self)
+            except Exception as e:
+                self.loguru_logger.debug(f"Could not update token counter on model change: {e}")
         elif select_id == "chat-conversation-search-character-filter-select" and current_active_tab == TAB_CHAT:
             self.loguru_logger.debug("Character filter changed in chat tab, triggering conversation search")
             await chat_handlers.perform_chat_conversation_search(self)

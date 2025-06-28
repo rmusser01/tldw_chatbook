@@ -181,6 +181,13 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                 logger.info("Stream finished with no error but content was empty/whitespace. Not saving to DB.")
 
         ai_widget.mark_generation_complete()  # Mark as complete in both error/success cases if widget exists
+        
+        # Update token counter after AI response is complete
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(self)
+        except Exception as e:
+            logger.debug(f"Could not update token counter: {e}")
 
     except QueryError as e:
         logger.error(f"QueryError during StreamDone UI update (event.error='{event.error}'): {e}", exc_info=True)

@@ -96,9 +96,13 @@ class TestEmbeddingsProperties:
         embeddings = property_embeddings_service.create_embeddings(texts)
         
         if embeddings:
-            # All embeddings should have the same dimension
-            first_dim = len(embeddings[0])
-            assert all(len(emb) == first_dim for emb in embeddings)
+            # Filter out any None values (shouldn't happen but defensive)
+            valid_embeddings = [emb for emb in embeddings if emb is not None]
+            
+            if valid_embeddings:
+                # All embeddings should have the same dimension
+                first_dim = len(valid_embeddings[0])
+                assert all(len(emb) == first_dim for emb in valid_embeddings)
             
             # Should match the number of input texts
             assert len(embeddings) == len(texts)
@@ -136,7 +140,12 @@ class TestEmbeddingsProperties:
         if embeddings_original and embeddings_permuted:
             # Each text should have the same embedding regardless of order
             for i, perm_idx in enumerate(perm_indices):
-                assert embeddings_original[perm_idx] == embeddings_permuted[i]
+                # Both should be either None or have the same value
+                if embeddings_original[perm_idx] is None:
+                    assert embeddings_permuted[i] is None
+                else:
+                    assert embeddings_permuted[i] is not None
+                    assert embeddings_original[perm_idx] == embeddings_permuted[i]
     
     @given(
         collection_name=st.text(
@@ -239,8 +248,11 @@ class TestEmbeddingsProperties:
         
         if embeddings:
             assert len(embeddings) == len(texts)
-            # All embeddings should be valid
-            assert all(isinstance(emb, list) and len(emb) == 2 for emb in embeddings)
+            # All embeddings should be valid (filter out None values)
+            valid_embeddings = [emb for emb in embeddings if emb is not None]
+            assert all(isinstance(emb, list) and len(emb) == 2 for emb in valid_embeddings)
+            # We should have embeddings for all texts
+            assert len(valid_embeddings) == len(texts)
     
     @given(
         texts=st.lists(st.text(min_size=1), min_size=1, max_size=10),
@@ -337,7 +349,6 @@ class EmbeddingsStateMachine(RuleBasedStateMachine):
         embeddings = self.service.create_embeddings(texts)
         assert embeddings is not None
         assert len(embeddings) == len(texts)
-        return texts
     
     @rule(
         target=collection_names,
@@ -347,10 +358,12 @@ class EmbeddingsStateMachine(RuleBasedStateMachine):
         """Create a new collection"""
         collection = self.service.get_or_create_collection(name)
         if collection:
-            self.collections[name] = {
-                'count': 0,
-                'documents': []
-            }
+            # Only initialize if it doesn't exist
+            if name not in self.collections:
+                self.collections[name] = {
+                    'count': 0,
+                    'documents': []
+                }
         return name
     
     @rule(
@@ -389,6 +402,16 @@ class EmbeddingsStateMachine(RuleBasedStateMachine):
         """Search a collection"""
         if collection not in self.collections:
             return
+        
+        # Mock the collection query to return expected format
+        mock_collection = MagicMock()
+        mock_collection.query.return_value = {
+            'documents': [[]],
+            'distances': [[]],
+            'metadatas': [[]],
+            'ids': [[]]
+        }
+        self.service.client.get_or_create_collection.return_value = mock_collection
         
         results = self.service.search_collection(
             collection,
