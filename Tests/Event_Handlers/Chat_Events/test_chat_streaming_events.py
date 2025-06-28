@@ -14,7 +14,7 @@ import tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events as streami
 # Import base mock but create custom fixture for streaming-specific needs
 from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
 @pytest.fixture

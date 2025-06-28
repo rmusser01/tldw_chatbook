@@ -1,5 +1,6 @@
 # test_service_factory.py  
 # Description: Unit tests for RAG service factory
+# NOTE: These tests use mocks. For integration tests with real services, see test_service_factory_integration.py
 #
 """
 test_service_factory.py
@@ -16,6 +17,8 @@ from unittest.mock import Mock, MagicMock, patch
 
 from tldw_chatbook.RAG_Search.Services.service_factory import RAGServiceFactory
 
+# Test marker for unit tests
+pytestmark = pytest.mark.unit
 
 @pytest.mark.requires_rag_deps
 class TestRAGServiceFactory:

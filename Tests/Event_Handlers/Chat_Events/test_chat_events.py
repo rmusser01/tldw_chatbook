@@ -1,4 +1,5 @@
 # /tests/Event_Handlers/Chat_Events/test_chat_events.py
+# Unit tests for chat event handlers using mocked components
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
@@ -32,7 +33,8 @@ from tldw_chatbook.Widgets.chat_message import ChatMessage
 # Import our comprehensive mock fixture
 from Tests.fixtures.event_handler_mocks import mock_app
 
-pytestmark = pytest.mark.asyncio
+# Test marker for unit tests
+pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
 # The mock_app fixture is imported from Tests.fixtures.event_handler_mocks

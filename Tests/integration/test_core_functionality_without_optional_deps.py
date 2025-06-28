@@ -6,6 +6,7 @@ import sys
 from unittest.mock import patch, MagicMock
 
 
+@pytest.mark.integration
 def test_core_imports_without_optional_deps():
     """Test that core modules can be imported without optional dependencies."""
     # Test core database functionality
@@ -26,6 +27,7 @@ def test_core_imports_without_optional_deps():
     assert True
 
 
+@pytest.mark.integration
 def test_notes_functionality_without_optional_deps():
     """Test that notes functionality works without optional dependencies."""
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
@@ -35,6 +37,7 @@ def test_notes_functionality_without_optional_deps():
     assert notes_service is not None
 
 
+@pytest.mark.integration
 def test_character_chat_without_optional_deps():
     """Test character chat functionality without optional dependencies."""
     from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
@@ -54,6 +57,7 @@ def test_character_chat_without_optional_deps():
     assert isinstance(result, dict)
 
 
+@pytest.mark.integration
 def test_chunking_without_optional_deps():
     """Test chunking functionality works without optional language-specific deps."""
     from tldw_chatbook.Chunking.Chunk_Lib import Chunker
@@ -73,6 +77,7 @@ def test_chunking_without_optional_deps():
     assert len(chunks) > 0
 
 
+@pytest.mark.unit
 def test_ui_components_with_disabled_features():
     """Test that UI components handle disabled optional features gracefully."""
     # Mock the app instance
@@ -93,6 +98,7 @@ def test_ui_components_with_disabled_features():
         assert True
 
 
+@pytest.mark.unit
 def test_search_window_chroma_manager_error_handling():
     """Test SearchWindow handles ChromaDBManager unavailability."""
     from tldw_chatbook.UI.SearchWindow import SearchWindow, VECTORDB_AVAILABLE
@@ -116,6 +122,7 @@ def test_search_window_chroma_manager_error_handling():
         asyncio.run(test_chroma_manager_error())
 
 
+@pytest.mark.integration
 def test_optional_deps_module_functionality():
     """Test the optional dependencies checking functionality."""
     from tldw_chatbook.Utils.optional_deps import (
@@ -142,6 +149,7 @@ def test_optional_deps_module_functionality():
         handler()
 
 
+@pytest.mark.integration
 @patch.dict(sys.modules, {}, clear=True)
 def test_core_app_import_without_torch():
     """Test that core app modules can be imported without torch/transformers."""

@@ -1,5 +1,6 @@
 # test_indexing_service.py
 # Unit tests for the RAG indexing service
+# NOTE: These tests use mocks. For integration tests with real components, see test_indexing_service_integration.py
 
 import pytest
 import asyncio
@@ -7,6 +8,8 @@ from unittest.mock import patch, MagicMock, AsyncMock, call
 
 from tldw_chatbook.RAG_Search.Services.indexing_service import IndexingService
 
+# Test marker for unit tests
+pytestmark = pytest.mark.unit
 
 @pytest.mark.requires_rag_deps
 class TestIndexingService:

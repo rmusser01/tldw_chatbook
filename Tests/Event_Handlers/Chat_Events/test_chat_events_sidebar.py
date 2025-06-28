@@ -21,7 +21,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
 # Import our comprehensive mock fixture
 from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock, create_widget_mock
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
 @pytest.fixture
