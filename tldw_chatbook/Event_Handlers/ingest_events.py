@@ -85,6 +85,26 @@ NOTE_FILE_FILTERS = Filters(
     ("All Files", lambda _: True),
 )
 
+# --- Document Ingest Constants ---
+DOCUMENT_FILE_FILTERS = Filters(
+    ("Documents", lambda p: p.suffix.lower() in (".txt", ".md", ".docx", ".rtf", ".html", ".htm", ".xml")),
+    ("Programming Files", lambda p: p.suffix.lower() in (
+        ".py", ".js", ".ts", ".java", ".cs", ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp",
+        ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".scala", ".r", ".m", ".mm",
+        ".lua", ".pl", ".sh", ".bash", ".ps1", ".vb", ".fs", ".clj", ".dart", ".jl"
+    )),
+    ("Data Files", lambda p: p.suffix.lower() in (".json", ".jsonl", ".csv", ".tsv", ".yaml", ".yml")),
+    ("Text Files", lambda p: p.suffix.lower() in (".txt", ".md")),
+    ("All Supported", lambda p: p.suffix.lower() in (
+        ".txt", ".md", ".docx", ".rtf", ".html", ".htm", ".xml",
+        ".py", ".js", ".ts", ".java", ".cs", ".cpp", ".cc", ".cxx", ".c", ".h", ".hpp",
+        ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".scala", ".r", ".m", ".mm",
+        ".lua", ".pl", ".sh", ".bash", ".ps1", ".vb", ".fs", ".clj", ".dart", ".jl",
+        ".json", ".jsonl", ".csv", ".tsv", ".yaml", ".yml"
+    )),
+    ("All Files", lambda _: True),
+)
+
 def _truncate_text(text: Optional[str], max_len: int) -> str:
     """
     Truncates a string to a maximum length, adding ellipsis if truncated.

@@ -327,12 +327,25 @@ class IngestWindow(Container):
 
             logger.debug(f"Opening file dialog for media type '{media_type}' with initial path '{dialog_initial_path}'.")
 
-            await self.app.push_screen(
-                FileOpen(
-                    title=f"Select Local File for {media_type.title()}"
-                ),
-                callback=self.handle_file_picker_dismissed
-            )
+            # Import DOCUMENT_FILE_FILTERS from ingest_events
+            from ..Event_Handlers.ingest_events import DOCUMENT_FILE_FILTERS
+            
+            # Use document-specific filters for document media type
+            if media_type == "document":
+                await self.app.push_screen(
+                    FileOpen(
+                        title=f"Select Local File for {media_type.title()}",
+                        filters=DOCUMENT_FILE_FILTERS
+                    ),
+                    callback=self.handle_file_picker_dismissed
+                )
+            else:
+                await self.app.push_screen(
+                    FileOpen(
+                        title=f"Select Local File for {media_type.title()}"
+                    ),
+                    callback=self.handle_file_picker_dismissed
+                )
         # If IngestWindow has a superclass that also defines on_button_pressed, consider calling it:
         # else:
         #     await super().on_button_pressed(event) # Example if there's a relevant superclass method

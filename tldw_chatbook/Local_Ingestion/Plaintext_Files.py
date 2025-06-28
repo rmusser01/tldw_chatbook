@@ -673,7 +673,11 @@ def process_document_with_improvements(
 # List of supported formats for external reference
 SUPPORTED_FORMATS = {
     'standard': ['.txt', '.md', '.html', '.htm', '.xml', '.docx', '.rtf'],
-    'enhanced': ['.json', '.jsonl', '.csv', '.tsv', '.yaml', '.yml']  # When improvements available
+    'enhanced': ['.json', '.jsonl', '.csv', '.tsv', '.yaml', '.yml'],  # When improvements available
+    'programming': ['.py', '.js', '.ts', '.java', '.cs', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', 
+                   '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.scala', '.r', '.m', '.mm',
+                   '.lua', '.pl', '.sh', '.bash', '.ps1', '.vb', '.fs', '.clj', '.dart', '.jl',
+                   '.nim', '.zig', '.v', '.elm', '.ex', '.exs', '.erl', '.hrl']  # Programming languages
 }
 
 #

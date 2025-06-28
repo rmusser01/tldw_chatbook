@@ -261,6 +261,224 @@ class XMLEnhancedConverter(FormatConverter):
             lines.append(f"{indent}{element.tail.strip()}")
 
 
+class ProgrammingLanguageConverter(FormatConverter):
+    """Convert programming language files to readable text with metadata."""
+    
+    # Mapping of extensions to language names
+    LANGUAGE_MAP = {
+        '.py': 'Python',
+        '.js': 'JavaScript',
+        '.ts': 'TypeScript',
+        '.java': 'Java',
+        '.cs': 'C#',
+        '.cpp': 'C++',
+        '.cc': 'C++',
+        '.cxx': 'C++',
+        '.c': 'C',
+        '.h': 'C/C++ Header',
+        '.hpp': 'C++ Header',
+        '.go': 'Go',
+        '.rs': 'Rust',
+        '.rb': 'Ruby',
+        '.php': 'PHP',
+        '.swift': 'Swift',
+        '.kt': 'Kotlin',
+        '.scala': 'Scala',
+        '.r': 'R',
+        '.m': 'Objective-C',
+        '.mm': 'Objective-C++',
+        '.lua': 'Lua',
+        '.pl': 'Perl',
+        '.sh': 'Shell',
+        '.bash': 'Bash',
+        '.ps1': 'PowerShell',
+        '.vb': 'Visual Basic',
+        '.fs': 'F#',
+        '.clj': 'Clojure',
+        '.dart': 'Dart',
+        '.jl': 'Julia',
+        '.nim': 'Nim',
+        '.zig': 'Zig',
+        '.v': 'V',
+        '.elm': 'Elm',
+        '.ex': 'Elixir',
+        '.exs': 'Elixir Script',
+        '.erl': 'Erlang',
+        '.hrl': 'Erlang Header',
+    }
+    
+    @property
+    def supported_extensions(self) -> List[str]:
+        return list(self.LANGUAGE_MAP.keys())
+    
+    def can_convert(self, file_path: Path) -> bool:
+        return file_path.suffix.lower() in self.supported_extensions
+    
+    def convert(self, file_path: Path) -> Tuple[str, Dict[str, Any]]:
+        """Convert programming file to text with metadata extraction."""
+        try:
+            # Read file content with encoding detection
+            content = self._read_with_encoding_detection(file_path)
+            
+            # Detect language
+            extension = file_path.suffix.lower()
+            language = self.LANGUAGE_MAP.get(extension, 'Unknown')
+            
+            # Extract metadata
+            metadata = {
+                'format': 'code',
+                'language': language,
+                'extension': extension,
+                'filename': file_path.name,
+                'line_count': content.count('\n') + 1 if content else 0,
+                'char_count': len(content),
+            }
+            
+            # Extract additional metadata based on language
+            self._extract_language_specific_metadata(content, language, metadata)
+            
+            # Format content with language indicator
+            formatted_content = f"# {file_path.name}\n"
+            formatted_content += f"# Language: {language}\n"
+            formatted_content += f"# Lines: {metadata['line_count']}\n"
+            formatted_content += "\n```{}\n{}\n```".format(extension.lstrip('.'), content)
+            
+            return formatted_content, metadata
+            
+        except Exception as e:
+            logger.error(f"Failed to convert programming file {file_path}: {e}")
+            raise ValueError(f"Programming file conversion failed: {str(e)}")
+    
+    def _read_with_encoding_detection(self, file_path: Path) -> str:
+        """Read file with automatic encoding detection."""
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'ascii', 'utf-16']
+        
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    content = f.read()
+                    # Quick validation - if we can encode back, it's probably correct
+                    _ = content.encode(encoding)
+                    return content
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                continue
+        
+        # If all encodings fail, try with errors='replace'
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            logger.warning(f"Reading {file_path} with replacement characters due to encoding issues")
+            return f.read()
+    
+    def _extract_language_specific_metadata(self, content: str, language: str, metadata: Dict[str, Any]):
+        """Extract language-specific metadata like imports, functions, classes."""
+        lines = content.split('\n')
+        
+        # Common patterns for different languages
+        import_patterns = {
+            'Python': (r'^import\s+\w+', r'^from\s+\w+\s+import'),
+            'JavaScript': (r'^import\s+', r'^const\s+\w+\s*=\s*require'),
+            'TypeScript': (r'^import\s+', r'^const\s+\w+\s*=\s*require'),
+            'Java': (r'^import\s+[\w.]+;',),
+            'C#': (r'^using\s+[\w.]+;',),
+            'Go': (r'^import\s+\(|^import\s+"'),
+            'Rust': (r'^use\s+[\w:]+;',),
+            'C': (r'^#include\s*[<"]', r'^#include\s*[<"]'),
+            'C++': (r'^#include\s*[<"]', r'^#include\s*[<"]'),
+        }
+        
+        function_patterns = {
+            'Python': r'^def\s+(\w+)\s*\(',
+            'JavaScript': r'function\s+(\w+)\s*\(|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(',
+            'TypeScript': r'function\s+(\w+)\s*\(|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(',
+            'Java': r'(?:public|private|protected)?\s*(?:static)?\s*\w+\s+(\w+)\s*\(',
+            'C#': r'(?:public|private|protected)?\s*(?:static)?\s*\w+\s+(\w+)\s*\(',
+            'Go': r'^func\s+(\w+)\s*\(',
+            'Rust': r'^fn\s+(\w+)\s*\(',
+        }
+        
+        class_patterns = {
+            'Python': r'^class\s+(\w+)',
+            'JavaScript': r'^class\s+(\w+)',
+            'TypeScript': r'^class\s+(\w+)|^interface\s+(\w+)',
+            'Java': r'(?:public\s+)?class\s+(\w+)',
+            'C#': r'(?:public\s+)?class\s+(\w+)',
+            'C++': r'class\s+(\w+)\s*[:{]',
+        }
+        
+        # Count imports
+        import_count = 0
+        if language in import_patterns:
+            for pattern in import_patterns[language]:
+                for line in lines:
+                    if re.match(pattern, line.strip()):
+                        import_count += 1
+        
+        metadata['import_count'] = import_count
+        
+        # Extract function names (limit to first 20)
+        functions = []
+        if language in function_patterns:
+            pattern = function_patterns[language]
+            for line in lines[:500]:  # Limit search to first 500 lines for performance
+                match = re.search(pattern, line)
+                if match:
+                    func_name = match.group(1) or (match.group(2) if len(match.groups()) > 1 else None)
+                    if func_name and func_name not in functions:
+                        functions.append(func_name)
+                        if len(functions) >= 20:
+                            break
+        
+        if functions:
+            metadata['functions'] = functions[:10]  # Store only first 10
+            metadata['function_count'] = len(functions)
+        
+        # Extract class names
+        classes = []
+        if language in class_patterns:
+            pattern = class_patterns[language]
+            for line in lines[:500]:
+                match = re.search(pattern, line)
+                if match:
+                    class_name = match.group(1)
+                    if class_name and class_name not in classes:
+                        classes.append(class_name)
+                        if len(classes) >= 10:
+                            break
+        
+        if classes:
+            metadata['classes'] = classes
+            metadata['class_count'] = len(classes)
+        
+        # Detect if it's a test file
+        filename_lower = metadata['filename'].lower()
+        metadata['is_test'] = 'test' in filename_lower or 'spec' in filename_lower
+        
+        # Count comment lines (basic detection)
+        comment_count = 0
+        comment_chars = {
+            'Python': '#',
+            'JavaScript': '//',
+            'TypeScript': '//',
+            'Java': '//',
+            'C#': '//',
+            'C': '//',
+            'C++': '//',
+            'Go': '//',
+            'Rust': '//',
+            'Ruby': '#',
+            'Shell': '#',
+            'Bash': '#',
+        }
+        
+        if language in comment_chars:
+            comment_char = comment_chars[language]
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith(comment_char):
+                    comment_count += 1
+        
+        metadata['comment_lines'] = comment_count
+
+
 class FormatRegistry:
     """Registry for format converters with priority and fallback support."""
     
@@ -275,6 +493,7 @@ class FormatRegistry:
         self.register_converter(CSVConverter(), priority=100)
         self.register_converter(YAMLConverter(), priority=100)
         self.register_converter(XMLEnhancedConverter(), priority=90)
+        self.register_converter(ProgrammingLanguageConverter(), priority=95)
         
         # Optional converters (check dependencies)
         self._register_optional_converters()
