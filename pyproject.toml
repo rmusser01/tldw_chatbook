@@ -55,6 +55,9 @@ dependencies = [
     "pycryptodomex",
     "keyring",
     "markdownify",
+    "aiofiles",
+    "docx2txt",
+    "html2text",
 ]
 
 # --- Optional Dependencies ---
@@ -99,6 +102,16 @@ websearch = [
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
 local_transformers = ["transformers"]
+text_processing = [
+    "pypandoc",  # For RTF conversion
+    "defusedxml",  # For safe XML parsing
+    "python-pptx",  # For PowerPoint files
+    "pdfplumber",  # For PDF text extraction
+    "openpyxl",  # For Excel files
+    "python-docx",  # Alternative DOCX handling
+    "striprtf",  # Fallback RTF parser
+    "sentence-transformers",  # For semantic chunking
+]
 dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests
