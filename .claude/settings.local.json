@@ -66,7 +66,9 @@
       "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsStateMachine::runTest -vvs)",
       "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsStateMachine::runTest -v)",
       "Bash(python -m pytest Tests/RAG/ -v)",
-      "Bash(python -m pytest Tests/RAG/test_full_rag.py::test_embeddings_service -v)"
+      "Bash(python -m pytest Tests/RAG/test_full_rag.py::test_embeddings_service -v)",
+      "Bash(python -m pytest Tests/RAG_Search/test_embeddings_unit.py::TestEmbeddingProviders::test_provider_interface -v)",
+      "Bash(python:*)"
     ],
     "deny": []
   }
