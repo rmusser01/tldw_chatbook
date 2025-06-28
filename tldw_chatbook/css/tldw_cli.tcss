@@ -1911,6 +1911,7 @@ AppFooterStatus {
     background: $primary-background-darken-1;
     width: 100%;
     layout: horizontal;
+    overflow: hidden;
     padding: 0 1;
     /* Removed align: right middle; from parent, will control children individually */
 }
@@ -1939,14 +1940,14 @@ AppFooterStatus {
     width: auto;
     padding: 0 1;
     color: $text-muted;
-    dock: right;
+    display: block;
 }
 
 #footer-token-count {
     width: auto;
     padding: 0 1;
     color: $text-muted;
-    dock: right;
+    display: block;
 }
 
 #internal-db-size-indicator { /* This is for the DB sizes */

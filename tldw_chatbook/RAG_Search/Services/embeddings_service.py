@@ -584,4 +584,5 @@ class EmbeddingsService:
     
     def __del__(self):
         """Cleanup on destruction."""
-        self._close_executor()
+        if hasattr(self, '_executor_lock'):
+            self._close_executor()

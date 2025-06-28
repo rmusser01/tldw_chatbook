@@ -65,7 +65,8 @@
       "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsStateMachine::runTest -xvs --tb=short)",
       "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsStateMachine::runTest -vvs)",
       "Bash(python -m pytest Tests/RAG/test_embeddings_properties.py::TestEmbeddingsStateMachine::runTest -v)",
-      "Bash(python -m pytest Tests/RAG/ -v)"
+      "Bash(python -m pytest Tests/RAG/ -v)",
+      "Bash(python -m pytest Tests/RAG/test_full_rag.py::test_embeddings_service -v)"
     ],
     "deny": []
   }
