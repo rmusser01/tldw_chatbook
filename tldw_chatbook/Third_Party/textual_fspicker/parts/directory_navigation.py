@@ -279,6 +279,9 @@ class DirectoryNavigation(OptionList):
 
     sort_display: var[bool] = var(True)
     """Should the display be sorted?"""
+    
+    sort_by: var[str] = var("name")
+    """How to sort the display: 'name', 'size', 'type', 'time'."""
 
     def __init__(self, location: Path | str = ".") -> None:
         """Initialise the directory navigation widget.
@@ -360,10 +363,42 @@ class DirectoryNavigation(OptionList):
     def _sort(self, entries: Iterable[DirectoryEntry]) -> Iterable[DirectoryEntry]:
         """Sort the entries as per the value of `sort_display`."""
         if self.sort_display:
-            return sorted(
-                entries,
-                key=lambda entry: (not is_dir(entry.location), entry.location.name),
-            )
+            if self.sort_by == "name":
+                return sorted(
+                    entries,
+                    key=lambda entry: (not is_dir(entry.location), entry.location.name.lower()),
+                )
+            elif self.sort_by == "size":
+                def get_size(entry: DirectoryEntry) -> int:
+                    try:
+                        return entry.location.stat().st_size
+                    except:
+                        return 0
+                return sorted(
+                    entries,
+                    key=lambda entry: (not is_dir(entry.location), get_size(entry)),
+                )
+            elif self.sort_by == "type":
+                return sorted(
+                    entries,
+                    key=lambda entry: (not is_dir(entry.location), entry.location.suffix.lower(), entry.location.name.lower()),
+                )
+            elif self.sort_by == "time":
+                def get_mtime(entry: DirectoryEntry) -> float:
+                    try:
+                        return entry.location.stat().st_mtime
+                    except:
+                        return 0.0
+                return sorted(
+                    entries,
+                    key=lambda entry: (not is_dir(entry.location), -get_mtime(entry)),  # Negative for newest first
+                )
+            else:
+                # Default to name sorting
+                return sorted(
+                    entries,
+                    key=lambda entry: (not is_dir(entry.location), entry.location.name.lower()),
+                )
         return entries
 
     @property
@@ -436,6 +471,14 @@ class DirectoryNavigation(OptionList):
 
     def _watch_sort_display(self) -> None:
         """Refresh the display if the sort option has been changed."""
+        self._repopulate_display()
+    
+    def _watch_sort_by(self) -> None:
+        """Refresh the display if the sort method has been changed."""
+        self._repopulate_display()
+    
+    def _watch_search_filter(self) -> None:
+        """Refresh the display when the search filter has been changed."""
         self._repopulate_display()
 
     def _watch_file_filter(self) -> None:

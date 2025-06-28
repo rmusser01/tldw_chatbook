@@ -10,13 +10,14 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static, ListView, ListItem, Input
+from textual.widgets import Button, Label, Static, ListView, ListItem, Input, Select
 from textual.reactive import reactive
 from textual.worker import Worker, get_current_worker
 from loguru import logger
 
 from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
+from ..Third_Party.textual_fspicker.base_dialog import Dialog, InputBar
 from ..config import get_cli_setting, set_cli_setting
 
 
@@ -137,22 +138,34 @@ class PathBreadcrumbs(Horizontal):
             self.post_message(self.PathChanged(event.button.data))
 
 
-class DirectorySearch(Horizontal):
-    """Search widget for filtering directory contents"""
+class FilePickerToolbar(Horizontal):
+    """Toolbar widget for file picker controls"""
     
     DEFAULT_CSS = """
-    DirectorySearch {
+    FilePickerToolbar {
         height: 3;
         padding: 0 1;
         background: $surface;
+        align: center middle;
     }
     
-    DirectorySearch Input {
-        width: 1fr;
+    FilePickerToolbar Input {
+        width: 30;
+        margin-right: 1;
     }
     
-    DirectorySearch Button {
-        margin-left: 1;
+    FilePickerToolbar Button {
+        margin: 0 1;
+        min-width: 0;
+    }
+    
+    FilePickerToolbar Select {
+        width: 20;
+        margin: 0 1;
+    }
+    
+    #hidden-files-btn.active {
+        background: $primary;
     }
     """
     
@@ -162,9 +175,33 @@ class DirectorySearch(Horizontal):
             self.query = query
             super().__init__()
     
+    class SortChanged(ModalScreen.Message):
+        """Emitted when sort order changes"""
+        def __init__(self, sort_by: str) -> None:
+            self.sort_by = sort_by
+            super().__init__()
+    
+    class HiddenToggled(ModalScreen.Message):
+        """Emitted when hidden files toggle changes"""
+        def __init__(self, show_hidden: bool) -> None:
+            self.show_hidden = show_hidden
+            super().__init__()
+    
+    def __init__(self, show_hidden: bool = False):
+        super().__init__()
+        self.show_hidden = show_hidden
+    
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search files...", id="search-input")
         yield Button("Clear", id="clear-search", variant="subtle")
+        yield Button("Hidden Files", id="hidden-files-btn", variant="primary" if self.show_hidden else "default")
+        yield Label("Sort by:")
+        yield Select(
+            [("Name", "name"), ("Size", "size"), ("Type", "type"), ("Date", "time")],
+            prompt="Sort by",
+            value="name",
+            id="sort-select"
+        )
     
     @on(Input.Changed, "#search-input")
     def handle_search_change(self, event: Input.Changed):
@@ -177,6 +214,20 @@ class DirectorySearch(Horizontal):
         search_input = self.query_one("#search-input", Input)
         search_input.value = ""
         self.post_message(self.SearchChanged(""))
+    
+    @on(Button.Pressed, "#hidden-files-btn")
+    def handle_hidden_toggle(self):
+        """Toggle hidden files display"""
+        self.show_hidden = not self.show_hidden
+        btn = self.query_one("#hidden-files-btn", Button)
+        btn.variant = "primary" if self.show_hidden else "default"
+        self.post_message(self.HiddenToggled(self.show_hidden))
+    
+    @on(Select.Changed, "#sort-select")
+    def handle_sort_change(self, event: Select.Changed):
+        """Handle sort order changes"""
+        if event.value:
+            self.post_message(self.SortChanged(str(event.value)))
 
 
 class EnhancedFileDialog(BaseFileDialog):
@@ -250,8 +301,8 @@ class EnhancedFileDialog(BaseFileDialog):
             # Breadcrumb navigation
             yield PathBreadcrumbs(Path(self._location))
             
-            # Search bar
-            yield DirectorySearch()
+            # Toolbar with search and controls
+            yield FilePickerToolbar()
             
             # Main file browser
             with Horizontal():
@@ -275,6 +326,10 @@ class EnhancedFileDialog(BaseFileDialog):
         dir_nav = self.query_one(DirectoryNavigation)
         breadcrumbs = self.query_one(PathBreadcrumbs)
         breadcrumbs.update_path(dir_nav.location)
+        
+        # Initialize toolbar state
+        toolbar = self.query_one(FilePickerToolbar)
+        toolbar.show_hidden = dir_nav.show_hidden
     
     def watch_show_recent(self, show: bool) -> None:
         """Toggle recent locations visibility"""
@@ -287,6 +342,7 @@ class EnhancedFileDialog(BaseFileDialog):
     def watch_search_query(self, query: str) -> None:
         """Filter directory entries based on search query"""
         from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        from ..Third_Party.textual_fspicker.base_dialog import Dialog
         
         try:
             dir_nav = self.query_one(DirectoryNavigation)
@@ -294,10 +350,10 @@ class EnhancedFileDialog(BaseFileDialog):
             
             if query:
                 dialog.add_class("search-active")
-                # Implement filtering logic here
-                # This would require modifying DirectoryNavigation or creating a wrapper
+                dir_nav.search_filter = query
             else:
                 dialog.remove_class("search-active")
+                dir_nav.search_filter = ""
         except Exception as e:
             logger.error(f"Error filtering entries: {e}")
     
@@ -319,8 +375,14 @@ class EnhancedFileDialog(BaseFileDialog):
     def action_toggle_hidden(self) -> None:
         """Toggle showing hidden files"""
         from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
-        self.query_one(DirectoryNavigation).toggle_hidden()
-        self.notify("Hidden files toggled", timeout=2)
+        dir_nav = self.query_one(DirectoryNavigation)
+        dir_nav.toggle_hidden()
+        # Update the toolbar button state
+        toolbar = self.query_one(FilePickerToolbar)
+        toolbar.show_hidden = dir_nav.show_hidden
+        btn = toolbar.query_one("#hidden-files-btn", Button)
+        btn.variant = "primary" if dir_nav.show_hidden else "default"
+        self.notify(f"Hidden files {'shown' if dir_nav.show_hidden else 'hidden'}", timeout=2)
     
     def action_focus_path_input(self) -> None:
         """Focus the path input field"""
@@ -377,10 +439,26 @@ class EnhancedFileDialog(BaseFileDialog):
         dir_nav = self.query_one(DirectoryNavigation)
         dir_nav.location = event.path
     
-    @on(DirectorySearch.SearchChanged)
-    def handle_search_change(self, event: DirectorySearch.SearchChanged):
+    @on(FilePickerToolbar.SearchChanged)
+    def handle_search_change(self, event: FilePickerToolbar.SearchChanged):
         """Handle search query changes"""
         self.search_query = event.query
+    
+    @on(FilePickerToolbar.SortChanged)
+    def handle_sort_change(self, event: FilePickerToolbar.SortChanged):
+        """Handle sort order changes"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        dir_nav = self.query_one(DirectoryNavigation)
+        dir_nav.sort_by = event.sort_by
+        self.notify(f"Sorting by {event.sort_by}", timeout=2)
+    
+    @on(FilePickerToolbar.HiddenToggled)
+    def handle_hidden_toggle(self, event: FilePickerToolbar.HiddenToggled):
+        """Handle hidden files toggle from toolbar"""
+        from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
+        dir_nav = self.query_one(DirectoryNavigation)
+        dir_nav.show_hidden = event.show_hidden
+        self.notify(f"Hidden files {'shown' if event.show_hidden else 'hidden'}", timeout=2)
     
     def dismiss(self, result: Optional[Path]) -> None:
         """Override dismiss to save recent location"""
