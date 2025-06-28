@@ -1,4 +1,4 @@
-# RAG Search UI Improvements Plan
+cc# RAG Search UI Improvements Plan
 
 ## Overview
 This document outlines the improvements being made to the RAG Search UI under the Search tab in the tldw_chatbook application. The goal is to enhance user experience, accessibility, and performance.
