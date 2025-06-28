@@ -3257,6 +3257,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                             self.current_ai_message_widget = None  # Clear ref
                         except QueryError as qe_cancel_ui:
                             self.loguru_logger.error(f"Error updating AI message UI on CANCELLED state: {qe_cancel_ui}")
+                
+                # Clear the current chat worker reference when any chat worker finishes
+                if worker_name_attr.startswith("API_Call_chat") or worker_name_attr == "respond_for_me_worker":
+                    self.set_current_chat_worker(None)
+                    self.loguru_logger.debug(f"Cleared current_chat_worker after {worker_name_attr} finished with state {worker_state}")
             else:
                 self.loguru_logger.debug(f"Chat-related worker '{worker_name_attr}' in other state: {worker_state}")
 
