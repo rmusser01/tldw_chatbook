@@ -710,7 +710,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     #TITLE = "🧠📝🔍  tldw CLI"
     TITLE = f"{get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}{get_char(EMOJI_TITLE_NOTE, FALLBACK_TITLE_NOTE)}{get_char(EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH)}  tldw CLI"
     # CSS file path
-    CSS_PATH = str(Path(__file__).parent / "css/main.tcss")
+    CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),
         Binding("ctrl+p", "command_palette", "Palette Menu", show=True)

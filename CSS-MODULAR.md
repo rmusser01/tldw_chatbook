@@ -301,5 +301,53 @@ Estimated duplication found:
 - Notes styles: Lines 649-672 from original
 - Metrics styles: Lines 677-729 from original
 - Utility states: Lines 1970-1986 from original
-- Total extracted: ~20% of original file
+- Conversations/Characters/Prompts: Lines 249-491 from original (large section)
+- Form components: Lines 903-940 from original
+- Tools & Settings: Lines 734-893 from original (complete tab)
+- Container patterns: Lines 938-993 from original
+
+**Progress Summary Phase 3:**
+- Total extracted: ~30% of original file (1,200+ lines)
 - Application continues to run without CSS errors
+- Major features have been extracted
+- Key components have been separated
+
+### 2025-06-29: Current Modularization Status
+
+**Completed Modules:**
+- ✅ Core: _base.tcss (basic structure)
+- ✅ Layout: _tabs.tcss, _windows.tcss, _sidebars.tcss, _containers.tcss (partial)
+- ✅ Components: _messages.tcss, _buttons.tcss (partial), _forms.tcss (partial), _widgets.tcss (partial)
+- ✅ Features: _chat.tcss, _conversations.tcss, _notes.tcss, _metrics.tcss, _tools-settings.tcss
+- ✅ Utilities: _states.tcss
+
+**Remaining Work:**
+- [ ] Extract remaining ~70% of styles
+- [ ] Complete extraction of all feature tabs (Ingest, Media, Search/RAG, LLM Management, Evaluation)
+- [ ] Extract typography and variables
+- [ ] Consolidate duplicate patterns
+- [ ] Final cleanup and optimization
+
+### 2025-06-29: Critical Discovery - Textual CSS Limitations
+
+**Issue:** Textual's CSS parser does not support `@import` statements
+**Solution:** Created build_css.py script to concatenate modules
+
+**Build Process:**
+1. Edit individual module files in their directories
+2. Run `python3 css/build_css.py` to concatenate
+3. Output: `tldw_cli_modular.tcss` (auto-generated)
+4. App uses the built file, not individual modules
+
+**Benefits:**
+- Maintains modular development workflow
+- Single build command updates everything
+- Generated file clearly marked as auto-generated
+- Build script shows missing modules
+- Preserves all benefits of modularization
+
+**Updated Workflow:**
+1. Edit CSS in module files
+2. Run build script
+3. Test application
+4. Commit both modules and built file
