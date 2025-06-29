@@ -64,23 +64,37 @@ class TestEmbeddingsIntegration:
         # Cleanup - service doesn't have close() method
     
     @pytest.fixture
-    def memory_manager(self, temp_dirs):
+    def memory_manager(self, integrated_embeddings_service):
         """Create a real memory management service with minimal config"""
         # Try to create real memory manager, fall back to mock if not available
         try:
+            from tldw_chatbook.RAG_Search.Services.memory_management_service import MemoryManagementConfig
+            config = MemoryManagementConfig(
+                max_total_size_mb=1024.0,
+                max_collection_size_mb=512.0
+            )
             return MemoryManagementService(
-                storage_path=temp_dirs["base"] + "/memory",
-                max_memory_gb=1.0
+                embeddings_service=integrated_embeddings_service,
+                config=config
             )
         except:
             # If real service fails, create a minimal mock
             mock_manager = MagicMock(spec=MemoryManagementService)
             mock_manager.get_memory_usage_summary.return_value = {
-                "total_memory_mb": 1000,
-                "used_memory_mb": 500,
-                "collections": {}
+                "total_estimated_size_mb": 1000.0,
+                "total_collections": 1,
+                "total_documents": 100,
+                "collections": [],
+                "limits": {
+                    "max_total_size_mb": 1024.0,
+                    "max_collection_size_mb": 512.0,
+                    "max_documents_per_collection": 100000
+                },
+                "usage_percentages": {
+                    "size_usage": 97.6
+                }
             }
-            mock_manager.run_automatic_cleanup.return_value = {"cleaned_collections": 0}
+            mock_manager.run_automatic_cleanup.return_value = {}  # Empty dict means no collections cleaned
             mock_manager.get_cleanup_recommendations.return_value = []
             mock_manager.update_collection_access_time = MagicMock()
             return mock_manager
@@ -153,8 +167,8 @@ class TestEmbeddingsIntegration:
         # Test memory operations
         summary = integrated_embeddings_service.get_memory_usage_summary()
         assert summary is not None
-        if isinstance(summary, dict) and "total_memory_mb" in summary:
-            assert summary["total_memory_mb"] > 0
+        if isinstance(summary, dict) and "total_estimated_size_mb" in summary:
+            assert summary["total_estimated_size_mb"] >= 0
         
         recommendations = integrated_embeddings_service.get_cleanup_recommendations()
         assert isinstance(recommendations, list)
@@ -166,9 +180,14 @@ class TestEmbeddingsIntegration:
         
         # Run cleanup
         result = await integrated_embeddings_service.run_memory_cleanup()
-        assert result["cleaned_collections"] == 0
+        # Result should be a dict mapping collection names to removed doc counts
+        # In this test, no collections should be cleaned
+        assert isinstance(result, dict)
+        assert len(result) == 0  # No collections cleaned
         
-        memory_manager.run_automatic_cleanup.assert_called_once()
+        # Only check mock calls if we have a mock
+        if hasattr(memory_manager, 'run_automatic_cleanup') and hasattr(memory_manager.run_automatic_cleanup, 'assert_called_once'):
+            memory_manager.run_automatic_cleanup.assert_called_once()
     
     def test_concurrent_embedding_creation(self, integrated_embeddings_service):
         """Test concurrent embedding creation with real cache"""

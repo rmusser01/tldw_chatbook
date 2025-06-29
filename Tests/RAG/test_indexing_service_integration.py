@@ -51,7 +51,7 @@ def temp_dirs():
 def real_media_db(temp_dirs):
     """Create a real MediaDatabase instance"""
     db_path = temp_dirs['db'] / 'media.db'
-    db = MediaDatabase(str(db_path))
+    db = MediaDatabase(str(db_path), 'test_client')
     
     # Add test media items
     test_items = [
@@ -406,7 +406,7 @@ class TestRealIndexingService:
         media_dbs = []
         for i in range(3):
             db_path = temp_dirs['db'] / f'media_{i}.db'
-            db = MediaDatabase(str(db_path))
+            db = MediaDatabase(str(db_path), f'test_client_{i}')
             
             # Add unique items to each database
             for j in range(2):

@@ -99,9 +99,17 @@ def real_cache_service(cache_dir):
 
 
 @pytest.fixture
-def real_memory_service():
+def real_memory_service(real_embedding_service):
     """Create a real memory management service"""
-    return MemoryManagementService()
+    from tldw_chatbook.RAG_Search.Services.memory_management_service import MemoryManagementConfig
+    config = MemoryManagementConfig(
+        max_total_size_mb=1024.0,
+        max_collection_size_mb=512.0
+    )
+    return MemoryManagementService(
+        embeddings_service=real_embedding_service,
+        config=config
+    )
 
 
 #######################################################################################################################
@@ -287,7 +295,7 @@ class TestRealChromaDBIntegration:
         ]
         
         # First service instance
-        service1 = EmbeddingsService(persist_directory=str(persist_dir))
+        service1 = EmbeddingsService(persist_directory=persist_dir)
         service1.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
         
         # Add documents
@@ -305,7 +313,7 @@ class TestRealChromaDBIntegration:
         del service1
         
         # Create new service instance
-        service2 = EmbeddingsService(persist_directory=str(persist_dir))
+        service2 = EmbeddingsService(persist_directory=persist_dir)
         service2.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
         
         # Collection should still exist
@@ -425,10 +433,18 @@ class TestRealMemoryManagement:
     """Test real memory management integration"""
     
     @requires_sentence_transformers
-    def test_memory_cleanup_with_real_embeddings(self, persist_dir):
+    def test_memory_cleanup_with_real_embeddings(self, persist_dir, real_embedding_service):
         """Test memory cleanup with real embedding operations"""
         # Create memory service with low threshold for testing
-        memory_service = MemoryManagementService()
+        from tldw_chatbook.RAG_Search.Services.memory_management_service import MemoryManagementConfig
+        config = MemoryManagementConfig(
+            max_total_size_mb=50.0,  # Low threshold for testing
+            max_collection_size_mb=25.0
+        )
+        memory_service = MemoryManagementService(
+            embeddings_service=real_embedding_service,
+            config=config
+        )
         
         # Create embedding service
         service = EmbeddingsService(

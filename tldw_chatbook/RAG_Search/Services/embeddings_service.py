@@ -867,9 +867,10 @@ class EmbeddingsService:
     
     def _create_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """Create embeddings for a batch of texts (thread-safe)."""
-        provider = self.get_current_provider()
-        if not provider:
-            raise ValueError("No embedding provider available")
+        with self._provider_lock:
+            provider = self.get_current_provider()
+            if not provider:
+                raise ValueError("No embedding provider available")
         return provider.create_embeddings(texts)
     
     def create_embeddings(self, texts: List[str], provider_id: Optional[str] = None) -> Optional[List[List[float]]]:
@@ -961,9 +962,10 @@ class EmbeddingsService:
         Returns:
             List of embedding vectors
         """
-        provider = self.get_current_provider()
-        if not provider:
-            raise ValueError("No embedding provider available")
+        with self._provider_lock:
+            provider = self.get_current_provider()
+            if not provider:
+                raise ValueError("No embedding provider available")
             
         if len(texts) <= self.batch_size:
             return provider.create_embeddings(texts)
@@ -1010,10 +1012,14 @@ class EmbeddingsService:
         """Get or create a collection (backward compatibility for ChromaDB)"""
         if isinstance(self.vector_store, ChromaDBStore) and self.client:
             try:
+                # ChromaDB requires non-empty metadata
+                if metadata is None:
+                    metadata = {"created_by": "tldw_chatbook"}
+                
                 # Try to get existing collection
                 collection = self.client.get_or_create_collection(
                     name=collection_name,
-                    metadata=metadata or {}
+                    metadata=metadata
                 )
                 logger.debug(f"Got collection: {collection_name}")
                 return collection
