@@ -216,19 +216,46 @@ class SequentialTestRunner:
         if result.failures and self.verbose:
             print(f"\n  Failures:")
             for i, failure in enumerate(result.failures[:5]):  # Show first 5 failures
-                print(f"    {i+1}. {failure.split(chr(10))[0]}")  # First line only
+                print(f"    {i+1}. {failure.split('\\n')[0]}")  # First line only
             if len(result.failures) > 5:
                 print(f"    ... and {len(result.failures) - 5} more")
     
     def run_all_tests(self):
         """Run all tests sequentially"""
+        # Check if pytest is available
+        try:
+            subprocess.run([sys.executable, "-m", "pytest", "--version"], 
+                         capture_output=True, check=True)
+        except subprocess.CalledProcessError:
+            print("ERROR: pytest is not installed or not available.")
+            print("Please install pytest: pip install pytest pytest-json-report")
+            return 1
+        
+        # Clean up any stale JSON report files
+        for json_file in self.base_path.glob("test_report_*.json"):
+            try:
+                json_file.unlink()
+                print(f"Cleaned up stale report: {json_file.name}")
+            except Exception as e:
+                print(f"Warning: Could not remove {json_file.name}: {e}")
+        
         self.start_time = datetime.now()
         print(f"Starting sequential test run at {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Base path: {self.base_path}")
         print(f"Test directory: {self.test_dir}")
         
+        # Check if test directory exists
+        if not self.test_dir.exists():
+            print(f"ERROR: Test directory does not exist: {self.test_dir}")
+            return 1
+        
         test_dirs = self.get_test_directories()
         print(f"\nFound {len(test_dirs)} test directories to process")
+        
+        if not test_dirs:
+            print("WARNING: No test directories found with test files.")
+            print("Expected test files to match pattern: test_*.py")
+            return 0
         
         for dir_name, dir_path in test_dirs:
             result = self.run_tests_for_directory(dir_name, dir_path)
@@ -238,7 +265,7 @@ class SequentialTestRunner:
             time.sleep(0.5)
         
         self.end_time = datetime.now()
-        self._generate_final_report()
+        return self._generate_final_report()
     
     def _generate_final_report(self):
         """Generate comprehensive final report"""
