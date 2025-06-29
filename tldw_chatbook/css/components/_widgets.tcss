@@ -33,3 +33,65 @@ Collapsible > .collapsible--header {
     border: round $surface;
     margin-bottom: 1;
 }
+
+/* --- Window Footer Widget --- */
+
+AppFooterStatus {
+    dock: bottom;
+    height: 1;  /* Single row height */
+    background: $primary-background-darken-1;
+    width: 100%;
+    layout: horizontal;
+    padding: 0 1;
+    /* Removed align: right middle; from parent, will control children individually */
+}
+
+#footer-key-palette {
+    width: auto;
+    padding: 0 1; /* Padding around each key binding */
+    color: $text-muted;
+    dock: left; /* Dock key bindings to the left */
+    visibility: visible;
+    display: initial;
+}
+
+#footer-key-quit {
+    width: auto;
+    height: 1;
+    padding: 0 1; /* Padding around each key binding */
+    color: $text-muted;
+    dock: left; /* Dock key bindings to the left */
+}
+
+#footer-spacer {
+    width: 1fr; /* Takes up remaining space in the middle */
+    height: 1;
+}
+
+#footer-word-count {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+    display: block;
+}
+
+#footer-token-count {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+    display: block;
+}
+
+#internal-db-size-indicator { /* This is for the DB sizes */
+    width: auto;
+    height: 1;
+    /* content-align: right; Textual doesn't have content-align for Static directly */
+    /* dock: right; Docking within Horizontal might be tricky, align on parent is better */
+    color: $text-muted;
+    dock: right; /* Dock DB sizes to the right */
+    padding: 0 1; /* Add padding to the right of DB sizes as well */
+    margin-left: 2; /* Add buffer before DB status */
+}
+/* --- End of Window Footer Widget --- */

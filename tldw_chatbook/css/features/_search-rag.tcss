@@ -3,3 +3,842 @@
  * ======================================== 
  * Search and RAG tab interface
  * ======================================== */
+
+/* --- Search Tab (RAG/Embeddings) --- */
+#search-window { /* Matches TAB_SEARCH, .window class provides layout: horizontal */
+    /* No explicit layout needed here if .window handles it */
+}
+
+.search-nav-pane { /* Style for the left navigation pane in Search Tab */
+    dock: left;
+    width: 25%;
+    min-width: 25;
+    max-width: 60;
+    height: 100%;
+    background: $boost;
+    padding: 1;
+    border-right: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.search-nav-pane .search-nav-button { /* Style for navigation buttons in Search Tab */
+    width: 100%;
+    margin-bottom: 1;
+    border: none;
+    height: 3;
+}
+.search-nav-pane .search-nav-button:hover {
+    background: $accent 80%; /* Example: accent color with 80% opacity */
+}
+/* Active state for selected search nav button */
+.search-nav-pane .search-nav-button.-active-search-sub-view {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
+.search-content-pane { /* Style for the right content display area in Search Tab */
+    width: 1fr;
+    height: 100%;
+    padding: 1 2;
+    overflow: auto; /* Changed from overflow-y: auto to allow both horizontal and vertical scrolling if needed */
+}
+
+/* -------------------------------------------------------------------------------------- */
+
+/* Web Search Specific Styles within Search Tab */
+#search-view-web-search {
+    /* Overriding the generic .search-view-area Static centering if needed */
+    /* For direct children like Input, Button, VerticalScroll, default layout (vertical) should be fine. */
+    padding: 1; /* Add some padding inside the web search view area */
+}
+
+#search-view-web-search > Input#web-search-input { /* Target Input directly inside */
+    margin-bottom: 1; /* Space below the input field */
+    width: 100%;
+}
+
+/* .search-action-button is used by #web-search-button */
+.search-action-button {
+    width: 100%;
+    margin-bottom: 1; /* Space below the button */
+    /* height: 3; /* Optional: Standard button height */
+}
+
+#search-view-web-search > VerticalScroll > Markdown#web-search-results { /* Target Markdown inside VS */
+    width: 100%; /* Take full width */
+    height: 1fr; /* Take remaining vertical space within its parent VerticalScroll */
+    border: round $primary-background-lighten-2;
+    padding: 1;
+    background: $surface; /* A slightly different background for the results area */
+}
+
+/* Embeddings Creation View Styles */
+#search-view-embeddings-creation {
+    padding: 1;
+}
+
+.search-form-container {
+    width: 100%;
+    margin: 0 0;
+}
+
+.search-view-title {
+    text-style: bold;
+    text-align: center;
+    background: blue 30%;
+    color: $text;
+    padding: 1;
+    margin-bottom: 2;
+    border: round $accent-darken-1;
+}
+
+.search-section-title {
+    text-style: bold;
+    margin-top: 2;
+    margin-bottom: 1;
+    background: $primary-background-lighten-1;
+    padding: 0 1;
+    border-left: thick $accent;
+}
+
+.search-form-row {
+    margin-bottom: 1;
+    height: 3;
+    align: left middle;
+}
+
+.search-form-label {
+    width: 30%;
+    padding-right: 1;
+    text-align: right;
+}
+
+/* Embeddings Management View Styles */
+#search-view-embeddings-management {
+    padding: 1;
+}
+
+.search-management-left-pane {
+    width: 45%;
+    padding-right: 1;
+    border-right: solid $background-darken-1;
+}
+
+.search-management-right-pane {
+    width: 55%;
+    padding-left: 1;
+}
+
+.search-button-row {
+    margin-top: 2;
+    align-horizontal: center;
+}
+
+.search-button-row Button {
+    margin: 0 1;
+}
+
+/* Status output styling */
+#creation-status-output, #mgmt-status-output {
+    margin-top: 2;
+    border: round $primary-background-lighten-2;
+    padding: 1;
+    background: $surface;
+}
+
+/* --- End of Search Tab --- */
+/* ----------------------------- ************************* ----------------------------- */
+
+/* Enhanced SearchRAGWindow Styles */
+.rag-search-container {
+    height: 100%;
+    width: 100%;
+    padding: 0;
+    background: $background;
+}
+
+/* Header Section */
+.search-header-section {
+    background: $primary-darken-2;
+    padding: 2 3 1 3;
+    margin-bottom: 2;
+    border-bottom: solid $primary-background;
+}
+
+.rag-title-enhanced {
+    text-align: center;
+    text-style: bold;
+    color: $primary;
+    /* font-size: 18; - not supported in TCSS */
+    margin-bottom: 1;
+}
+
+.rag-subtitle {
+    text-align: center;
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* Search Section */
+.search-section {
+    background: $surface;
+    padding: 2;
+    margin: 0 2 2 2;
+    border: round $primary-background;
+}
+
+.search-input-wrapper {
+    /* position: relative; - not supported in TCSS */
+}
+
+.search-bar-enhanced {
+    layout: horizontal;
+    height: 4;
+    background: $background;
+    border: thick $primary;
+    /* border-radius: 2; - not supported in TCSS */
+    padding: 0 1;
+    align: center middle;
+}
+
+.search-input-enhanced {
+    width: 1fr;
+    background: transparent;
+    border: none;
+    padding: 0 1;
+    /* font-size: 14; - not supported in TCSS */
+}
+
+.search-input-enhanced:focus {
+    background: transparent;
+}
+
+.clear-button {
+    width: 3;
+    min-width: 3;
+    height: 3;
+    background: transparent;
+    border: none;
+    color: $text-muted;
+    margin: 0;
+}
+
+.clear-button:hover {
+    color: $error;
+    background: $error 20%;
+}
+
+.search-button-enhanced {
+    min-width: 10;
+    height: 3;
+    margin-left: 1;
+    background: $primary;
+    color: $text;
+    border: none;
+}
+
+.search-button-enhanced:hover {
+    background: $primary-lighten-1;
+}
+
+.search-loading-indicator {
+    /* position: absolute; - not supported in TCSS */
+    /* top: 1; - not supported in TCSS */
+    /* right: 12; - not supported in TCSS */
+    width: 2;
+    height: 2;
+}
+
+/* Settings Section */
+.settings-section {
+    margin: 0 2;
+}
+
+.quick-settings-container {
+    background: $surface;
+    padding: 2;
+    margin-bottom: 1;
+    border: round $primary-background;
+}
+
+.settings-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 2;
+    text-align: center;
+}
+
+.settings-grid {
+    layout: horizontal;
+    /* gap: 3; - not supported in TCSS */
+}
+
+.setting-group {
+    width: 1fr;
+}
+
+.setting-label {
+    color: $text-muted;
+    margin-bottom: 1;
+    /* font-size: 12; - not supported in TCSS */
+}
+
+.mode-select {
+    width: 100%;
+    background: $background;
+    border: solid $primary-background;
+}
+
+.source-checkboxes-enhanced {
+    layout: horizontal;
+    /* gap: 2; - not supported in TCSS */
+    background: $background;
+    padding: 1;
+    border: round $primary-background;
+}
+
+.source-checkbox {
+    margin: 0;
+}
+
+/* Saved Searches Panel */
+.saved-searches-panel-enhanced {
+    background: $boost;
+    padding: 2;
+    margin-bottom: 2;
+    border: round $primary-background;
+}
+
+.saved-searches-wrapper {
+    width: 100%;
+}
+
+.saved-searches-header {
+    layout: horizontal;
+    margin-bottom: 1;
+    align: center middle;
+}
+
+.saved-searches-title {
+    width: 1fr;
+    text-style: bold;
+    color: $secondary;
+}
+
+.new-search-button {
+    width: 3;
+    height: 3;
+    min-width: 3;
+    background: $primary;
+    color: $text;
+    border: round $primary;
+}
+
+.saved-searches-list-enhanced {
+    height: 5;
+    border: round $background;
+    background: $background;
+    margin-bottom: 1;
+}
+
+.empty-saved-searches {
+    text-align: center;
+    color: $text-muted;
+    padding: 2;
+    text-style: italic;
+}
+
+.saved-search-actions-enhanced {
+    layout: horizontal;
+    /* gap: 1; - not supported in TCSS */
+}
+
+.saved-action-button {
+    width: 1fr;
+    min-width: 8;
+}
+
+.saved-action-button.danger {
+    background: $error-darken-1;
+    color: $text;
+}
+
+.saved-action-button.danger:hover {
+    background: $error;
+}
+
+/* Advanced Settings */
+.advanced-collapsible {
+    margin-bottom: 2;
+}
+
+.advanced-collapsible > .collapsible--header {
+    background: $surface;
+    padding: 1 2;
+    border: round $primary-background;
+}
+
+.advanced-settings-wrapper {
+    background: $surface;
+    padding: 2;
+    border: round $primary-background;
+    border-top: none;
+}
+
+.advanced-section {
+    margin-bottom: 2;
+    padding-bottom: 2;
+    border-bottom: dashed $primary-background;
+}
+
+.advanced-section:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.advanced-section-title {
+    text-style: bold;
+    color: $secondary;
+    margin-bottom: 1;
+}
+
+.parameter-grid-enhanced {
+    layout: horizontal;
+    /* gap: 2; - not supported in TCSS */
+}
+
+.param-group {
+    width: 1fr;
+}
+
+.param-label {
+    color: $text-muted;
+    margin-bottom: 0;
+    /* font-size: 12; - not supported in TCSS */
+}
+
+.param-input {
+    width: 100%;
+    margin-top: 0;
+    background: $background;
+    border: solid $primary-background;
+}
+
+.rerank-checkbox {
+    margin: 1 0;
+}
+
+.chunking-section {
+    margin-top: 1;
+}
+
+/* Status Container */
+.status-container-enhanced {
+    background: $boost;
+    padding: 1 2;
+    margin: 0 2 2 2;
+    border: round $primary-background;
+}
+
+.status-bar {
+    layout: horizontal;
+    align: center middle;
+}
+
+.search-status-enhanced {
+    width: 1fr;
+    color: $text;
+    text-style: bold;
+}
+
+.search-stats {
+    color: $text-muted;
+    /* font-size: 12; - not supported in TCSS */
+}
+
+.search-progress-bar {
+    margin-top: 1;
+    height: 1;
+    background: $background;
+    border: solid $primary-background;
+}
+
+/* Results Section */
+.results-section {
+    margin: 0 2 2 2;
+    height: 1fr;
+}
+
+.results-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+    padding: 1;
+    background: $surface;
+    border: round $primary-background;
+    text-align: center;
+}
+
+.results-tabs-enhanced {
+    height: 100%;
+    background: $surface;
+    border: round $primary-background;
+}
+
+.results-tabs-enhanced TabPane {
+    padding: 1;
+}
+
+.results-header {
+    background: $boost;
+    padding: 1;
+    margin-bottom: 1;
+    border: round $primary-background;
+}
+
+.results-header-bar {
+    layout: horizontal;
+    align: center middle;
+}
+
+.results-summary-enhanced {
+    width: 1fr;
+    color: $text;
+}
+
+.pagination-controls-enhanced {
+    layout: horizontal;
+    /* gap: 1; - not supported in TCSS */
+    align: center middle;
+}
+
+.page-button {
+    width: 3;
+    min-width: 3;
+    height: 3;
+    background: $panel;
+    border: solid $primary-background;
+}
+
+.page-button:hover {
+    background: $primary;
+    color: $text;
+}
+
+.page-button:disabled {
+    opacity: 0.6;
+    background: $panel-darken-2;
+    color: $text-muted;
+}
+
+.page-info-enhanced {
+    min-width: 10;
+    text-align: center;
+    color: $text-muted;
+}
+
+.results-container-enhanced {
+    height: 1fr;
+    background: $background;
+    padding: 1;
+}
+
+/* Search Result Cards */
+.search-result-card-enhanced {
+    margin-bottom: 1;
+    background: $panel;
+    border: solid $primary-background;
+    transition: all 0.2s;
+}
+
+.search-result-card-enhanced:hover {
+    background: $panel-lighten-1;
+    border: solid $primary;
+    /* box-shadow: 0 2 4 $primary 30%; - not supported */
+}
+
+.search-result-card-enhanced.expanded {
+    background: $boost;
+    border: thick $primary;
+}
+
+.result-card-wrapper {
+    layout: horizontal;
+    padding: 1;
+    /* gap: 1; - not supported in TCSS */
+}
+
+.result-source-column {
+    width: 5;
+    align: center middle;
+    padding: 1;
+    background: $background-darken-1;
+    /* border-radius: 1; - not supported in TCSS */
+}
+
+.source-icon {
+    /* font-size: 20; - not supported in TCSS */
+    margin-bottom: 0;
+}
+
+.source-label {
+    /* font-size: 10; - not supported in TCSS */
+    text-style: bold;
+    margin-top: 0;
+}
+
+.source-media { color: $primary; }
+.source-conversation { color: $success; }
+.source-note { color: $warning; }
+
+.result-content-column {
+    width: 1fr;
+    padding: 0 1;
+}
+
+.result-header-enhanced {
+    layout: horizontal;
+    margin-bottom: 1;
+    align: center middle;
+}
+
+.result-title-enhanced {
+    width: 1fr;
+    color: $text;
+    /* font-size: 14; - not supported in TCSS */
+}
+
+.score-indicator {
+    min-width: 5;
+    height: 2;
+    padding: 0 1;
+    /* border-radius: 1; - not supported in TCSS */
+    align: center middle;
+}
+
+.score-text {
+    /* font-size: 11; - not supported in TCSS */
+    text-align: center;
+}
+
+.score-high {
+    background: $success;
+    color: $text;
+}
+
+.score-medium {
+    background: $warning;
+    color: $text;
+}
+
+.score-low {
+    background: $error-darken-1;
+    color: $text;
+}
+
+.result-preview-enhanced {
+    color: $text-muted;
+    margin-bottom: 1;
+    /* line-height: 1.4; - not supported in TCSS */
+}
+
+.metadata-pills {
+    layout: horizontal;
+    /* gap: 1; - not supported in TCSS */
+    margin-bottom: 1;
+    /* flex-wrap: wrap; - not supported in TCSS */
+}
+
+.metadata-pill {
+    background: $background;
+    padding: 0 1;
+    border: solid $primary-background;
+    /* border-radius: 1; - not supported in TCSS */
+    /* font-size: 11; - not supported in TCSS */
+    color: $text-muted;
+}
+
+.metadata-pill.more {
+    background: $primary-darken-2;
+    color: $primary;
+}
+
+.result-expanded-content {
+    margin-top: 1;
+    padding: 1;
+    background: $background;
+    border: round $primary-background;
+}
+
+.expanded-section-title {
+    color: $secondary;
+    margin: 1 0;
+}
+
+.result-full-content {
+    color: $text;
+    margin-bottom: 1;
+    max-height: 20;
+    overflow-y: auto;
+}
+
+.metadata-full-item {
+    color: $text-muted;
+    margin-left: 1;
+}
+
+.result-actions-enhanced {
+    layout: horizontal;
+    /* gap: 1; - not supported in TCSS */
+    margin-top: 1;
+}
+
+.result-button {
+    min-width: 8;
+    height: 3;
+    background: $background;
+    border: solid $primary-background;
+    /* font-size: 12; - not supported in TCSS */
+}
+
+.result-button:hover {
+    background: $primary;
+    color: $text;
+}
+
+.view-button {
+    background: $primary-darken-1;
+    color: $text;
+}
+
+/* Context and Analytics */
+.context-preview-enhanced {
+    padding: 2;
+    background: $background;
+    border: round $primary-background;
+    max-height: 30;
+    overflow-y: auto;
+}
+
+.history-table-enhanced {
+    width: 100%;
+    height: 100%;
+}
+
+.analytics-content-enhanced {
+    padding: 2;
+}
+
+/* Action Buttons */
+.actions-section {
+    margin: 0 2 2 2;
+}
+
+.action-buttons-bar-enhanced {
+    layout: horizontal;
+    background: $surface;
+    padding: 2;
+    border: round $primary-background;
+    align: center middle;
+}
+
+.primary-actions {
+    layout: horizontal;
+    /* gap: 1; - not supported in TCSS */
+}
+
+.action-spacer {
+    width: 1fr;
+}
+
+.maintenance-actions {
+    /* position: relative; - not supported in TCSS */
+}
+
+.action-button {
+    min-width: 12;
+    height: 3;
+    border: solid $primary-background;
+}
+
+.save-button {
+    background: $success-darken-1;
+    color: $text;
+}
+
+.save-button:hover {
+    background: $success;
+}
+
+.export-button {
+    background: $primary-darken-1;
+    color: $text;
+}
+
+.export-button:hover {
+    background: $primary;
+}
+
+.export-button:disabled {
+    opacity: 0.6;
+    background: $panel-darken-2;
+}
+
+.maintenance-button {
+    background: $panel;
+    color: $text-muted;
+}
+
+.maintenance-button:hover {
+    background: $panel-lighten-1;
+    color: $text;
+}
+
+.maintenance-menu {
+    /* position: absolute; - not supported in TCSS */
+    /* bottom: 4; - not supported in TCSS */
+    /* right: 0; - not supported in TCSS */
+    background: $surface;
+    border: solid $primary;
+    padding: 1;
+    min-width: 15;
+    /* z-index: 100; - not supported */
+}
+
+.menu-item {
+    width: 100%;
+    margin-bottom: 1;
+    background: $panel;
+    border: none;
+    text-align: left;
+}
+
+.menu-item:hover {
+    background: $primary;
+    color: $text;
+}
+
+.menu-item:last-child {
+    margin-bottom: 0;
+}
+
+/* Empty States */
+.empty-results-message {
+    text-align: center;
+    color: $text-muted;
+    padding: 4;
+    text-style: italic;
+    background: $surface;
+    border: dashed $primary-background;
+    margin: 2;
+}
+
+/* Ensure SearchRAGWindow fills its container */
+#search-view-rag-qa {
+    height: 100%;
+    width: 100%;
+    display: block;
+    overflow: hidden;
+}

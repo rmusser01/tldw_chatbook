@@ -3,3 +3,123 @@
  * ======================================== 
  * Media ingestion tab styles
  * ======================================== */
+
+/* --- Ingest Content Tab --- */
+#ingest-window { /* Matches TAB_INGEST */
+    layout: horizontal;
+}
+.tldw-api-media-specific-options { /* Common class for specific option blocks */
+    padding: 1;
+    border: round $surface;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+/* Added to ensure initially hidden specific options are indeed hidden */
+.tldw-api-media-specific-options.hidden {
+     padding: 1;
+     border: round $surface;
+     margin-top: 1;
+}
+
+.ingest-nav-pane { /* Style for the left navigation pane */
+    dock: left;
+    width: 25%;
+    min-width: 25;
+    max-width: 60;
+    height: 100%;
+    background: $boost; /* Or a slightly different shade */
+    padding: 1;
+    border-right: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.ingest-nav-pane .ingest-nav-button { /* Style for navigation buttons */
+    width: 100%;
+    margin-bottom: 1;
+    border: none;
+    height: 3;
+}
+.ingest-nav-pane .ingest-nav-button:hover {
+    background: $accent 60%; /* Slightly different hover potentially */
+}
+/* Active state for selected ingest nav button (optional) */
+/* .ingest-nav-pane .ingest-nav-button.-active-view {
+    background: $accent-darken-1;
+    color: $text;
+} */
+
+.ingest-content-pane { /* Style for the right content display area */
+    width: 1fr;
+    height: 100%;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+.ingest-view-area { /* Common class for individual content areas */
+    width: 100%;
+    height: 100%; /* Or auto */
+    /* Example content styling */
+    /* align: center middle; */
+    /* border: round $primary; */
+    /* padding: 2; */
+}
+.ingest-label {
+    margin-top: 1;
+    margin-bottom: 0;
+}
+.ingest-selected-files-list {
+    height: 5;
+    border: round $primary;
+    margin-bottom: 1;
+    background: $surface;
+}
+.ingest-preview-area {
+    height: 1fr;
+    border: round $primary-lighten-2;
+    padding: 1;
+    margin-bottom: 1;
+    background: $surface;
+}
+.ingest-preview-area > Static#ingest-prompts-preview-placeholder {
+    color: $text-muted;
+    width: 100%;
+    text-align: center;
+    padding: 2 0;
+}
+.ingest-status-area {
+    height: 8;
+    margin-top: 1;
+}
+
+.prompt-preview-item {
+    border: panel $background-lighten-2;
+    padding: 1;
+    margin-bottom: 1;
+}
+.prompt-preview-item .prompt-title {
+    text-style: bold;
+}
+.prompt-preview-item .prompt-field-label {
+    text-style: italic;
+    color: $text-muted;
+}
+.prompt-preview-item Markdown {
+    background: $surface-darken-1;
+    padding: 0 1;
+    margin-top: 1;
+    margin-bottom: 1;
+    border: solid $primary-darken-1; /* Use 'solid' instead of 'narrow' */
+    max-height: 10;
+    overflow-y: auto;
+}
+.prompt-preview-item .prompt-details-text {
+    max-height: 5;
+    overflow-y: auto;
+    background: $surface;
+    padding: 0 1;
+    border: dashed $primary-darken-2; /* Use 'dashed' instead of 'dotted' */
+    margin-bottom: 1;
+}
+/* --- END OF INTEGRATED NEW CSS --- */

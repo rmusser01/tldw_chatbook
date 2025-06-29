@@ -322,11 +322,25 @@ Estimated duplication found:
 - ✅ Utilities: _states.tcss
 
 **Remaining Work:**
-- [ ] Extract remaining ~70% of styles
-- [ ] Complete extraction of all feature tabs (Ingest, Media, Search/RAG, LLM Management, Evaluation)
+- [ ] Extract remaining ~30% of styles
+- [x] Complete extraction of all feature tabs (Ingest, Media, Search/RAG, LLM Management)
+- [ ] Extract Evaluation tab styles
 - [ ] Extract typography and variables
 - [ ] Consolidate duplicate patterns
 - [ ] Final cleanup and optimization
+
+### 2025-06-29: Phase 4 - Major Feature Extraction
+- [x] Extract Ingest tab → `features/_ingest.tcss` (Lines 994-1113)
+- [x] Extract LLM Management → `features/_llm-management.tcss` (Lines 1115-1446)
+- [x] Extract Media tab → `features/_media.tcss` (Lines 1452-1626)
+- [x] Extract Search/RAG tab → `features/_search-rag.tcss` (Lines 2025-2862)
+- [x] Add footer widget to components
+
+**Extraction Progress:**
+- Total extracted: ~70% of original file (2,700+ lines out of 3,939)
+- Built CSS size: 69,176 characters (from modules)
+- Application continues to run without errors
+- Major features complete, only Evaluation and misc styles remain
 
 ### 2025-06-29: Critical Discovery - Textual CSS Limitations
 
