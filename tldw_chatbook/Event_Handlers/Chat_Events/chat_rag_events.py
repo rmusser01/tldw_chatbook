@@ -73,6 +73,12 @@ RAG_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) and RAG_SERV
 RERANK_AVAILABLE = DEPENDENCIES_AVAILABLE.get('flashrank', False)
 COHERE_AVAILABLE = DEPENDENCIES_AVAILABLE.get('cohere', False)
 
+# Global cache for RAG service instance
+_rag_service_cache = {
+    'service': None,
+    'config_hash': None
+}
+
 async def perform_plain_rag_search(
     app: "TldwCli",
     query: str,
@@ -364,15 +370,23 @@ async def perform_full_rag_pipeline(
     # Check if embeddings are available
     if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
         logger.warning("Embeddings dependencies not available. Falling back to plain RAG.")
+        app.notify(
+            "Using plain text search (embeddings not available). Install with: pip install tldw_chatbook[embeddings_rag]",
+            severity="warning"
+        )
         return await perform_plain_rag_search(
             app, query, sources, top_k, max_context_length, 
             enable_rerank=True, reranker_model="flashrank"
         )
     
-    # Initialize RAG service
+    # Initialize or get cached RAG service
+    persist_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+    persist_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create config
     config = create_config_for_collection(
-        "media",  # Default collection
-        persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+        "tldw_rag",  # Unified collection for all sources
+        persist_dir=persist_dir
     )
     # Configure for the search
     config.search.default_top_k = top_k
@@ -380,52 +394,100 @@ async def perform_full_rag_pipeline(
     config.chunking.chunk_size = chunk_size
     config.chunking.chunk_overlap = chunk_overlap
     
-    rag_service = RAGService(config)
+    # Generate a simple hash of the config for caching
+    import hashlib
+    config_str = f"{persist_dir}_{chunk_size}_{chunk_overlap}"
+    config_hash = hashlib.md5(config_str.encode()).hexdigest()
     
-    # Perform semantic search across all sources
+    # Check if we can use cached service
+    if _rag_service_cache['service'] and _rag_service_cache['config_hash'] == config_hash:
+        rag_service = _rag_service_cache['service']
+        logger.debug("Using cached RAG service")
+    else:
+        try:
+            rag_service = RAGService(config)
+            _rag_service_cache['service'] = rag_service
+            _rag_service_cache['config_hash'] = config_hash
+            logger.info("Created new RAG service instance")
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG service: {e}")
+            # Fall back to plain RAG
+            return await perform_plain_rag_search(
+                app, query, sources, top_k, max_context_length, 
+                enable_rerank, reranker_model
+            )
+    
+    # First, check if we need to index any new content
+    # This is a placeholder - in production, you'd want smarter incremental indexing
+    await _ensure_content_indexed(app, rag_service, sources)
+    
     # Build metadata filter based on enabled sources
     source_filters = []
+    filter_metadata = {}
+    enabled_sources = []
+    
     if sources.get('media', False):
-        source_filters.append('media')
+        enabled_sources.append('media')
     if sources.get('conversations', False):
-        source_filters.append('conversations')
+        enabled_sources.append('conversation')
     if sources.get('notes', False):
-        source_filters.append('notes')
+        enabled_sources.append('note')
+    
+    # Only add filter if not all sources are selected
+    if len(enabled_sources) < 3 and enabled_sources:
+        filter_metadata['source_type'] = {'$in': enabled_sources}
     
     # Search with the simplified RAG service
-    search_results = await rag_service.search(
-        query=query,
-        top_k=top_k * 2,  # Get extra for re-ranking
-        search_type="semantic",
-        include_citations=include_metadata
-    )
+    try:
+        search_results = await rag_service.search(
+            query=query,
+            top_k=top_k * 2,  # Get extra for re-ranking
+            search_type="semantic",
+            filter_metadata=filter_metadata if filter_metadata else None,
+            include_citations=include_metadata
+        )
+    except Exception as e:
+        logger.error(f"RAG search failed: {e}")
+        # Fall back to plain RAG
+        return await perform_plain_rag_search(
+            app, query, sources, top_k, max_context_length, 
+            enable_rerank, reranker_model
+        )
     
     # Convert search results to the expected format
     all_results = []
     for result in search_results:
-        # Filter by source if needed
-        if result.metadata.get('source') in source_filters:
-            result_dict = {
-                'id': result.id,
-                'title': result.metadata.get('title', 'Untitled'),
-                'content': result.document,
-                'source': result.metadata.get('source', 'unknown'),
-                'score': result.score,
-                'metadata': result.metadata
-            }
-            
-            # Add citations if available
-            if hasattr(result, 'citations') and result.citations:
-                result_dict['citations'] = [
-                    {
-                        'text': cit.text,
-                        'document_title': cit.document_title,
-                        'confidence': cit.confidence
-                    }
-                    for cit in result.citations
-                ]
-            
-            all_results.append(result_dict)
+        # Extract source type and verify it's enabled
+        source_type = result.metadata.get('source_type', 'unknown')
+        
+        # Map source types to expected format
+        source_map = {
+            'media': 'media',
+            'conversation': 'conversation',
+            'note': 'note'
+        }
+        
+        result_dict = {
+            'id': result.id,
+            'title': result.metadata.get('title', result.metadata.get('doc_title', 'Untitled')),
+            'content': result.document,
+            'source': source_map.get(source_type, source_type),
+            'score': result.score,
+            'metadata': result.metadata
+        }
+        
+        # Add citations if available
+        if hasattr(result, 'citations') and result.citations:
+            result_dict['citations'] = [
+                {
+                    'text': cit.text,
+                    'document_title': cit.document_title,
+                    'confidence': cit.confidence
+                }
+                for cit in result.citations
+            ]
+        
+        all_results.append(result_dict)
     
     # Apply re-ranking if enabled and available
     if enable_rerank and len(all_results) > 0:
@@ -924,6 +986,31 @@ async def perform_hybrid_rag_search(
                 f"context length: {len(context_string)} chars")
     
     return all_results, context_string
+
+
+async def _ensure_content_indexed(app: "TldwCli", rag_service: RAGService, sources: Dict[str, bool]) -> None:
+    """
+    Ensure content from enabled sources is indexed in the RAG service.
+    This is a simplified version - in production you'd want incremental indexing.
+    """
+    try:
+        # For now, we'll just log a message
+        # In a full implementation, you would:
+        # 1. Check what's already indexed (using timestamps)
+        # 2. Index only new/updated content
+        # 3. Use the RAG indexing database to track what's been indexed
+        
+        logger.info(f"Content indexing check for sources: {sources}")
+        
+        # TODO: Implement actual indexing logic here
+        # This would involve:
+        # - Querying media_db for new items if sources['media']
+        # - Querying conversations for new messages if sources['conversations']
+        # - Querying notes for new/updated notes if sources['notes']
+        # - Using rag_service.index_document() to add them to the vector store
+        
+    except Exception as e:
+        logger.error(f"Error ensuring content is indexed: {e}")
 
 
 async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optional[str]:

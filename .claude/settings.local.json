@@ -69,7 +69,8 @@
       "Bash(python -m pytest Tests/RAG/test_full_rag.py::test_embeddings_service -v)",
       "Bash(python -m pytest Tests/RAG_Search/test_embeddings_unit.py::TestEmbeddingProviders::test_provider_interface -v)",
       "Bash(python:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python -m pytest Tests/RAG/simplified/ -v --tb=short)"
     ],
     "deny": []
   }

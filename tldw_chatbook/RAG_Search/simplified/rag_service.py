@@ -77,7 +77,6 @@ class RAGService:
             "collection_name": self.config.collection_name,
             "chunk_size": self.config.chunk_size,
             "chunk_overlap": self.config.chunk_overlap,
-            "search_type": self.config.search_type,
             "device": self.config.device
         })
         
@@ -161,7 +160,8 @@ class RAGService:
         
         # Create correlation ID for tracking
         correlation_id = str(uuid.uuid4())
-        logger = logging.getLogger(__name__).bind(correlation_id=correlation_id, doc_id=doc_id)
+        # Use standard logger - bind() is a loguru feature
+        logger = logging.getLogger(__name__)
         
         # Log document metrics
         log_counter("rag_document_index_attempt")
@@ -742,7 +742,7 @@ async def create_and_index(
 
 
 def create_rag_service(
-    embedding_model: Optional[str] = None,
+    embedding_model: Optional[Union[str, RAGConfig]] = None,
     vector_store: str = "chroma",
     persist_dir: Optional[Union[str, Path]] = None,
     **kwargs
@@ -751,7 +751,7 @@ def create_rag_service(
     Create a RAG service with common configurations.
     
     Args:
-        embedding_model: Embedding model to use
+        embedding_model: Embedding model to use, or a RAGConfig object
         vector_store: Vector store type ("chroma" or "memory")
         persist_dir: Directory for persistence (if using chroma)
         **kwargs: Additional config parameters
@@ -759,10 +759,31 @@ def create_rag_service(
     Returns:
         Configured RAGService instance
     """
-    config = RAGConfig(
-        embedding_model=embedding_model or "sentence-transformers/all-MiniLM-L6-v2",
-        vector_store_type=vector_store,
-        persist_directory=persist_dir,
-        **kwargs
-    )
+    # If the first argument is already a RAGConfig, use it directly
+    if isinstance(embedding_model, RAGConfig):
+        return RAGService(embedding_model)
+    
+    # Create a default config
+    config = RAGConfig()
+    
+    # Update embedding model if provided
+    if embedding_model:
+        config.embedding.model = embedding_model
+    
+    # Update vector store settings
+    config.vector_store.type = vector_store
+    if persist_dir:
+        config.vector_store.persist_directory = Path(persist_dir)
+    
+    # Update any additional kwargs that match config structure
+    for key, value in kwargs.items():
+        if hasattr(config.embedding, key):
+            setattr(config.embedding, key, value)
+        elif hasattr(config.vector_store, key):
+            setattr(config.vector_store, key, value)
+        elif hasattr(config.chunking, key):
+            setattr(config.chunking, key, value)
+        elif hasattr(config.search, key):
+            setattr(config.search, key, value)
+    
     return RAGService(config)

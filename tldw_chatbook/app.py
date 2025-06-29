@@ -2337,19 +2337,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             except QueryError:
                 self.loguru_logger.error("Could not find MediaWindow to activate its initial view.")
         elif new_tab == TAB_SEARCH:
-            if not self.search_active_sub_tab: # If no sub-tab is active yet for Search tab
-                self.loguru_logger.debug(f"Switched to Search tab, activating initial sub-tab view: {self._initial_search_sub_tab_view}")
-                # Use call_later to ensure the UI for SearchWindow is fully composed and ready
-                self.call_later(setattr, self, 'search_active_sub_tab', self._initial_search_sub_tab_view)
-
-            # Explicitly initialize the SearchWindow views
-            try:
-                search_window = self.query_one(SearchWindow)
-                self.call_after_refresh(search_window._initialize_embeddings_creation_view)
-                self.call_after_refresh(search_window._refresh_collections_list)
-                self.loguru_logger.debug("Initialized SearchWindow views after tab activation")
-            except Exception as e:
-                self.loguru_logger.error(f"Failed to initialize SearchWindow views: {e}", exc_info=True)
+            if not self.search_active_sub_tab:
+                self.search_active_sub_tab = self._initial_search_sub_tab_view
         elif new_tab == TAB_INGEST:
             if not self.ingest_active_view:
                 self.loguru_logger.debug(
