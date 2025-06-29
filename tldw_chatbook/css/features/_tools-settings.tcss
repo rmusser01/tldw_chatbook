@@ -163,3 +163,67 @@
     margin-bottom: 1;
     text-style: italic;
 }
+
+/* --- Core Settings Styles --- */
+.core-settings-container {
+    padding: 1 2;
+    width: 100%;
+    height: 100%;
+}
+
+.section-title {
+    text-style: bold;
+    text-align: center;
+    margin-bottom: 2;
+    color: $primary;
+}
+
+.subsection-title {
+    text-style: bold;
+    margin: 2 0 1 0;
+    color: $secondary;
+}
+
+.settings-group {
+    background: $surface;
+    padding: 1;
+    margin-bottom: 2;
+    border: round $primary-background;
+}
+
+.settings-label {
+    margin: 1 0 0 0;
+    color: $text-muted;
+}
+
+.settings-input {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+.settings-select {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+.checkbox-group {
+    layout: horizontal;
+    margin: 0 0 1 0;
+}
+
+.checkbox-group Checkbox {
+    margin-right: 2;
+}
+
+.settings-actions {
+    layout: horizontal;
+    margin-top: 2;
+    align: center middle;
+}
+
+.settings-actions Button {
+    margin: 0 1;
+    min-width: 15;
+}
+
+/* --- End Core Settings Styles ---*/

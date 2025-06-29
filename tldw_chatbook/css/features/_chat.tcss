@@ -103,3 +103,259 @@
                                                /* Or 'none' if you only want background and no explicit border */
 }
 /* End of Character Sidebar Specific Styles */
+
+/* --- Chat Settings Mode Styles --- */
+
+/* Settings mode toggle container */
+.settings-mode-container {
+    layout: horizontal;
+    height: 3;
+    width: 100%;
+    align: center middle;
+    margin-bottom: 1;
+    padding: 0 1;
+}
+
+/* Mode labels */
+.mode-label {
+    margin: 0 1;
+    color: $text-muted;
+}
+
+/* Settings mode toggle switch */
+.settings-mode-toggle {
+    margin: 0 1;
+}
+
+/* Settings search input */
+.settings-search-input {
+    width: 100%;
+    margin-bottom: 2;
+    border: round $primary;
+}
+
+/* Quick settings section */
+.quick-settings-section {
+    padding: 1;
+    border: round $surface;
+    margin-bottom: 1;
+}
+
+/* RAG Settings Panel - Prominent styling */
+.rag-settings-panel {
+    padding: 1;
+    border: round $surface;  /* Changed from $accent to match other panels */
+    background: $panel;      /* Changed from $boost to standard panel background */
+    margin-bottom: 1;
+}
+
+/* Highlight RAG panel when focused */
+.rag-settings-panel:focus-within {
+    border: round $accent;
+    background: $boost;
+}
+
+/* Remove highlight when collapsed */
+.rag-settings-panel.collapsed {
+    border: round $surface !important;
+    background: $panel !important;
+}
+
+.rag-settings-panel-advanced {
+    padding: 1;
+    border: round $accent;
+    background: $boost;
+    margin-bottom: 1;
+}
+
+/* RAG panel header with icon */
+.rag-panel-header {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+/* RAG toggle row */
+.rag-toggle-row {
+    layout: horizontal;
+    height: 3;
+    align: left middle;
+    margin-bottom: 1;
+}
+
+/* RAG main toggle */
+.rag-main-toggle {
+    margin-right: 2;
+}
+
+/* RAG preset select */
+.rag-preset-select {
+    width: 50%;
+}
+
+/* RAG scope container */
+.rag-scope-container {
+    padding-left: 2;
+    margin-bottom: 1;
+}
+
+/* Section headers */
+.section-header {
+    text-style: bold underline;
+    color: $primary;
+    margin-bottom: 1;
+    margin-top: 1;
+}
+
+.subsection-header {
+    text-style: bold;
+    color: $secondary;
+    margin-bottom: 1;
+    margin-top: 1;
+}
+
+/* Info text */
+.info-text {
+    color: $text-muted;
+    text-style: italic;
+    margin-bottom: 1;
+}
+
+/* Hidden class for mode switching */
+.hidden {
+    display: none;
+}
+
+/* Search highlighting */
+.search-hidden {
+    display: none;
+}
+
+.search-highlighted {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+/* Settings containers for mode switching */
+#chat-basic-settings-container {
+    width: 100%;
+}
+
+#chat-advanced-settings-container {
+    width: 100%;
+}
+
+/* --- End Chat Settings Mode Styles ---*/
+
+/* --- Enhanced Chat Settings Styles --- */
+
+/* Mode toggle container */
+.mode-toggle-container {
+    layout: horizontal;
+    height: 3;
+    width: 100%;
+    align: center middle;
+    margin-bottom: 1;
+}
+
+/* Mode labels */
+.mode-label {
+    margin: 0 1;
+    color: $text-muted;
+}
+
+/* Settings mode toggle switch */
+.settings-mode-toggle {
+    margin: 0 1;
+}
+
+/* Settings search input */
+.settings-search-input {
+    width: 100%;
+    margin-bottom: 2;
+    border: round $primary;
+}
+
+/* RAG Settings Panel - Prominent styling */
+.rag-settings-panel {
+    padding: 1;
+    border: round $surface;  /* Changed to match other panels */
+    background: $panel;      /* Changed to standard panel background */
+    margin-bottom: 1;
+}
+
+/* Remove extra padding from RAG panel content */
+.rag-settings-panel Container {
+    padding: 0;
+    height: auto;
+}
+
+/* Highlight RAG panel when focused */
+.rag-settings-panel:focus-within {
+    border: round $primary-lighten-2;
+    background: $boost;
+}
+
+/* Remove highlight when collapsed */
+.rag-settings-panel.collapsed {
+    border: round $surface !important;
+    background: $panel !important;
+}
+
+/* RAG panel header with icon */
+.rag-panel-header {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+/* RAG enable toggle */
+.rag-enable-toggle {
+    margin-bottom: 1;
+}
+
+/* RAG preset select */
+.rag-preset-select {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* RAG scope options */
+.rag-scope-options {
+    margin-bottom: 1;
+}
+
+.rag-scope-options Checkbox {
+    margin-bottom: 0;
+}
+
+/* Ensure proper spacing for sidebar labels in RAG panel */
+.rag-settings-panel .sidebar-label {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* Advanced only sections - hidden by default in basic mode */
+.advanced-only {
+    display: none;
+}
+
+/* Show advanced sections when in advanced mode */
+.sidebar.advanced-mode .advanced-only {
+    display: block;
+}
+
+/* Hide advanced-only when in basic mode */
+.sidebar.basic-mode .advanced-only {
+    display: none;
+}
+
+/* Search highlighting */
+.search-highlight {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+/* --- End Enhanced Chat Settings Styles ---*/

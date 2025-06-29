@@ -40,7 +40,7 @@ def run_tests():
     ]
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True)#, timeout=300) requires pytest-timeout
         
         # Process output
         output_lines = result.stdout.splitlines()

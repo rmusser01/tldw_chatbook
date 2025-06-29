@@ -842,3 +842,39 @@
     display: block;
     overflow: hidden;
 }
+
+/* --- Enhanced RAG Search UI Styles --- */
+
+/* Search History Dropdown */
+.search-history-dropdown {
+    /* position: absolute; - not supported in TCSS */
+    width: 100%;
+    max-height: 15;
+    background: $surface;
+    border: solid $primary;
+    border-top: none;
+    margin-top: -1;
+    /* z-index: 100; - not supported in TCSS */
+}
+
+.search-history-dropdown.hidden {
+    display: none;
+}
+
+.search-history-list {
+    max-height: 15;
+    overflow-y: auto;
+    background: $background;
+}
+
+.history-item-text {
+    padding: 1;
+    border-bottom: dashed $primary-background;
+}
+
+.history-item-text:hover {
+    background: $boost;
+    color: $primary;
+}
+
+/* --- End Enhanced RAG Search UI Styles ---*/
