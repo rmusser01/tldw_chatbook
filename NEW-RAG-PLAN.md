@@ -2752,6 +2752,172 @@ The key insights are:
 2. **Add value with citations** - Enhanced functionality users actually need
 3. **Simplicity doesn't mean less capable** - Focus on what's actually used
 
+## Implementation Progress
+
+### Phase 1: Core Components Implementation
+
+#### 1. Citations Module (✓ Completed)
+**File**: `tldw_chatbook/RAG_Search/Services/simplified/citations.py`
+
+**Implementation Decisions**:
+- Added a `KEYWORD` citation type for FTS5 matches (in addition to EXACT, SEMANTIC, FUZZY)
+- Included validation in `__post_init__` to ensure data integrity
+- Added serialization methods (`to_dict`, `from_dict`, `to_json`, `from_json`) for persistence
+- Implemented utility functions for common operations:
+  - `merge_citations`: Handles duplicate citations by keeping highest confidence
+  - `group_citations_by_document`: Groups citations for document-level analysis
+  - `filter_overlapping_citations`: Removes overlapping text spans, preferring exact matches
+- Enhanced `SearchResultWithCitations` with helper methods:
+  - `get_citations_by_type`: Filter by citation type
+  - `get_highest_confidence_citation`: Quick access to best match
+  - Improved `format_with_citations` to group by type and limit citations
+
+**Design Rationale**:
+- The validation ensures citations are always in a valid state
+- Serialization support enables caching and persistence of search results
+- Utility functions reduce code duplication in the main service
+- The overlapping filter prevents redundant citations from cluttering results
+
+#### 2. Embeddings Wrapper (✓ Completed)
+**File**: `tldw_chatbook/RAG_Search/Services/simplified/embeddings_wrapper.py`
+
+**Implementation Decisions**:
+- Created a thin wrapper around existing `EmbeddingFactory` rather than reimplementing
+- Added automatic provider detection from model names (e.g., "openai/" prefix)
+- Included support for local OpenAI-compatible APIs via `base_url` parameter
+- Added comprehensive metrics tracking (calls, texts processed, errors)
+- Implemented both sync and async methods matching the existing factory
+- Added convenience methods for single text embedding
+- Included `get_embedding_dimension()` to determine vector size dynamically
+- Added `create_embeddings_service()` helper for common configurations
+- Implemented context manager protocol for proper cleanup
+
+**Design Rationale**:
+- Reusing `EmbeddingFactory` leverages years of battle-tested code
+- The wrapper simplifies the API while maintaining full functionality
+- Metrics tracking helps monitor performance and debug issues
+- Dynamic dimension detection avoids hardcoding model-specific values
+- The convenience function reduces boilerplate for common use cases
+- Proper resource cleanup prevents memory leaks in long-running applications
+
+**Key Integration Points**:
+- Uses relative imports to access the existing Embeddings_Lib
+- Maintains compatibility with the factory's configuration schema
+- Preserves thread-safety guarantees from the underlying implementation
+
+#### 3. Vector Store with Citations (✓ Completed)
+**File**: `tldw_chatbook/RAG_Search/Services/simplified/vector_store.py`
+
+**Implementation Decisions**:
+- Used Protocol instead of ABC for the VectorStore interface (lighter weight)
+- Implemented both ChromaVectorStore and InMemoryVectorStore
+- Added comprehensive citation creation from search results
+- Included support for multiple distance metrics (cosine, l2, ip)
+- Added metrics tracking (add_count, search_count, last_operation_time)
+- Implemented score normalization for consistent [0,1] range across metrics
+- Added `score_threshold` parameter for filtering low-confidence results
+- Included proper metadata processing for ChromaDB compatibility
+- Added `clear()` method for easy data cleanup
+- Enhanced `get_collection_stats()` with metadata field discovery
+
+**Design Rationale**:
+- Protocol-based design allows duck typing and easier testing
+- Supporting multiple distance metrics provides flexibility for different use cases
+- In-memory store enables quick testing and development without persistence
+- Score normalization ensures consistent behavior regardless of distance metric
+- Metadata field discovery helps developers understand available citation data
+- The factory function provides a consistent interface for store creation
+
+**Citation Generation Logic**:
+- Creates semantic citations for all search results with confidence scores
+- Extracts document metadata (title, author, date, URL) for proper attribution
+- Supports keyword match citations when available in metadata
+- Includes query text in citation metadata for context
+- Limits citation text length to prevent UI overflow
+
+**Created Module Init File**:
+- `__init__.py` exports all public interfaces
+- Provides convenient imports for the simplified module
+- Maintains backward compatibility aliases
+
+#### 4. Main RAG Service Coordinator (✓ Completed)
+**File**: `tldw_chatbook/RAG_Search/Services/simplified/rag_service.py`
+
+**Implementation Decisions**:
+- Created a simple `RAGConfig` dataclass for essential settings (full config in next task)
+- Direct composition of services without factory pattern
+- Implemented both async and sync versions of all methods
+- Added comprehensive metrics tracking at service level
+- Included batch indexing with error handling options
+- Implemented parallel search for hybrid mode using `asyncio.gather`
+- Added proper resource cleanup with context manager support
+- Included convenience functions for common operations
+- Used the existing `ChunkingService` rather than reimplementing
+
+**Design Rationale**:
+- Dataclass config is simple and type-safe
+- Async-first design with sync wrappers maintains flexibility
+- Batch operations with `continue_on_error` support real-world usage
+- Parallel search improves hybrid mode performance
+- Context manager ensures proper cleanup in all cases
+- Reusing existing chunking service avoids duplication
+
+**Key Features**:
+- **Indexing**: Single document and batch indexing with progress tracking
+- **Search**: Semantic, keyword (stub), and hybrid search modes
+- **Citations**: Full citations support with metadata preservation
+- **Metrics**: Comprehensive metrics including timing and counts
+- **Error Handling**: Graceful degradation with detailed logging
+- **Resource Management**: Proper cleanup of embeddings and stores
+
+**Integration Points**:
+- Uses the wrapper around `Embeddings_Lib.py`
+- Integrates with both ChromaDB and in-memory vector stores
+- Preserves all metadata needed for citation generation
+- Compatible with existing chunking service interface
+
+#### 5. Simplified Configuration System (✓ Completed)
+**File**: `tldw_chatbook/RAG_Search/Services/simplified/config.py`
+
+**Implementation Decisions**:
+- Created hierarchical configuration using dataclasses (EmbeddingConfig, VectorStoreConfig, etc.)
+- Integrated with existing tldw_cli configuration system via `get_cli_setting()`
+- Supported multiple configuration sources: environment vars > TOML > defaults
+- Maintained backward compatibility with legacy config locations
+- Added validation method to catch configuration errors early
+- Included convenience functions for common patterns
+- Provided clear TOML example for documentation
+
+**Design Rationale**:
+- Dataclasses provide type safety and IDE support
+- Hierarchical structure makes configuration logical and discoverable
+- Integration with existing system avoids configuration fragmentation
+- Multiple sources allow flexible deployment scenarios
+- Validation prevents runtime errors from bad configuration
+- Convenience functions reduce boilerplate for common use cases
+
+**Key Features**:
+- **Smart Defaults**: Sensible defaults for all settings
+- **Environment Override**: All major settings can be overridden via env vars
+- **Legacy Support**: Reads from old config locations for smooth migration
+- **Collection Types**: Pre-configured settings for media, chat, notes, character
+- **Testing Support**: Easy configuration for unit tests
+- **Validation**: Comprehensive validation with clear error messages
+
+**Configuration Hierarchy**:
+```
+RAGConfig
+├── EmbeddingConfig (model, device, cache, API settings)
+├── VectorStoreConfig (type, persistence, collections)
+├── ChunkingConfig (size, overlap, method)
+└── SearchConfig (top_k, thresholds, re-ranking)
+```
+
+**Updated Module Exports**:
+- Added all new components to `__init__.py`
+- Fixed import in `rag_service.py` to use separate config module
+- Maintained clean public API
+
 ---
 
 *Document created: 2025-06-29*  
