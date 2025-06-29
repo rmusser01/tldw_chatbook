@@ -24,6 +24,9 @@ logger.add(sys.stderr, level="INFO")
 
 import pytest
 
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
+
 @pytest.mark.requires_rag_deps
 @pytest.mark.asyncio
 async def test_rag_search():

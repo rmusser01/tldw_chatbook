@@ -1,6 +1,13 @@
 # test_prompts_db_pytest.py
 # Pytest-based tests for Prompts_DB
 
+"""
+Integration tests for Prompts_DB using real SQLite database instances.
+
+These tests verify the complete functionality of the PromptsDatabase class
+including schema creation, CRUD operations, and data integrity.
+"""
+
 import pytest
 import tempfile
 import shutil
@@ -20,6 +27,9 @@ from tldw_chatbook.DB.Prompts_DB import (
     view_prompt_keywords_markdown,
     export_prompts_formatted,
 )
+
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture

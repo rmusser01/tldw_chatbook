@@ -13,6 +13,9 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from tldw_chatbook.RAG_Search.Services.embeddings_service import EmbeddingsService
 from .conftest import MockEmbeddingProvider
 
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.requires_rag_deps
 class TestEmbeddingsService:

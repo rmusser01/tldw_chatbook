@@ -1,5 +1,5 @@
 """
-Unit tests for pagination functionality in database functions.
+Integration tests for pagination functionality in database functions.
 """
 
 import logging
@@ -14,6 +14,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
 )
 
 
+@pytest.mark.integration
 class TestMediaDatabasePagination:
     """Test pagination in Media database functions."""
     
@@ -132,6 +133,7 @@ class TestMediaDatabasePagination:
         assert len(results) == 10
 
 
+@pytest.mark.integration
 class TestPaginationEdgeCases:
     """Test edge cases in pagination."""
     
@@ -171,6 +173,7 @@ class TestPaginationEdgeCases:
             Path(tmp.name).unlink(missing_ok=True)
 
 
+@pytest.mark.integration
 class TestBatchQueryOptimization:
     """Test query patterns in search results."""
     
@@ -228,6 +231,7 @@ class TestBatchQueryOptimization:
             Path(tmp.name).unlink(missing_ok=True)
 
 
+@pytest.mark.integration
 class TestPaginationConsistency:
     """Test that pagination maintains consistency across queries."""
     

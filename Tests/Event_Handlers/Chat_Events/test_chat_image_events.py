@@ -1,6 +1,13 @@
 # Tests/Event_Handlers/Chat_Events/test_chat_image_events.py
-# Description: Unit tests for ChatImageHandler
+# Description: Integration tests for ChatImageHandler
 #
+"""
+test_chat_image_events.py
+------------------------
+
+Integration tests for ChatImageHandler that test image file processing,
+including file I/O operations and image manipulation with PIL.
+"""
 # Imports
 #
 # Standard Library
@@ -68,9 +75,10 @@ def oversized_file():
 
 
 #
-# Unit Tests
+# Integration Tests
 #
 
+@pytest.mark.integration
 class TestChatImageHandler:
     """Test suite for ChatImageHandler."""
     
@@ -252,6 +260,7 @@ class TestChatImageHandler:
         assert processed_img.height == 2048
 
 
+@pytest.mark.integration
 class TestChatImageHandlerEdgeCases:
     """Test edge cases for ChatImageHandler."""
     
@@ -329,6 +338,7 @@ class TestChatImageHandlerEdgeCases:
                     png_as_txt.unlink()
 
 
+@pytest.mark.unit
 class TestChatImageHandlerConstants:
     """Test ChatImageHandler constants and configuration."""
     

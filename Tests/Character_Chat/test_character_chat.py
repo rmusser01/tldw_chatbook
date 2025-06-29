@@ -1,4 +1,11 @@
 # test_character_chat_lib.py
+"""
+Integration tests for Character Chat functionality.
+
+These tests use real database operations with CharactersRAGDB to verify
+the complete character chat system including character management,
+conversations, and message handling.
+"""
 
 import pytest
 import sqlite3
@@ -38,6 +45,9 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     post_message_to_conversation,
     retrieve_conversation_messages_for_ui
 )
+
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
 
 
 # --- Standalone Fixtures (No conftest.py) ---

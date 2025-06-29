@@ -26,6 +26,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from loguru import logger
 logger.add(sys.stderr, level="INFO")
 
+# Mark all tests in this module as integration tests
+pytestmark = pytest.mark.integration
+
 # Mock app class for testing
 class MockApp:
     def __init__(self):

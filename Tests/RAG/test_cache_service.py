@@ -8,6 +8,9 @@ import shutil
 
 from tldw_chatbook.RAG_Search.Services.cache_service import CacheService, LRUCache, get_cache_service
 
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.requires_rag_deps
 class TestLRUCache:

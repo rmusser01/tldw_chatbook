@@ -12,6 +12,9 @@ import string
 
 from tldw_chatbook.RAG_Search.Services.embeddings_service import EmbeddingsService
 
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.requires_rag_deps
 class TestEmbeddingsProperties:

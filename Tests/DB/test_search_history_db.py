@@ -1,11 +1,11 @@
 # test_search_history_db.py
-# Description: Unit tests for RAG search history database
+# Description: Integration tests for RAG search history database
 #
 """
 test_search_history_db.py
 -------------------------
 
-Unit tests for the search history database that persists RAG search
+Integration tests for the search history database that persists RAG search
 queries, results, and analytics.
 """
 
@@ -19,6 +19,7 @@ import time
 from tldw_chatbook.DB.search_history_db import SearchHistoryDB
 
 
+@pytest.mark.integration
 class TestSearchHistoryDB:
     """Test cases for SearchHistoryDB."""
     
