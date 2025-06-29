@@ -12,15 +12,18 @@ from loguru import logger
 # Local imports
 from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
-# Try to import the new RAG service
+# Try to import the simplified RAG service
 try:
-    from ...RAG_Search.Services import RAGService, RAG_SERVICE_AVAILABLE
-    if not RAG_SERVICE_AVAILABLE:
-        raise ImportError("RAG Service not available")
+    from ...RAG_Search.Services.simplified import (
+        RAGService, create_config_for_collection, RAGConfig
+    )
+    RAG_SERVICE_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"New RAG service not available: {e}")
+    logger.warning(f"Simplified RAG service not available: {e}")
     RAG_SERVICE_AVAILABLE = False
     RAGService = None
+    create_config_for_collection = None
+    RAGConfig = None
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -48,31 +51,16 @@ async def get_rag_service(app: "TldwCli") -> Optional['RAGService']:
         
     if _rag_service is None:
         try:
-            # Get database paths
-            media_db_path = None
-            chachanotes_db_path = None
-            
-            if hasattr(app, 'media_db') and app.media_db:
-                # Extract path from media DB
-                media_db_path = Path(app.media_db.db_path)
-                
-            if hasattr(app, 'rag_db') and app.rag_db:
-                # Extract path from chachanotes DB
-                chachanotes_db_path = Path(app.rag_db.db_path)
-            
-            # Get LLM handler if available
-            llm_handler = getattr(app, 'llm_handler', None)
-            
-            # Create service
-            _rag_service = RAGService(
-                media_db_path=media_db_path,
-                chachanotes_db_path=chachanotes_db_path,
-                llm_handler=llm_handler
+            # Create configuration for the RAG service
+            config = create_config_for_collection(
+                "media",  # Default collection
+                persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
             )
             
-            # Initialize asynchronously
-            await _rag_service.initialize()
-            logger.info("RAG service initialized successfully")
+            # Create service with simplified interface
+            _rag_service = RAGService(config)
+            
+            logger.info("Simplified RAG service initialized successfully")
             
         except Exception as e:
             logger.error(f"Failed to initialize RAG service: {e}")

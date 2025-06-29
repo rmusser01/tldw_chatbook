@@ -69,6 +69,10 @@ class SearchConfig:
     enable_reranking: bool = False
     reranker_model: Optional[str] = None
     reranker_top_k: int = 5
+    # Cache settings
+    enable_cache: bool = True
+    cache_size: int = 100
+    cache_ttl: float = 3600  # 1 hour in seconds
 
 
 @dataclass

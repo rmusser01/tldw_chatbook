@@ -46,21 +46,24 @@ except ImportError as e:
         raise ImportError("Hybrid RAG search not available - missing dependencies")
 
 try:
-    from ..RAG_Search.Services import EmbeddingsService, ChunkingService, IndexingService
+    from ..RAG_Search.Services.simplified import (
+        RAGService, create_config_for_collection, RAGConfig, IndexingResult
+    )
     RAG_SERVICES_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"RAG services not available: {e}")
+    logger.warning(f"Simplified RAG services not available: {e}")
     RAG_SERVICES_AVAILABLE = False
     # Create placeholder classes
-    class EmbeddingsService:
+    class RAGService:
         def __init__(self, *args, **kwargs):
-            raise ImportError("EmbeddingsService not available - missing dependencies")
-    class ChunkingService:
+            raise ImportError("RAGService not available - missing dependencies")
+    def create_config_for_collection(*args, **kwargs):
+        raise ImportError("RAG configuration not available - missing dependencies")
+    class RAGConfig:
         def __init__(self, *args, **kwargs):
-            raise ImportError("ChunkingService not available - missing dependencies")
-    class IndexingService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("IndexingService not available - missing dependencies")
+            raise ImportError("RAGConfig not available - missing dependencies")
+    class IndexingResult:
+        pass
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -901,13 +904,19 @@ class SearchRAGWindow(Container):
         self.query_one("#maintenance-menu").add_class("hidden")
         
         try:
-            from ..RAG_Search.Services.cache_service import get_cache_service
-            cache_service = get_cache_service()
-            cache_service.clear_all_caches()
+            # Clear the embeddings cache in the simplified RAG service
+            # We'll need to get or create a RAG service instance
+            config = create_config_for_collection(
+                "media",
+                persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+            )
+            rag_service = RAGService(config)
+            rag_service.clear_cache()
+            rag_service.close()
             self.app_instance.notify("✅ Cache cleared successfully", severity="success")
         except ImportError:
-            logger.warning("Cache service not available - dependencies missing")
-            self.app_instance.notify("❌ Cache service not available - please install RAG dependencies", severity="error")
+            logger.warning("RAG service not available - dependencies missing")
+            self.app_instance.notify("❌ RAG service not available - please install RAG dependencies", severity="error")
         except Exception as e:
             logger.error(f"Error clearing cache: {e}")
             self.app_instance.notify(f"❌ Error clearing cache: {str(e)}", severity="error")
@@ -930,11 +939,12 @@ class SearchRAGWindow(Container):
         try:
             await status_elem.update("🔄 Indexing content...")
             
-            # Initialize services
-            embeddings_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
-            embeddings_service = EmbeddingsService(embeddings_dir)
-            chunking_service = ChunkingService()
-            indexing_service = IndexingService(embeddings_service, chunking_service)
+            # Initialize RAG service
+            config = create_config_for_collection(
+                "media",  # Default collection, will be used for all types
+                persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+            )
+            rag_service = RAGService(config)
             
             # Index with progress updates
             total_steps = 3
@@ -946,11 +956,52 @@ class SearchRAGWindow(Container):
                 await progress_bar.update(progress=progress)
                 await status_elem.update(f"🔄 Indexing {content_type}: {current}/{total}")
             
-            results = await indexing_service.index_all(
-                media_db=self.app_instance.media_db,
-                chachanotes_db=self.app_instance.chachanotes_db,
-                progress_callback=update_progress
-            )
+            # Index each content type
+            results = {"media": 0, "conversations": 0, "notes": 0}
+            
+            # Index media content
+            if self.app_instance.media_db:
+                await update_progress("media", 0, 100)
+                media_docs = await self._get_media_documents()
+                for i, doc in enumerate(media_docs):
+                    await update_progress("media", i, len(media_docs))
+                    result = await rag_service.index_document(
+                        doc_id=doc["id"],
+                        content=doc["content"],
+                        title=doc["title"],
+                        metadata=doc["metadata"]
+                    )
+                    if result.success:
+                        results["media"] += 1
+            
+            # Index conversations
+            if self.app_instance.chachanotes_db:
+                await update_progress("conversations", 0, 100)
+                conv_docs = await self._get_conversation_documents()
+                for i, doc in enumerate(conv_docs):
+                    await update_progress("conversations", i, len(conv_docs))
+                    result = await rag_service.index_document(
+                        doc_id=doc["id"],
+                        content=doc["content"],
+                        title=doc["title"],
+                        metadata=doc["metadata"]
+                    )
+                    if result.success:
+                        results["conversations"] += 1
+            
+            # Index notes
+            await update_progress("notes", 0, 100)
+            notes_docs = await self._get_notes_documents()
+            for i, doc in enumerate(notes_docs):
+                await update_progress("notes", i, len(notes_docs))
+                result = await rag_service.index_document(
+                    doc_id=doc["id"],
+                    content=doc["content"],
+                    title=doc["title"],
+                    metadata=doc["metadata"]
+                )
+                if result.success:
+                    results["notes"] += 1
             
             total_indexed = sum(results.values())
             await status_elem.update(
@@ -1317,6 +1368,91 @@ Score: {result.get('score', 0):.3f}
             except Exception as e:
                 self.app_instance.notify(f"Export failed: {str(e)}", severity="error")
     
+    async def _get_media_documents(self) -> List[Dict[str, Any]]:
+        """Get documents from media database"""
+        documents = []
+        try:
+            if self.app_instance.media_db:
+                # Get all media entries
+                media_items = self.app_instance.media_db.get_all_media()
+                for item in media_items:
+                    doc = {
+                        "id": f"media_{item['id']}",
+                        "title": item.get('title', 'Untitled Media'),
+                        "content": item.get('transcription', '') or item.get('content', ''),
+                        "metadata": {
+                            "source": "media",
+                            "media_type": item.get('type', 'unknown'),
+                            "url": item.get('url', ''),
+                            "author": item.get('author', ''),
+                            "ingested_at": item.get('ingested_at', '')
+                        }
+                    }
+                    if doc["content"]:  # Only add if there's content
+                        documents.append(doc)
+        except Exception as e:
+            logger.error(f"Error getting media documents: {e}")
+        return documents
+    
+    async def _get_conversation_documents(self) -> List[Dict[str, Any]]:
+        """Get documents from conversations database"""
+        documents = []
+        try:
+            if self.app_instance.chachanotes_db:
+                # Get all conversations
+                conversations = self.app_instance.chachanotes_db.get_all_conversations()
+                for conv in conversations:
+                    # Get messages for this conversation
+                    messages = self.app_instance.chachanotes_db.get_messages_for_conversation(conv['id'])
+                    if messages:
+                        # Combine messages into conversation content
+                        content = "\n".join([
+                            f"{msg['role']}: {msg['content']}" 
+                            for msg in messages
+                        ])
+                        doc = {
+                            "id": f"conv_{conv['id']}",
+                            "title": conv.get('name', f"Conversation {conv['id']}"),
+                            "content": content,
+                            "metadata": {
+                                "source": "conversations",
+                                "conversation_id": conv['id'],
+                                "character_id": conv.get('character_id'),
+                                "created_at": conv.get('created_at', ''),
+                                "message_count": len(messages)
+                            }
+                        }
+                        documents.append(doc)
+        except Exception as e:
+            logger.error(f"Error getting conversation documents: {e}")
+        return documents
+    
+    async def _get_notes_documents(self) -> List[Dict[str, Any]]:
+        """Get documents from notes"""
+        documents = []
+        try:
+            if self.app_instance.chachanotes_db:
+                # Get all notes
+                notes = self.app_instance.chachanotes_db.get_all_notes()
+                for note in notes:
+                    doc = {
+                        "id": f"note_{note['id']}",
+                        "title": note.get('title', 'Untitled Note'),
+                        "content": note.get('content', ''),
+                        "metadata": {
+                            "source": "notes",
+                            "note_id": note['id'],
+                            "tags": note.get('tags', ''),
+                            "created_at": note.get('created_at', ''),
+                            "updated_at": note.get('updated_at', '')
+                        }
+                    }
+                    if doc["content"]:  # Only add if there's content
+                        documents.append(doc)
+        except Exception as e:
+            logger.error(f"Error getting notes documents: {e}")
+        return documents
+
     def get_search_analytics(self, days_back: int = 30) -> Dict[str, Any]:
         """Get search analytics from the history database."""
         try:

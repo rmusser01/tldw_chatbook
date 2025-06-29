@@ -36,6 +36,11 @@ from .rag_service import (
     create_rag_service
 )
 
+from .simple_cache import (
+    SimpleRAGCache,
+    get_rag_cache
+)
+
 from .config import (
     EmbeddingConfig,
     VectorStoreConfig,
@@ -72,6 +77,10 @@ __all__ = [
     "IndexingResult",
     "create_and_index",
     "create_rag_service",
+    
+    # Cache
+    "SimpleRAGCache",
+    "get_rag_cache",
     
     # Configuration
     "EmbeddingConfig",

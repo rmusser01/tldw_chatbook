@@ -4073,15 +4073,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             import threading
             
             def save_caches_with_timeout():
-                try:
-                    from .RAG_Search.Services.cache_service import get_cache_service
-                    cache_service = get_cache_service()
-                    cache_service.save_persistent_caches()
-                    loguru_logger.info("Persistent caches saved successfully")
-                except ImportError:
-                    loguru_logger.debug("Cache service not available - skipping cache save")
-                except Exception as e:
-                    loguru_logger.error(f"Error saving persistent caches: {e}")
+                # Note: The old cache service is deprecated
+                # The simplified RAG service handles caching internally
+                # and doesn't require explicit save on shutdown
+                loguru_logger.debug("Cache saving skipped - handled by simplified RAG service")
             
             # Run cache saving in a separate thread with timeout
             save_thread = threading.Thread(target=save_caches_with_timeout)

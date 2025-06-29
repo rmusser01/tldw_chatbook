@@ -508,14 +508,18 @@ class InMemoryVectorStore:
     def search_with_citations(self, 
                             query_embedding: np.ndarray,
                             query_text: str,
-                            top_k: int = 10) -> List[SearchResultWithCitations]:
+                            top_k: int = 10,
+                            score_threshold: float = 0.0) -> List[SearchResultWithCitations]:
         """Enhanced search with citations."""
-        # Get basic results
-        basic_results = self.search(query_embedding, top_k)
+        # Get basic results (get extra to account for filtering)
+        basic_results = self.search(query_embedding, top_k * 2)
+        
+        # Filter by score threshold
+        filtered_results = [r for r in basic_results if r.score >= score_threshold]
         
         # Convert to results with citations
         results_with_citations = []
-        for result in basic_results:
+        for result in filtered_results[:top_k]:
             # Create citation
             citation = Citation(
                 document_id=result.metadata.get("doc_id", result.id),

@@ -21,6 +21,7 @@ from .vector_store import (
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
 from ..chunking_service import ChunkingService
+from .simple_cache import SimpleRAGCache, get_rag_cache
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,14 @@ class RAGService:
         
         # Initialize chunking service
         self.chunking = ChunkingService()
+        
+        # Initialize cache
+        cache_config = config.search.__dict__ if hasattr(config.search, '__dict__') else {}
+        self.cache = get_rag_cache(
+            max_size=cache_config.get('cache_size', 100),
+            ttl_seconds=cache_config.get('cache_ttl', 3600),
+            enabled=cache_config.get('enable_cache', True)
+        )
         
         # Metrics
         self._docs_indexed = 0
@@ -275,6 +284,13 @@ class RAGService:
         include_citations = include_citations if include_citations is not None else self.config.include_citations
         score_threshold = score_threshold if score_threshold is not None else self.config.score_threshold
         
+        # Check cache first
+        cached_result = self.cache.get(query, search_type, top_k, filter_metadata)
+        if cached_result is not None:
+            results, context = cached_result
+            logger.debug(f"Returning cached results for query: '{query}'")
+            return results
+        
         self._searches_performed += 1
         start_time = time.time()
         
@@ -296,6 +312,11 @@ class RAGService:
             
             elapsed = time.time() - start_time
             logger.info(f"Search completed in {elapsed:.2f}s, found {len(results)} results")
+            
+            # Cache the results
+            # For caching, we need to extract a simple context string
+            context = self._extract_context_from_results(results)
+            self.cache.put(query, search_type, top_k, results, context, filter_metadata)
             
             return results
             
@@ -477,10 +498,44 @@ class RAGService:
     
     # === Management Methods ===
     
+    def _extract_context_from_results(self, results: List[Union[SearchResult, SearchResultWithCitations]], 
+                                     max_length: int = 10000) -> str:
+        """Extract a context string from search results for caching."""
+        context_parts = []
+        total_chars = 0
+        
+        for result in results:
+            # Format result
+            title = result.metadata.get('title', 'Untitled')
+            source = result.metadata.get('source', 'unknown')
+            
+            result_text = f"[{source.upper()} - {title}]\n"
+            remaining_chars = max_length - total_chars - len(result_text)
+            
+            if remaining_chars <= 0:
+                break
+            
+            content_preview = result.document[:remaining_chars]
+            result_text += content_preview
+            
+            if len(result.document) > remaining_chars:
+                result_text += "...\n"
+            else:
+                result_text += "\n"
+            
+            context_parts.append(result_text)
+            total_chars += len(result_text)
+            
+            if total_chars >= max_length:
+                break
+        
+        return "\n---\n".join(context_parts)
+    
     def clear_cache(self):
         """Clear all caches."""
         self.embeddings.clear_cache()
-        logger.info("Cleared embeddings cache")
+        self.cache.clear()
+        logger.info("Cleared embeddings and search result caches")
     
     def clear_index(self):
         """Clear the vector store index."""
@@ -494,6 +549,7 @@ class RAGService:
         metrics = {
             "embeddings_metrics": self.embeddings.get_metrics(),
             "vector_store_stats": self.vector_store.get_collection_stats(),
+            "cache_metrics": self.cache.get_metrics(),
             "service_metrics": {
                 "documents_indexed": self._docs_indexed,
                 "total_chunks_created": self._total_chunks_created,

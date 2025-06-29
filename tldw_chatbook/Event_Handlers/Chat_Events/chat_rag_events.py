@@ -33,25 +33,31 @@ else:
 
 # Conditional imports for RAG services
 try:
-    from ...RAG_Search.Services.embeddings_service import EmbeddingsService
-    from ...RAG_Search.Services.chunking_service import ChunkingService
-    from ...RAG_Search.Services.cache_service import get_cache_service
+    from ...RAG_Search.Services.simplified import (
+        RAGService, create_config_for_collection, RAGConfig,
+        SearchResult, SearchResultWithCitations
+    )
     RAG_SERVICES_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"RAG services not available: {e}")
+    logger.warning(f"Simplified RAG services not available: {e}")
     RAG_SERVICES_AVAILABLE = False
     
     # Create placeholder classes
-    class EmbeddingsService:
+    class RAGService:
         def __init__(self, *args, **kwargs):
-            raise ImportError("EmbeddingsService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+            raise ImportError("RAGService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
     
-    class ChunkingService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("ChunkingService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    def create_config_for_collection(*args, **kwargs):
+        raise ImportError("RAG config not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
     
-    def get_cache_service(*args, **kwargs):
-        raise ImportError("Cache service not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    class RAGConfig:
+        pass
+    
+    class SearchResult:
+        pass
+    
+    class SearchResultWithCitations:
+        pass
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -98,23 +104,9 @@ async def perform_plain_rag_search(
     
     logger.info(f"Performing plain RAG search for query: '{query}'")
     
-    # Check cache first if available
-    if RAG_AVAILABLE:
-        try:
-            cache_service = get_cache_service()
-            cache_params = {
-                'sources': sources,
-                'top_k': top_k,
-                'max_context_length': max_context_length,
-                'enable_rerank': enable_rerank,
-                'reranker_model': reranker_model
-            }
-            cached_result = cache_service.get_query_result(query, cache_params)
-            if cached_result:
-                logger.info("Returning cached RAG search result")
-                return cached_result
-        except Exception as e:
-            logger.debug(f"Cache service not available or error: {e}")
+    # Note: Caching is now handled internally by the simplified RAG service
+    # when perform_full_rag_pipeline is called. For plain RAG search,
+    # we don't have caching since it uses direct database queries.
     
     all_results = []
     
@@ -328,12 +320,7 @@ async def perform_plain_rag_search(
     logger.info(f"Plain RAG search completed. Found {len(all_results)} results, "
                 f"context length: {len(context_string)} chars")
     
-    # Cache the results if available
-    if RAG_AVAILABLE:
-        try:
-            cache_service.cache_query_result(query, cache_params, all_results, context_string)
-        except Exception as e:
-            logger.debug(f"Failed to cache results: {e}")
+    # Note: No caching for plain RAG search as it uses direct database queries
     
     return all_results, context_string
 
@@ -379,43 +366,63 @@ async def perform_full_rag_pipeline(
             enable_rerank=True, reranker_model="flashrank"
         )
     
-    # Initialize services
-    embeddings_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
-    embeddings_service = EmbeddingsService(embeddings_dir)
-    chunking_service = ChunkingService()
+    # Initialize RAG service
+    config = create_config_for_collection(
+        "media",  # Default collection
+        persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+    )
+    # Configure for the search
+    config.search.default_top_k = top_k
+    config.search.include_citations = include_metadata
+    config.chunking.chunk_size = chunk_size
+    config.chunking.chunk_overlap = chunk_overlap
     
-    # Create query embedding
-    query_embeddings = embeddings_service.create_embeddings([query])
-    if not query_embeddings:
-        logger.error("Failed to create query embeddings. Falling back to plain RAG.")
-        return await perform_plain_rag_search(
-            app, query, sources, top_k, max_context_length, 
-            enable_rerank=True, reranker_model="flashrank"
-        )
+    rag_service = RAGService(config)
     
-    all_results = []
-    
-    # Search each enabled source
+    # Perform semantic search across all sources
+    # Build metadata filter based on enabled sources
+    source_filters = []
     if sources.get('media', False):
-        media_results = await _search_media_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(media_results)
-    
+        source_filters.append('media')
     if sources.get('conversations', False):
-        conv_results = await _search_conversations_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(conv_results)
-    
+        source_filters.append('conversations')
     if sources.get('notes', False):
-        notes_results = await _search_notes_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(notes_results)
+        source_filters.append('notes')
     
-    # Sort by similarity score
-    all_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+    # Search with the simplified RAG service
+    search_results = await rag_service.search(
+        query=query,
+        top_k=top_k * 2,  # Get extra for re-ranking
+        search_type="semantic",
+        include_citations=include_metadata
+    )
+    
+    # Convert search results to the expected format
+    all_results = []
+    for result in search_results:
+        # Filter by source if needed
+        if result.metadata.get('source') in source_filters:
+            result_dict = {
+                'id': result.id,
+                'title': result.metadata.get('title', 'Untitled'),
+                'content': result.document,
+                'source': result.metadata.get('source', 'unknown'),
+                'score': result.score,
+                'metadata': result.metadata
+            }
+            
+            # Add citations if available
+            if hasattr(result, 'citations') and result.citations:
+                result_dict['citations'] = [
+                    {
+                        'text': cit.text,
+                        'document_title': cit.document_title,
+                        'confidence': cit.confidence
+                    }
+                    for cit in result.citations
+                ]
+            
+            all_results.append(result_dict)
     
     # Apply re-ranking if enabled and available
     if enable_rerank and len(all_results) > 0:
@@ -715,15 +722,50 @@ async def perform_hybrid_rag_search(
         enable_rerank=False  # We'll re-rank the combined results
     )
     
-    # Get vector search results if available
+    # Get vector search results if available using simplified RAG
     vector_results = []
-    if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-        logger.debug("Getting vector search results...")
-        vector_results, _ = await perform_full_rag_pipeline(
-            app, query, sources, top_k * 3, max_context_length,
-            chunk_size, chunk_overlap, include_metadata=True,
-            enable_rerank=False  # We'll re-rank the combined results
-        )
+    if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) and RAG_SERVICES_AVAILABLE:
+        logger.debug("Getting vector search results using simplified RAG...")
+        try:
+            # Initialize RAG service for hybrid search
+            config = create_config_for_collection(
+                "media",
+                persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+            )
+            config.search.default_top_k = top_k * 3
+            config.chunking.chunk_size = chunk_size
+            config.chunking.chunk_overlap = chunk_overlap
+            
+            rag_service = RAGService(config)
+            
+            # Perform semantic search
+            search_results = await rag_service.search(
+                query=query,
+                top_k=top_k * 3,
+                search_type="semantic",
+                include_citations=False  # We don't need citations for hybrid
+            )
+            
+            # Convert to expected format and filter by sources
+            source_filters = [k for k, v in sources.items() if v]
+            for result in search_results:
+                if result.metadata.get('source') in source_filters:
+                    vector_results.append({
+                        'id': result.id,
+                        'title': result.metadata.get('title', 'Untitled'),
+                        'content': result.document,
+                        'source': result.metadata.get('source', 'unknown'),
+                        'score': result.score,
+                        'metadata': result.metadata
+                    })
+            
+            rag_service.close()
+            
+        except Exception as e:
+            logger.error(f"Error in vector search: {e}")
+            logger.warning("Vector search failed - using BM25 results only")
+            vector_weight = 0
+            bm25_weight = 1.0
     else:
         logger.warning("Embeddings not available, using BM25 only")
         vector_weight = 0
