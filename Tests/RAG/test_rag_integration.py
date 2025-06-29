@@ -17,9 +17,11 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
 )
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.RAG_Search.Services import (
+from tldw_chatbook.RAG_Search import (
     EmbeddingsService,
-    ChunkingService
+    ChunkingService,
+    RAGService,
+    create_config_for_testing
 )
 from loguru import logger
 
@@ -429,3 +431,152 @@ class TestRAGIntegration:
                 # Embeddings service creation might fail in test environment
                 # but that's okay for this test
                 pass
+    
+    @pytest.mark.asyncio
+    async def test_simplified_rag_service(self, temp_dirs):
+        """Test the new simplified RAG service"""
+        # Create test configuration
+        config = create_config_for_testing(
+            vector_store_type="in_memory",
+            embedding_model="all-MiniLM-L6-v2",
+            chunk_size=200,
+            chunk_overlap=50
+        )
+        
+        # Create RAG service
+        rag_service = RAGService(config)
+        
+        # Test documents
+        test_docs = [
+            {
+                'id': 'python_basics',
+                'title': 'Python Programming Basics',
+                'content': '''Python is a high-level programming language known for its simplicity and readability. 
+                It supports multiple programming paradigms including procedural, object-oriented, and functional programming.
+                Python uses dynamic typing and automatic memory management through garbage collection.
+                Popular Python frameworks include Django for web development and NumPy for scientific computing.''',
+                'metadata': {'type': 'tutorial', 'language': 'python', 'level': 'beginner'}
+            },
+            {
+                'id': 'ml_intro',
+                'title': 'Introduction to Machine Learning',
+                'content': '''Machine learning is a subset of artificial intelligence that enables systems to learn from data.
+                Common ML algorithms include linear regression for prediction, decision trees for classification,
+                and neural networks for complex pattern recognition. Python is the most popular language for ML,
+                with libraries like scikit-learn, TensorFlow, and PyTorch.''',
+                'metadata': {'type': 'article', 'topic': 'ml', 'level': 'intermediate'}
+            },
+            {
+                'id': 'web_dev',
+                'title': 'Modern Web Development',
+                'content': '''Web development encompasses both frontend and backend technologies.
+                Frontend development uses HTML, CSS, and JavaScript, with frameworks like React and Vue.
+                Backend development can use various languages including Python (Django, Flask),
+                JavaScript (Node.js), and Ruby (Rails). RESTful APIs connect frontend and backend.''',
+                'metadata': {'type': 'guide', 'topic': 'webdev', 'frameworks': ['react', 'django']}
+            }
+        ]
+        
+        # Index documents
+        for doc in test_docs:
+            result = await rag_service.index_document(
+                doc_id=doc['id'],
+                content=doc['content'],
+                title=doc['title'],
+                metadata=doc['metadata']
+            )
+            assert result.success
+            assert result.chunks_created > 0
+        
+        # Test semantic search
+        semantic_results = await rag_service.search(
+            query="Python frameworks for web development",
+            top_k=3,
+            search_type="semantic"
+        )
+        
+        assert len(semantic_results) > 0
+        # Should find Python and web dev related content
+        found_python = any('python' in r.content.lower() for r in semantic_results)
+        found_web = any('web' in r.content.lower() or 'django' in r.content.lower() for r in semantic_results)
+        assert found_python or found_web
+        
+        # Test keyword search
+        keyword_results = await rag_service.search(
+            query="machine learning algorithms",
+            top_k=2,
+            search_type="keyword"
+        )
+        
+        assert len(keyword_results) > 0
+        # Should find ML content
+        assert any('machine learning' in r.content.lower() for r in keyword_results)
+        
+        # Test hybrid search
+        hybrid_results = await rag_service.search(
+            query="Python programming for data science",
+            top_k=3,
+            search_type="hybrid"
+        )
+        
+        assert len(hybrid_results) > 0
+        
+        # Test search with citations
+        citation_results = await rag_service.search_with_citations(
+            query="neural networks and deep learning",
+            top_k=2
+        )
+        
+        assert len(citation_results) > 0
+        for result in citation_results:
+            assert hasattr(result, 'citations')
+            assert isinstance(result.citations, list)
+        
+        # Test caching
+        # Same query should be faster due to caching
+        import time
+        start = time.time()
+        cached_results = await rag_service.search(
+            query="Python frameworks for web development",
+            top_k=3,
+            search_type="semantic"
+        )
+        cache_time = time.time() - start
+        
+        # Results should be the same
+        assert len(cached_results) == len(semantic_results)
+        
+        # Test batch indexing
+        batch_docs = [
+            {
+                'id': f'batch_doc_{i}',
+                'content': f'This is batch document {i} with some test content.',
+                'title': f'Batch Doc {i}',
+                'metadata': {'batch': True, 'index': i}
+            }
+            for i in range(5)
+        ]
+        
+        batch_results = await rag_service.index_documents_batch(batch_docs)
+        assert len(batch_results) == 5
+        assert all(r.success for r in batch_results)
+        
+        # Test deletion
+        deleted = await rag_service.delete_document('python_basics')
+        assert deleted
+        
+        # Search should not find deleted document
+        post_delete_results = await rag_service.search(
+            query="Python Programming Basics",
+            top_k=5,
+            search_type="keyword"
+        )
+        
+        # Should not find the exact title anymore
+        assert not any(r.metadata.get('title') == 'Python Programming Basics' for r in post_delete_results)
+        
+        # Test stats
+        stats = rag_service.get_stats()
+        assert stats['total_documents'] >= 2  # At least the remaining docs
+        assert stats['total_chunks'] > 0
+        assert stats['total_searches'] > 0

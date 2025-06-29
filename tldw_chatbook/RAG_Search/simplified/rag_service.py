@@ -12,6 +12,8 @@ import logging
 from dataclasses import dataclass
 import time
 import numpy as np
+import uuid
+import psutil
 
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import (
@@ -22,6 +24,7 @@ from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
 from ..chunking_service import ChunkingService
 from .simple_cache import SimpleRAGCache, get_rag_cache
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,17 @@ class RAGService:
         """
         self.config = config or RAGConfig()
         
+        # Log comprehensive configuration
+        logger.info("RAG Service Configuration", extra={
+            "embedding_model": self.config.embedding_model,
+            "vector_store_type": self.config.vector_store_type,
+            "collection_name": self.config.collection_name,
+            "chunk_size": self.config.chunk_size,
+            "chunk_overlap": self.config.chunk_overlap,
+            "search_type": self.config.search_type,
+            "device": self.config.device
+        })
+        
         # Initialize embeddings using wrapper around existing library
         logger.info(f"Initializing embeddings service with model: {self.config.embedding_model}")
         self.embeddings = EmbeddingsServiceWrapper(
@@ -86,23 +100,38 @@ class RAGService:
         
         # Initialize chunking service
         self.chunking = ChunkingService()
+        logger.info("Initialized chunking service")
         
         # Initialize cache
         cache_config = config.search.__dict__ if hasattr(config.search, '__dict__') else {}
+        cache_size = cache_config.get('cache_size', 100)
+        cache_ttl = cache_config.get('cache_ttl', 3600)
+        cache_enabled = cache_config.get('enable_cache', True)
+        
         self.cache = get_rag_cache(
-            max_size=cache_config.get('cache_size', 100),
-            ttl_seconds=cache_config.get('cache_ttl', 3600),
-            enabled=cache_config.get('enable_cache', True)
+            max_size=cache_size,
+            ttl_seconds=cache_ttl,
+            enabled=cache_enabled
         )
+        logger.info(f"Initialized cache: size={cache_size}, ttl={cache_ttl}s, enabled={cache_enabled}")
+        
+        # Log initialization metrics
+        log_counter("rag_service_initialized", labels={
+            "model": self.config.embedding_model,
+            "vector_store": self.config.vector_store_type,
+            "device": self.config.device
+        })
         
         # Metrics
         self._docs_indexed = 0
         self._searches_performed = 0
         self._last_index_time = None
         self._total_chunks_created = 0
+        self._search_type_counts = {"semantic": 0, "keyword": 0, "hybrid": 0}
     
     # === Indexing Methods ===
     
+    @timeit("rag_indexing_document")
     async def index_document(self, 
                            doc_id: str, 
                            content: str,
@@ -130,17 +159,29 @@ class RAGService:
         metadata = metadata or {}
         title = title or doc_id
         
+        # Create correlation ID for tracking
+        correlation_id = str(uuid.uuid4())
+        logger = logging.getLogger(__name__).bind(correlation_id=correlation_id, doc_id=doc_id)
+        
+        # Log document metrics
+        log_counter("rag_document_index_attempt")
+        log_histogram("rag_document_size_chars", len(content))
+        
         try:
-            # Chunk the document
+            # Chunk the document with timing
+            chunk_start = time.time()
             chunks = await self._chunk_document(
                 content, 
                 chunk_size or self.config.chunk_size,
                 chunk_overlap or self.config.chunk_overlap,
                 chunking_method or self.config.chunking_method
             )
+            chunk_time = time.time() - chunk_start
+            log_histogram("rag_chunking_time", chunk_time)
             
             if not chunks:
                 logger.warning(f"No chunks created for document {doc_id}")
+                log_counter("rag_document_empty_chunks")
                 return IndexingResult(
                     doc_id=doc_id,
                     chunks_created=0,
@@ -148,12 +189,22 @@ class RAGService:
                     success=True
                 )
             
+            # Log chunk statistics
+            chunk_sizes = [len(chunk["text"]) for chunk in chunks]
+            log_histogram("rag_chunks_per_document", len(chunks))
+            log_histogram("rag_chunk_size_chars", sum(chunk_sizes) / len(chunk_sizes))
+            log_counter("rag_chunks_created", value=len(chunks))
+            
             # Extract chunk texts
             chunk_texts = [chunk["text"] for chunk in chunks]
             
-            # Create embeddings
-            logger.debug(f"Creating embeddings for {len(chunk_texts)} chunks")
+            # Create embeddings with timing
+            embed_start = time.time()
+            logger.info(f"Creating embeddings for {len(chunk_texts)} chunks")
             embeddings = await self.embeddings.create_embeddings_async(chunk_texts)
+            embed_time = time.time() - embed_start
+            log_histogram("rag_embedding_time", embed_time)
+            log_histogram("rag_embeddings_per_document", len(embeddings))
             
             # Prepare for storage with citation metadata
             chunk_ids = [f"{doc_id}_chunk_{i}" for i in range(len(chunks))]
@@ -175,8 +226,11 @@ class RAGService:
                 }
                 chunk_metadata.append(meta)
             
-            # Store in vector database
+            # Store in vector database with timing
+            store_start = time.time()
             await self._store_chunks(chunk_ids, embeddings, chunk_texts, chunk_metadata)
+            store_time = time.time() - store_start
+            log_histogram("rag_vector_store_time", store_time)
             
             # Update metrics
             self._docs_indexed += 1
@@ -184,7 +238,15 @@ class RAGService:
             self._last_index_time = time.time()
             
             elapsed = time.time() - start_time
-            logger.info(f"Indexed document {doc_id} with {len(chunks)} chunks in {elapsed:.2f}s")
+            
+            # Log success metrics
+            log_counter("rag_document_index_success")
+            log_histogram("rag_document_index_total_time", elapsed)
+            log_gauge("rag_total_documents_indexed", self._docs_indexed)
+            log_gauge("rag_total_chunks_in_index", self._total_chunks_created)
+            
+            logger.info(f"Indexed document {doc_id} with {len(chunks)} chunks in {elapsed:.2f}s " +
+                       f"(chunk: {chunk_time:.2f}s, embed: {embed_time:.2f}s, store: {store_time:.2f}s)")
             
             return IndexingResult(
                 doc_id=doc_id,
@@ -194,6 +256,7 @@ class RAGService:
             )
             
         except Exception as e:
+            log_counter("rag_document_index_error", labels={"error": type(e).__name__})
             logger.error(f"Failed to index document {doc_id}: {e}", exc_info=True)
             return IndexingResult(
                 doc_id=doc_id,
@@ -258,6 +321,7 @@ class RAGService:
     
     # === Search Methods ===
     
+    @timeit("rag_search_operation")
     async def search(self,
                     query: str,
                     top_k: Optional[int] = None,
@@ -284,17 +348,36 @@ class RAGService:
         include_citations = include_citations if include_citations is not None else self.config.include_citations
         score_threshold = score_threshold if score_threshold is not None else self.config.score_threshold
         
+        # Create correlation ID for tracking
+        correlation_id = str(uuid.uuid4())
+        logger_ctx = logging.getLogger(__name__).bind(
+            correlation_id=correlation_id,
+            query=query[:50],  # Truncate long queries
+            search_type=search_type
+        )
+        
+        # Log search metrics
+        log_counter("rag_search_attempt", labels={"type": search_type})
+        log_histogram("rag_search_query_length", len(query))
+        self._search_type_counts[search_type] += 1
+        
         # Check cache first
         cached_result = self.cache.get(query, search_type, top_k, filter_metadata)
         if cached_result is not None:
             results, context = cached_result
-            logger.debug(f"Returning cached results for query: '{query}'")
+            log_counter("rag_search_cache_hit", labels={"type": search_type})
+            logger_ctx.info(f"Cache hit for query: '{query[:50]}...'")
             return results
+        
+        log_counter("rag_search_cache_miss", labels={"type": search_type})
         
         self._searches_performed += 1
         start_time = time.time()
+        results_before_filter = 0
         
         try:
+            logger_ctx.info(f"Performing {search_type} search with top_k={top_k}, threshold={score_threshold}")
+            
             if search_type == "semantic":
                 results = await self._semantic_search(
                     query, top_k, filter_metadata, include_citations, score_threshold
@@ -310,8 +393,33 @@ class RAGService:
             else:
                 raise ValueError(f"Unknown search type: {search_type}")
             
+            # Log result statistics
+            if results:
+                scores = [r.score for r in results]
+                log_histogram("rag_search_result_score", sum(scores) / len(scores))
+                log_histogram("rag_search_min_score", min(scores))
+                log_histogram("rag_search_max_score", max(scores))
+                
+                # Log score distribution
+                for i, score in enumerate(scores[:5]):  # Top 5 results
+                    log_histogram("rag_search_score_distribution", score, 
+                                labels={"rank": str(i+1), "type": search_type})
+            
             elapsed = time.time() - start_time
-            logger.info(f"Search completed in {elapsed:.2f}s, found {len(results)} results")
+            
+            # Log search success metrics
+            log_counter("rag_search_success", labels={"type": search_type})
+            log_histogram("rag_search_time", elapsed, labels={"type": search_type})
+            log_histogram("rag_search_results_count", len(results))
+            log_gauge("rag_total_searches_performed", self._searches_performed)
+            
+            # Log search type distribution
+            total_searches = sum(self._search_type_counts.values())
+            for stype, count in self._search_type_counts.items():
+                log_gauge(f"rag_search_type_{stype}_ratio", 
+                         count / total_searches if total_searches > 0 else 0)
+            
+            logger_ctx.info(f"Search completed in {elapsed:.2f}s, found {len(results)} results")
             
             # Cache the results
             # For caching, we need to extract a simple context string
@@ -321,7 +429,8 @@ class RAGService:
             return results
             
         except Exception as e:
-            logger.error(f"Search failed: {e}", exc_info=True)
+            log_counter("rag_search_error", labels={"type": search_type, "error": type(e).__name__})
+            logger_ctx.error(f"Search failed: {e}", exc_info=True)
             raise
     
     def search_sync(self, query: str, **kwargs) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
@@ -467,14 +576,20 @@ class RAGService:
     
     # === Helper Methods ===
     
+    @timeit("rag_chunking_operation")
     async def _chunk_document(self, 
                             content: str,
                             chunk_size: int,
                             chunk_overlap: int,
                             method: str) -> List[Dict[str, Any]]:
         """Chunk document asynchronously."""
+        logger.info(f"Chunking document with method={method}, size={chunk_size}, overlap={chunk_overlap}")
+        log_histogram("rag_chunk_size_config", chunk_size)
+        log_histogram("rag_chunk_overlap_config", chunk_overlap)
+        log_counter("rag_chunking_method", labels={"method": method})
+        
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        chunks = await loop.run_in_executor(
             None,
             self.chunking.chunk_text,
             content,
@@ -482,6 +597,17 @@ class RAGService:
             chunk_overlap,
             method
         )
+        
+        # Log chunk statistics
+        if chunks:
+            chunk_lengths = [len(chunk.get("text", "")) for chunk in chunks]
+            avg_chunk_length = sum(chunk_lengths) / len(chunk_lengths)
+            log_histogram("rag_avg_chunk_length", avg_chunk_length)
+            log_histogram("rag_min_chunk_length", min(chunk_lengths))
+            log_histogram("rag_max_chunk_length", max(chunk_lengths))
+            logger.debug(f"Created {len(chunks)} chunks, avg length: {avg_chunk_length:.0f} chars")
+        
+        return chunks
     
     async def _store_chunks(self,
                           ids: List[str],

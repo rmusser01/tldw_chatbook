@@ -13,8 +13,10 @@ import logging
 from dataclasses import dataclass
 from abc import abstractmethod
 import time
+import psutil
 
 from .citations import Citation, CitationType, SearchResultWithCitations
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 
 logger = logging.getLogger(__name__)
 
@@ -101,10 +103,20 @@ class ChromaVectorStore:
         # Ensure persist directory exists
         self.persist_directory.mkdir(parents=True, exist_ok=True)
         
+        # Log initialization
+        logger.info(f"Initializing ChromaVectorStore: collection={collection_name}, "
+                   f"metric={distance_metric}, persist_dir={persist_directory}")
+        log_counter("vector_store_initialized", labels={
+            "type": "chroma",
+            "collection": collection_name,
+            "metric": distance_metric
+        })
+        
         # Metrics
         self._add_count = 0
         self._search_count = 0
         self._last_operation_time = None
+        self._embedding_dim = None
     
     @property
     def client(self):
@@ -147,6 +159,7 @@ class ChromaVectorStore:
             logger.info(f"Using collection: {self.collection_name}")
         return self._collection
     
+    @timeit("vector_store_add_documents")
     def add(self, 
             ids: List[str], 
             embeddings: np.ndarray, 
@@ -167,6 +180,12 @@ class ChromaVectorStore:
             logger.warning("add() called with empty documents")
             return
         
+        start_time = time.time()
+        
+        # Log operation metrics
+        log_counter("vector_store_add_attempt", labels={"collection": self.collection_name})
+        log_histogram("vector_store_batch_size", len(ids))
+        
         # Validate inputs
         if len(ids) != len(documents) or len(ids) != len(metadata):
             raise ValueError("ids, documents, and metadata must have same length")
@@ -174,10 +193,22 @@ class ChromaVectorStore:
         if isinstance(embeddings, np.ndarray):
             if embeddings.shape[0] != len(ids):
                 raise ValueError(f"embeddings shape {embeddings.shape} doesn't match {len(ids)} documents")
+            
+            # Store embedding dimension if not set
+            if self._embedding_dim is None and embeddings.shape[1] > 0:
+                self._embedding_dim = embeddings.shape[1]
+                log_gauge("vector_store_embedding_dim", self._embedding_dim)
+                logger.info(f"Detected embedding dimension: {self._embedding_dim}")
+            
             embeddings = embeddings.tolist()
+        
+        # Log document statistics
+        doc_lengths = [len(doc) for doc in documents]
+        log_histogram("vector_store_document_length", sum(doc_lengths) / len(doc_lengths))
         
         # Ensure metadata is properly formatted
         processed_metadata = []
+        metadata_sizes = []
         for i, meta in enumerate(metadata):
             # ChromaDB requires all metadata values to be strings, ints, or floats
             processed_meta = {}
@@ -190,6 +221,11 @@ class ChromaVectorStore:
                     # Convert other types to string
                     processed_meta[key] = str(value)
             processed_metadata.append(processed_meta)
+            metadata_sizes.append(len(json.dumps(processed_meta)))
+        
+        # Log metadata statistics
+        if metadata_sizes:
+            log_histogram("vector_store_metadata_size", sum(metadata_sizes) / len(metadata_sizes))
         
         try:
             self.collection.add(
@@ -201,16 +237,31 @@ class ChromaVectorStore:
             
             self._add_count += len(ids)
             self._last_operation_time = time.time()
-            logger.info(f"Added {len(ids)} documents to collection")
+            
+            # Log success metrics
+            elapsed = time.time() - start_time
+            log_counter("vector_store_documents_added", value=len(ids))
+            log_histogram("vector_store_add_time", elapsed)
+            log_gauge("vector_store_total_documents", self._add_count)
+            
+            logger.info(f"Added {len(ids)} documents to collection in {elapsed:.3f}s")
             
         except Exception as e:
-            logger.error(f"Failed to add to ChromaDB: {e}")
+            log_counter("vector_store_add_error", labels={"error": type(e).__name__})
+            logger.error(f"Failed to add to ChromaDB: {e}", exc_info=True)
             raise
     
+    @timeit("vector_store_search")
     def search(self, 
                query_embedding: np.ndarray, 
                top_k: int = 10) -> List[SearchResult]:
         """Basic search without citations (backward compatibility)."""
+        start_time = time.time()
+        
+        # Log search attempt
+        log_counter("vector_store_search_attempt", labels={"collection": self.collection_name})
+        log_histogram("vector_store_search_top_k", top_k)
+        
         if isinstance(query_embedding, np.ndarray):
             query_embedding = query_embedding.tolist()
         
@@ -222,21 +273,39 @@ class ChromaVectorStore:
             )
             
             search_results = []
+            scores = []
+            
             if results['ids'] and results['ids'][0]:
                 for i in range(len(results['ids'][0])):
+                    score = 1 - results['distances'][0][i]  # Convert distance to similarity
+                    scores.append(score)
                     search_results.append(SearchResult(
                         id=results['ids'][0][i],
-                        score=1 - results['distances'][0][i],  # Convert distance to similarity
+                        score=score,
                         document=results['documents'][0][i],
                         metadata=results['metadatas'][0][i] or {}
                     ))
             
+            # Log search metrics
+            elapsed = time.time() - start_time
+            log_histogram("vector_store_search_time", elapsed)
+            log_histogram("vector_store_search_results_count", len(search_results))
+            
+            if scores:
+                log_histogram("vector_store_search_avg_score", sum(scores) / len(scores))
+                log_histogram("vector_store_search_max_score", max(scores))
+                log_histogram("vector_store_search_min_score", min(scores))
+            
             self._search_count += 1
             self._last_operation_time = time.time()
+            log_gauge("vector_store_total_searches", self._search_count)
+            
+            logger.info(f"Search completed in {elapsed:.3f}s, found {len(search_results)} results")
             return search_results
             
         except Exception as e:
-            logger.error(f"Search failed: {e}")
+            log_counter("vector_store_search_error", labels={"error": type(e).__name__})
+            logger.error(f"Search failed: {e}", exc_info=True)
             return []
     
     def search_with_citations(self, 
@@ -352,10 +421,14 @@ class ChromaVectorStore:
         except Exception as e:
             logger.error(f"Failed to clear collection: {e}")
     
+    @timeit("vector_store_get_stats")
     def get_collection_stats(self) -> dict:
         """Get collection statistics."""
         try:
             count = self.collection.count()
+            
+            # Log collection statistics
+            log_gauge("vector_store_collection_size", count, labels={"collection": self.collection_name})
             
             # Get sample of metadata to show available fields
             sample_data = self.collection.peek(limit=1)
@@ -378,6 +451,10 @@ class ChromaVectorStore:
             # Try to get embedding dimension
             if sample_data['embeddings'] and sample_data['embeddings'][0]:
                 stats["embedding_dimension"] = len(sample_data['embeddings'][0])
+                self._embedding_dim = stats["embedding_dimension"]
+            
+            # Log comprehensive stats
+            logger.info(f"Collection stats: {count} documents, {len(metadata_fields)} metadata fields")
             
             return stats
         except Exception as e:

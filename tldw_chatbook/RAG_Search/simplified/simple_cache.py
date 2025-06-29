@@ -12,6 +12,9 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from collections import OrderedDict
 import logging
+import sys
+
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,13 @@ class SimpleRAGCache:
         self._hits = 0
         self._misses = 0
         self._evictions = 0
+        self._total_requests = 0
+        
+        # Log initialization
+        logger.info(f"Cache initialized: max_size={max_size}, ttl={ttl_seconds}s, enabled={enabled}")
+        log_gauge("cache_max_size", max_size)
+        log_gauge("cache_ttl_seconds", ttl_seconds)
+        log_counter("cache_initialized", labels={"enabled": str(enabled)})
     
     def _make_key(self, 
                   query: str, 
@@ -117,10 +127,14 @@ class SimpleRAGCache:
         if not self.enabled:
             return None
         
+        self._total_requests += 1
         key = self._make_key(query, search_type, top_k, filters)
+        log_counter("cache_request", labels={"type": search_type})
         
         if key not in self._cache:
             self._misses += 1
+            log_counter("cache_miss", labels={"type": search_type})
+            logger.debug(f"Cache miss for query: '{query[:50]}...'")
             return None
         
         entry = self._cache[key]
@@ -131,6 +145,9 @@ class SimpleRAGCache:
             # Expired
             del self._cache[key]
             self._misses += 1
+            log_counter("cache_expired", labels={"type": search_type})
+            log_histogram("cache_entry_expired_age_seconds", age)
+            logger.debug(f"Cache entry expired for query: '{query[:50]}...' (age: {age:.1f}s)")
             return None
         
         # Move to end (most recently used)
@@ -138,7 +155,15 @@ class SimpleRAGCache:
         entry.access()
         
         self._hits += 1
-        logger.debug(f"Cache hit for query: '{query}' (age: {age:.1f}s)")
+        log_counter("cache_hit", labels={"type": search_type})
+        log_histogram("cache_entry_age_seconds", age)
+        log_histogram("cache_entry_access_count", entry.access_count)
+        
+        # Update hit rate metric
+        hit_rate = self._hits / (self._hits + self._misses) if (self._hits + self._misses) > 0 else 0
+        log_gauge("cache_hit_rate", hit_rate)
+        
+        logger.debug(f"Cache hit for query: '{query[:50]}...' (age: {age:.1f}s, accesses: {entry.access_count})")
         
         return entry.value
     
@@ -169,8 +194,16 @@ class SimpleRAGCache:
         if len(self._cache) >= self.max_size and key not in self._cache:
             # Evict least recently used
             oldest_key = next(iter(self._cache))
+            evicted_entry = self._cache[oldest_key]
             del self._cache[oldest_key]
             self._evictions += 1
+            
+            # Log eviction details
+            log_counter("cache_eviction", labels={"type": search_type})
+            eviction_age = time.time() - evicted_entry.timestamp
+            log_histogram("cache_evicted_entry_age_seconds", eviction_age)
+            log_histogram("cache_evicted_entry_access_count", evicted_entry.access_count)
+            logger.debug(f"Evicted cache entry (age: {eviction_age:.1f}s, accesses: {evicted_entry.access_count})")
         
         # Store the entry
         entry = CacheEntry(
@@ -183,12 +216,26 @@ class SimpleRAGCache:
         # Move to end (most recently used)
         self._cache.move_to_end(key)
         
-        logger.debug(f"Cached results for query: '{query}' ({len(results)} results)")
+        # Log cache statistics
+        log_counter("cache_put", labels={"type": search_type})
+        log_histogram("cache_result_count", len(results))
+        log_histogram("cache_context_size", len(context))
+        log_gauge("cache_current_size", len(self._cache))
+        log_gauge("cache_eviction_count", self._evictions)
+        
+        # Estimate memory usage for this entry
+        entry_size = sys.getsizeof(results) + sys.getsizeof(context)
+        log_histogram("cache_entry_size_bytes", entry_size)
+        
+        logger.debug(f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_size} bytes)")
     
     def clear(self) -> None:
         """Clear all cache entries."""
+        size_before = len(self._cache)
         self._cache.clear()
-        logger.info("Cache cleared")
+        log_counter("cache_cleared")
+        log_gauge("cache_current_size", 0)
+        logger.info(f"Cache cleared ({size_before} entries removed)")
     
     def get_metrics(self) -> Dict[str, Any]:
         """
@@ -206,9 +253,9 @@ class SimpleRAGCache:
             if isinstance(entry.value, tuple) and len(entry.value) == 2:
                 results, context = entry.value
                 # Rough size estimate
-                size_bytes += len(str(results)) + len(context)
+                size_bytes += sys.getsizeof(results) + sys.getsizeof(context)
         
-        return {
+        metrics = {
             "enabled": self.enabled,
             "size": len(self._cache),
             "max_size": self.max_size,
@@ -217,9 +264,29 @@ class SimpleRAGCache:
             "evictions": self._evictions,
             "hit_rate": hit_rate,
             "ttl_seconds": self.ttl_seconds,
-            "size_bytes": size_bytes
+            "size_bytes": size_bytes,
+            "total_requests": self._total_requests
         }
+        
+        # Log key metrics
+        log_gauge("cache_hit_rate", hit_rate)
+        log_gauge("cache_memory_estimate_mb", size_bytes / (1024 * 1024))
+        log_gauge("cache_fill_ratio", len(self._cache) / self.max_size if self.max_size > 0 else 0)
+        
+        return metrics
     
+    def log_cache_efficiency(self):
+        """Log cache efficiency metrics - should be called periodically."""
+        metrics = self.get_metrics()
+        
+        logger.info(
+            f"Cache efficiency: hit_rate={metrics['hit_rate']:.2%}, "
+            f"size={metrics['size']}/{metrics['max_size']}, "
+            f"memory={metrics['size_bytes']/(1024*1024):.1f}MB, "
+            f"evictions={metrics['evictions']}"
+        )
+    
+    @timeit("cache_prune_expired")
     def prune_expired(self) -> int:
         """
         Remove expired entries.
@@ -232,16 +299,27 @@ class SimpleRAGCache:
         
         current_time = time.time()
         expired_keys = []
+        total_age = 0
+        total_accesses = 0
         
         for key, entry in self._cache.items():
-            if current_time - entry.timestamp > self.ttl_seconds:
+            age = current_time - entry.timestamp
+            if age > self.ttl_seconds:
                 expired_keys.append(key)
+                total_age += age
+                total_accesses += entry.access_count
         
         for key in expired_keys:
             del self._cache[key]
         
         if expired_keys:
-            logger.debug(f"Pruned {len(expired_keys)} expired cache entries")
+            avg_age = total_age / len(expired_keys)
+            avg_accesses = total_accesses / len(expired_keys)
+            log_counter("cache_entries_expired", value=len(expired_keys))
+            log_histogram("cache_pruned_avg_age_seconds", avg_age)
+            log_histogram("cache_pruned_avg_access_count", avg_accesses)
+            log_gauge("cache_current_size", len(self._cache))
+            logger.info(f"Pruned {len(expired_keys)} expired cache entries (avg age: {avg_age:.1f}s)")
         
         return len(expired_keys)
     

@@ -1,0 +1,165 @@
+/* ========================================
+ * FEATURES: Tools and Settings
+ * ======================================== 
+ * Tools and Settings tab
+ * ======================================== */
+
+/* --- Tools & Settings Tab --- */
+#tools_settings-window { /* Matches TAB_TOOLS_SETTINGS */
+    layout: horizontal; /* Main layout for this tab */
+}
+
+.tools-nav-pane {
+    dock: left;
+    width: 25%; /* Adjust as needed */
+    min-width: 25; /* Example min-width */
+    max-width: 60; /* Example max-width */
+    height: 100%;
+    background: $boost; /* Or $surface-lighten-1 */
+    padding: 1;
+    border-right: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.tools-nav-pane .ts-nav-button { /* Style for navigation buttons */
+    width: 100%;
+    margin-bottom: 1;
+    border: none; /* Cleaner look for nav buttons */
+    height: 3;
+}
+.tools-nav-pane .ts-nav-button:hover {
+    background: $accent 50%;
+}
+
+.tools-nav-pane .ts-nav-button.active-nav {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
+
+.tools-content-pane {
+    width: 1fr; /* Takes remaining horizontal space */
+    height: 100%;
+    padding: 1 2; /* Padding for the content area */
+    overflow-y: auto; /* If content within sub-views might scroll */
+}
+
+.ts-view-area { /* Class for individual content areas */
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: none; /* Hidden by default */
+}
+
+.ts-view-area.active {
+    display: block; /* Show when active */
+}
+
+/* Container height fixes */
+.general-settings-container {
+    height: 100%;
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.config-file-settings-container {
+    height: 100%;
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Settings form styling */
+.section-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+.section-description {
+    color: $text-muted;
+    margin-bottom: 2;
+    text-align: center;
+    text-style: italic;
+}
+
+.subsection-title {
+    text-style: bold;
+    color: $secondary;
+    margin: 2 0 1 0;
+}
+
+.settings-group {
+    margin-bottom: 2;
+    padding: 1;
+    background: $surface;
+    border: round $primary-background;
+    height: auto;
+}
+
+.settings-label {
+    margin-bottom: 1;
+    text-style: bold;
+}
+
+.settings-select, .settings-input {
+    width: 100%;
+    margin-bottom: 1;
+    min-height: 3;
+    height: auto;
+}
+
+.checkbox-group {
+    margin-bottom: 1;
+}
+
+.warning-text {
+    color: $warning;
+    margin-bottom: 1;
+    text-style: italic;
+}
+
+.settings-actions {
+    margin-top: 2;
+    layout: horizontal;
+    height: auto;
+    align: center middle;
+}
+
+.settings-actions Button {
+    margin: 0 1 0 0;
+}
+
+/* Configuration file settings specific */
+.config-file-settings-container {
+    height: 100%;
+    width: 100%;
+}
+
+.config-editor {
+    height: 1fr;
+    border: round $primary;
+    background: $panel;
+    margin-bottom: 1;
+}
+
+.config-button-container {
+    layout: horizontal;
+    height: auto;
+    margin-top: 1;
+    align: center middle;
+}
+
+.config-button-container Button {
+    margin: 0 1 0 0;
+}
+
+.tab-description {
+    color: $text-muted;
+    margin-bottom: 1;
+    text-style: italic;
+}

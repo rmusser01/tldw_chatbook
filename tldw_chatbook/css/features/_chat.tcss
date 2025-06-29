@@ -1,0 +1,105 @@
+/* ========================================
+ * FEATURES: Chat
+ * ======================================== 
+ * Chat tab specific styles
+ * ======================================== */
+
+/* --- Chat Window specific layouts --- */
+#chat-main-content {
+    layout: vertical;
+    height: 100%;
+    width: 1fr; /* This is KEY - it takes up the remaining horizontal space */
+}
+/* VerticalScroll for chat messages */
+#chat-log {
+    height: 1fr; /* Takes remaining space */
+    width: 100%;
+    /* border: round $surface; Optional: Add border to scroll area */
+    padding: 0 1; /* Padding around messages */
+}
+
+/* Input area styling (shared by chat and character) */
+#chat-input-area, #conv-char-input-area { /* Updated from #character-input-area */
+    height: auto;    /* Allow height to adjust */
+    max-height: 12;  /* Limit growth */
+    width: 100%;
+    align: left top; /* Align children to top-left */
+    padding: 1; /* Consistent padding */
+    border-top: round $surface;
+}
+/* Input widget styling (shared) */
+.chat-input { /* Targets TextArea */
+    width: 1fr;
+    height: auto;      /* Allow height to adjust */
+    max-height: 100%;  /* Don't overflow parent */
+    margin-right: 1; /* Space before button */
+    border: round $surface;
+}
+
+/* Send button styling (shared) */
+.send-button { /* Targets Button */
+    width: 2;
+    height: 3; /* Fixed height for consistency */
+    /* align-self: stretch; REMOVED */
+    margin-top: 0;
+    padding: 0; /* No padding for button */
+}
+
+.stop-button {
+    width: 2;
+    height: 3;
+    margin-top: 0;
+}
+
+/* Save Chat Button in chat-right-sidebar in Chat Tab */
+.save-chat-button { /* Class used in character_sidebar.py */
+    margin-top: 2;   /* Add 1 cell/unit of space above the button */
+    /*width: 100%;      Optional: make it full width like other sidebar buttons */
+}
+
+/* chat-right-sidebar Specific Styles */
+#chat-right-sidebar #chat-conversation-title-input { /* Title input */
+    /* width: 100%; (from .sidebar-input) */
+    /* margin-bottom: 1; (from .sidebar-input) */
+}
+
+#chat-right-sidebar .chat-keywords-textarea { /* Keywords TextArea specific class */
+    height: 4;  /* Or 3 to 5, adjust as preferred */
+    /* width: 100%; (from .sidebar-textarea) */
+    /* border: round $surface; (from .sidebar-textarea) */
+    /* margin-bottom: 1; (from .sidebar-textarea) */
+}
+
+/* Styling for the new "Save Details" button */
+#chat-right-sidebar .save-details-button {
+    margin-top: 1; /* Space above this button */
+    /* width: 100%;    Make it full width */
+}
+
+/* Ensure the Save Current Chat button also has clear styling if needed */
+#chat-right-sidebar .save-chat-button {
+    margin-top: 1; /* Ensure it has some space if it's after keywords */
+    /* width: 100%; */
+}
+
+/* Chat Sidebar - Prompts Section */
+#chat-prompts-collapsible Input,
+#chat-prompts-collapsible ListView,
+#chat-prompts-collapsible Button {
+    margin-bottom: 1; /* Consistent spacing */
+}
+#chat-prompt-list-view { /* ID for the prompt list in chat sidebar */
+    height: 8; /* Adjust as needed */
+    border: round $surface;
+    margin-bottom: 1;
+}
+.loaded-prompt-area { /* Container for loaded prompt details in chat sidebar */
+    margin-top: 1;
+    padding: 0 1;        /* Padding for content inside */
+    background: $surface; /* Slightly different background to group elements */
+    /* To get rounded corners for the area itself, apply a border style */
+    border: round $primary-background-lighten-1; /* Example: round border with a light color */
+                                               /* Or use 'round $surface' if you want it less distinct */
+                                               /* Or 'none' if you only want background and no explicit border */
+}
+/* End of Character Sidebar Specific Styles */

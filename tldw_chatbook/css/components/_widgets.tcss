@@ -1,0 +1,35 @@
+/* ========================================
+ * COMPONENTS: Widgets
+ * ======================================== 
+ * Miscellaneous reusable widgets
+ * ======================================== */
+
+#app-titlebar {
+    dock: top;
+    height: 1;                 /* single line */
+    background: $accent;       /* or any colour */
+    color: $text;
+    text-align: center;
+    text-style: bold;
+    padding: 0 1;
+}
+
+/* Reduce height of Collapsible headers */
+Collapsible > .collapsible--header {
+    height: 2;
+}
+
+/* Half height for RAG Settings collapsible header */
+#chat-rag-panel > .collapsible--header,
+#character-rag-panel > .collapsible--header {
+    height: 1;
+}
+
+.chat-system-prompt-styling {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    max-height: 10; /* Limit height */
+    border: round $surface;
+    margin-bottom: 1;
+}

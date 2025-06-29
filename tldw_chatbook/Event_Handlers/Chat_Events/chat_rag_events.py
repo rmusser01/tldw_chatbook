@@ -35,7 +35,7 @@ else:
 try:
     from tldw_chatbook.RAG_Search.simplified import (
         RAGService, create_config_for_collection, RAGConfig,
-        SearchResult, SearchResultWithCitations
+        SearchResult, SearchResultWithCitations, EmbeddingsService
     )
     RAG_SERVICES_AVAILABLE = True
 except ImportError as e:
@@ -57,6 +57,9 @@ except ImportError as e:
         pass
     
     class SearchResultWithCitations:
+        pass
+    
+    class EmbeddingsService:
         pass
 
 if TYPE_CHECKING:

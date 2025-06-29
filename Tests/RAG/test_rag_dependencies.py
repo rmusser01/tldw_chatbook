@@ -163,21 +163,35 @@ def check_rag_services() -> Dict[str, bool]:
         results['rag_events'] = False
         logger.warning(f"❌ RAG event handlers not available: {e}")
     
-    # Check if modular RAG is available
+    # Check if simplified RAG is available
     try:
-        from tldw_chatbook.RAG_Search.Services import RAGService, RAG_SERVICE_AVAILABLE
-        results['modular_rag'] = RAG_SERVICE_AVAILABLE
-        if RAG_SERVICE_AVAILABLE:
-            logger.success("✅ Modular RAG service available")
-        else:
-            logger.warning("❌ Modular RAG service not available")
-    except ImportError:
-        results['modular_rag'] = False
-        logger.warning("❌ Modular RAG service not found")
+        from tldw_chatbook.RAG_Search import (
+            RAGService,
+            EmbeddingsService,
+            ChunkingService,
+            create_rag_service
+        )
+        results['simplified_rag'] = True
+        logger.success("✅ Simplified RAG service available")
+        
+        # Check if we can create a RAG service
+        try:
+            from tldw_chatbook.RAG_Search import create_config_for_testing
+            test_config = create_config_for_testing()
+            test_service = create_rag_service(test_config)
+            results['rag_service_creation'] = True
+            logger.success("✅ RAG service creation successful")
+        except Exception as e:
+            results['rag_service_creation'] = False
+            logger.warning(f"⚠️  RAG service creation failed: {e}")
+            
+    except ImportError as e:
+        results['simplified_rag'] = False
+        logger.warning(f"❌ Simplified RAG service not available: {e}")
     
     # Check embeddings service
     try:
-        from tldw_chatbook.RAG_Search.Services import EmbeddingsService
+        from tldw_chatbook.RAG_Search import EmbeddingsService
         results['embeddings_service'] = True
         logger.success("✅ Embeddings service available")
     except ImportError:
@@ -186,12 +200,38 @@ def check_rag_services() -> Dict[str, bool]:
     
     # Check chunking service
     try:
-        from tldw_chatbook.RAG_Search.Services import ChunkingService
+        from tldw_chatbook.RAG_Search import ChunkingService
         results['chunking_service'] = True
         logger.success("✅ Chunking service available")
     except ImportError:
         results['chunking_service'] = False
         logger.warning("❌ Chunking service not available")
+    
+    # Check vector store options
+    try:
+        from tldw_chatbook.RAG_Search.simplified import (
+            ChromaVectorStore,
+            InMemoryVectorStore,
+            create_vector_store
+        )
+        results['vector_stores'] = True
+        logger.success("✅ Vector store implementations available")
+    except ImportError:
+        results['vector_stores'] = False
+        logger.warning("❌ Vector store implementations not available")
+    
+    # Check citation support
+    try:
+        from tldw_chatbook.RAG_Search.simplified import (
+            Citation,
+            CitationType,
+            SearchResultWithCitations
+        )
+        results['citations'] = True
+        logger.success("✅ Citation support available")
+    except ImportError:
+        results['citations'] = False
+        logger.warning("❌ Citation support not available")
     
     return results
 
@@ -201,10 +241,10 @@ def check_configuration() -> Dict[str, Any]:
     
     logger.info("\n=== Checking Configuration ===")
     
-    # Check environment variables
+    # Check environment variables (legacy)
     use_modular_rag = os.environ.get('USE_MODULAR_RAG', 'false').lower() in ('true', '1', 'yes')
     results['USE_MODULAR_RAG'] = use_modular_rag
-    logger.info(f"USE_MODULAR_RAG environment variable: {use_modular_rag}")
+    logger.info(f"USE_MODULAR_RAG environment variable (legacy): {use_modular_rag}")
     
     # Check config file
     config_path = Path.home() / ".config/tldw_cli/config.toml"
@@ -221,7 +261,8 @@ def check_configuration() -> Dict[str, Any]:
             rag_config = config.get('rag', {})
             if rag_config:
                 logger.info("   RAG configuration found:")
-                logger.info(f"   - use_modular_service: {rag_config.get('use_modular_service', False)}")
+                logger.info(f"   - use_simplified_rag: {rag_config.get('use_simplified_rag', True)}")
+                logger.info(f"   - vector_store_type: {rag_config.get('vector_store_type', 'chroma')}")
                 logger.info(f"   - batch_size: {rag_config.get('batch_size', 32)}")
                 results['rag_config'] = True
             else:
@@ -249,7 +290,9 @@ def print_summary(deps: Dict[str, bool], dbs: Dict[str, bool],
     
     full_rag_available = plain_rag_available and deps.get('embeddings_rag', False)
     
-    modular_rag_available = services.get('modular_rag', False)
+    simplified_rag_available = services.get('simplified_rag', False)
+    vector_stores_available = services.get('vector_stores', False)
+    citations_available = services.get('citations', False)
     
     logger.info("\nRAG Capabilities:")
     if plain_rag_available:
@@ -264,14 +307,21 @@ def print_summary(deps: Dict[str, bool], dbs: Dict[str, bool],
         if not deps.get('embeddings_rag', False):
             logger.info("   To enable: pip install tldw_chatbook[embeddings_rag]")
     
-    if modular_rag_available:
-        logger.success("✅ Modular RAG (new architecture): AVAILABLE")
-        if config.get('USE_MODULAR_RAG', False):
-            logger.info("   Status: ENABLED via environment variable")
+    if simplified_rag_available:
+        logger.success("✅ Simplified RAG (new architecture): AVAILABLE")
+        if services.get('rag_service_creation', False):
+            logger.info("   Service creation: SUCCESSFUL")
         else:
-            logger.info("   Status: DISABLED (set USE_MODULAR_RAG=true to enable)")
+            logger.warning("   Service creation: FAILED")
+        
+        if vector_stores_available:
+            logger.info("   Vector stores: ChromaDB, InMemory")
+        
+        if citations_available:
+            logger.info("   Citation support: AVAILABLE")
     else:
-        logger.info("ℹ️  Modular RAG: NOT AVAILABLE (optional)")
+        logger.info("ℹ️  Simplified RAG: NOT AVAILABLE")
+        logger.info("   This may indicate missing dependencies")
     
     # Reranking capabilities
     logger.info("\nReranking Capabilities:")

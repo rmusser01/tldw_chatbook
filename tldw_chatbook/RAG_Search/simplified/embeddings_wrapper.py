@@ -10,8 +10,11 @@ from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
 import logging
 import os
+import time
+import psutil
 
 from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +53,25 @@ class EmbeddingsServiceWrapper:
         self.device = device
         self._cache_size = cache_size
         
+        # Auto-detect device if not specified
+        if device is None:
+            import torch
+            if torch.cuda.is_available():
+                self.device = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self.device = "mps"
+            else:
+                self.device = "cpu"
+            logger.info(f"Auto-detected device: {self.device}")
+        
+        # Log API key usage (without revealing the key)
+        if api_key:
+            logger.info("Using provided API key for embeddings")
+        elif os.environ.get("OPENAI_API_KEY"):
+            logger.info("Using OPENAI_API_KEY from environment")
+        
         # Determine provider and model configuration
-        config_dict = self._build_config(model_name, device, api_key, base_url)
+        config_dict = self._build_config(model_name, self.device, api_key, base_url)
         
         try:
             # Initialize factory with our configuration
@@ -61,15 +81,23 @@ class EmbeddingsServiceWrapper:
                 idle_seconds=900,  # 15 minutes idle timeout
                 allow_dynamic_hf=True  # Allow loading HF models not in config
             )
-            logger.info(f"Initialized embeddings service with model: {model_name}")
+            logger.info(f"Initialized embeddings service with model: {model_name}, device: {self.device}, cache_size: {cache_size}")
+            
+            # Log initialization metrics
+            log_counter("embeddings_service_initialized", labels={"model": model_name, "device": self.device})
+            log_gauge("embeddings_cache_max_size", cache_size)
+            
         except Exception as e:
             logger.error(f"Failed to initialize embeddings service: {e}")
+            log_counter("embeddings_service_init_error", labels={"model": model_name, "error": type(e).__name__})
             raise
         
         # Metrics tracking
         self._embeddings_created = 0
         self._total_texts_processed = 0
         self._errors_count = 0
+        self._cache_hits = 0
+        self._cache_misses = 0
     
     def _build_config(self, model_name: str, device: Optional[str], 
                      api_key: Optional[str], base_url: Optional[str]) -> Dict[str, Any]:
@@ -132,6 +160,7 @@ class EmbeddingsServiceWrapper:
         logger.debug(f"Built embedding config: provider={provider}, model={model_path}")
         return config
     
+    @timeit("embeddings_create_operation")
     def create_embeddings(self, texts: List[str]) -> np.ndarray:
         """
         Create embeddings for texts using the configured model.
@@ -150,20 +179,61 @@ class EmbeddingsServiceWrapper:
             logger.warning("create_embeddings called with empty text list")
             return np.array([])
         
+        start_time = time.time()
+        
+        # Log batch details
+        log_histogram("embeddings_batch_size", len(texts))
+        logger.info(f"Creating embeddings for batch of {len(texts)} texts")
+        
+        # Get memory usage before
+        process = psutil.Process()
+        memory_before = process.memory_info().rss / (1024 * 1024)  # MB
+        
         try:
+            # Check if embeddings are cached (simplified check)
+            # In reality, the factory handles caching internally
+            # This is a simplified representation for metrics
+            cache_key = str(hash(tuple(texts[:5])))  # Sample for cache detection
+            is_cached = hasattr(self.factory, '_cache') and cache_key in getattr(self.factory, '_cache', {})
+            
+            if is_cached:
+                self._cache_hits += 1
+                log_counter("embeddings_cache_hit")
+                logger.debug(f"Cache hit for embedding batch")
+            else:
+                self._cache_misses += 1
+                log_counter("embeddings_cache_miss")
+                logger.debug(f"Cache miss for embedding batch")
+            
             # Use the factory's embed method
             embeddings = self.factory.embed(texts, as_list=False)
+            
+            # Get memory usage after
+            memory_after = process.memory_info().rss / (1024 * 1024)  # MB
+            memory_delta = memory_after - memory_before
             
             # Update metrics
             self._embeddings_created += 1
             self._total_texts_processed += len(texts)
             
-            logger.debug(f"Created embeddings for {len(texts)} texts, shape: {embeddings.shape}")
+            # Log performance metrics
+            elapsed_time = time.time() - start_time
+            log_histogram("embeddings_creation_time", elapsed_time)
+            log_gauge("embeddings_model_memory_mb", memory_after)
+            log_histogram("embeddings_memory_delta_mb", memory_delta)
+            log_counter("embeddings_texts_processed", value=len(texts))
+            
+            # Log text length statistics
+            text_lengths = [len(text) for text in texts]
+            log_histogram("embeddings_text_length_chars", sum(text_lengths) / len(text_lengths))
+            
+            logger.info(f"Created embeddings for {len(texts)} texts in {elapsed_time:.3f}s, shape: {embeddings.shape}, memory delta: {memory_delta:.1f}MB")
             return embeddings
             
         except Exception as e:
             self._errors_count += 1
-            logger.error(f"Failed to create embeddings: {e}")
+            log_counter("embeddings_creation_error", labels={"error": type(e).__name__})
+            logger.error(f"Failed to create embeddings: {e}", exc_info=True)
             raise RuntimeError(f"Embedding creation failed: {e}") from e
     
     async def create_embeddings_async(self, texts: List[str]) -> np.ndarray:
@@ -176,6 +246,10 @@ class EmbeddingsServiceWrapper:
             logger.warning("create_embeddings_async called with empty text list")
             return np.array([])
         
+        start_time = time.time()
+        log_histogram("embeddings_async_batch_size", len(texts))
+        logger.info(f"Creating embeddings asynchronously for batch of {len(texts)} texts")
+        
         try:
             # Use the factory's async embed method
             embeddings = await self.factory.async_embed(texts, as_list=False)
@@ -184,12 +258,18 @@ class EmbeddingsServiceWrapper:
             self._embeddings_created += 1
             self._total_texts_processed += len(texts)
             
-            logger.debug(f"Created embeddings asynchronously for {len(texts)} texts")
+            # Log performance metrics
+            elapsed_time = time.time() - start_time
+            log_histogram("embeddings_async_creation_time", elapsed_time)
+            log_counter("embeddings_async_texts_processed", value=len(texts))
+            
+            logger.info(f"Created embeddings asynchronously for {len(texts)} texts in {elapsed_time:.3f}s")
             return embeddings
             
         except Exception as e:
             self._errors_count += 1
-            logger.error(f"Failed to create embeddings asynchronously: {e}")
+            log_counter("embeddings_async_creation_error", labels={"error": type(e).__name__})
+            logger.error(f"Failed to create embeddings asynchronously: {e}", exc_info=True)
             raise RuntimeError(f"Async embedding creation failed: {e}") from e
     
     def create_embedding(self, text: str) -> np.ndarray:
@@ -221,6 +301,7 @@ class EmbeddingsServiceWrapper:
             logger.warning("Could not determine embedding dimension")
             return None
     
+    @timeit("embeddings_prefetch_models")
     def prefetch_model(self, model_ids: Optional[List[str]] = None):
         """
         Prefetch and cache models for faster first-use.
@@ -231,14 +312,36 @@ class EmbeddingsServiceWrapper:
         if model_ids is None:
             model_ids = ["default"]
         
+        # Get memory before loading
+        process = psutil.Process()
+        memory_before = process.memory_info().rss / (1024 * 1024)  # MB
+        
         try:
+            start_time = time.time()
             self.factory.prefetch(model_ids)
-            logger.info(f"Prefetched models: {model_ids}")
+            load_time = time.time() - start_time
+            
+            # Get memory after loading
+            memory_after = process.memory_info().rss / (1024 * 1024)  # MB
+            memory_used = memory_after - memory_before
+            
+            # Log metrics
+            log_histogram("embeddings_model_load_time", load_time)
+            log_histogram("embeddings_model_memory_usage_mb", memory_used)
+            log_counter("embeddings_models_prefetched", value=len(model_ids))
+            
+            logger.info(f"Prefetched models: {model_ids} in {load_time:.2f}s, memory used: {memory_used:.1f}MB")
         except Exception as e:
-            logger.error(f"Failed to prefetch models: {e}")
+            log_counter("embeddings_prefetch_error", labels={"error": type(e).__name__})
+            logger.error(f"Failed to prefetch models: {e}", exc_info=True)
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get service metrics for monitoring."""
+        # Calculate cache hit rate
+        total_cache_requests = self._cache_hits + self._cache_misses
+        cache_hit_rate = (self._cache_hits / total_cache_requests 
+                         if total_cache_requests > 0 else 0.0)
+        
         metrics = {
             "model_name": self.model_name,
             "device": self.device,
@@ -247,8 +350,16 @@ class EmbeddingsServiceWrapper:
             "total_texts_processed": self._total_texts_processed,
             "errors_count": self._errors_count,
             "error_rate": (self._errors_count / self._embeddings_created 
-                          if self._embeddings_created > 0 else 0.0)
+                          if self._embeddings_created > 0 else 0.0),
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+            "cache_hit_rate": cache_hit_rate
         }
+        
+        # Log cache efficiency metrics
+        log_gauge("embeddings_cache_hit_rate", cache_hit_rate)
+        log_gauge("embeddings_total_texts_processed", self._total_texts_processed)
+        log_gauge("embeddings_error_rate", metrics["error_rate"])
         
         # Try to get embedding dimension
         dim = self.get_embedding_dimension()

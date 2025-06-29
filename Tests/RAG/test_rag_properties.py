@@ -8,8 +8,9 @@ import tempfile
 from pathlib import Path
 import shutil
 
-from tldw_chatbook.RAG_Search.Services.cache_service import LRUCache, CacheService
-from tldw_chatbook.RAG_Search.Services.chunking_service import ChunkingService
+# Import from the new simplified implementation
+from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
+from tldw_chatbook.RAG_Search import ChunkingService
 
 # Check if NLTK is available and properly configured
 try:
@@ -28,86 +29,95 @@ except ImportError:
 
 
 @pytest.mark.requires_rag_deps
-class TestLRUCacheProperties:
-    """Property-based tests for LRU cache"""
+class TestSimpleRAGCacheProperties:
+    """Property-based tests for SimpleRAGCache"""
     
     @given(
-        max_size=st.integers(min_value=1, max_value=100),
-        operations=st.lists(
+        embeddings_data=st.lists(
             st.tuples(
-                st.sampled_from(['put', 'get']),
-                st.text(min_size=1, max_size=10),  # keys
-                st.text(min_size=1, max_size=100)  # values
+                st.text(min_size=1, max_size=50),  # text
+                st.lists(st.floats(min_value=-1, max_value=1, allow_nan=False, allow_infinity=False), 
+                        min_size=3, max_size=10)  # embedding
             ),
             min_size=0,
-            max_size=200
+            max_size=50
         )
     )
-    def test_cache_size_never_exceeds_max(self, max_size, operations):
-        """Cache size should never exceed max_size"""
-        cache = LRUCache(max_size=max_size)
-        
-        for op, key, value in operations:
-            if op == 'put':
-                cache.put(key, value)
-            else:  # get
-                cache.get(key)
+    def test_embedding_cache_consistency(self, embeddings_data):
+        """Embeddings should be cached and retrieved correctly"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache = SimpleRAGCache(cache_dir=Path(temp_dir), max_memory_mb=100)
             
-            # Invariant: size never exceeds max_size
-            assert cache.size() <= max_size
+            # Cache embeddings
+            text_to_embedding = {}
+            for text, embedding in embeddings_data:
+                cache.cache_embedding(text, embedding)
+                text_to_embedding[text] = embedding
+            
+            # Retrieve and verify
+            for text, expected_embedding in text_to_embedding.items():
+                cached = cache.get_embedding(text)
+                assert cached is not None
+                assert len(cached) == len(expected_embedding)
+                # Compare with tolerance for float precision
+                for i in range(len(cached)):
+                    assert abs(cached[i] - expected_embedding[i]) < 1e-6
     
     @given(
-        key=st.text(min_size=1, max_size=50),
-        value=st.text(min_size=1, max_size=100)
-    )
-    def test_put_then_get_returns_value(self, key, value):
-        """Putting a value and then getting it should return the same value"""
-        cache = LRUCache(max_size=10)
-        
-        cache.put(key, value)
-        retrieved = cache.get(key)
-        
-        assert retrieved == value
-    
-    @given(
-        keys=st.lists(st.text(min_size=1, max_size=10), min_size=3, max_size=10, unique=True)
-    )
-    def test_lru_eviction_order(self, keys):
-        """Test that LRU eviction follows correct order"""
-        cache = LRUCache(max_size=2)  # Small cache to force eviction
-        
-        # Put first 3 items
-        for i, key in enumerate(keys[:3]):
-            cache.put(key, f"value_{i}")
-        
-        # First key should be evicted
-        assert cache.get(keys[0]) is None
-        assert cache.get(keys[1]) is not None
-        assert cache.get(keys[2]) is not None
-    
-    @given(
-        initial_data=st.dictionaries(
-            st.text(min_size=1, max_size=10),
-            st.text(min_size=1, max_size=50),
-            min_size=0,
-            max_size=20
+        batch_data=st.lists(
+            st.tuples(
+                st.text(min_size=1, max_size=50),
+                st.lists(st.floats(min_value=-1, max_value=1, allow_nan=False, allow_infinity=False),
+                        min_size=3, max_size=10)
+            ),
+            min_size=1,
+            max_size=20,
+            unique_by=lambda x: x[0]  # Unique texts
         )
     )
-    def test_clear_removes_all_items(self, initial_data):
-        """Clear should remove all items from cache"""
-        cache = LRUCache(max_size=100)
-        
-        # Add all data
-        for key, value in initial_data.items():
-            cache.put(key, value)
-        
-        # Clear cache
-        cache.clear()
-        
-        # All items should be gone
-        assert cache.size() == 0
-        for key in initial_data:
-            assert cache.get(key) is None
+    def test_batch_operations(self, batch_data):
+        """Batch operations should be consistent with individual operations"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache = SimpleRAGCache(cache_dir=Path(temp_dir))
+            
+            # Cache batch
+            cache.cache_embeddings_batch(batch_data)
+            
+            # Get batch
+            texts = [text for text, _ in batch_data]
+            cached, uncached = cache.get_embeddings_batch(texts)
+            
+            # All should be cached
+            assert len(uncached) == 0
+            assert len(cached) == len(texts)
+            
+            # Values should match
+            for text, embedding in batch_data:
+                assert text in cached
+                cached_embedding = cached[text]
+                assert len(cached_embedding) == len(embedding)
+                for i in range(len(embedding)):
+                    assert abs(cached_embedding[i] - embedding[i]) < 1e-6
+    
+    @given(
+        texts=st.lists(st.text(min_size=1, max_size=50), min_size=0, max_size=30)
+    )
+    def test_clear_cache(self, texts):
+        """Clear should remove all cached items"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache = SimpleRAGCache(cache_dir=Path(temp_dir))
+            
+            # Cache some embeddings
+            for text in texts:
+                embedding = [0.1] * 10  # Dummy embedding
+                cache.cache_embedding(text, embedding)
+            
+            # Clear cache
+            cache.clear()
+            
+            # Nothing should be cached
+            for text in texts:
+                assert cache.get_embedding(text) is None
 
 
 @pytest.mark.requires_rag_deps
@@ -124,7 +134,8 @@ class TestChunkingServiceProperties:
         assume(chunk_overlap < chunk_size)
         
         service = ChunkingService()
-        chunks = service._chunk_by_words(text, chunk_size, chunk_overlap)
+        # The new service uses chunk_text method
+        chunks = service.chunk_text(text, chunk_size, chunk_overlap, method="words")
         
         if not text.strip():
             assert len(chunks) == 0
@@ -162,7 +173,8 @@ class TestChunkingServiceProperties:
             text = "This is a test sentence. Here is another one. And a third."
         
         service = ChunkingService()
-        chunks = service._chunk_by_sentences(text, chunk_size, overlap_sentences=1)
+        # The new service uses chunk_text method with sentences
+        chunks = service.chunk_text(text, chunk_size, chunk_overlap=50, method="sentences")
         
         # Each chunk should end with sentence boundary or be the last chunk
         for i, chunk in enumerate(chunks):
@@ -188,7 +200,16 @@ class TestChunkingServiceProperties:
         assume(chunk_overlap < chunk_size)
         
         service = ChunkingService()
-        chunks = service.chunk_document(doc, chunk_size, chunk_overlap)
+        # The new service expects just text, so we'll adapt
+        chunks = service.chunk_text(doc['content'], chunk_size, chunk_overlap)
+        
+        # Add document metadata to chunks
+        for i, chunk in enumerate(chunks):
+            chunk['chunk_id'] = f"{doc['id']}_chunk_{i}"
+            chunk['chunk_index'] = i
+            chunk['document_id'] = doc['id']
+            chunk['document_title'] = doc['title']
+            chunk['document_type'] = doc['type']
         
         for i, chunk in enumerate(chunks):
             # Required fields
@@ -214,14 +235,7 @@ class TestChunkingServiceProperties:
     def test_short_text_single_chunk(self, text, chunk_size):
         """Text shorter than chunk_size should produce at most one chunk"""
         service = ChunkingService()
-        doc = {
-            'id': 'test',
-            'title': 'Test',
-            'content': text,
-            'type': 'test'
-        }
-        
-        chunks = service.chunk_document(doc, chunk_size, 10)
+        chunks = service.chunk_text(text, chunk_size, 10)
         
         if text.strip():
             assert len(chunks) == 1
@@ -235,16 +249,17 @@ class TestChunkingServiceProperties:
 
 
 @pytest.mark.requires_rag_deps
-class TestCacheServiceProperties:
-    """Property-based tests for cache service"""
+class TestSimpleRAGCacheQueryProperties:
+    """Property-based tests for query caching in SimpleRAGCache"""
     
     @given(
         queries=st.lists(
             st.tuples(
                 st.text(min_size=1, max_size=50),  # query
-                st.dictionaries(  # params
+                st.dictionaries(  # results as simple dicts
                     st.text(min_size=1, max_size=10),
-                    st.one_of(st.text(max_size=20), st.integers(), st.booleans()),
+                    st.text(max_size=50),
+                    min_size=1,
                     max_size=5
                 )
             ),
@@ -253,123 +268,174 @@ class TestCacheServiceProperties:
         )
     )
     @settings(max_examples=50, deadline=1000)
-    def test_query_cache_consistency(self, queries):
-        """Query cache should return consistent results"""
+    def test_search_result_caching(self, queries):
+        """Search results should be cached and retrieved correctly"""
         with tempfile.TemporaryDirectory() as temp_dir:
-            cache_service = CacheService(Path(temp_dir))
+            cache = SimpleRAGCache(cache_dir=Path(temp_dir))
             
-            # Cache some queries
+            # Cache some search results
             cached_data = {}
-            for query, params in queries:
-                results = [{"id": i, "query": query} for i in range(3)]
-                context = f"Context for {query}"
+            for query, result_dict in queries:
+                # Create a simple search result
+                results = [{"id": f"doc_{i}", "score": 0.9 - i*0.1, "text": text} 
+                          for i, (key, text) in enumerate(result_dict.items())]
                 
-                cache_service.cache_query_result(query, params, results, context)
-                cached_data[(query, str(sorted(params.items())))] = (results, context)
+                cache.cache_search_results(query, results)
+                cached_data[query] = results
             
             # Retrieve and verify
-            for query, params in queries:
-                retrieved = cache_service.get_query_result(query, params)
-                expected_key = (query, str(sorted(params.items())))
+            for query in set(q for q, _ in queries):  # Unique queries
+                retrieved = cache.get_search_results(query)
                 
-                if expected_key in cached_data:
-                    expected = cached_data[expected_key]
-                    assert retrieved == expected
+                if query in cached_data:
+                    expected = cached_data[query]
+                    assert retrieved is not None
+                    assert len(retrieved) == len(expected)
+                    # Compare results
+                    for i, (ret, exp) in enumerate(zip(retrieved, expected)):
+                        assert ret["id"] == exp["id"]
+                        assert abs(ret["score"] - exp["score"]) < 1e-6
+                        assert ret["text"] == exp["text"]
     
     @given(
-        embeddings_data=st.lists(
-            st.tuples(
-                st.text(min_size=1, max_size=50),  # text
-                st.lists(st.floats(min_value=-1, max_value=1, allow_nan=False, allow_infinity=False), min_size=3, max_size=10)  # embedding
-            ),
-            min_size=0,
-            max_size=20
-        )
+        max_memory_mb=st.integers(min_value=10, max_value=500),
+        num_embeddings=st.integers(min_value=0, max_value=100)
     )
-    @settings(max_examples=50, deadline=1000)
-    def test_embedding_cache_batch_operations(self, embeddings_data):
-        """Batch embedding operations should be consistent"""
+    def test_memory_management(self, max_memory_mb, num_embeddings):
+        """Cache should respect memory limits"""
         with tempfile.TemporaryDirectory() as temp_dir:
-            cache_service = CacheService(Path(temp_dir))
+            cache = SimpleRAGCache(cache_dir=Path(temp_dir), max_memory_mb=max_memory_mb)
             
-            # Cache embeddings
-            cache_service.cache_embeddings_batch(embeddings_data)
+            # Generate embeddings of known size
+            embedding_size = 384  # Common embedding dimension
+            bytes_per_embedding = embedding_size * 4  # float32
             
-            # Retrieve as batch
-            texts = [text for text, _ in embeddings_data]
-            cached, uncached = cache_service.get_embeddings_batch(texts)
+            # Add embeddings
+            for i in range(num_embeddings):
+                text = f"test_text_{i}"
+                embedding = [float(i % 10) / 10] * embedding_size
+                cache.cache_embedding(text, embedding)
             
-            # Handle duplicate texts in embeddings_data
-            unique_texts = {}
-            for text, embedding in embeddings_data:
-                unique_texts[text] = embedding
+            # Check that memory usage is tracked
+            stats = cache.get_stats()
+            assert 'memory_usage_mb' in stats
+            assert 'cache_size' in stats
             
-            # All unique texts should be cached
-            assert len(uncached) == 0
-            assert len(cached) == len(unique_texts)
-            
-            # Values should match
-            for text, embedding in unique_texts.items():
-                assert cached[text] == embedding
+            # Memory usage should not exceed limit significantly
+            # (allow some overhead for data structures)
+            if stats['memory_usage_mb'] > 0:
+                assert stats['memory_usage_mb'] <= max_memory_mb * 1.5
 
 
 @pytest.mark.requires_rag_deps
-class CacheStateMachine(RuleBasedStateMachine):
-    """Stateful testing for cache operations"""
+class SimpleRAGCacheStateMachine(RuleBasedStateMachine):
+    """Stateful testing for SimpleRAGCache operations"""
     
     def __init__(self):
         super().__init__()
         self.temp_dir = tempfile.mkdtemp()
-        self.cache = CacheService(Path(self.temp_dir))
-        self.stored_data = {}
+        self.cache = SimpleRAGCache(cache_dir=Path(self.temp_dir))
+        self.stored_embeddings = {}
+        self.stored_searches = {}
     
     def teardown(self):
         """Cleanup temp directory"""
         shutil.rmtree(self.temp_dir)
     
-    keys = Bundle('keys')
+    embedding_keys = Bundle('embedding_keys')
+    search_keys = Bundle('search_keys')
     
     @rule(
-        target=keys,
+        target=embedding_keys,
         key=st.text(min_size=1, max_size=20),
-        value=st.lists(st.floats(allow_nan=False, allow_infinity=False), min_size=3, max_size=5)
+        value=st.lists(st.floats(min_value=-1, max_value=1, allow_nan=False, allow_infinity=False), 
+                      min_size=3, max_size=5)
     )
     def cache_embedding(self, key, value):
         """Cache an embedding"""
         self.cache.cache_embedding(key, value)
-        self.stored_data[key] = value
+        self.stored_embeddings[key] = value
         return key
     
-    @rule(key=keys)
+    @rule(key=embedding_keys)
     def get_embedding(self, key):
         """Get a cached embedding"""
         result = self.cache.get_embedding(key)
-        if key in self.stored_data:
-            assert result == self.stored_data[key]
+        if key in self.stored_embeddings:
+            assert result is not None
+            expected = self.stored_embeddings[key]
+            assert len(result) == len(expected)
+            for i in range(len(result)):
+                assert abs(result[i] - expected[i]) < 1e-6
         else:
             assert result is None
     
     @rule()
     def clear_all(self):
         """Clear all caches"""
-        self.cache.clear_all()
-        self.stored_data.clear()
+        self.cache.clear()
+        self.stored_embeddings.clear()
+        self.stored_searches.clear()
+    
+    @rule(
+        target=search_keys,
+        query=st.text(min_size=1, max_size=50),
+        results=st.lists(
+            st.fixed_dictionaries({
+                'id': st.text(min_size=1, max_size=10),
+                'score': st.floats(min_value=0, max_value=1),
+                'text': st.text(min_size=1, max_size=100)
+            }),
+            min_size=1,
+            max_size=5
+        )
+    )
+    def cache_search_results(self, query, results):
+        """Cache search results"""
+        self.cache.cache_search_results(query, results)
+        self.stored_searches[query] = results
+        return query
+    
+    @rule(key=search_keys)
+    def get_search_results(self, key):
+        """Get cached search results"""
+        result = self.cache.get_search_results(key)
+        if key in self.stored_searches:
+            assert result is not None
+            expected = self.stored_searches[key]
+            assert len(result) == len(expected)
+            for i, (r, e) in enumerate(zip(result, expected)):
+                assert r['id'] == e['id']
+                assert abs(r['score'] - e['score']) < 1e-6
+                assert r['text'] == e['text']
+        else:
+            assert result is None
+    
+    @invariant()
+    def cache_consistency(self):
+        """Cache should always return consistent data"""
+        # Check all stored embeddings
+        for key, value in self.stored_embeddings.items():
+            cached = self.cache.get_embedding(key)
+            if cached is not None:
+                assert len(cached) == len(value)
+                for i in range(len(cached)):
+                    assert abs(cached[i] - value[i]) < 1e-6
+        
+        # Check all stored searches
+        for query, results in self.stored_searches.items():
+            cached = self.cache.get_search_results(query)
+            if cached is not None:
+                assert len(cached) == len(results)
     
     @invariant()
     def stats_are_non_negative(self):
         """Cache statistics should never be negative"""
-        stats = self.cache.get_statistics()
-        assert stats['total_hits'] >= 0
-        assert stats['total_misses'] >= 0
-        assert 0 <= stats['hit_rate'] <= 1
-    
-    @invariant()
-    def cache_sizes_match(self):
-        """Internal cache sizes should be consistent"""
-        assert self.cache.embedding_cache.size() >= 0
-        assert self.cache.query_cache.size() >= 0
+        stats = self.cache.get_stats()
+        assert stats['cache_size'] >= 0
+        assert stats['memory_usage_mb'] >= 0
 
 
 # Test the state machine
-TestCacheStateMachine = CacheStateMachine.TestCase
-TestCacheStateMachine.settings = settings(max_examples=100, deadline=5000, stateful_step_count=50)
+TestSimpleRAGCacheStateMachine = SimpleRAGCacheStateMachine.TestCase
+TestSimpleRAGCacheStateMachine.settings = settings(max_examples=100, deadline=5000, stateful_step_count=50)
