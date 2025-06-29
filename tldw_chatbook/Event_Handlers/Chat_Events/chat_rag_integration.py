@@ -14,7 +14,7 @@ from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 # Try to import the simplified RAG service
 try:
-    from ...RAG_Search.Services.simplified import (
+    from tldw_chatbook.RAG_Search.simplified import (
         RAGService, create_config_for_collection, RAGConfig
     )
     RAG_SERVICE_AVAILABLE = True

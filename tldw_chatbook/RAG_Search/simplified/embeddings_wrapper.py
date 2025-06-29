@@ -11,7 +11,7 @@ from pathlib import Path
 import logging
 import os
 
-from ....Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
+from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
 
 logger = logging.getLogger(__name__)
 

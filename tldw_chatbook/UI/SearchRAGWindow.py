@@ -46,7 +46,7 @@ except ImportError as e:
         raise ImportError("Hybrid RAG search not available - missing dependencies")
 
 try:
-    from ..RAG_Search.Services.simplified import (
+    from tldw_chatbook.RAG_Search.simplified import (
         RAGService, create_config_for_collection, RAGConfig, IndexingResult
     )
     RAG_SERVICES_AVAILABLE = True

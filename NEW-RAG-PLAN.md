@@ -3012,7 +3012,7 @@ Sample search results showed relevant document retrieval with confidence scores 
 ### Usage Example
 
 ```python
-from tldw_chatbook.RAG_Search.Services.simplified import (
+from tldw_chatbook.RAG_Search.simplified import (
     RAGService, create_config_for_testing
 )
 

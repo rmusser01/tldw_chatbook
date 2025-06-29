@@ -33,7 +33,7 @@ else:
 
 # Conditional imports for RAG services
 try:
-    from ...RAG_Search.Services.simplified import (
+    from tldw_chatbook.RAG_Search.simplified import (
         RAGService, create_config_for_collection, RAGConfig,
         SearchResult, SearchResultWithCitations
     )

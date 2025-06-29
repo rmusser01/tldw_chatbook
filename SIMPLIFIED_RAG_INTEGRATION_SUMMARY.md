@@ -54,8 +54,9 @@ chunks = chunking_service.chunk_text(content)
 ```
 
 ### After (Simplified)
+
 ```python
-from tldw_chatbook.RAG_Search.Services.simplified import RAGService, create_config_for_collection
+from tldw_chatbook.RAG_Search.simplified import RAGService, create_config_for_collection
 
 config = create_config_for_collection("media")
 rag_service = RAGService(config)
