@@ -60,7 +60,7 @@ data_dir = "{}"
     app.API_IMPORTS_SUCCESSFUL = True
     
     # Initialize real databases
-    app.media_db = MediaDatabase(str(media_db_path))
+    app.media_db = MediaDatabase(str(media_db_path), "test_client_id")
     app.chachanotes_db = CharactersRAGDB(str(chachanotes_db_path), "test_user")
     
     # Set up the notes service to use real database
@@ -74,25 +74,23 @@ data_dir = "{}"
     app.notes_user_id = "test_user"
     
     # Insert test data into media database
-    app.media_db.insert_media_item(
+    app.media_db.add_media_with_keywords(
         title='Test Media One',
         content='Content for one.',
         media_type='article',
         author='Author One',
         url='http://example.com/one',
-        keywords=['test', 'one'],
-        notes='Notes for one',
-        publication_date='2023-01-01'
+        keywords='test,one',
+        ingestion_date='2023-01-01'
     )
-    app.media_db.insert_media_item(
+    app.media_db.add_media_with_keywords(
         title='Test Media Two',
         content='Content for two.',
         media_type='video',
         author='Author Two',
         url='http://example.com/two',
-        keywords=['test', 'two'],
-        notes='Notes for two',
-        publication_date='2023-01-02'
+        keywords='test,two',
+        ingestion_date='2023-01-02'
     )
     
     yield app
@@ -100,7 +98,7 @@ data_dir = "{}"
     # Cleanup
     if hasattr(app, '_media_sidebar_search_timer') and app._media_sidebar_search_timer:
         app._media_sidebar_search_timer.cancel()
-    app.media_db.close()
+    app.media_db.close_connection()
     app.chachanotes_db.close()
 
 

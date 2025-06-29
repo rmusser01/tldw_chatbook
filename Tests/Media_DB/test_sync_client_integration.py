@@ -161,7 +161,7 @@ def client_db():
     tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
     db = MediaDatabase(db_path=tmp.name, client_id="client_test_integration")
     yield db
-    db.close()
+    db.close_connection()
     os.unlink(tmp.name)
 
 
@@ -249,7 +249,7 @@ class TestClientSyncEngineIntegration:
         assert keywords[0]['keyword'] == "test_keyword"
         
         # Cleanup
-        client2_db.close()
+        client2_db.close_connection()
         os.unlink(tmp_db.name)
         os.unlink(tmp_state.name)
     
@@ -299,7 +299,7 @@ class TestClientSyncEngineIntegration:
         assert final_keywords[0]['keyword'] in ["client1_update", "client2_update"]
         
         # Cleanup
-        client2_db.close()
+        client2_db.close_connection()
         os.unlink(tmp_db.name)
         os.unlink(tmp_state.name)
     
@@ -339,7 +339,7 @@ class TestClientSyncEngineIntegration:
         assert len(media_items) == 1
         
         # Cleanup
-        client2_db.close()
+        client2_db.close_connection()
         os.unlink(tmp_db.name)
         os.unlink(tmp_state.name)
     
@@ -411,7 +411,7 @@ class TestClientSyncEngineIntegration:
         assert keywords[0]['keyword'] == "idempotent_test"
         
         # Cleanup
-        client2_db.close()
+        client2_db.close_connection()
         os.unlink(tmp_db.name)
         os.unlink(tmp_state.name)
 
@@ -462,6 +462,6 @@ class TestSyncEnginePerformance:
         assert len(keywords) == num_items
         
         # Cleanup
-        client2_db.close()
+        client2_db.close_connection()
         os.unlink(tmp_db.name)
         os.unlink(tmp_state.name)

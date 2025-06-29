@@ -63,7 +63,7 @@ class TestMockedChatAPIs:
         assert call_args[1]['json']['model'] == 'gpt-3.5-turbo'
         assert call_args[1]['json']['messages'] == mock_messages
     
-    @patch('httpx.post')
+    @patch('requests.Session.post')
     def test_anthropic_chat_mocked(self, mock_post, mock_messages):
         """Test Anthropic chat with mocked response."""
         # Setup mock
@@ -82,7 +82,8 @@ class TestMockedChatAPIs:
         )
         
         # Verify
-        assert result == "This is a test response from Anthropic."
+        assert isinstance(result, dict)
+        assert result["choices"][0]["message"]["content"] == "This is a test response from Anthropic."
         mock_post.assert_called_once()
         
         # Check headers
@@ -137,7 +138,7 @@ class TestMockedChatAPIs:
         
         assert content == ["Hello", " world"]
     
-    @patch('httpx.post')
+    @patch('requests.Session.post')
     def test_api_error_handling(self, mock_post):
         """Test error handling for API failures."""
         # Test 401 Unauthorized
@@ -269,7 +270,7 @@ class TestMockedStreamingAPIs:
         
         assert "".join(content) == "The answer is 42."
     
-    @patch('httpx.Client')
+    @patch('requests.Session')
     def test_streaming_error_handling(self, mock_client_class):
         """Test error handling during streaming."""
         # Setup

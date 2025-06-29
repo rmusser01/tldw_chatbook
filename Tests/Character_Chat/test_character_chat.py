@@ -15,7 +15,6 @@ import base64
 import io
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo

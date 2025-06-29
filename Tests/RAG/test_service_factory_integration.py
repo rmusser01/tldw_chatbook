@@ -14,7 +14,7 @@ from tldw_chatbook.RAG_Search.Services.chunking_service import ChunkingService
 from tldw_chatbook.RAG_Search.Services.indexing_service import IndexingService
 from tldw_chatbook.RAG_Search.Services.cache_service import CacheService
 from tldw_chatbook.RAG_Search.Services.memory_management_service import MemoryManagementService
-from tldw_chatbook.RAG_Search.Services.rag_service import RAGService
+from tldw_chatbook.RAG_Search.Services.rag_service import RAGApplication
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -267,7 +267,7 @@ class TestRealServiceFactory:
         assert isinstance(services['chunking'], ChunkingService)
         assert isinstance(services['indexing'], IndexingService)
         assert isinstance(services['cache'], CacheService)
-        assert isinstance(services['rag'], RAGService)
+        assert isinstance(services['rag'], RAGApplication)
         assert isinstance(services['memory_manager'], MemoryManagementService)
         
         # Verify services are properly connected

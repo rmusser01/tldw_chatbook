@@ -30,8 +30,8 @@ logger.add(sys.stderr, level="INFO")
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
 
-# Mock app class for testing
-class MockApp:
+# Test app class with real components for integration testing
+class AppHelper:
     def __init__(self):
         from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -48,7 +48,7 @@ class MockApp:
         self.chachanotes_db = self.rag_db
         
         # Mock notes service
-        self.notes_service = MockNotesService()
+        self.notes_service = TestNotesService()
         self.notes_user_id = "test_user"
         
         # App config
@@ -58,7 +58,7 @@ class MockApp:
     def notify(self, message: str, severity: str = "info"):
         logger.info(f"[{severity.upper()}] {message}")
 
-class MockNotesService:
+class TestNotesService:
     def search_notes(self, user_id: str, query: str, limit: int = 10):
         """Mock notes search."""
         return []
@@ -222,7 +222,7 @@ async def test_full_rag_pipeline():
         logger.info("   To enable: pip install tldw_chatbook[embeddings_rag]")
         return False
     
-    app = MockApp()
+    app = AppHelper()
     
     # Test queries
     test_cases = [
@@ -288,7 +288,7 @@ async def test_hybrid_search():
         logger.warning("⚠️  Embeddings not available for hybrid search")
         return False
     
-    app = MockApp()
+    app = AppHelper()
     
     # Test with different weight combinations
     weight_tests = [

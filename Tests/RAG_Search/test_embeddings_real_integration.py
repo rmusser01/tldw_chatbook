@@ -70,7 +70,7 @@ def cache_dir(temp_dir):
 @pytest.fixture
 def real_embedding_service(persist_dir):
     """Create a real embedding service with default provider"""
-    service = EmbeddingsService(persist_directory=str(persist_dir))
+    service = EmbeddingsService(persist_directory=persist_dir)
     # Initialize with a small model for testing
     if DEPENDENCIES_AVAILABLE.get('sentence_transformers', False):
         service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
@@ -95,16 +95,13 @@ def sample_texts():
 @pytest.fixture
 def real_cache_service(cache_dir):
     """Create a real cache service"""
-    return CacheService(cache_dir=str(cache_dir))
+    return CacheService(cache_dir=cache_dir)
 
 
 @pytest.fixture
 def real_memory_service():
     """Create a real memory management service"""
-    return MemoryManagementService(
-        cache_size_mb=50,
-        cleanup_threshold=0.8
-    )
+    return MemoryManagementService()
 
 
 #######################################################################################################################
@@ -120,12 +117,16 @@ class TestRealEmbeddingsWorkflow:
         # Create service with real ChromaDB if available
         if DEPENDENCIES_AVAILABLE.get('chromadb', False):
             from tldw_chatbook.RAG_Search.Services.embeddings_service import ChromaDBStore
-            vector_store = ChromaDBStore(persist_directory=str(persist_dir))
+            import chromadb
+            from chromadb.config import Settings
+            settings = Settings(anonymized_telemetry=False, allow_reset=True)
+            client = chromadb.PersistentClient(path=str(persist_dir), settings=settings)
+            vector_store = ChromaDBStore(client)
         else:
             vector_store = InMemoryStore()
         
         service = EmbeddingsService(
-            persist_directory=str(persist_dir),
+            persist_directory=persist_dir,
             vector_store=vector_store
         )
         
@@ -178,7 +179,7 @@ class TestRealEmbeddingsWorkflow:
     @requires_torch
     def test_multiple_real_providers(self, persist_dir):
         """Test using multiple real embedding providers"""
-        service = EmbeddingsService(persist_directory=str(persist_dir))
+        service = EmbeddingsService(persist_directory=persist_dir)
         
         # Add multiple real providers
         st_provider = SentenceTransformerProvider("all-MiniLM-L6-v2")
@@ -209,7 +210,7 @@ class TestRealEmbeddingsWorkflow:
     @requires_sentence_transformers
     def test_real_concurrent_operations(self, persist_dir, sample_texts):
         """Test concurrent operations with real embeddings"""
-        service = EmbeddingsService(persist_directory=str(persist_dir))
+        service = EmbeddingsService(persist_directory=persist_dir)
         service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
         
         results = []
@@ -327,7 +328,7 @@ class TestRealChromaDBIntegration:
     @requires_sentence_transformers
     def test_chromadb_metadata_filtering(self, persist_dir):
         """Test ChromaDB metadata filtering with real data"""
-        service = EmbeddingsService(persist_directory=str(persist_dir))
+        service = EmbeddingsService(persist_directory=persist_dir)
         service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
         
         # Add documents with different metadata
@@ -383,13 +384,13 @@ class TestRealCacheIntegration:
     def test_embeddings_with_real_cache(self, persist_dir, cache_dir, sample_texts):
         """Test embedding service with real cache"""
         # Create cache service
-        cache_service = CacheService(cache_dir=str(cache_dir))
+        cache_service = CacheService(cache_dir=cache_dir)
         
         # Create embedding service
         service = EmbeddingsService(
-            persist_directory=str(persist_dir),
-            cache_service=cache_service
+            persist_directory=persist_dir
         )
+        # Cache service is created internally by EmbeddingsService
         service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
         
         # First call - should create embeddings
@@ -427,16 +428,14 @@ class TestRealMemoryManagement:
     def test_memory_cleanup_with_real_embeddings(self, persist_dir):
         """Test memory cleanup with real embedding operations"""
         # Create memory service with low threshold for testing
-        memory_service = MemoryManagementService(
-            cache_size_mb=10,  # Small cache
-            cleanup_threshold=0.5  # Cleanup at 50%
-        )
+        memory_service = MemoryManagementService()
         
         # Create embedding service
         service = EmbeddingsService(
-            persist_directory=str(persist_dir),
-            memory_manager=memory_service
+            persist_directory=persist_dir
         )
+        # Set memory manager after creation
+        service.set_memory_manager(memory_service)
         service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
         
         # Generate many embeddings to trigger cleanup
@@ -471,7 +470,7 @@ class TestRealErrorHandling:
     @requires_sentence_transformers
     def test_invalid_model_name(self, persist_dir):
         """Test handling of invalid model names"""
-        service = EmbeddingsService(persist_directory=str(persist_dir))
+        service = EmbeddingsService(persist_directory=persist_dir)
         
         # Try to initialize with invalid model
         success = service.initialize_embedding_model("invalid/model/name/that/doesnt/exist")
@@ -484,7 +483,7 @@ class TestRealErrorHandling:
     @requires_sentence_transformers
     def test_corrupted_embeddings_handling(self, persist_dir):
         """Test handling of corrupted data"""
-        service = EmbeddingsService(persist_directory=str(persist_dir))
+        service = EmbeddingsService(persist_directory=persist_dir)
         service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
         
         # Create valid embeddings
