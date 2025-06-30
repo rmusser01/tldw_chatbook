@@ -157,12 +157,32 @@ class ChromaDBManager:
         # END OF FIX
         # ======================================================================
 
+        # Try to use new embeddings service if available, otherwise fall back to legacy
         try:
+            # Check if we should use the new service (via environment variable or config flag)
+            use_new_service = embeddings_config_dict.get("use_new_embeddings_service", False)
+            if not use_new_service:
+                # Check environment variable
+                import os
+                use_new_service = os.getenv("USE_NEW_EMBEDDINGS_SERVICE", "").lower() in ("true", "1", "yes")
+            
+            if use_new_service:
+                logger.info("Using new embeddings service with compatibility layer")
+                from tldw_chatbook.RAG_Search.Services.embeddings_compat import EmbeddingFactoryCompat
+                self.embedding_factory = EmbeddingFactoryCompat(cfg=embeddings_config_dict)
+                self.embedding_config_schema: EmbeddingConfigSchema = self.embedding_factory.config
+            else:
+                logger.info("Using legacy EmbeddingFactory")
+                self.embedding_factory = EmbeddingFactory(cfg=embeddings_config_dict)
+                self.embedding_config_schema: EmbeddingConfigSchema = self.embedding_factory.config
+        except ImportError:
+            # New service not available, use legacy
+            logger.info("New embeddings service not available, using legacy EmbeddingFactory")
             self.embedding_factory = EmbeddingFactory(cfg=embeddings_config_dict)
             self.embedding_config_schema: EmbeddingConfigSchema = self.embedding_factory.config
         except Exception as e:
-            logger.critical(f"Failed to initialize EmbeddingFactory for user '{self.user_id}': {e}", exc_info=True)
-            raise RuntimeError(f"EmbeddingFactory initialization failed: {e}") from e
+            logger.critical(f"Failed to initialize embedding system for user '{self.user_id}': {e}", exc_info=True)
+            raise RuntimeError(f"Embedding system initialization failed: {e}") from e
 
         # This part of your code seems to be using an old key. Let's make it more robust too.
         user_db_base_dir_str = user_embedding_config.get("database", {}).get("USER_DB_BASE_DIR")

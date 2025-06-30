@@ -127,7 +127,7 @@ class ModelConfigDialog(ModalScreen):
         
         try:
             # Import here to avoid circular imports
-            from ..App_Functions.Evals.llm_interface import LLMInterface
+            from tldw_chatbook.Evals import LLMInterface
             
             # Create interface and test
             interface = LLMInterface(

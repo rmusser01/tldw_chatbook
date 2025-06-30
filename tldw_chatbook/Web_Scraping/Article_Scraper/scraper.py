@@ -1,4 +1,28 @@
-# article_scraper/scraper.py
+"""
+article_scraper/scraper.py
+==========================
+
+Core scraping functionality using Playwright browser automation.
+
+This module provides the Scraper class which manages browser instances
+for efficient web scraping with features like:
+- Context manager for proper resource cleanup
+- Stealth mode to avoid detection
+- Cookie injection for authenticated scraping
+- Automatic retries on failure
+- Content extraction with Trafilatura
+
+Classes:
+--------
+Scraper: Main scraping class with async context manager support
+
+Example:
+--------
+    async with Scraper(config=ScraperConfig(stealth=True)) as scraper:
+        result = await scraper.scrape("https://example.com")
+        if result['extraction_successful']:
+            print(result['content'])
+"""
 #
 # Imports
 import asyncio
@@ -20,7 +44,29 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 class Scraper:
-    """Manages a Playwright browser instance for efficient, repeated scraping."""
+    """
+    Manages a Playwright browser instance for efficient web scraping.
+    
+    This class provides a high-level interface for web scraping using
+    Playwright browser automation. It handles browser lifecycle management,
+    page creation, and content extraction.
+    
+    Features:
+        - Async context manager for automatic cleanup
+        - Configurable retry logic
+        - Stealth mode support
+        - Cookie injection for authentication
+        - Batch scraping of multiple URLs
+        
+    Attributes:
+        config (ScraperConfig): Configuration for scraping behavior
+        custom_cookies (List[Dict]): Optional cookies for authentication
+        
+    Example:
+        >>> config = ScraperConfig(stealth=True, retries=3)
+        >>> async with Scraper(config=config) as scraper:
+        ...     result = await scraper.scrape("https://example.com")
+    """
 
     def __init__(self, config: Optional[ScraperConfig] = None, custom_cookies: Optional[List[Dict]] = None):
         self.config = config or ScraperConfig()
@@ -29,7 +75,18 @@ class Scraper:
         self._browser: Optional[Browser] = None
 
     async def __aenter__(self):
-        """Initializes the browser context when entering an `async with` block."""
+        """
+        Initialize browser when entering async context.
+        
+        Starts Playwright and launches a Chromium browser instance.
+        This method is called automatically when using 'async with'.
+        
+        Returns:
+            Scraper: Self for use in context manager
+            
+        Raises:
+            PlaywrightError: If browser fails to start
+        """
         logging.info("Starting Playwright browser...")
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=True)
@@ -44,7 +101,24 @@ class Scraper:
             await self._playwright.stop()
 
     async def _fetch_html(self, context: BrowserContext, url: str) -> str:
-        """Fetches HTML from a URL with retries."""
+        """
+        Fetch HTML content from a URL with retry logic.
+        
+        Handles page navigation, stealth mode, and automatic retries
+        on failure. Waits for content to load based on configuration.
+        
+        Args:
+            context (BrowserContext): Playwright browser context
+            url (str): URL to fetch
+            
+        Returns:
+            str: HTML content of the page, empty string on failure
+            
+        Note:
+            - Applies stealth mode if configured
+            - Retries on timeout or navigation errors
+            - Returns empty string after all retries exhausted
+        """
         for attempt in range(self.config.retries):
             try:
                 page = await context.new_page()
@@ -73,7 +147,28 @@ class Scraper:
         return ""
 
     def _extract_data(self, html: str, url: str) -> Dict[str, Any]:
-        """Extracts article data from HTML using Trafilatura."""
+        """
+        Extract structured article data from HTML.
+        
+        Uses Trafilatura to extract content and metadata, then
+        converts to clean Markdown format. Adds metadata wrapper
+        for tracking content provenance.
+        
+        Args:
+            html (str): Raw HTML content
+            url (str): Source URL for metadata
+            
+        Returns:
+            Dict[str, Any]: Extracted data containing:
+                - url: Source URL
+                - title: Article title
+                - author: Article author
+                - date: Publication date
+                - content: Clean markdown content
+                - content_with_meta: Content with metadata header
+                - extraction_successful: Success status
+                - error: Error message if failed
+        """
         if not html:
             return {'extraction_successful': False, 'error': 'HTML content was empty.'}
 
@@ -110,7 +205,27 @@ class Scraper:
         return article_data
 
     async def scrape(self, url: str) -> Dict[str, Any]:
-        """Scrapes a single article from a URL."""
+        """
+        Scrape a single article from a URL.
+        
+        Complete scraping pipeline: creates browser context,
+        fetches HTML, extracts content, and returns structured data.
+        
+        Args:
+            url (str): URL to scrape
+            
+        Returns:
+            Dict[str, Any]: Article data (see _extract_data for structure)
+            
+        Raises:
+            RuntimeError: If called outside async context manager
+            
+        Example:
+            >>> async with Scraper() as scraper:
+            ...     article = await scraper.scrape("https://example.com/article")
+            ...     if article['extraction_successful']:
+            ...         print(f"Title: {article['title']}")
+        """
         if not self._browser:
             raise RuntimeError("Scraper must be used within an `async with` block.")
 
@@ -135,7 +250,32 @@ class Scraper:
         return result
 
     async def scrape_many(self, urls: List[str]) -> List[Dict[str, Any]]:
-        """Scrapes multiple URLs concurrently for maximum performance."""
+        """
+        Scrape multiple URLs concurrently.
+        
+        Processes all URLs in parallel for maximum performance.
+        Each URL is scraped independently, and failures don't
+        affect other URLs.
+        
+        Args:
+            urls (List[str]): List of URLs to scrape
+            
+        Returns:
+            List[Dict[str, Any]]: List of article data in same order as input
+            
+        Note:
+            - Results maintain the same order as input URLs
+            - Failed extractions are included with error details
+            - All URLs are processed even if some fail
+            
+        Example:
+            >>> urls = ["https://example.com/1", "https://example.com/2"]
+            >>> async with Scraper() as scraper:
+            ...     results = await scraper.scrape_many(urls)
+            ...     for result in results:
+            ...         if result['extraction_successful']:
+            ...             print(result['title'])
+        """
         tasks = [self.scrape(url) for url in urls]
         results = await asyncio.gather(*tasks)
         return results

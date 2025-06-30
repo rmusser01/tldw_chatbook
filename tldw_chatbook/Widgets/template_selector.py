@@ -186,7 +186,7 @@ class TemplateSelectorDialog(ModalScreen):
     def _load_templates(self):
         """Load available templates."""
         try:
-            from ..App_Functions.Evals.eval_templates import get_eval_templates
+            from tldw_chatbook.Evals import get_eval_templates
             template_manager = get_eval_templates()
             self.templates = template_manager.list_templates()
             
@@ -292,7 +292,7 @@ class QuickTemplateSelector(Container):
     def _load_templates(self):
         """Load and filter templates."""
         try:
-            from ..App_Functions.Evals.eval_templates import get_eval_templates
+            from tldw_chatbook.Evals import get_eval_templates
             template_manager = get_eval_templates()
             all_templates = template_manager.list_templates()
             

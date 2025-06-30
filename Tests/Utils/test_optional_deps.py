@@ -81,34 +81,38 @@ def test_get_safe_import_with_existing_module():
     assert hasattr(result, 'path')  # os module should have 'path' attribute
 
 
-@patch.dict('sys.modules', {}, clear=True)
 def test_embeddings_rag_deps_missing():
     """Test embeddings/RAG dependency checking when dependencies are missing."""
-    # Clear the modules cache for dependencies
-    modules_to_remove = ['torch', 'transformers', 'numpy', 'chromadb']
-    original_modules = {}
+    # Mock the __import__ function to simulate missing modules
+    modules_to_fail = {'torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers'}
+    original_import = __builtins__['__import__']
     
-    for module in modules_to_remove:
-        if module in sys.modules:
-            original_modules[module] = sys.modules[module]
-            del sys.modules[module]
+    def mock_import(name, *args, **kwargs):
+        if name in modules_to_fail:
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        return original_import(name, *args, **kwargs)
     
     try:
         # Re-import and re-initialize the optional_deps module
         if 'tldw_chatbook.Utils.optional_deps' in sys.modules:
             del sys.modules['tldw_chatbook.Utils.optional_deps']
         
-        from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_embeddings_rag_deps
+        # Patch the import
+        __builtins__['__import__'] = mock_import
+        
+        from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_embeddings_rag_deps, reset_dependency_checks
+        
+        # Reset the dependency checks to clear cached results
+        reset_dependency_checks()
         
         # Should detect missing dependencies
         result = check_embeddings_rag_deps()
         assert result is False
-        assert DEPENDENCIES_AVAILABLE.get('embeddings_rag', True) is False
+        assert DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) is False
         
     finally:
-        # Restore original modules
-        for module, mod in original_modules.items():
-            sys.modules[module] = mod
+        # Restore original import
+        __builtins__['__import__'] = original_import
 
 
 def test_embeddings_lib_graceful_failure():

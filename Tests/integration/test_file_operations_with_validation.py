@@ -15,6 +15,7 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
 from tldw_chatbook.tldw_api.utils import (
     prepare_files_for_httpx, cleanup_file_objects
 )
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -140,9 +141,14 @@ class TestAPIUtilsFileOperations:
             str(Path(temp_upload_dir) / "test_file_1.txt")
         ]
         
+        # Validate paths first
+        validated_paths = []
+        for path in file_paths:
+            validated_path = validate_path(path, temp_upload_dir)
+            validated_paths.append(str(validated_path))
+        
         httpx_files = prepare_files_for_httpx(
-            file_paths,
-            base_directory=temp_upload_dir
+            validated_paths
         )
         
         assert httpx_files is not None
@@ -166,11 +172,12 @@ class TestAPIUtilsFileOperations:
             "/etc/passwd"  # Invalid path
         ]
         
+        # Validate paths - should raise error
         with pytest.raises(ValueError, match="outside the allowed directory"):
-            prepare_files_for_httpx(
-                file_paths,
-                base_directory=temp_upload_dir
-            )
+            validated_paths = []
+            for path in file_paths:
+                validated_path = validate_path(path, temp_upload_dir)
+                validated_paths.append(str(validated_path))
     
     def test_prepare_files_with_path_traversal(self, temp_upload_dir):
         """Test that path traversal in file paths is blocked."""
@@ -178,11 +185,10 @@ class TestAPIUtilsFileOperations:
             str(Path(temp_upload_dir) / ".." / ".." / "etc" / "passwd")
         ]
         
+        # Validate paths - should raise error
         with pytest.raises(ValueError, match="outside the allowed directory"):
-            prepare_files_for_httpx(
-                file_paths,
-                base_directory=temp_upload_dir
-            )
+            for path in file_paths:
+                validate_path(path, temp_upload_dir)
     
     def test_prepare_files_without_validation(self, temp_upload_dir):
         """Test preparing files without base directory validation."""
@@ -275,11 +281,9 @@ class TestFileOperationErrorHandling:
         hidden_file = Path(temp_upload_dir) / ".hidden_file.txt"
         hidden_file.write_text("Hidden content")
         
+        # Validate path - should raise error for hidden files
         with pytest.raises(ValueError, match="hidden files"):
-            prepare_files_for_httpx(
-                [str(hidden_file)],
-                base_directory=temp_upload_dir
-            )
+            validate_path(str(hidden_file), temp_upload_dir)
 
 
 class TestEndToEndFileUpload:
@@ -321,9 +325,15 @@ class TestEndToEndFileUpload:
         
         # Prepare files for upload
         file_paths = [files['text'], files['json'], files['nested']]
+        
+        # Validate paths first
+        validated_paths = []
+        for path in file_paths:
+            validated_path = validate_path(path, base_dir)
+            validated_paths.append(str(validated_path))
+        
         httpx_files = prepare_files_for_httpx(
-            file_paths,
-            base_directory=base_dir
+            validated_paths
         )
         
         try:
@@ -359,9 +369,9 @@ class TestEndToEndFileUpload:
             "/etc/passwd"  # Invalid - absolute outside
         ]
         
-        # Should fail fast on first invalid path
+        # Should fail fast on first invalid path during validation
         with pytest.raises(ValueError, match="outside the allowed directory"):
-            prepare_files_for_httpx(
-                file_paths,
-                base_directory=base_dir
-            )
+            validated_paths = []
+            for path in file_paths:
+                validated_path = validate_path(path, base_dir)
+                validated_paths.append(str(validated_path))

@@ -1,11 +1,11 @@
 # test_rag_indexing_db.py
-# Description: Unit tests for RAG indexing state tracking database
+# Description: Integration tests for RAG indexing state tracking database
 #
 """
 test_rag_indexing_db.py
 -----------------------
 
-Unit tests for the RAG indexing database that tracks indexed items
+Integration tests for the RAG indexing database that tracks indexed items
 and supports incremental indexing.
 """
 
@@ -18,6 +18,7 @@ import time
 from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
 
 
+@pytest.mark.integration
 class TestRAGIndexingDB:
     """Test cases for RAG indexing database."""
     

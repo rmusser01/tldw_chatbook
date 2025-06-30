@@ -1,6 +1,8 @@
+.DS_STORE
 .idea
 .claude
 .hypothesis/
+.pypirc
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

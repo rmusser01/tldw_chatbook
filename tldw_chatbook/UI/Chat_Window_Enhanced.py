@@ -35,6 +35,11 @@ class ChatWindowEnhanced(Container):
     Enhanced Container for the Chat Tab's UI with image support.
     """
     
+    BINDINGS = [
+        ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
+        ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),
+    ]
+    
     # CSS for hidden elements
     DEFAULT_CSS = """
     .hidden {
@@ -62,6 +67,11 @@ class ChatWindowEnhanced(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         logger.debug("ChatWindowEnhanced initialized.")
+    
+    async def on_mount(self) -> None:
+        """Called when the widget is mounted."""
+        # Token counter will be initialized when tab is switched to chat
+        pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
@@ -70,6 +80,7 @@ class ChatWindowEnhanced(Container):
         """
         from ..Event_Handlers.Chat_Events import chat_events
         from ..Event_Handlers.Chat_Events import chat_events_sidebar
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
 
         button_id = event.button.id
         if not button_id:
@@ -98,10 +109,14 @@ class ChatWindowEnhanced(Container):
             # New image-related handlers
             "attach-image": self.handle_attach_image_button,
             "clear-image": self.handle_clear_image_button,
+            # Notes expand/collapse handler
+            "chat-notes-expand-button": self.handle_notes_expand_button,
         }
 
         # Add sidebar button handlers
         button_handlers.update(chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS)
+        # Add sidebar resize handlers
+        button_handlers.update(chat_events_sidebar_resize.CHAT_SIDEBAR_RESIZE_HANDLERS)
 
         # Check if we have a handler for this button
         handler = button_handlers.get(button_id)
@@ -239,6 +254,42 @@ class ChatWindowEnhanced(Container):
     def get_pending_image(self) -> Optional[dict]:
         """Get the pending image attachment data."""
         return self.pending_image
+    
+    async def handle_notes_expand_button(self, app, event) -> None:
+        """Handle the notes expand/collapse button."""
+        try:
+            button = app.query_one("#chat-notes-expand-button", Button)
+            textarea = app.query_one("#chat-notes-content-textarea", TextArea)
+            
+            # Toggle between expanded and normal states
+            if "notes-textarea-expanded" in textarea.classes:
+                # Collapse
+                textarea.remove_class("notes-textarea-expanded")
+                textarea.add_class("notes-textarea-normal")
+                textarea.styles.height = 10
+                button.label = "⬆ Expand"
+            else:
+                # Expand
+                textarea.remove_class("notes-textarea-normal")
+                textarea.add_class("notes-textarea-expanded")
+                textarea.styles.height = 25
+                button.label = "⬇ Collapse"
+                
+            # Focus the textarea after expanding
+            textarea.focus()
+            
+        except Exception as e:
+            logger.error(f"Error handling notes expand button: {e}")
+    
+    async def action_resize_sidebar_shrink(self) -> None:
+        """Action for keyboard shortcut to shrink sidebar."""
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+        await chat_events_sidebar_resize.handle_sidebar_shrink(self.app_instance, None)
+    
+    async def action_resize_sidebar_expand(self) -> None:
+        """Action for keyboard shortcut to expand sidebar."""
+        from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
+        await chat_events_sidebar_resize.handle_sidebar_expand(self.app_instance, None)
 
 #
 # End of Chat_Window_Enhanced.py

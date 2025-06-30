@@ -21,9 +21,9 @@ import yaml
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from tldw_chatbook.App_Functions.Evals.eval_orchestrator import EvaluationOrchestrator
-from tldw_chatbook.App_Functions.Evals.task_loader import TaskLoader
-from tldw_chatbook.App_Functions.Evals.eval_runner import EvalRunner
+from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
+from tldw_chatbook.Evals.task_loader import TaskLoader
+from tldw_chatbook.Evals.eval_runner import EvalRunner
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 
 class TestEndToEndEvaluation:

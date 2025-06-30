@@ -6,17 +6,20 @@ from textual.widgets import Input, RichLog, Button
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import handle_start_llamacpp_server_button_pressed
 from tldw_chatbook.app import TldwCli  # Assuming TldwCli is the app class
 
-# Mark all tests in this file as asyncio
-pytestmark = pytest.mark.asyncio
+# Import comprehensive mock but create custom fixture for LLM management
+from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock
+
+# Mark all tests in this file as asyncio and unit tests
+pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
 @pytest.fixture
 def mock_app():
-    """Fixture to create a mock TldwCli app instance."""
-    app = MagicMock(spec=TldwCli)
-    app.loguru_logger = MagicMock()  # Mock the logger if it's used directly in the handler
-
-    # Mock query_one to return specific widget mocks
+    """Fixture to create a mock TldwCli app instance for LLM management tests."""
+    # Get base mock app
+    app = create_comprehensive_app_mock()
+    
+    # Override specific widgets for LLM management tests
     widget_mocks = {
         "#llamacpp-exec-path": MagicMock(spec=Input, value="/path/to/server"),
         "#llamacpp-model-path": MagicMock(spec=Input, value="/path/to/model.gguf"),
@@ -25,20 +28,24 @@ def mock_app():
         "#llamacpp-additional-args": MagicMock(spec=Input, value="--n-gpu-layers 33 --verbose"),
         "#llamacpp-log-output": MagicMock(spec=RichLog),
     }
-
-    def query_one_side_effect(selector, widget_type):
-        # Ensure the widget_type matches if provided (it is in the handler)
-        mock_widget = widget_mocks.get(selector)
-        if not mock_widget:
-            raise Exception(f"Mock for selector {selector} not found")  # Should not happen in these tests
-        if not isinstance(mock_widget, widget_type):
-            raise Exception(f"Mock for {selector} is {type(mock_widget)} not {widget_type}")
-        return mock_widget
-
-    app.query_one = MagicMock(side_effect=query_one_side_effect)
-    app.run_worker = AsyncMock()  # Use AsyncMock if run_worker is an async method or returns an awaitable
-    app.notify = MagicMock()
-
+    
+    # Save the original query_one behavior
+    original_query_one = app.query_one.side_effect
+    
+    def llm_query_one_side_effect(selector, widget_type=None):
+        # Check our custom widgets first
+        if selector in widget_mocks:
+            mock_widget = widget_mocks[selector]
+            # Type check if requested
+            if widget_type and not isinstance(mock_widget, MagicMock):
+                if not isinstance(mock_widget, widget_type):
+                    raise Exception(f"Mock for {selector} is {type(mock_widget)} not {widget_type}")
+            return mock_widget
+        # Fall back to original behavior
+        return original_query_one(selector, widget_type)
+    
+    app.query_one.side_effect = llm_query_one_side_effect
+    
     # Yield the app and widget_mocks for tests to access
     yield app, widget_mocks
 

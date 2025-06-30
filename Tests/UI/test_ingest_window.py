@@ -2,6 +2,7 @@
 #
 # Imports
 import pytest
+import pytest_asyncio
 from pytest_mock import MockerFixture  # For mocking
 from pathlib import Path
 #
@@ -27,11 +28,11 @@ from tldw_chatbook.tldw_api.schemas import ProcessVideoRequest, ProcessAudioRequ
 # Helper to get the IngestWindow instance from the app
 async def get_ingest_window(pilot: Pilot) -> IngestWindow:
     ingest_window_query = pilot.app.query(IngestWindow)
-    assert ingest_window_query.is_empty is False, "IngestWindow not found"
+    assert len(ingest_window_query) > 0, "IngestWindow not found"
     return ingest_window_query.first()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def app_pilot() -> Pilot:
     app = TldwCli()
     async with app.run_test() as pilot:
@@ -71,8 +72,8 @@ class TestIngestWindowTLDWAPI:
         nav_pane = ingest_window.query_one("#ingest-nav-pane")
 
         for mt in MEDIA_TYPES:
-            nav_button_id = f"ingest-nav-tldw-api-{mt.replace('_', '-')}"  # IDs don't have #
-            view_id = f"ingest-view-tldw-api-{mt.replace('_', '-')}"
+            nav_button_id = f"ingest-nav-tldw-api-{mt}"  # IDs don't have #
+            view_id = f"ingest-view-tldw-api-{mt}"
 
             # Check navigation button exists
             nav_button = nav_pane.query_one(f"#{nav_button_id}", Button)
@@ -99,10 +100,16 @@ class TestIngestWindowTLDWAPI:
     @pytest.mark.parametrize("media_type", MEDIA_TYPES)
     async def test_tldw_api_navigation_and_view_display(self, app_pilot: Pilot, media_type: str):
         ingest_window = await get_ingest_window(app_pilot)
-        nav_button_id = f"ingest-nav-tldw-api-{media_type.replace('_', '-')}"
-        target_view_id = f"ingest-view-tldw-api-{media_type.replace('_', '-')}"
+        nav_button_id = f"ingest-nav-tldw-api-{media_type}"
+        target_view_id = f"ingest-view-tldw-api-{media_type}"
 
-        await app_pilot.click(f"#{nav_button_id}")
+        # Click the navigation button - use offset to click on visible portion
+        try:
+            await app_pilot.click(f"#{nav_button_id}")
+        except Exception:
+            # If OutOfBounds, try clicking with offset
+            nav_button = ingest_window.query_one(f"#{nav_button_id}", Button)
+            await app_pilot.click(nav_button, offset=(5, 5))
         await app_pilot.pause()  # Allow watchers to update display properties
 
         # Verify target view is visible
@@ -113,7 +120,7 @@ class TestIngestWindowTLDWAPI:
         # Verify other TLDW API views are hidden
         for other_mt in MEDIA_TYPES:
             if other_mt != media_type:
-                other_view_id = f"ingest-view-tldw-api-{other_mt.replace('_', '-')}"
+                other_view_id = f"ingest-view-tldw-api-{other_mt}"
                 other_view_area = ingest_window.query_one(f"#{other_view_id}", Container)
                 assert other_view_area.display is False, f"{other_view_id} should be hidden when {target_view_id} is active"
 
@@ -171,7 +178,14 @@ class TestIngestWindowTLDWAPI:
 
         # Navigate to video tab by clicking its nav button
         nav_button_id = f"ingest-nav-tldw-api-{media_type}"
-        await app_pilot.click(f"#{nav_button_id}")
+        
+        # Click the navigation button - use offset to click on visible portion
+        try:
+            await app_pilot.click(f"#{nav_button_id}")
+        except Exception:
+            # If OutOfBounds, try clicking with offset
+            nav_button = ingest_window.query_one(f"#{nav_button_id}", Button)
+            await app_pilot.click(nav_button, offset=(5, 5))
         await app_pilot.pause()  # Allow UI to update
 
         target_view_id = f"ingest-view-tldw-api-{media_type}"

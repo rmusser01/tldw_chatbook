@@ -1,5 +1,6 @@
 # tests/test_sync_client.py
 # Description: Unit tests for the ClientSyncEngine class, focusing on state management, push/pull operations, and conflict resolution.
+# NOTE: These are UNIT tests that mock network calls. For integration tests with a real test server, see test_sync_client_integration.py
 #
 # Imports
 from datetime import datetime, timedelta
@@ -14,7 +15,10 @@ import requests
 # Local Imports
 from .test_media_db_v2 import get_entity_version
 from tldw_chatbook.DB.Sync_Client import ClientSyncEngine
-#
+
+# Test marker for unit tests
+pytestmark = pytest.mark.unit
+
 #######################################################################################################################
 #
 # Functions:
@@ -222,7 +226,11 @@ class TestClientSyncEnginePullApply:
         assert row['keyword'] == kw_name
         assert row['version'] == 1
         assert row['client_id'] == "other_client" # Originating client ID stored
-        assert row['last_modified'] == "2023-10-28T10:00:00Z" # Server timestamp applied
+        # Server timestamp applied - SQLite might return as datetime due to PARSE_DECLTYPES
+        if isinstance(row['last_modified'], datetime):
+            assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == "2023-10-28T10:00:00Z"
+        else:
+            assert row['last_modified'] == "2023-10-28T10:00:00Z"
         assert not row['deleted']
         # Verify state update
         assert sync_engine.last_server_log_id_processed == 101
@@ -260,7 +268,10 @@ class TestClientSyncEnginePullApply:
         row = cursor.fetchone()
         assert row['keyword'] == "updated_name"
         assert row['version'] == 2
-        assert row['last_modified'] == "2023-10-28T11:00:00Z"
+        if isinstance(row['last_modified'], datetime):
+            assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == "2023-10-28T11:00:00Z"
+        else:
+            assert row['last_modified'] == "2023-10-28T11:00:00Z"
         assert sync_engine.last_server_log_id_processed == 102
 
     @patch('tldw_chatbook.DB.Sync_Client.requests.get')
@@ -293,7 +304,10 @@ class TestClientSyncEnginePullApply:
         row = cursor.fetchone()
         assert row['deleted'] == 1
         assert row['version'] == 2
-        assert row['last_modified'] == "2023-10-28T12:00:00Z"
+        if isinstance(row['last_modified'], datetime):
+            assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == "2023-10-28T12:00:00Z"
+        else:
+            assert row['last_modified'] == "2023-10-28T12:00:00Z"
         assert sync_engine.last_server_log_id_processed == 103
 
     @patch('tldw_chatbook.DB.Sync_Client.requests.get')
@@ -369,7 +383,8 @@ class TestClientSyncEngineConflict:
           assert get_entity_version(client_db, "Keywords", kw_uuid) == 1
 
           # 2. Simulate local concurrent change (V2 - Local)
-          ts_local_v2 = (datetime.fromisoformat(ts_v1.replace("Z","+00:00")) + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
+          # ts_v1 is a datetime object from SQLite, not a string
+          ts_local_v2 = (ts_v1 + timedelta(seconds=10)).strftime('%Y-%m-%dT%H:%M:%SZ')
           client_db.execute_query(
                "UPDATE Keywords SET keyword='local_v2', version=2, last_modified=?, client_id=? WHERE uuid=?",
                (ts_local_v2, sync_engine.client_id, kw_uuid), commit=True
@@ -377,7 +392,7 @@ class TestClientSyncEngineConflict:
           assert get_entity_version(client_db, "Keywords", kw_uuid) == 2
 
           # 3. Prepare conflicting server change (also V2, based on V1, but with later timestamp)
-          ts_server_v2 = (datetime.fromisoformat(ts_v1.replace("Z","+00:00")) + timedelta(seconds=20)).strftime('%Y-%m-%dT%H:%M:%SZ')
+          ts_server_v2 = (ts_v1 + timedelta(seconds=20)).strftime('%Y-%m-%dT%H:%M:%SZ')
           server_change = create_mock_log_entry(
                change_id=102, entity="Keywords", uuid=kw_uuid, op="update",
                client="other_client", version=2, # Based on V1
@@ -401,7 +416,11 @@ class TestClientSyncEngineConflict:
           assert row['keyword'] == "server_v2_wins"  # Server change applied
           # assert row['version'] == 2 # OLD Assertion: Expects version to stay 2
           assert row['version'] == 3  # NEW Assertion: Expects version to be incremented by force_apply logic
-          assert row['last_modified'] == ts_server_v2  # Server timestamp applied
+          # Server timestamp applied - check the actual value
+          if isinstance(row['last_modified'], datetime):
+              assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == ts_server_v2
+          else:
+              assert row['last_modified'] == ts_server_v2  # Server timestamp applied
           assert sync_engine.last_server_log_id_processed == 102
 
 
@@ -416,7 +435,7 @@ class TestClientSyncEngineConflict:
            assert get_entity_version(client_db, "Keywords", kw_uuid) == 1
 
            # 2. Simulate local concurrent change (V2 - Local) with later timestamp
-           ts_local_v2 = (datetime.fromisoformat(ts_v1.replace("Z","+00:00")) + timedelta(seconds=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+           ts_local_v2 = (ts_v1 + timedelta(seconds=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
            client_db.execute_query(
                "UPDATE Keywords SET keyword='local_v2_wins', version=2, last_modified=?, client_id=? WHERE uuid=?",
                (ts_local_v2, sync_engine.client_id, kw_uuid), commit=True
@@ -424,7 +443,7 @@ class TestClientSyncEngineConflict:
            assert get_entity_version(client_db, "Keywords", kw_uuid) == 2
 
            # 3. Prepare conflicting server change (also V2, based on V1, but with earlier timestamp)
-           ts_server_v2 = (datetime.fromisoformat(ts_v1.replace("Z","+00:00")) + timedelta(seconds=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+           ts_server_v2 = (ts_v1 + timedelta(seconds=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
            server_change = create_mock_log_entry(
                change_id=102, entity="Keywords", uuid=kw_uuid, op="update",
                client="other_client", version=2, # Based on V1
@@ -446,7 +465,11 @@ class TestClientSyncEngineConflict:
            row = cursor.fetchone()
            assert row['keyword'] == "local_v2_wins" # Local change retained
            assert row['version'] == 2
-           assert row['last_modified'] == ts_local_v2 # Local timestamp retained
+           # Local timestamp retained - check the actual value
+           if isinstance(row['last_modified'], datetime):
+               assert row['last_modified'].strftime('%Y-%m-%dT%H:%M:%SZ') == ts_local_v2
+           else:
+               assert row['last_modified'] == ts_local_v2 # Local timestamp retained
            assert sync_engine.last_server_log_id_processed == 102 # State still advances
 
 #

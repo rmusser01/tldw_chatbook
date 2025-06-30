@@ -1015,7 +1015,7 @@ async def handle_notes_sidebar_emoji_button_pressed(app: 'TldwCli', event: Butto
             # Insert emoji at cursor in notes editor
             try:
                 editor = app.query_one("#notes-editor-area", TextArea)
-                editor.insert_text_at_cursor(emoji_char)
+                editor.insert(emoji_char)
                 editor.focus()
             except QueryError:
                 pass

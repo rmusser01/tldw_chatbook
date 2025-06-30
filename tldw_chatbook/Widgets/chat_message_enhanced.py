@@ -269,13 +269,8 @@ class ChatMessageEnhanced(Widget):
                 )
                 pil_image = pil_image.resize(new_size, PILImage.Resampling.LANCZOS)
             
-            # Save to temporary buffer
-            temp_buffer = BytesIO()
-            pil_image.save(temp_buffer, format='PNG')
-            temp_buffer.seek(0)
-            
-            # Create Pixels renderable
-            pixels = Pixels.from_image(temp_buffer)
+            # Create Pixels renderable directly from PIL image
+            pixels = Pixels.from_image(pil_image)
             self._image_widget.mount(Static(pixels))
         except Exception as e:
             logging.error(f"Error in pixelated rendering: {e}")
@@ -285,7 +280,9 @@ class ChatMessageEnhanced(Widget):
         """Render image using textual-image or fallback."""
         if TEXTUAL_IMAGE_AVAILABLE:
             try:
-                image = TextualImage.from_bytes(self.image_data)
+                # TextualImage expects a PIL image, not raw bytes
+                pil_image = PILImage.open(BytesIO(self.image_data))
+                image = TextualImage(pil_image)
                 self._image_widget.mount(image)
             except Exception as e:
                 logging.error(f"Error with textual-image rendering: {e}")
@@ -303,7 +300,7 @@ class ChatMessageEnhanced(Widget):
 📷 Image ({self.image_mime_type or 'unknown'})
 Size: {image_size:.1f} KB
 Preview: {preview}...
-[Click "Save Image" to view in external viewer]
+\\[Click "Save Image" to view in external viewer\\]
 [/dim]"""
         
         self._image_widget.mount(Static(fallback_text))
@@ -365,10 +362,12 @@ Preview: {preview}...
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Called when a button inside this message is pressed."""
-        # Post our custom Action message
-        self.post_message(self.Action(self, event.button))
-        # Stop the event from bubbling up
-        event.stop()
+        # Only handle buttons that don't have specific handlers
+        if event.button.id not in ["toggle-image-mode", "save-image"]:
+            # Post our custom Action message
+            self.post_message(self.Action(self, event.button))
+            # Stop the event from bubbling up
+            event.stop()
     
     def mark_generation_complete(self):
         """Marks the AI message generation as complete."""

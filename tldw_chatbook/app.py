@@ -7,7 +7,9 @@ import inspect
 import logging
 import logging.handlers
 import subprocess
+import sys
 import threading
+import time
 import traceback
 from typing import Union, Optional, Any, Dict, List, Callable
 #
@@ -18,10 +20,10 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import (
-    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label
+    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch
 )
 
-from textual.containers import Container
+from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
 from textual.worker import Worker, WorkerState
 from textual.binding import Binding
@@ -34,6 +36,8 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
+# from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
+from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_gauge, log_resource_usage
 #
 # --- Local API library Imports ---
 from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_management_events_mlx_lm,
@@ -706,8 +710,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     """A Textual app for interacting with LLMs."""
     #TITLE = "🧠📝🔍  tldw CLI"
     TITLE = f"{get_char(EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN)}{get_char(EMOJI_TITLE_NOTE, FALLBACK_TITLE_NOTE)}{get_char(EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH)}  tldw CLI"
-    # Use forward slashes for paths, works cross-platform
-    CSS_PATH = str(Path(__file__).parent / "css/tldw_cli.tcss")
+    # CSS file path
+    CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),
         Binding("ctrl+p", "command_palette", "Palette Menu", show=True)
@@ -763,10 +767,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # DB Size checker - now using AppFooterStatus
     _db_size_status_widget: Optional[AppFooterStatus] = None
     _db_size_update_timer: Optional[Timer] = None
+    _token_count_update_timer: Optional[Timer] = None
 
     # Reactives for sidebar
     chat_sidebar_collapsed: reactive[bool] = reactive(False)
     chat_right_sidebar_collapsed: reactive[bool] = reactive(False)  # For character sidebar
+    # Load saved width from config, default to 25% if not set
+    _saved_width = settings.get("chat_defaults", {}).get("right_sidebar_width", 25)
+    chat_right_sidebar_width: reactive[int] = reactive(_saved_width)  # Width percentage for right sidebar
     notes_sidebar_left_collapsed: reactive[bool] = reactive(False)
     notes_sidebar_right_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
@@ -839,6 +847,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     media_db: Optional[MediaDatabase] = None
     current_sidebar_media_item: Optional[Dict[str, Any]] = None # For chat sidebar media review
 
+    # Settings mode for chat sidebar
+    chat_settings_mode: reactive[str] = reactive("basic")  # "basic" or "advanced"
+    chat_settings_search_query: reactive[str] = reactive("")  # Search query for settings
+
     # Search Tab's active sub-view reactives
     search_active_sub_tab: reactive[Optional[str]] = reactive(None)
     _initial_search_sub_tab_view: Optional[str] = SEARCH_VIEW_RAG_QA
@@ -896,12 +908,29 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _last_tldw_api_request_context: Dict[str, Any] = {}
 
     def __init__(self):
+        # Track startup timing
+        self._startup_start_time = time.perf_counter()
+        self._startup_phases = {}
+        
+        # Log initial memory usage
+        log_resource_usage()
+        log_counter("app_startup_initiated", 1, documentation="Application startup initiated")
+        
         super().__init__()
+        
+        # Phase 1: Basic initialization
+        phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
         self.loguru_logger = loguru_logger # Make loguru_logger an instance variable for handlers
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
+        self._startup_phases["basic_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
+                     labels={"phase": "basic_init"}, 
+                     documentation="Duration of startup phase in seconds")
 
+        # Phase 2: Attribute initialization
+        phase_start = time.perf_counter()
         self.parsed_prompts_for_preview = [] # <<< INITIALIZATION for prompts
         self.last_prompt_import_dir = None
 
@@ -927,7 +956,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.media_current_page = 1
         self.media_search_current_page = 1
         self.media_search_total_pages = 1
+        self._startup_phases["attribute_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["attribute_init"], 
+                     labels={"phase": "attribute_init"}, 
+                     documentation="Duration of startup phase in seconds")
 
+        # Phase 3: Notes service initialization
+        phase_start = time.perf_counter()
         # 1. Get the user name from the loaded settings
         # The fallback here should match what you expect if settings doesn't have it,
         # or what's defined as the ultimate default in config.py.
@@ -961,8 +996,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_notes_init:  # Catch any other unexpected error
             logger.error(f"Unexpected error during NotesInteropService initialization: {e_notes_init}", exc_info=True)
             self.notes_service = None
+        
+        self._startup_phases["notes_service_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["notes_service_init"], 
+                     labels={"phase": "notes_service_init"}, 
+                     documentation="Duration of startup phase in seconds")
+        log_resource_usage()  # Check memory after notes service
 
-        # --- Providers & Models ---
+        # Phase 4: Providers & Models
+        phase_start = time.perf_counter()
         logging.debug("__INIT__: Attempting to get providers and models...")
         try:
             # Call the function from the config module
@@ -972,6 +1014,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_providers:
             logging.error(f"__INIT__: Failed to get providers and models: {e_providers}", exc_info=True)
             self.providers_models = {}
+        self._startup_phases["providers_models"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["providers_models"], 
+                     labels={"phase": "providers_models"}, 
+                     documentation="Duration of startup phase in seconds")
 
         # --- Initial Tab ---
         initial_tab_from_config = get_cli_setting("general", "default_tab", TAB_CHAT)
@@ -983,7 +1029,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         self._rich_log_handler: Optional[RichLogHandler] = None # For the RichLog widget in Logs tab
 
-        # --- PromptsInteropService Initialization ---
+        # Phase 5: PromptsInteropService Initialization
+        phase_start = time.perf_counter()
         self.prompts_service_initialized = False
         try:
             prompts_db_path_str = get_cli_setting("database", "prompts_db_path", str(Path.home() / ".local/share/tldw_cli/tldw_cli_prompts_v2.db"))
@@ -995,9 +1042,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_prompts:
             self.prompts_service_initialized = False
             logging.error(f"Failed to initialize Prompts Interop Service: {e_prompts}", exc_info=True)
+        self._startup_phases["prompts_service_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["prompts_service_init"], 
+                     labels={"phase": "prompts_service_init"}, 
+                     documentation="Duration of startup phase in seconds")
 
         self._prompt_search_timer = None  # Initialize here
 
+        # Phase 6: Media DB initialization
+        phase_start = time.perf_counter()
         try:
             media_db_path = get_media_db_path()  # From your config.py
             self.media_db = MediaDatabase(db_path=media_db_path,
@@ -1027,6 +1080,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e_media_types_fetch:
             self.loguru_logger.critical(f"ULTRA EARLY APP INIT: CRITICAL ERROR fetching _media_types_for_ui: {e_media_types_fetch}", exc_info=True)
             self._media_types_for_ui = ["Error: Exception fetching media types"]
+        
+        self._startup_phases["media_db_init"] = time.perf_counter() - phase_start
+        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["media_db_init"], 
+                     labels={"phase": "media_db_init"}, 
+                     documentation="Duration of startup phase in seconds")
+        log_resource_usage()  # Check memory after media DB
 
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
@@ -1064,6 +1123,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
         self.button_handler_map = self._build_handler_map()
+        
+        # Log total initialization time
+        total_init_time = time.perf_counter() - self._startup_start_time
+        self._startup_phases["total_init"] = total_init_time
+        log_histogram("app_startup_total_duration_seconds", total_init_time, 
+                     documentation="Total application initialization time in seconds")
+        
+        # Log startup summary
+        logger.info(f"=== STARTUP TIMING SUMMARY ===")
+        logger.info(f"Total initialization time: {total_init_time:.3f} seconds")
+        for phase, duration in self._startup_phases.items():
+            if phase != "total_init":
+                percentage = (duration / total_init_time) * 100 if total_init_time > 0 else 0
+                logger.info(f"  {phase}: {duration:.3f}s ({percentage:.1f}%)")
+        logger.info(f"==============================")
+        
+        # Final memory check
+        log_resource_usage()
 
     def _build_handler_map(self) -> dict:
         """Constructs the master button handler map from all event modules."""
@@ -1209,19 +1286,53 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             configure_application_logging(self)
 
     def compose(self) -> ComposeResult:
+        compose_start = time.perf_counter()
+        self._ui_compose_start_time = compose_start  # Store for later reference
         logging.debug("App composing UI...")
+        log_counter("ui_compose_started", 1, documentation="UI composition started")
+        
+        # Track individual component creation
+        component_start = time.perf_counter()
         yield Header()
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "header"}, 
+                     documentation="Time to create UI component")
+        
         # Set up the main title bar with a static title
+        component_start = time.perf_counter()
         yield TitleBar()
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "titlebar"}, 
+                     documentation="Time to create UI component")
 
         # Use new TabBar widget
+        component_start = time.perf_counter()
         yield TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value)
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "tabbar"}, 
+                     documentation="Time to create UI component")
 
+        # Content area - all windows
+        content_area_start = time.perf_counter()
         yield from self.compose_content_area() # Call refactored content area composer
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - content_area_start,
+                     labels={"component": "content_area_all_windows"}, 
+                     documentation="Time to create UI component")
 
         # Yield the new AppFooterStatus widget instead of the old Footer
+        component_start = time.perf_counter()
         yield AppFooterStatus(id="app-footer-status")
-        logging.debug("App compose finished.")
+        log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
+                     labels={"component": "footer"}, 
+                     documentation="Time to create UI component")
+        
+        compose_duration = time.perf_counter() - compose_start
+        self._ui_compose_end_time = time.perf_counter()  # Store compose end time
+        log_histogram("app_compose_duration_seconds", compose_duration,
+                     documentation="Total time for compose() method")
+        log_counter("ui_compose_completed", 1, documentation="UI composition completed")
+        logging.debug(f"App compose finished in {compose_duration:.3f} seconds")
+        log_resource_usage()  # Check memory after compose
 
     ############################################################
     #
@@ -1230,19 +1341,37 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     ###########################################################
     def compose_content_area(self) -> ComposeResult:
         """Yields the main window component for each tab."""
+        content_area_start = time.perf_counter()
         with Container(id="content"):
-            yield ChatWindow(self, id="chat-window", classes="window")
-            yield CCPWindow(self, id="conversations_characters_prompts-window", classes="window")
-            yield NotesWindow(self, id="notes-window", classes="window")
-            yield MediaWindow(self, id="media-window", classes="window")
-            yield SearchWindow(self, id="search-window", classes="window")
-            yield IngestWindow(self, id="ingest-window", classes="window")
-            yield ToolsSettingsWindow(self, id="tools_settings-window", classes="window")
-            yield LLMManagementWindow(self, id="llm_management-window", classes="window")
-            yield LogsWindow(self, id="logs-window", classes="window")
-            yield StatsWindow(self, id="stats-window", classes="window")
-            yield EvalsWindow(self, id="evals-window", classes="window")
-            yield CodingWindow(self, id="coding-window", classes="window")
+            windows = [
+                ("chat", ChatWindow, "chat-window"),
+                ("ccp", CCPWindow, "conversations_characters_prompts-window"),
+                ("notes", NotesWindow, "notes-window"),
+                ("media", MediaWindow, "media-window"),
+                ("search", SearchWindow, "search-window"),
+                ("ingest", IngestWindow, "ingest-window"),
+                ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
+                ("llm_management", LLMManagementWindow, "llm_management-window"),
+                ("logs", LogsWindow, "logs-window"),
+                ("stats", StatsWindow, "stats-window"),
+                ("evals", EvalsWindow, "evals-window"),
+                ("coding", CodingWindow, "coding-window"),
+            ]
+            
+            for window_name, window_class, window_id in windows:
+                window_start = time.perf_counter()
+                yield window_class(self, id=window_id, classes="window")
+                window_duration = time.perf_counter() - window_start
+                log_histogram("app_window_creation_duration_seconds", window_duration,
+                             labels={"window": window_name}, 
+                             documentation="Time to create individual window")
+                
+        # Log total content area creation time
+        content_area_duration = time.perf_counter() - content_area_start
+        log_histogram("ui_content_area_duration_seconds", content_area_duration,
+                     documentation="Total time to create all content windows")
+        log_counter("ui_windows_created", len(windows), 
+                   documentation="Number of UI windows created")
 
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
@@ -1323,6 +1452,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one("#ccp-card-personality-display", TextArea).text = details.get("personality", "")
                         self.query_one("#ccp-card-scenario-display", TextArea).text = details.get("scenario", "")
                         self.query_one("#ccp-card-first-message-display", TextArea).text = details.get("first_message", "")
+                        
+                        # Populate V2 Character Card fields
+                        self.query_one("#ccp-card-creator-notes-display", TextArea).text = details.get("creator_notes") or ""
+                        self.query_one("#ccp-card-system-prompt-display", TextArea).text = details.get("system_prompt") or ""
+                        self.query_one("#ccp-card-post-history-instructions-display", TextArea).text = details.get("post_history_instructions") or ""
+                        
+                        # Handle alternate greetings (array to text)
+                        alternate_greetings = details.get("alternate_greetings", [])
+                        self.query_one("#ccp-card-alternate-greetings-display", TextArea).text = "\n".join(alternate_greetings) if alternate_greetings else ""
+                        
+                        # Handle tags (array to comma-separated)
+                        tags = details.get("tags", [])
+                        self.query_one("#ccp-card-tags-display", Static).update(", ".join(tags) if tags else "None")
+                        
+                        self.query_one("#ccp-card-creator-display", Static).update(details.get("creator") or "N/A")
+                        self.query_one("#ccp-card-version-display", Static).update(details.get("character_version") or "N/A")
+                        
+                        # Handle keywords (array to comma-separated)
+                        keywords = details.get("keywords", [])
+                        self.query_one("#ccp-card-keywords-display", Static).update(", ".join(keywords) if keywords else "None")
 
                         image_placeholder = self.query_one("#ccp-card-image-placeholder", Static)
                         if self.current_ccp_character_image:
@@ -1340,6 +1489,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one("#ccp-card-personality-display", TextArea).text = ""
                         self.query_one("#ccp-card-scenario-display", TextArea).text = ""
                         self.query_one("#ccp-card-first-message-display", TextArea).text = ""
+                        
+                        # Clear V2 Character Card fields
+                        self.query_one("#ccp-card-creator-notes-display", TextArea).text = ""
+                        self.query_one("#ccp-card-system-prompt-display", TextArea).text = ""
+                        self.query_one("#ccp-card-post-history-instructions-display", TextArea).text = ""
+                        self.query_one("#ccp-card-alternate-greetings-display", TextArea).text = ""
+                        self.query_one("#ccp-card-tags-display", Static).update("None")
+                        self.query_one("#ccp-card-creator-display", Static).update("N/A")
+                        self.query_one("#ccp-card-version-display", Static).update("N/A")
+                        self.query_one("#ccp-card-keywords-display", Static).update("None")
+                        
                         self.query_one("#ccp-card-image-placeholder", Static).update("No character loaded")
                         loguru_logger.debug("Character card widgets cleared.")
                     except QueryError as qe:
@@ -1813,16 +1973,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
+        mount_start = time.perf_counter()
+        
+        # Logging setup
+        logging_start = time.perf_counter()
         self._setup_logging()
         if self._rich_log_handler:
             self.loguru_logger.debug("Starting RichLogHandler processor task...")
             self._rich_log_handler.start_processor(self)
+        log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - logging_start,
+                     labels={"phase": "logging_setup"}, 
+                     documentation="Duration of on_mount phase in seconds")
 
         # Schedule setup to run after initial rendering
         self.call_after_refresh(self._post_mount_setup)
         self.call_after_refresh(self.hide_inactive_windows)
 
-        # Load up dem themes
+        # Theme registration
+        theme_start = time.perf_counter()
         for theme_name in ALL_THEMES:
             self.register_theme(theme_name)
         
@@ -1834,6 +2002,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e:
             self.loguru_logger.warning(f"Failed to apply default theme '{default_theme}', falling back to 'textual-dark': {e}")
             self.theme = "textual-dark"
+        
+        log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - theme_start,
+                     labels={"phase": "theme_registration"}, 
+                     documentation="Duration of on_mount phase in seconds")
+        
+        mount_duration = time.perf_counter() - mount_start
+        log_histogram("app_on_mount_duration_seconds", mount_duration,
+                     documentation="Total time for on_mount() method")
+        self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
 
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""
@@ -1850,10 +2027,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
+        post_mount_start = time.perf_counter()
         self.loguru_logger.info("App _post_mount_setup: Binding Select widgets and populating dynamic content...")
+        
         # Populate LLM help texts
+        phase_start = time.perf_counter()
         self.call_later(llm_management_events.populate_llm_help_texts, self)
+        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                     labels={"phase": "llm_help_texts"}, 
+                     documentation="Duration of post-mount phase in seconds")
 
+        # Widget binding
+        phase_start = time.perf_counter()
         try:
             chat_select = self.query_one(f"#{TAB_CHAT}-api-provider", Select)
             self.watch(chat_select, "value", self.update_chat_provider_reactive, init=False)
@@ -1872,19 +2057,34 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         #     self.loguru_logger.error(f"_post_mount_setup: Failed to find CCP provider select: #{TAB_CCP}-api-provider")
         # except Exception as e:
         #     self.loguru_logger.error(f"_post_mount_setup: Error binding CCP provider select: {e}", exc_info=True)
+        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                     labels={"phase": "widget_binding"}, 
+                     documentation="Duration of post-mount phase in seconds")
 
         # Set initial tab now that other bindings might be ready
         # self.current_tab = self._initial_tab_value # This triggers watchers
 
         # Populate dynamic selects and lists
         # These also might rely on the main tab windows being fully composed.
+        phase_start = time.perf_counter()
         self.call_later(chat_handlers.populate_chat_conversation_character_filter_select, self)
         self.call_later(ccp_handlers.populate_ccp_character_select, self)
         self.call_later(ccp_handlers.populate_ccp_prompts_list_view, self)
+        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                     labels={"phase": "populate_lists"}, 
+                     documentation="Duration of post-mount phase in seconds")
 
         # Crucially, set the initial tab *after* bindings and other setup that might depend on queries.
         # The _set_initial_tab will trigger watchers.
         self.call_later(self._set_initial_tab)
+        
+        post_mount_duration = time.perf_counter() - post_mount_start
+        log_histogram("app_post_mount_duration_seconds", post_mount_duration,
+                     documentation="Total time for _post_mount_setup() method")
+        self.loguru_logger.info(f"_post_mount_setup completed in {post_mount_duration:.3f} seconds")
+        
+        # Log final resource usage
+        log_resource_usage()
 
         # If initial tab is CCP, trigger its initial search.
         # This should happen *after* current_tab is set.
@@ -1905,16 +2105,76 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await self.update_db_sizes()  # Initial population
             self._db_size_update_timer = self.set_interval(60, self.update_db_sizes) # Periodic updates
             self.loguru_logger.info("DB size update timer started for AppFooterStatus.")
+            
+            # Start token count updates
+            # Initial update after a short delay to ensure UI is ready
+            self.set_timer(0.5, self.update_token_count_display)
+            # Set up periodic updates - using a lambda to ensure it's called correctly
+            self._token_count_update_timer = self.set_interval(3, lambda: self.call_after_refresh(self.update_token_count_display))
+            self.loguru_logger.info("Token count update timer started.")
         except QueryError:
             self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
         except Exception as e_db_size:
             self.loguru_logger.error(f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}", exc_info=True)
         # --- End DB Size Indicator Setup ---
 
+        # Initialize chat settings sidebar mode
+        try:
+            chat_sidebar = self.query_one("#chat-left-sidebar")
+            chat_sidebar.add_class("basic-mode")  # Start in basic mode
+            self.loguru_logger.debug("Initialized chat sidebar in basic mode")
+        except QueryError:
+            self.loguru_logger.warning("Could not find chat sidebar to set initial mode")
+            
         # CRITICAL: Set UI ready state after all bindings and initializations
         self._ui_ready = True
+        ui_ready_time = time.perf_counter()
 
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
+        
+        # Log UI loading metrics
+        if hasattr(self, '_ui_compose_start_time'):
+            ui_loading_time = ui_ready_time - self._ui_compose_start_time
+            log_histogram("ui_loading_duration_seconds", ui_loading_time,
+                         documentation="Total time from compose start to UI ready")
+            log_counter("ui_loading_complete", 1, documentation="UI loading completed successfully")
+            self.loguru_logger.info(f"UI loading completed in {ui_loading_time:.3f} seconds")
+        
+        # Log post-mount setup duration
+        post_mount_duration = ui_ready_time - post_mount_start
+        log_histogram("app_post_mount_total_duration_seconds", post_mount_duration,
+                     documentation="Total time for post-mount setup")
+        
+        # Log total startup time (from __init__ start to fully ready)
+        if hasattr(self, '_startup_start_time'):
+            total_startup_time = ui_ready_time - self._startup_start_time
+            log_histogram("app_startup_complete_duration_seconds", total_startup_time,
+                         documentation="Total time from app initialization start to fully ready")
+            log_counter("app_startup_complete", 1, documentation="Application startup completed successfully")
+            
+            # Log breakdown of startup phases
+            backend_init_time = self._ui_compose_start_time - self._startup_start_time if hasattr(self, '_ui_compose_start_time') else 0
+            ui_compose_time = getattr(self, '_ui_compose_end_time', ui_ready_time) - self._ui_compose_start_time if hasattr(self, '_ui_compose_start_time') else 0
+            
+            log_histogram("app_startup_breakdown_seconds", backend_init_time,
+                         labels={"phase": "backend_initialization"},
+                         documentation="Breakdown of application startup phases")
+            log_histogram("app_startup_breakdown_seconds", ui_compose_time,
+                         labels={"phase": "ui_composition"},
+                         documentation="Breakdown of application startup phases")
+            log_histogram("app_startup_breakdown_seconds", post_mount_duration,
+                         labels={"phase": "post_mount_setup"},
+                         documentation="Breakdown of application startup phases")
+            
+            self.loguru_logger.info(f"=== APPLICATION STARTUP COMPLETE ===")
+            self.loguru_logger.info(f"Total startup time: {total_startup_time:.3f} seconds")
+            self.loguru_logger.info(f"  - Backend init: {backend_init_time:.3f}s")
+            self.loguru_logger.info(f"  - UI composition: {ui_compose_time:.3f}s")
+            self.loguru_logger.info(f"  - Post-mount setup: {post_mount_duration:.3f}s")
+            self.loguru_logger.info(f"===================================")
+            
+            # Final memory usage
+            log_resource_usage()
 
 
     async def update_db_sizes(self) -> None:
@@ -1944,7 +2204,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             if media_size_str is None:
                 media_size_str = "N/A"
 
-            status_string = f"Prompts DB: {prompts_size_str}  |  Chats/Notes DB: {chachanotes_size_str}  |  Media DB: {media_size_str}"
+            status_string = f"P: {prompts_size_str} | C/N: {chachanotes_size_str} | M: {media_size_str}"
             self.loguru_logger.debug(f"DB size status string to display in AppFooterStatus: '{status_string}'")
             # Call the custom update method on the AppFooterStatus widget
             self._db_size_status_widget.update_db_sizes_display(status_string)
@@ -1953,6 +2213,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error(f"Error updating DB sizes in AppFooterStatus: {e}", exc_info=True)
             if self._db_size_status_widget: # Check again in case it became None somehow
                 self._db_size_status_widget.update_db_sizes_display("Error loading DB sizes")
+    
+    async def update_token_count_display(self) -> None:
+        """Updates the token count in the footer when on Chat tab."""
+        if self.current_tab != TAB_CHAT:
+            # Clear token count when not on chat tab
+            if self._db_size_status_widget:
+                self._db_size_status_widget.update_token_count("")
+            return
+            
+        try:
+            if self._db_size_status_widget:
+                # Do the real update
+                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                await update_chat_token_counter(self)
+        except Exception as e:
+            self.loguru_logger.error(f"Error updating token count: {e}", exc_info=True)
+            if self._db_size_status_widget:
+                self._db_size_status_widget.update_token_count("Token count error")
 
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
@@ -2032,7 +2310,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             new_window = self.query_one(f"#{new_tab}-window")
             new_window.display = True
             
-            # Update word count in footer based on tab
+            # Update word count and token count in footer based on tab
             try:
                 footer = self.query_one("AppFooterStatus")
                 if new_tab == "notes":
@@ -2044,9 +2322,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         footer.update_word_count(word_count)
                     except QueryError:
                         footer.update_word_count(0)
-                else:
-                    # Clear word count when not on notes tab
+                    # Clear token count when on notes tab
+                    footer.update_token_count("")
+                elif new_tab == TAB_CHAT:
+                    # Clear word count when on chat tab
                     footer.update_word_count(0)
+                    # Update token count immediately
+                    self.call_after_refresh(self.update_token_count_display)
+                else:
+                    # Clear both when on other tabs
+                    footer.update_word_count(0)
+                    footer.update_token_count("")
             except QueryError:
                 pass
 
@@ -2095,19 +2381,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             except QueryError:
                 self.loguru_logger.error("Could not find MediaWindow to activate its initial view.")
         elif new_tab == TAB_SEARCH:
-            if not self.search_active_sub_tab: # If no sub-tab is active yet for Search tab
-                self.loguru_logger.debug(f"Switched to Search tab, activating initial sub-tab view: {self._initial_search_sub_tab_view}")
-                # Use call_later to ensure the UI for SearchWindow is fully composed and ready
-                self.call_later(setattr, self, 'search_active_sub_tab', self._initial_search_sub_tab_view)
-
-            # Explicitly initialize the SearchWindow views
-            try:
-                search_window = self.query_one(SearchWindow)
-                self.call_after_refresh(search_window._initialize_embeddings_creation_view)
-                self.call_after_refresh(search_window._refresh_collections_list)
-                self.loguru_logger.debug("Initialized SearchWindow views after tab activation")
-            except Exception as e:
-                self.loguru_logger.error(f"Failed to initialize SearchWindow views: {e}", exc_info=True)
+            if not self.search_active_sub_tab:
+                self.search_active_sub_tab = self._initial_search_sub_tab_view
         elif new_tab == TAB_INGEST:
             if not self.ingest_active_view:
                 self.loguru_logger.debug(
@@ -2169,6 +2444,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             sidebar.display = not collapsed
         except QueryError:
             logging.error("Character sidebar widget (#chat-right-sidebar) not found.")
+    
+    def watch_chat_right_sidebar_width(self, width: int) -> None:
+        """Update the width of the chat right sidebar."""
+        if not hasattr(self, "app") or not self.app:  # Check if app is ready
+            return
+        if not self._ui_ready:
+            return
+        try:
+            sidebar = self.query_one("#chat-right-sidebar", VerticalScroll)
+            sidebar.styles.width = f"{width}%"
+        except QueryError:
+            # Sidebar might not be created yet
+            pass
 
     def watch_notes_sidebar_left_collapsed(self, collapsed: bool) -> None:
         """Hide or show the notes left sidebar."""
@@ -2831,6 +3119,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif input_id == "chat-template-search-input" and current_active_tab == TAB_CHAT:
             # No debouncer here, direct call for template search
             await chat_handlers.handle_chat_template_search_input_changed(self, event.value)
+        elif input_id == "chat-llm-max-tokens" and current_active_tab == TAB_CHAT:
+            # Update token counter when max tokens value changes
+            self.call_after_refresh(self.update_token_count_display)
+        elif input_id == "chat-custom-token-limit" and current_active_tab == TAB_CHAT:
+            # Update token counter when custom token limit changes
+            self.call_after_refresh(self.update_token_count_display)
+        elif input_id == "chat-settings-search" and current_active_tab == TAB_CHAT:
+            await self.handle_settings_search(event.value)
         # --- Chat Tab Media Search Input ---
         # elif input_id == "chat-media-search-input" and current_active_tab == TAB_CHAT:
         #     await handle_chat_media_search_input_changed(self, event.input)
@@ -2864,8 +3160,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug("Dispatching to chat_events_sidebar.handle_media_item_selected")
             await chat_events_sidebar.handle_media_item_selected(self, event.item)
 
-        # Note: chat-conversation-search-results-list and conv-char-search-results-list selections
-        # are typically handled by their respective "Load Selected" buttons rather than direct on_list_view_selected.
+        elif list_view_id == "chat-conversation-search-results-list" and current_active_tab == TAB_CHAT:
+            self.loguru_logger.debug("Conversation selected in chat tab search results")
+            # Store the selected item for the Load Selected button, but don't load immediately
+            # This maintains the existing UX where users must click "Load Selected"
+            
+        # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
             self.loguru_logger.warning(
             f"No specific handler for ListView.Selected from list_view_id='{list_view_id}' on tab='{current_active_tab}'")
@@ -2877,6 +3177,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if checkbox_id.startswith("chat-conversation-search-") and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_search_checkbox_changed(self, checkbox_id, event.value)
         # Add handlers for checkboxes in other tabs if any
+
+    async def on_switch_changed(self, event: Switch.Changed) -> None:
+        """Handles changes in Switch widgets."""
+        from textual.widgets import Switch
+        
+        switch_id = event.switch.id
+        current_active_tab = self.current_tab
+        
+        if switch_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
+            await self.handle_settings_mode_toggle(event)
+
 
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""
@@ -2896,6 +3207,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
         elif select_id == "notes-sort-select" and current_active_tab == TAB_NOTES:
             await notes_handlers.handle_notes_sort_changed(self, event)
+        elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
+            await self.handle_rag_preset_changed(event)
+        elif select_id == "chat-api-provider" and current_active_tab == TAB_CHAT:
+            # Update token counter when provider changes
+            try:
+                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                await update_chat_token_counter(self)
+            except Exception as e:
+                self.loguru_logger.debug(f"Could not update token counter on provider change: {e}")
+        elif select_id == "chat-api-model" and current_active_tab == TAB_CHAT:
+            # Update token counter when model changes
+            try:
+                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                await update_chat_token_counter(self)
+            except Exception as e:
+                self.loguru_logger.debug(f"Could not update token counter on model change: {e}")
+        elif select_id == "chat-conversation-search-character-filter-select" and current_active_tab == TAB_CHAT:
+            self.loguru_logger.debug("Character filter changed in chat tab, triggering conversation search")
+            await chat_handlers.perform_chat_conversation_search(self)
 
     ##################################################################
     # --- Event Handlers for Streaming and Worker State Changes ---
@@ -2932,6 +3262,113 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     #####################################################################
     # --- End of Chat Event Handlers for Streaming & thinking tags ---
     #####################################################################
+
+    async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
+        """Handles the settings mode toggle between Basic and Advanced."""
+        try:
+            # Update reactive variable
+            self.chat_settings_mode = "advanced" if event.value else "basic"
+            
+            # Update sidebar class for CSS styling
+            sidebar = self.query_one("#chat-left-sidebar")
+            if self.chat_settings_mode == "basic":
+                sidebar.add_class("basic-mode")
+                sidebar.remove_class("advanced-mode")
+            else:
+                sidebar.add_class("advanced-mode") 
+                sidebar.remove_class("basic-mode")
+            
+            self.notify(f"Settings mode: {self.chat_settings_mode.title()}")
+            self.loguru_logger.info(f"Switched to {self.chat_settings_mode} settings mode")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error toggling settings mode: {e}")
+            self.notify("Error switching settings mode", severity="error")
+
+    async def handle_rag_preset_changed(self, event: Select.Changed) -> None:
+        """Handles RAG preset selection."""
+        try:
+            preset = event.value
+            
+            # Get RAG-related widgets
+            rag_enable = self.query_one("#chat-rag-enable-checkbox", Checkbox)
+            plain_rag = self.query_one("#chat-rag-plain-enable-checkbox", Checkbox) 
+            top_k = self.query_one("#chat-rag-top-k", Input)
+            
+            # Apply preset configurations
+            if preset == "none":
+                rag_enable.value = False
+                self.notify("RAG disabled")
+            elif preset == "light":
+                rag_enable.value = True
+                plain_rag.value = True
+                top_k.value = "3"
+                self.notify("Light RAG: BM25 only, top 3 results")
+            elif preset == "full":
+                rag_enable.value = True
+                plain_rag.value = False
+                top_k.value = "10"
+                # Try to enable reranking if in advanced mode
+                try:
+                    rerank = self.query_one("#chat-rag-rerank-enable-checkbox", Checkbox)
+                    rerank.value = True
+                except QueryError:
+                    pass  # Reranking is in advanced mode
+                self.notify("Full RAG: Embeddings + reranking, top 10 results")
+            elif preset == "custom":
+                rag_enable.value = True
+                self.notify("Custom RAG: Configure settings manually")
+                
+            self.loguru_logger.info(f"Applied RAG preset: {preset}")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error applying RAG preset: {e}")
+            self.notify("Error applying RAG preset", severity="error")
+
+    async def handle_settings_search(self, query: str) -> None:
+        """Handles search in settings sidebar."""
+        try:
+            query = query.lower().strip()
+            
+            # Get all settings elements
+            sidebar = self.query_one("#chat-left-sidebar")
+            
+            if not query:
+                # Clear search - show all settings based on current mode
+                for widget in sidebar.query(".sidebar-label, .section-header, .subsection-header"):
+                    widget.remove_class("search-highlight")
+                for collapsible in sidebar.query(Collapsible):
+                    # Respect the original collapsed state
+                    pass
+                return
+                
+            # Search through all labels and highlight matches
+            matches_found = 0
+            
+            for label in sidebar.query(".sidebar-label, .section-header, .subsection-header"):
+                if isinstance(label, (Static, Label)):
+                    label_text = str(label.renderable).lower()
+                    if query in label_text:
+                        label.add_class("search-highlight")
+                        matches_found += 1
+                        
+                        # Expand parent collapsibles to show match
+                        parent = label.parent
+                        while parent and parent != sidebar:
+                            if isinstance(parent, Collapsible):
+                                parent.collapsed = False
+                            parent = parent.parent
+                    else:
+                        label.remove_class("search-highlight")
+                        
+            if matches_found == 0:
+                self.notify(f"No settings found for '{query}'", severity="warning")
+            else:
+                self.notify(f"Found {matches_found} settings matching '{query}'")
+                
+        except Exception as e:
+            self.loguru_logger.error(f"Error in settings search: {e}")
+            self.notify("Error searching settings", severity="error")
 
 
     #####################################################################
@@ -3014,6 +3451,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                             self.current_ai_message_widget = None  # Clear ref
                         except QueryError as qe_cancel_ui:
                             self.loguru_logger.error(f"Error updating AI message UI on CANCELLED state: {qe_cancel_ui}")
+                
+                # Clear the current chat worker reference when any chat worker finishes
+                if worker_name_attr.startswith("API_Call_chat") or worker_name_attr == "respond_for_me_worker":
+                    self.set_current_chat_worker(None)
+                    self.loguru_logger.debug(f"Cleared current_chat_worker after {worker_name_attr} finished with state {worker_state}")
             else:
                 self.loguru_logger.debug(f"Chat-related worker '{worker_name_attr}' in other state: {worker_state}")
 
@@ -3034,6 +3476,154 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info(f"Ollama API worker '{event.worker.name}' finished with state {event.state}.")
             await llm_management_events_ollama.handle_ollama_worker_completion(self, event)
 
+        #######################################################################
+        # --- Handle AI Generation Workers (for character generation) ---
+        #######################################################################
+        elif worker_group == "ai_generation":
+            self.loguru_logger.info(f"AI generation worker '{event.worker.name}' state changed to {worker_state}.")
+            
+            if worker_state == WorkerState.SUCCESS:
+                self.loguru_logger.info(f"AI generation worker '{event.worker.name}' completed successfully.")
+                result = event.worker.result
+                
+                # Handle the response
+                if result and isinstance(result, dict) and 'choices' in result:
+                    try:
+                        content = result['choices'][0]['message']['content']
+                        
+                        # Determine which field to update based on worker name
+                        if event.worker.name == "ai_generate_description":
+                            text_area = self.query_one("#ccp-editor-char-description-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-description-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_personality":
+                            text_area = self.query_one("#ccp-editor-char-personality-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-personality-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_scenario":
+                            text_area = self.query_one("#ccp-editor-char-scenario-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-scenario-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_first_message":
+                            text_area = self.query_one("#ccp-editor-char-first-message-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-first-message-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_system_prompt":
+                            text_area = self.query_one("#ccp-editor-char-system-prompt-textarea", TextArea)
+                            text_area.text = content
+                            button = self.query_one("#ccp-generate-system-prompt-button", Button)
+                            button.disabled = False
+                            
+                        elif event.worker.name == "ai_generate_all":
+                            # Parse the comprehensive response
+                            sections = {
+                                'description': '',
+                                'personality': '',
+                                'scenario': '',
+                                'first_message': '',
+                                'system_prompt': ''
+                            }
+                            
+                            current_section = None
+                            current_content = []
+                            
+                            for line in content.split('\n'):
+                                line_stripped = line.strip()
+                                line_lower = line_stripped.lower()
+                                
+                                # Remove markdown formatting from potential headers
+                                line_clean = line_stripped.replace('**', '').replace('##', '').strip()
+                                line_clean_lower = line_clean.lower()
+                                
+                                # Check for section headers (handle both plain and markdown formatted)
+                                if 'description' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'description'
+                                    current_content = []
+                                elif 'personality' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'personality'
+                                    current_content = []
+                                elif 'scenario' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'scenario'
+                                    current_content = []
+                                elif 'first message' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'first_message'
+                                    current_content = []
+                                elif 'system prompt' in line_clean_lower and any(marker in line_stripped for marker in [':', '**', '##']):
+                                    if current_section and current_content:
+                                        sections[current_section] = '\n'.join(current_content).strip()
+                                    current_section = 'system_prompt'
+                                    current_content = []
+                                elif current_section and line_stripped and not (line_stripped.startswith('#') and len(line_stripped) < 50):
+                                    # Skip pure header lines but keep content
+                                    current_content.append(line)
+                            
+                            # Add the last section
+                            if current_section and current_content:
+                                sections[current_section] = '\n'.join(current_content).strip()
+                            
+                            # Update all fields
+                            if sections['description']:
+                                self.query_one("#ccp-editor-char-description-textarea", TextArea).text = sections['description']
+                            if sections['personality']:
+                                self.query_one("#ccp-editor-char-personality-textarea", TextArea).text = sections['personality']
+                            if sections['scenario']:
+                                self.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = sections['scenario']
+                            if sections['first_message']:
+                                self.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = sections['first_message']
+                            if sections['system_prompt']:
+                                self.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = sections['system_prompt']
+                            
+                            # Re-enable the generate all button
+                            button = self.query_one("#ccp-generate-all-button", Button)
+                            button.disabled = False
+                            self.notify("Character profile generated successfully!", severity="success")
+                            
+                    except (KeyError, IndexError) as e:
+                        self.loguru_logger.error(f"Failed to extract content from AI response: {e}")
+                        self.notify("Failed to parse AI response", severity="error")
+                    except QueryError as e:
+                        self.loguru_logger.error(f"Could not find UI element to update: {e}")
+                        self.notify("UI error updating fields", severity="error")
+                else:
+                    self.notify("Failed to generate content", severity="error")
+                    
+            elif worker_state == WorkerState.ERROR:
+                self.loguru_logger.error(f"AI generation worker '{event.worker.name}' failed: {event.worker.error}")
+                self.notify(f"Generation failed: {str(event.worker.error)[:100]}", severity="error")
+                
+                # Re-enable the appropriate button on error
+                button_mapping = {
+                    "ai_generate_description": "#ccp-generate-description-button",
+                    "ai_generate_personality": "#ccp-generate-personality-button",
+                    "ai_generate_scenario": "#ccp-generate-scenario-button",
+                    "ai_generate_first_message": "#ccp-generate-first-message-button",
+                    "ai_generate_system_prompt": "#ccp-generate-system-prompt-button",
+                    "ai_generate_all": "#ccp-generate-all-button"
+                }
+                
+                button_id = button_mapping.get(event.worker.name)
+                if button_id:
+                    try:
+                        button = self.query_one(button_id, Button)
+                        button.disabled = False
+                    except QueryError:
+                        self.loguru_logger.warning(f"Could not find button {button_id} to re-enable")
 
         #######################################################################
         # --- Handle Llama.cpp Server Worker (identified by group) ---
@@ -3517,15 +4107,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             import threading
             
             def save_caches_with_timeout():
-                try:
-                    from .RAG_Search.Services.cache_service import get_cache_service
-                    cache_service = get_cache_service()
-                    cache_service.save_persistent_caches()
-                    loguru_logger.info("Persistent caches saved successfully")
-                except ImportError:
-                    loguru_logger.debug("Cache service not available - skipping cache save")
-                except Exception as e:
-                    loguru_logger.error(f"Error saving persistent caches: {e}")
+                # Note: The old cache service is deprecated
+                # The simplified RAG service handles caching internally
+                # and doesn't require explicit save on shutdown
+                loguru_logger.debug("Cache saving skipped - handled by simplified RAG service")
             
             # Run cache saving in a separate thread with timeout
             save_thread = threading.Thread(target=save_caches_with_timeout)
@@ -3590,14 +4175,51 @@ if __name__ == "__main__":
 
     # --- CSS File Handling ---
     try:
-        from .Constants import css_content
         css_dir = Path(__file__).parent / "css"
         css_dir.mkdir(exist_ok=True)
-        css_file_path = css_dir / "tldw_cli.tcss"
-        if not css_file_path.exists():
-            with open(css_file_path, "w", encoding='utf-8') as f:
-                f.write(css_content)
-            logging.info(f"Created default CSS file: {css_file_path}")
+        
+        # Check if modular CSS needs to be built
+        modular_css_path = css_dir / "tldw_cli_modular.tcss"
+        build_script_path = css_dir / "build_css.py"
+        
+        # Check if any module is newer than the built file
+        should_rebuild = False
+        if not modular_css_path.exists():
+            should_rebuild = True
+            logging.info("Modular CSS file not found, will build it")
+        elif build_script_path.exists():
+            # Check if any module file is newer than the built file
+            modular_mtime = modular_css_path.stat().st_mtime
+            for subdir in ['core', 'layout', 'components', 'features', 'utilities']:
+                subdir_path = css_dir / subdir
+                if subdir_path.exists():
+                    for css_file in subdir_path.glob('*.tcss'):
+                        if css_file.stat().st_mtime > modular_mtime:
+                            should_rebuild = True
+                            logging.info(f"Module {css_file.name} is newer than built CSS, rebuilding")
+                            break
+                if should_rebuild:
+                    break
+        
+        if should_rebuild and build_script_path.exists():
+            logging.info("Building modular CSS...")
+            import subprocess
+            result = subprocess.run([sys.executable, str(build_script_path)], 
+                                  cwd=str(css_dir), 
+                                  capture_output=True, 
+                                  text=True)
+            if result.returncode == 0:
+                logging.info("Successfully built modular CSS")
+            else:
+                logging.error(f"Failed to build modular CSS: {result.stderr}")
+                # Fall back to legacy CSS if available
+                from .Constants import css_content
+                css_file_path = css_dir / "tldw_cli.tcss"
+                if not css_file_path.exists():
+                    with open(css_file_path, "w", encoding='utf-8') as f:
+                        f.write(css_content)
+                    logging.info(f"Created fallback CSS file: {css_file_path}")
+        
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
@@ -3644,14 +4266,51 @@ def main_cli_runner():
 
     # --- CSS File Handling ---
     try:
-        from .Constants import css_content
         css_dir = Path(__file__).parent / "css"
         css_dir.mkdir(exist_ok=True)
-        css_file_path = css_dir / "tldw_cli.tcss"
-        if not css_file_path.exists():
-            with open(css_file_path, "w", encoding='utf-8') as f:
-                f.write(css_content)
-            logging.info(f"Created default CSS file: {css_file_path}")
+        
+        # Check if modular CSS needs to be built
+        modular_css_path = css_dir / "tldw_cli_modular.tcss"
+        build_script_path = css_dir / "build_css.py"
+        
+        # Check if any module is newer than the built file
+        should_rebuild = False
+        if not modular_css_path.exists():
+            should_rebuild = True
+            logging.info("Modular CSS file not found, will build it")
+        elif build_script_path.exists():
+            # Check if any module file is newer than the built file
+            modular_mtime = modular_css_path.stat().st_mtime
+            for subdir in ['core', 'layout', 'components', 'features', 'utilities']:
+                subdir_path = css_dir / subdir
+                if subdir_path.exists():
+                    for css_file in subdir_path.glob('*.tcss'):
+                        if css_file.stat().st_mtime > modular_mtime:
+                            should_rebuild = True
+                            logging.info(f"Module {css_file.name} is newer than built CSS, rebuilding")
+                            break
+                if should_rebuild:
+                    break
+        
+        if should_rebuild and build_script_path.exists():
+            logging.info("Building modular CSS...")
+            import subprocess
+            result = subprocess.run([sys.executable, str(build_script_path)], 
+                                  cwd=str(css_dir), 
+                                  capture_output=True, 
+                                  text=True)
+            if result.returncode == 0:
+                logging.info("Successfully built modular CSS")
+            else:
+                logging.error(f"Failed to build modular CSS: {result.stderr}")
+                # Fall back to legacy CSS if available
+                from .Constants import css_content
+                css_file_path = css_dir / "tldw_cli.tcss"
+                if not css_file_path.exists():
+                    with open(css_file_path, "w", encoding='utf-8') as f:
+                        f.write(css_content)
+                    logging.info(f"Created fallback CSS file: {css_file_path}")
+        
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 

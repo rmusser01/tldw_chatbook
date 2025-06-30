@@ -44,8 +44,11 @@ class CCPWindow(Container):
             with Collapsible(title="Characters", id="conv-char-characters-collapsible"):
                 yield Button("Import Character Card", id="ccp-import-character-button",
                              classes="sidebar-button")
+                yield Button("Create Character", id="ccp-create-character-button",
+                             classes="sidebar-button")
                 yield Select([], prompt="Select Character...", allow_blank=True, id="conv-char-character-select")
                 yield Button("Load Character", id="ccp-right-pane-load-character-button", classes="sidebar-button")
+                yield Button("Refresh List", id="ccp-refresh-character-list-button", classes="sidebar-button")
             with Collapsible(title="Conversations", id="conv-char-conversations-collapsible"):
                 yield Button("Import Conversation", id="ccp-import-conversation-button",
                              classes="sidebar-button")
@@ -61,7 +64,7 @@ class CCPWindow(Container):
                 yield Button("Load Selected Prompt", id="ccp-prompt-load-selected-button", classes="sidebar-button")
 
         yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), id="toggle-conv-char-left-sidebar",
-                     classes="cc-sidebar-toggle-button")
+                     classes="cc-sidebar-toggle-button", tooltip="Toggle left sidebar")
 
         # Center Pane
         logger.debug("Composing center pane")
@@ -85,7 +88,24 @@ class CCPWindow(Container):
                 yield Label("Scenario:")
                 yield TextArea(id="ccp-card-scenario-display", read_only=True, classes="ccp-card-textarea")
                 yield Label("First Message:")
-                yield TextArea(id="ccp-card-first-message-display", classes="ccp-card-textarea")
+                yield TextArea(id="ccp-card-first-message-display", read_only=True, classes="ccp-card-textarea")
+                # V2 Character Card fields
+                yield Label("Creator Notes:")
+                yield TextArea(id="ccp-card-creator-notes-display", read_only=True, classes="ccp-card-textarea")
+                yield Label("System Prompt:")
+                yield TextArea(id="ccp-card-system-prompt-display", read_only=True, classes="ccp-card-textarea")
+                yield Label("Post History Instructions:")
+                yield TextArea(id="ccp-card-post-history-instructions-display", read_only=True, classes="ccp-card-textarea")
+                yield Label("Alternate Greetings:")
+                yield TextArea(id="ccp-card-alternate-greetings-display", read_only=True, classes="ccp-card-textarea")
+                yield Label("Tags:")
+                yield Static(id="ccp-card-tags-display")
+                yield Label("Creator:")
+                yield Static(id="ccp-card-creator-display")
+                yield Label("Character Version:")
+                yield Static(id="ccp-card-version-display")
+                yield Label("Keywords:")
+                yield Static(id="ccp-card-keywords-display")
                 with Horizontal(classes="ccp-card-action-buttons"): # Added a class for potential styling
                     yield Button("Edit this Character", id="ccp-card-edit-button", variant="default")
                     yield Button("Save Changes", id="ccp-card-save-button", variant="success") # Added variant
@@ -95,18 +115,44 @@ class CCPWindow(Container):
                 yield Static("Character Editor", classes="pane-title", id="ccp-center-pane-title-char-editor")
                 yield Label("Character Name:", classes="sidebar-label")
                 yield Input(id="ccp-editor-char-name-input", placeholder="Character name...", classes="sidebar-input")
+                yield Button("✨ Generate All Fields", id="ccp-generate-all-button", classes="ai-generate-all-button", variant="success")
                 yield Label("Avatar Path/URL:", classes="sidebar-label")
                 yield Input(id="ccp-editor-char-avatar-input", placeholder="Path or URL to avatar image...", classes="sidebar-input")
                 yield Label("Description:", classes="sidebar-label")
-                yield TextArea(id="ccp-editor-char-description-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                with Horizontal(classes="field-with-ai-button"):
+                    yield TextArea(id="ccp-editor-char-description-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                    yield Button("✨ Generate", id="ccp-generate-description-button", classes="ai-generate-button", variant="primary")
                 yield Label("Personality:", classes="sidebar-label")
-                yield TextArea(id="ccp-editor-char-personality-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                with Horizontal(classes="field-with-ai-button"):
+                    yield TextArea(id="ccp-editor-char-personality-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                    yield Button("✨ Generate", id="ccp-generate-personality-button", classes="ai-generate-button", variant="primary")
                 yield Label("Scenario:", classes="sidebar-label")
-                yield TextArea(id="ccp-editor-char-scenario-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                with Horizontal(classes="field-with-ai-button"):
+                    yield TextArea(id="ccp-editor-char-scenario-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                    yield Button("✨ Generate", id="ccp-generate-scenario-button", classes="ai-generate-button", variant="primary")
                 yield Label("First Message (Greeting):", classes="sidebar-label")
-                yield TextArea(id="ccp-editor-char-first-message-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                with Horizontal(classes="field-with-ai-button"):
+                    yield TextArea(id="ccp-editor-char-first-message-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                    yield Button("✨ Generate", id="ccp-generate-first-message-button", classes="ai-generate-button", variant="primary")
                 yield Label("Keywords (comma-separated):", classes="sidebar-label")
                 yield TextArea(id="ccp-editor-char-keywords-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                # V2 Character Card Fields
+                yield Label("Creator Notes:", classes="sidebar-label")
+                yield TextArea(id="ccp-editor-char-creator-notes-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                yield Label("System Prompt:", classes="sidebar-label")
+                with Horizontal(classes="field-with-ai-button"):
+                    yield TextArea(id="ccp-editor-char-system-prompt-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                    yield Button("✨ Generate", id="ccp-generate-system-prompt-button", classes="ai-generate-button", variant="primary")
+                yield Label("Post History Instructions:", classes="sidebar-label")
+                yield TextArea(id="ccp-editor-char-post-history-instructions-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                yield Label("Alternate Greetings (one per line):", classes="sidebar-label")
+                yield TextArea(id="ccp-editor-char-alternate-greetings-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                yield Label("Tags (comma-separated):", classes="sidebar-label")
+                yield Input(id="ccp-editor-char-tags-input", placeholder="e.g., fantasy, anime, helpful", classes="sidebar-input")
+                yield Label("Creator:", classes="sidebar-label")
+                yield Input(id="ccp-editor-char-creator-input", placeholder="Creator name", classes="sidebar-input")
+                yield Label("Character Version:", classes="sidebar-label")
+                yield Input(id="ccp-editor-char-version-input", placeholder="e.g., 1.0", classes="sidebar-input")
                 with Horizontal(classes="ccp-prompt-action-buttons"):
                     yield Button("Save Character", id="ccp-editor-char-save-button", variant="success", classes="sidebar-button")
                     yield Button("Clone Character", id="ccp-editor-char-clone-button", classes="sidebar-button")
@@ -138,7 +184,7 @@ class CCPWindow(Container):
 
         # Button to toggle the right sidebar for CCP tab
         yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
-                     id="toggle-conv-char-right-sidebar", classes="cc-sidebar-toggle-button")
+                     id="toggle-conv-char-right-sidebar", classes="cc-sidebar-toggle-button", tooltip="Toggle right sidebar")
 
         # Right Pane
         logger.debug("Composing right pane")

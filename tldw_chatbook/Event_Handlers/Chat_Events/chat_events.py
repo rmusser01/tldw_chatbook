@@ -359,6 +359,13 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         user_msg_widget_instance = ChatMessage(message_text_from_input, role="User")
         await chat_container.mount(user_msg_widget_instance)
         loguru_logger.debug(f"Mounted new user message to UI: '{message_text_from_input[:50]}...'")
+        
+        # Update token counter after adding user message
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(app)
+        except Exception as e:
+            loguru_logger.debug(f"Could not update token counter: {e}")
 
     # --- 7. Save User Message to DB (IF CHAT IS ALREADY PERSISTENT) ---
     if not app.current_chat_is_ephemeral and active_conversation_id and db:
@@ -521,10 +528,11 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         strategy="sorted_evenly", # Default or get from config/UI
         strip_thinking_tags=strip_thinking_tags_value # Pass the new setting
     )
-    app.run_worker(worker_target, name=f"API_Call_{prefix}",
+    worker = app.run_worker(worker_target, name=f"API_Call_{prefix}",
                    group="api_calls",
                    thread=True,
                    description=f"Calling {selected_provider}")
+    app.set_current_chat_worker(worker)
 
 
 async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, action_widget: ChatMessage) -> None:
@@ -634,7 +642,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         try:
             text_widget = action_widget.query_one(".message-text", Static)
             original_display = text_widget.renderable  # Store to restore
-            text_widget.update(Text.from_markup(f"[italic]Speaking: {escape_markup(message_text)}[/]"))
+            text_widget.update(f"Speaking: {message_text}")
             # After TTS simulation/actual call:
             # app.set_timer(3, lambda: text_widget.update(original_display)) # Example restore
         except QueryError:
@@ -871,8 +879,9 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             strip_thinking_tags=strip_thinking_tags_value_regen, # Pass for regeneration
             media_content={}, selected_parts=[], chatdict_entries=None, max_tokens=500, strategy="sorted_evenly"
         )
-        app.run_worker(worker_target_regen, name=f"API_Call_{prefix}_regenerate", group="api_calls", thread=True,
+        worker = app.run_worker(worker_target_regen, name=f"API_Call_{prefix}_regenerate", group="api_calls", thread=True,
                        description=f"Regenerating for {selected_provider_regen}")
+        app.set_current_chat_worker(worker)
 
     elif "continue-button" in button_classes and message_role == "AI":
         loguru_logger.info(
@@ -914,6 +923,13 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
         loguru_logger.debug("Cleared character editing fields on new chat.")
     except QueryError as e:
         loguru_logger.warning(f"Could not clear all character edit fields on new chat: {e}")
+    
+    # Update token counter to show empty state
+    try:
+        from .chat_token_events import update_chat_token_counter
+        await update_chat_token_counter(app)
+    except Exception as e:
+        loguru_logger.debug(f"Could not update token counter: {e}")
 
     try:
         # Watcher should handle most of this, but explicit clearing is safer
@@ -1217,11 +1233,35 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
 
         loguru_logger.debug(
             f"Searching conversations. Term: '{search_term}', CharID for DB: {effective_character_id_for_search}, IncludeCharFlag: {include_character_chats}")
-        conversations = db.search_conversations_by_title(
-            title_query=search_term,
-            character_id=effective_character_id_for_search,  # This will be None if searching all/all_chars checked
-            limit=100
-        )
+        
+        # Handle different search scenarios
+        if not search_term:
+            # Empty search term - show all conversations based on filters
+            if effective_character_id_for_search is not None and effective_character_id_for_search != ccl.DEFAULT_CHARACTER_ID:
+                # Specific character selected - show all conversations for that character
+                conversations = db.get_conversations_for_character(
+                    character_id=effective_character_id_for_search,
+                    limit=100
+                )
+            elif search_all_characters and include_character_chats:
+                # "All Characters" checked - get all conversations (both regular and character chats)
+                conversations = db.list_all_active_conversations(limit=100)
+            elif effective_character_id_for_search == ccl.DEFAULT_CHARACTER_ID:
+                # Regular chats only (non-character chats)
+                # Get all conversations and filter for those without a character
+                all_conversations = db.list_all_active_conversations(limit=100)
+                conversations = [conv for conv in all_conversations 
+                               if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
+            else:
+                # No specific filter - still show all conversations
+                conversations = db.list_all_active_conversations(limit=100)
+        else:
+            # Search term provided - use the search function
+            conversations = db.search_conversations_by_title(
+                title_query=search_term,
+                character_id=effective_character_id_for_search,  # This will be None if searching all/all_chars checked
+                limit=100
+            )
 
         # If include_character_chats is False, and the DB query couldn't filter by "IS NULL"
         # we might need to filter here:
@@ -1412,6 +1452,14 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
 
         app.query_one("#chat-input", TextArea).focus()
         app.notify(f"Chat '{conv_metadata.get('title', 'Untitled')}' loaded.", severity="information", timeout=3)
+        
+        # Update token counter after loading conversation
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(app)
+        except Exception as e:
+            loguru_logger.debug(f"Could not update token counter: {e}")
+            
     except QueryError as qe_disp_main:
         loguru_logger.error(f"UI component missing during display_conversation for {conversation_id}: {qe_disp_main}")
         app.notify("Error updating UI for loaded chat.", severity="error")
@@ -2725,13 +2773,14 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
         )
 
         # Run the LLM call in a worker
-        app.run_worker(
+        worker = app.run_worker(
             worker_target,
             name="respond_for_me_worker",
             group="llm_suggestions",
             thread=True,
             description="Generating suggestion for user response..."
         )
+        app.set_current_chat_worker(worker)
 
         # The response will be handled by a worker event (e.g., on_stream_done or a custom one).
         # So, remove direct processing of llm_response_text and UI population here.
