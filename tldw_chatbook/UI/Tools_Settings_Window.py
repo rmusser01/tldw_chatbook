@@ -758,43 +758,49 @@ class ToolsSettingsWindow(Container):
         
         with Container(classes="settings-container"):
             # Database Status Section
-            with Collapsible(title="Database Status", collapsed=False):
-                # Show current database sizes
-                yield Label("ChaChaNotes Database:", classes="settings-label")
-                yield Static("Size: Loading...", id="db-size-chachanotes", classes="db-status")
-                
-                yield Label("Prompts Database:", classes="settings-label")
-                yield Static("Size: Loading...", id="db-size-prompts", classes="db-status")
-                
-                yield Label("Media Database:", classes="settings-label")
-                yield Static("Size: Loading...", id="db-size-media", classes="db-status")
+            yield Collapsible(
+                Label("ChaChaNotes Database:", classes="settings-label"),
+                Static("Size: Loading...", id="db-size-chachanotes", classes="db-status"),
+                Label("Prompts Database:", classes="settings-label"),
+                Static("Size: Loading...", id="db-size-prompts", classes="db-status"),
+                Label("Media Database:", classes="settings-label"),
+                Static("Size: Loading...", id="db-size-media", classes="db-status"),
+                title="Database Status",
+                collapsed=False
+            )
             
             # Database Maintenance Section
-            with Collapsible(title="Database Maintenance", collapsed=False):
-                yield Button("Vacuum All Databases", id="db-vacuum-all", variant="primary")
-                yield Static("Reclaim unused space and optimize database performance", classes="help-text")
-                
-                yield Button("Backup All Databases", id="db-backup-all", variant="success")
-                yield Static("Create timestamped backups of all databases", classes="help-text")
-                
-                yield Button("Check Database Integrity", id="db-check-integrity", variant="warning")
-                yield Static("Verify database structure and data integrity", classes="help-text")
+            yield Collapsible(
+                Button("Vacuum All Databases", id="db-vacuum-all", variant="primary"),
+                Static("Reclaim unused space and optimize database performance", classes="help-text"),
+                Button("Backup All Databases", id="db-backup-all", variant="success"),
+                Static("Create timestamped backups of all databases", classes="help-text"),
+                Button("Check Database Integrity", id="db-check-integrity", variant="warning"),
+                Static("Verify database structure and data integrity", classes="help-text"),
+                title="Database Maintenance",
+                collapsed=False
+            )
             
             # Export/Import Section
-            with Collapsible(title="Export & Import", collapsed=False):
-                yield Button("Export Conversations", id="db-export-conversations")
-                yield Button("Export Notes", id="db-export-notes")
-                yield Button("Export Characters", id="db-export-characters")
-                
-                yield Button("Import Data", id="db-import-data", variant="primary")
-                yield Static("Import previously exported data files", classes="help-text")
+            yield Collapsible(
+                Button("Export Conversations", id="db-export-conversations"),
+                Button("Export Notes", id="db-export-notes"),
+                Button("Export Characters", id="db-export-characters"),
+                Button("Import Data", id="db-import-data", variant="primary"),
+                Static("Import previously exported data files", classes="help-text"),
+                title="Export & Import",
+                collapsed=False
+            )
             
             # Danger Zone - collapsed by default for safety
-            with Collapsible(title="⚠️ Danger Zone", collapsed=True):
-                yield Static("These actions cannot be undone!", classes="danger-warning")
-                yield Button("Clear All Conversations", id="db-clear-conversations", variant="error")
-                yield Button("Clear All Notes", id="db-clear-notes", variant="error")
-                yield Button("Reset All Databases", id="db-reset-all", variant="error")
+            yield Collapsible(
+                Static("These actions cannot be undone!", classes="danger-warning"),
+                Button("Clear All Conversations", id="db-clear-conversations", variant="error"),
+                Button("Clear All Notes", id="db-clear-notes", variant="error"),
+                Button("Reset All Databases", id="db-reset-all", variant="error"),
+                title="⚠️ Danger Zone",
+                collapsed=True
+            )
     
     def _compose_appearance_settings(self) -> ComposeResult:
         """Compose the Appearance Settings UI."""
