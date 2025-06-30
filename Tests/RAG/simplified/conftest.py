@@ -240,40 +240,66 @@ def simple_chunking_service():
 @pytest.fixture
 def test_rag_config(chroma_persist_dir):
     """Create a test RAG configuration."""
-    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        RAGConfig, EmbeddingConfig, VectorStoreConfig, 
+        ChunkingConfig, SearchConfig
+    )
     
     return RAGConfig(
-        collection_name="test_collection",
-        persist_directory=str(chroma_persist_dir),
-        embedding_provider="mock",
-        embedding_model="mock-model",
-        distance_metric="cosine",
-        chunk_size=100,
-        chunk_overlap=20,
-        batch_size=10,
-        top_k=5,
-        score_threshold=0.5,
-        enable_cache=True,
-        cache_ttl_seconds=300,
-        max_cache_size=100
+        embedding=EmbeddingConfig(
+            model="sentence-transformers/all-MiniLM-L6-v2",  # Use real model
+            device="cpu",
+            cache_size=100,
+            batch_size=10
+        ),
+        vector_store=VectorStoreConfig(
+            type="chroma",
+            persist_directory=chroma_persist_dir,
+            collection_name="test_collection",
+            distance_metric="cosine"
+        ),
+        chunking=ChunkingConfig(
+            chunk_size=100,
+            chunk_overlap=20,
+            chunking_method="words"
+        ),
+        search=SearchConfig(
+            default_top_k=5,
+            score_threshold=0.5,
+            enable_cache=True,
+            cache_size=100,
+            cache_ttl=300
+        )
     )
 
 
 @pytest.fixture
 def memory_rag_config():
     """Create an in-memory RAG configuration."""
-    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        RAGConfig, EmbeddingConfig, VectorStoreConfig,
+        ChunkingConfig, SearchConfig
+    )
     
     return RAGConfig(
-        collection_name="test_memory",
-        persist_directory=":memory:",
-        embedding_provider="mock",
-        embedding_model="mock-model",
-        vector_store_type="in_memory",
-        distance_metric="cosine",
-        chunk_size=100,
-        chunk_overlap=20,
-        enable_cache=False
+        embedding=EmbeddingConfig(
+            model="sentence-transformers/all-MiniLM-L6-v2",  # Use real model
+            device="cpu"
+        ),
+        vector_store=VectorStoreConfig(
+            type="memory",
+            collection_name="test_memory",
+            distance_metric="cosine"
+        ),
+        chunking=ChunkingConfig(
+            chunk_size=100,
+            chunk_overlap=20,
+            chunking_method="words"
+        ),
+        search=SearchConfig(
+            default_top_k=10,
+            enable_cache=False
+        )
     )
 
 

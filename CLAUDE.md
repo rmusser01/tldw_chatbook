@@ -96,6 +96,10 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - Provider-specific settings and API key management
   - Path resolution and database initialization
 - **`tldw_chatbook/Constants.py`** - Application-wide constants and identifiers
+  - Tab identifiers including `TAB_CODING`, `TAB_EVALS`
+  - CSS styling constants for theming
+  - Help text for LLM server configurations
+  - UI dimension constants
 
 #### UI Layer Architecture
 - **`UI/`** - Main window components implementing tab functionality
@@ -106,17 +110,31 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `Ingest_Window.py` - Media ingestion with progress tracking
   - `LLM_Management_Window.py` - Local LLM server management
   - `Tools_Settings_Window.py` - Application settings and tools
+  - `Coding_Window.py` - Coding assistance interface with collapsible sidebar
+  - `Logs_Window.py` - Application logs viewer with copy functionality
+  - `Stats_Window.py` - Statistics and metrics display
+  - `SearchWindow.py` - Legacy search implementation (backup)
 - **`Widgets/`** - Reusable UI components following Textual patterns
   - `chat_message.py` / `chat_message_enhanced.py` - Rich message display with markdown
   - `chat_right_sidebar.py` - Context-aware sidebar for chat
   - `notes_sidebar_left/right.py` - Dual sidebar navigation for notes
   - `enhanced_file_picker.py` - Advanced file selection with filtering
+  - `emoji_picker.py` - Emoji selection widget
+  - `eval_additional_dialogs.py` / `eval_config_dialogs.py` / `eval_results_widgets.py` - Evaluation UI components
+  - `AppFooterStatus.py` - Footer status widget
+  - `titlebar.py` - Custom title bar widget
+  - `template_selector.py` - Template selection for notes
   - Custom list items, dialogs, and specialized widgets
 
 #### Business Logic Layer
 - **`Event_Handlers/`** - Decoupled event handling with clear responsibilities
   - `Chat_Events/` - Chat-specific events (streaming, images, RAG integration)
   - `LLM_Management_Events/` - Provider-specific LLM management
+    - `llm_management_events_llamafile.py` - Llamafile server management
+    - `llm_management_events_onnx.py` - ONNX runtime support
+    - `llm_management_events_transformers.py` - Transformers library integration
+  - `notes_sync_events.py` - File synchronization event handling
+  - `eval_events.py` - Evaluation system events
   - Tab-specific handlers for each major feature
   - Worker event coordination for async operations
 - **`Chat/`** - Core chat engine
@@ -128,7 +146,9 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `ccv3_parser.py` - Character card format parsing
 - **`Notes/`** - Advanced notes system
   - `Notes_Library.py` - Notes management with template support
-  - `sync_engine.py` / `sync_service.py` - Bidirectional file synchronization
+  - `sync_engine.py` - Core synchronization engine with conflict resolution
+  - `sync_service.py` - Background sync service implementation
+  - Template system for structured note creation
 
 #### Data Layer
 - **`DB/`** - Database abstraction with specialized implementations
@@ -143,6 +163,15 @@ The codebase follows a sophisticated modular architecture with clear separation 
     - Vector embedding storage (when RAG enabled)
   - `RAG_Indexing_DB.py` - Specialized RAG index management
   - `search_history_db.py` - Search query persistence
+  - `Evals_DB.py` - Comprehensive evaluation database for LLM benchmarking
+    - Model performance tracking
+    - Test suite management
+    - Results aggregation
+  - `Prompts_DB.py` - Dedicated prompts management with versioning
+    - Prompt templates storage
+    - Version history tracking
+    - Category organization
+  - `Sync_Client.py` - Client-side synchronization for distributed database sync
   - `sql_validation.py` - SQL injection prevention
 
 #### Service Layer
@@ -161,6 +190,18 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - Hybrid search (keyword + semantic)
   - Configurable retrieval strategies
 
+- **`Config_Files/`** - Configuration management
+  - `create_custom_template.py` - Template creation utilities
+  - Default configuration templates
+
+- **`Third_Party/`** - External integrations
+  - `aider/` - Aider code assistant integration
+  - `textual_fspicker/` - Enhanced file picker widget library
+
+- **`Screens/`** - Complex UI screen implementations
+  - Dedicated screen components for multi-step workflows
+  - Reusable screen patterns
+
 #### Supporting Systems
 - **`Utils/`** - Cross-cutting utilities
   - `path_validation.py` - Security-focused path handling
@@ -168,11 +209,21 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `optional_deps.py` - Dynamic feature detection
   - `secure_temp_files.py` - Safe temporary file handling
 - **`Metrics/`** - Application telemetry
-  - OpenTelemetry integration
+  - `metrics.py` - Core metrics collection
+  - `Otel_Metrics.py` - OpenTelemetry integration
+  - `metrics_logger.py` - Metrics logging functionality
   - Performance monitoring
   - Usage analytics (local only)
 - **`Web_Scraping/`** - Content extraction
-  - Article extraction with readability
+  - `WebSearch_APIs.py` - Comprehensive web search integration
+    - Google, Bing, DuckDuckGo, Brave
+    - Kagi, Tavily, SearX
+    - Baidu, Yandex
+  - `Article_Scraper/` - Full article scraping module
+    - `crawler.py` - Web crawling functionality
+    - `processors.py` - Content processing
+    - `importers.py` - Content import pipelines
+  - `cookie_scraping/` - Cookie cloning for authenticated access
   - Confluence integration
   - Cookie-based authentication support
 
@@ -205,6 +256,8 @@ The codebase follows a sophisticated modular architecture with clear separation 
 - `RAGSearchEvent` - Search queries and results
 - `SyncEvent` - File synchronization status
 - `WorkerEvent` - Background task coordination
+- `EvalEvent` - Evaluation system events
+- `NoteSyncEvent` - Note-specific sync operations
 
 ### Security Architecture
 
@@ -267,6 +320,8 @@ Located in `LLM_Calls/LLM_API_Calls.py`:
 - **Groq**: High-speed inference
 - **HuggingFace**: Hub model access
 - **OpenRouter**: Multi-provider gateway
+- **TabbyAPI**: High-performance inference server
+- **Custom OpenAI 2**: Alternative OpenAI-compatible implementation
 
 #### Local Providers
 Located in `LLM_Calls/LLM_API_Calls_Local.py`:
@@ -277,6 +332,9 @@ Located in `LLM_Calls/LLM_API_Calls_Local.py`:
 - **Aphrodite**: vLLM fork with extensions
 - **MLX**: Apple Silicon optimized
 - **Custom OpenAI**: Any OpenAI-compatible endpoint
+- **Llamafile**: Single-file executable LLM server
+- **ONNX**: Cross-platform neural network inference
+- **Transformers**: HuggingFace transformers library
 
 ### Provider Implementation Guide
 
@@ -434,9 +492,10 @@ def test_db():
 
 #### Key Testing Principles
 - **No Mocking Databases**: Use real SQLite in-memory
-- **Property-Based Testing**: Find edge cases automatically
-- **Async Test Support**: For streaming operations
+- **Property-Based Testing**: Find edge cases automatically with Hypothesis
+- **Async Test Support**: For streaming operations with pytest-asyncio
 - **Fixture Reuse**: Consistent test data
+- **Test Markers**: `unit`, `integration`, `optional`, `asyncio`
 
 ### Security Patterns
 
@@ -605,6 +664,37 @@ feature/
   - Use `--profile` flag (if implemented)
   - Check metrics in Stats tab
 
+### Evaluation System Architecture
+
+The evaluation system provides comprehensive LLM benchmarking:
+
+#### Components
+- **Evals_DB.py**: Database for storing evaluation data
+- **Evaluation UI**: Tab for running and viewing evaluations
+- **Result Widgets**: Specialized widgets for displaying results
+- **Configuration Dialogs**: Settings for evaluation parameters
+
+#### Workflow
+1. Configure evaluation parameters
+2. Select models to evaluate
+3. Run benchmark suites
+4. View and compare results
+5. Export evaluation data
+
+### Notes Synchronization System
+
+#### Architecture
+- **Bidirectional Sync**: Files ↔ Database synchronization
+- **Conflict Resolution**: Last-write-wins with backup
+- **Change Detection**: File system monitoring
+- **Sync Service**: Background synchronization
+
+#### Key Features
+- Automatic sync on file changes
+- Manual sync triggers
+- Sync status indicators
+- Conflict resolution UI
+
 ### Common Patterns
 
 #### Adding a New Tab
@@ -638,6 +728,22 @@ feature/
 3. **Test Suite**: Full pass on multiple platforms
 4. **Documentation**: Update README and guides
 5. **Tag Release**: Follow semantic versioning
+6. **PyPI Release**: `python -m build && twine upload dist/*`
+7. **Update Homebrew Formula**: If applicable
+
+### Deployment and Distribution
+
+#### PyPI Package
+- **Package Name**: `tldw-cli`
+- **Entry Point**: `tldw-cli` command
+- **Build System**: setuptools with pyproject.toml
+- **Package Data**: Includes templates, CSS, and default configs
+
+#### Installation Methods
+1. **PyPI**: `pip install tldw-cli`
+2. **Development**: `pip install -e .`
+3. **Docker**: Container support (if implemented)
+4. **Homebrew**: macOS formula (if available)
 
 ### Troubleshooting
 

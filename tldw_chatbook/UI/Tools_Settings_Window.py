@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import toml
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
-from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch
+from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher
 # Local Imports
 from tldw_chatbook.config import load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, API_MODELS_BY_PROVIDER
 #
@@ -47,13 +47,8 @@ class ToolsSettingsWindow(Container):
     }
     
     .ts-view-area {
-        display: none;
         width: 100%;
         height: 100%;
-    }
-    
-    .ts-view-area.active {
-        display: block;
     }
     
     .ts-nav-button {
@@ -97,6 +92,11 @@ class ToolsSettingsWindow(Container):
         layout: horizontal;
         margin-top: 2;
         height: 3;
+        width: 100%;
+    }
+    
+    .settings-button-container .spacer {
+        width: 1fr;
     }
     
     .settings-button-container Button, .form-actions Button {
@@ -269,6 +269,7 @@ class ToolsSettingsWindow(Container):
             
             with Container(classes="settings-button-container"):
                 yield Button("Save General Settings", id="save-general-settings", variant="primary")
+                yield Static("", classes="spacer")
                 yield Button("Reset General Settings", id="reset-general-settings")
     
     def _compose_config_file_settings(self) -> ComposeResult:
@@ -337,377 +338,409 @@ class ToolsSettingsWindow(Container):
     
     def _compose_general_config_form(self) -> ComposeResult:
         """Form for general configuration section."""
-        with Container(classes="config-form"):
-            general_config = self.config_data.get("general", {})
-            
-            yield Label("Default Tab:", classes="form-label")
-            tab_options = [
-                ("Chat", "chat"),
-                ("Character Chat", "character"),
-                ("Notes", "notes"),
-                ("Media", "media"),
-                ("Search", "search"),
-                ("Tools & Settings", "tools_settings")
-            ]
-            yield Select(
+        general_config = self.config_data.get("general", {})
+        
+        tab_options = [
+            ("Chat", "chat"),
+            ("Character Chat", "character"),
+            ("Notes", "notes"),
+            ("Media", "media"),
+            ("Search", "search"),
+            ("Tools & Settings", "tools_settings")
+        ]
+        
+        yield Container(
+            Label("Default Tab:", classes="form-label"),
+            Select(
                 options=tab_options,
                 value=general_config.get("default_tab", "chat"),
                 id="config-general-default-tab"
-            )
+            ),
             
-            yield Label("Default Theme:", classes="form-label")
-            yield Input(
+            Label("Default Theme:", classes="form-label"),
+            Input(
                 value=general_config.get("default_theme", "textual-dark"),
                 placeholder="textual-dark",
                 id="config-general-theme"
-            )
+            ),
             
-            yield Label("Palette Theme Limit:", classes="form-label")
-            yield Input(
+            Label("Palette Theme Limit:", classes="form-label"),
+            Input(
                 value=str(general_config.get("palette_theme_limit", 1)),
                 placeholder="1",
                 id="config-general-palette-limit"
-            )
+            ),
             
-            yield Label("Log Level:", classes="form-label")
-            yield Input(
+            Label("Log Level:", classes="form-label"),
+            Input(
                 value=general_config.get("log_level", "INFO"),
                 placeholder="INFO",
                 id="config-general-log-level"
-            )
+            ),
             
-            yield Label("User Name:", classes="form-label")
-            yield Input(
+            Label("User Name:", classes="form-label"),
+            Input(
                 value=general_config.get("users_name", "default_user"),
                 placeholder="default_user",
                 id="config-general-users-name"
-            )
+            ),
             
-            with Container(classes="form-actions"):
-                yield Button("Save General Config", id="save-general-config-form", variant="primary")
-                yield Button("Reset Section", id="reset-general-config-form")
+            Container(
+                Button("Save General Config", id="save-general-config-form", variant="primary"),
+                Button("Reset Section", id="reset-general-config-form"),
+                classes="form-actions"
+            ),
+            classes="config-form"
+        )
     
     def _compose_api_config_form(self) -> ComposeResult:
         """Form for API settings configuration."""
-        with Container(classes="config-form"):
-            api_settings = self.config_data.get("api_settings", {})
+        api_settings = self.config_data.get("api_settings", {})
+        
+        # Create sections for each provider
+        # The display_name must match the keys in API_MODELS_BY_PROVIDER
+        providers = [
+            ("OpenAI", "openai", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ("Anthropic", "anthropic", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ("Google", "google", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ("DeepSeek", "deepseek", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ("Groq", "groq", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ("MistralAI", "mistralai", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ("Cohere", "cohere", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ("HuggingFace", "huggingface", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+            ("OpenRouter", "openrouter", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
+        ]
+        
+        # Local API providers
+        local_providers = [
+            ("Llama.cpp", "llama_cpp", ["api_url", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+            ("Ollama", "ollama", ["api_url", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+            ("vLLM", "vllm", ["api_key_env_var", "api_url", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+            ("KoboldCPP", "koboldcpp", ["api_url", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+            ("Oobabooga", "oobabooga", ["api_key_env_var", "api_url", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
+        ]
+        
+        # Build all widgets as a list
+        widgets = []
+        
+        # Commercial providers
+        for display_name, key, fields in providers:
+            widgets.append(Static(f"{display_name} Configuration", classes="form-section-title"))
+            provider_config = api_settings.get(key, {})
             
-            # Create sections for each provider
-            # The display_name must match the keys in API_MODELS_BY_PROVIDER
-            providers = [
-                ("OpenAI", "openai", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-                ("Anthropic", "anthropic", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-                ("Google", "google", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-                ("DeepSeek", "deepseek", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-                ("Groq", "groq", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-                ("MistralAI", "mistralai", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-                ("Cohere", "cohere", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-                ("HuggingFace", "huggingface", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-                ("OpenRouter", "openrouter", ["api_key_env_var", "api_key", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming"]),
-            ]
+            for field in fields:
+                if field == "api_key":
+                    widgets.append(Label("API Key (Fallback):", classes="form-label"))
+                    widgets.append(Input(
+                        value=provider_config.get(field, "<API_KEY_HERE>"),
+                        password=True,
+                        id=f"config-{key}-{field}",
+                        placeholder="Enter API key or use environment variable"
+                    ))
+                elif field == "api_key_env_var":
+                    widgets.append(Label("API Key Environment Variable:", classes="form-label"))
+                    widgets.append(Input(
+                        value=provider_config.get(field, f"{key.upper()}_API_KEY"),
+                        id=f"config-{key}-{field}",
+                        placeholder=f"{key.upper()}_API_KEY"
+                    ))
+                elif field == "model":
+                    widgets.append(Label("Default Model:", classes="form-label"))
+                    # Get available models for this provider
+                    try:
+                        models = list(API_MODELS_BY_PROVIDER.get(display_name, []))
+                    except:
+                        models = []
+                    
+                    current_model = provider_config.get(field, "")
+                    
+                    # Always use Input for now to avoid Select widget issues
+                    widgets.append(Input(
+                        value=current_model,
+                        id=f"config-{key}-{field}",
+                        placeholder=f"Enter model name (e.g., {models[0] if models else 'model-name'})"
+                    ))
+                elif field == "streaming":
+                    widgets.append(Checkbox(
+                        "Enable Streaming",
+                        value=provider_config.get(field, False),
+                        id=f"config-{key}-{field}"
+                    ))
+                else:
+                    # Format field name nicely
+                    label = field.replace("_", " ").title()
+                    widgets.append(Label(f"{label}:", classes="form-label"))
+                    widgets.append(Input(
+                        value=str(provider_config.get(field, "")),
+                        id=f"config-{key}-{field}",
+                        placeholder=f"Enter {label.lower()}"
+                    ))
+        
+        # Local providers section
+        widgets.append(Static("Local API Providers", classes="form-section-title"))
+        
+        for display_name, key, fields in local_providers:
+            widgets.append(Static(f"{display_name} Configuration", classes="form-subsection-title"))
+            provider_config = api_settings.get(key, {})
             
-            # Local API providers
-            local_providers = [
-                ("Llama.cpp", "llama_cpp", ["api_url", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
-                ("Ollama", "ollama", ["api_url", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
-                ("vLLM", "vllm", ["api_key_env_var", "api_url", "model", "temperature", "top_p", "top_k", "min_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
-                ("KoboldCPP", "koboldcpp", ["api_url", "model", "temperature", "top_p", "top_k", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
-                ("Oobabooga", "oobabooga", ["api_key_env_var", "api_url", "model", "temperature", "top_p", "max_tokens", "timeout", "retries", "retry_delay", "streaming", "system_prompt"]),
-            ]
-            
-            # Commercial providers
-            for display_name, key, fields in providers:
-                yield Static(f"{display_name} Configuration", classes="form-section-title")
-                provider_config = api_settings.get(key, {})
-                
-                for field in fields:
-                    if field == "api_key":
-                        yield Label("API Key (Fallback):", classes="form-label")
-                        yield Input(
-                            value=provider_config.get(field, "<API_KEY_HERE>"),
-                            password=True,
-                            id=f"config-{key}-{field}",
-                            placeholder="Enter API key or use environment variable"
-                        )
-                    elif field == "api_key_env_var":
-                        yield Label("API Key Environment Variable:", classes="form-label")
-                        yield Input(
-                            value=provider_config.get(field, f"{key.upper()}_API_KEY"),
-                            id=f"config-{key}-{field}",
-                            placeholder=f"{key.upper()}_API_KEY"
-                        )
-                    elif field == "model":
-                        yield Label("Default Model:", classes="form-label")
-                        # Get available models for this provider
-                        try:
-                            models = list(API_MODELS_BY_PROVIDER.get(display_name, []))
-                        except:
-                            models = []
-                        
-                        current_model = provider_config.get(field, "")
-                        
-                        # Always use Input for now to avoid Select widget issues
-                        yield Input(
-                            value=current_model,
-                            id=f"config-{key}-{field}",
-                            placeholder=f"Enter model name (e.g., {models[0] if models else 'model-name'})"
-                        )
-                    elif field == "streaming":
-                        yield Checkbox(
-                            "Enable Streaming",
-                            value=provider_config.get(field, False),
-                            id=f"config-{key}-{field}"
-                        )
-                    else:
-                        # Format field name nicely
-                        label = field.replace("_", " ").title()
-                        yield Label(f"{label}:", classes="form-label")
-                        yield Input(
-                            value=str(provider_config.get(field, "")),
-                            id=f"config-{key}-{field}",
-                            placeholder=f"Enter {label.lower()}"
-                        )
-            
-            # Local providers section
-            yield Static("Local API Providers", classes="form-section-title")
-            
-            for display_name, key, fields in local_providers:
-                yield Static(f"{display_name} Configuration", classes="form-subsection-title")
-                provider_config = api_settings.get(key, {})
-                
-                for field in fields:
-                    if field == "api_url":
-                        yield Label("API URL:", classes="form-label")
-                        yield Input(
-                            value=provider_config.get(field, "http://localhost:8080"),
-                            id=f"config-{key}-{field}",
-                            placeholder="http://localhost:8080"
-                        )
-                    elif field == "system_prompt":
-                        yield Label("Default System Prompt:", classes="form-label")
-                        yield TextArea(
-                            text=provider_config.get(field, "You are a helpful AI assistant"),
-                            id=f"config-{key}-{field}",
-                            classes="system-prompt-textarea"
-                        )
-                    elif field == "streaming":
-                        yield Checkbox(
-                            "Enable Streaming",
-                            value=provider_config.get(field, False),
-                            id=f"config-{key}-{field}"
-                        )
-                    else:
-                        label = field.replace("_", " ").title()
-                        yield Label(f"{label}:", classes="form-label")
-                        yield Input(
-                            value=str(provider_config.get(field, "")),
-                            id=f"config-{key}-{field}",
-                            placeholder=f"Enter {label.lower()}"
-                        )
-            
-            with Container(classes="form-actions"):
-                yield Button("Save API Config", id="save-api-config-form", variant="primary")
-                yield Button("Reset Section", id="reset-api-config-form")
+            for field in fields:
+                if field == "api_url":
+                    widgets.append(Label("API URL:", classes="form-label"))
+                    widgets.append(Input(
+                        value=provider_config.get(field, "http://localhost:8080"),
+                        id=f"config-{key}-{field}",
+                        placeholder="http://localhost:8080"
+                    ))
+                elif field == "system_prompt":
+                    widgets.append(Label("Default System Prompt:", classes="form-label"))
+                    widgets.append(TextArea(
+                        text=provider_config.get(field, "You are a helpful AI assistant"),
+                        id=f"config-{key}-{field}",
+                        classes="system-prompt-textarea"
+                    ))
+                elif field == "streaming":
+                    widgets.append(Checkbox(
+                        "Enable Streaming",
+                        value=provider_config.get(field, False),
+                        id=f"config-{key}-{field}"
+                    ))
+                else:
+                    label = field.replace("_", " ").title()
+                    widgets.append(Label(f"{label}:", classes="form-label"))
+                    widgets.append(Input(
+                        value=str(provider_config.get(field, "")),
+                        id=f"config-{key}-{field}",
+                        placeholder=f"Enter {label.lower()}"
+                    ))
+        
+        # Add action buttons
+        widgets.append(Container(
+            Button("Save API Config", id="save-api-config-form", variant="primary"),
+            Button("Reset Section", id="reset-api-config-form"),
+            classes="form-actions"
+        ))
+        
+        yield Container(*widgets, classes="config-form")
     
     def _compose_database_config_form(self) -> ComposeResult:
         """Form for database configuration."""
-        with Container(classes="config-form"):
-            db_config = self.config_data.get("database", {})
-            
-            yield Label("ChaChaNotes Database Path:", classes="form-label")
-            yield Input(
+        db_config = self.config_data.get("database", {})
+        
+        yield Container(
+            Label("ChaChaNotes Database Path:", classes="form-label"),
+            Input(
                 value=db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"),
                 id="config-db-chachanotes-path"
-            )
+            ),
             
-            yield Label("Prompts Database Path:", classes="form-label")
-            yield Input(
+            Label("Prompts Database Path:", classes="form-label"),
+            Input(
                 value=db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db"),
                 id="config-db-prompts-path"
-            )
+            ),
             
-            yield Label("Media Database Path:", classes="form-label")
-            yield Input(
+            Label("Media Database Path:", classes="form-label"),
+            Input(
                 value=db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"),
                 id="config-db-media-path"
-            )
+            ),
             
-            yield Label("User Database Base Directory:", classes="form-label")
-            yield Input(
+            Label("User Database Base Directory:", classes="form-label"),
+            Input(
                 value=db_config.get("USER_DB_BASE_DIR", "~/.local/share/tldw_cli/"),
                 id="config-db-base-dir"
-            )
+            ),
             
-            with Container(classes="form-actions"):
-                yield Button("Save Database Config", id="save-database-config-form", variant="primary")
-                yield Button("Reset Section", id="reset-database-config-form")
+            Container(
+                Button("Save Database Config", id="save-database-config-form", variant="primary"),
+                Button("Reset Section", id="reset-database-config-form"),
+                classes="form-actions"
+            ),
+            classes="config-form"
+        )
     
     def _compose_rag_config_form(self) -> ComposeResult:
         """Form for RAG configuration."""
-        with Container(classes="config-form"):
-            rag_config = self.config_data.get("rag_search", {})
-            
-            yield Label("Default Search Mode:", classes="form-label")
-            search_modes = [("Q&A Mode", "qa"), ("Chat Mode", "chat")]
-            yield Select(
+        rag_config = self.config_data.get("rag_search", {})
+        sources_config = rag_config.get("default_sources", {})
+        rerank_config = rag_config.get("reranking", {})
+        chunking_config = rag_config.get("chunking", {})
+        
+        search_modes = [("Q&A Mode", "qa"), ("Chat Mode", "chat")]
+        chunking_methods = [
+            ("Fixed Size", "fixed"),
+            ("Semantic", "semantic"),
+            ("Sentence-based", "sentence")
+        ]
+        
+        yield Container(
+            Label("Default Search Mode:", classes="form-label"),
+            Select(
                 options=search_modes,
                 value=rag_config.get("default_mode", "qa"),
                 id="config-rag-search-mode"
-            )
+            ),
             
-            yield Label("Default Top-K Results:", classes="form-label")
-            yield Input(
+            Label("Default Top-K Results:", classes="form-label"),
+            Input(
                 value=str(rag_config.get("default_top_k", 10)),
                 id="config-rag-top-k"
-            )
+            ),
             
             # Default Sources
-            yield Static("Default Search Sources", classes="form-section-title")
-            sources_config = rag_config.get("default_sources", {})
-            
-            yield Checkbox(
+            Static("Default Search Sources", classes="form-section-title"),
+            Checkbox(
                 "Media Files",
                 value=sources_config.get("media", True),
                 id="config-rag-source-media"
-            )
-            yield Checkbox(
+            ),
+            Checkbox(
                 "Conversations",
                 value=sources_config.get("conversations", True),
                 id="config-rag-source-conversations"
-            )
-            yield Checkbox(
+            ),
+            Checkbox(
                 "Notes",
                 value=sources_config.get("notes", True),
                 id="config-rag-source-notes"
-            )
+            ),
             
             # Reranking Settings
-            yield Static("Re-ranking Configuration", classes="form-section-title")
-            rerank_config = rag_config.get("reranking", {})
-            
-            yield Checkbox(
+            Static("Re-ranking Configuration", classes="form-section-title"),
+            Checkbox(
                 "Enable Re-ranking by Default",
                 value=rerank_config.get("enabled", False),
                 id="config-rag-rerank-enabled"
-            )
+            ),
             
-            yield Label("Re-ranker Model:", classes="form-label")
-            yield Input(
+            Label("Re-ranker Model:", classes="form-label"),
+            Input(
                 value=rerank_config.get("model", "cross-encoder/ms-marco-MiniLM-L-12-v2"),
                 id="config-rag-rerank-model"
-            )
+            ),
             
             # Chunking Settings
-            yield Static("Chunking Configuration", classes="form-section-title")
-            chunking_config = rag_config.get("chunking", {})
+            Static("Chunking Configuration", classes="form-section-title"),
             
-            yield Label("Chunk Size:", classes="form-label")
-            yield Input(
+            Label("Chunk Size:", classes="form-label"),
+            Input(
                 value=str(chunking_config.get("size", 512)),
                 id="config-rag-chunk-size"
-            )
+            ),
             
-            yield Label("Chunk Overlap:", classes="form-label")
-            yield Input(
+            Label("Chunk Overlap:", classes="form-label"),
+            Input(
                 value=str(chunking_config.get("overlap", 128)),
                 id="config-rag-chunk-overlap"
-            )
+            ),
             
-            yield Label("Chunking Method:", classes="form-label")
-            chunking_methods = [
-                ("Fixed Size", "fixed"),
-                ("Semantic", "semantic"),
-                ("Sentence-based", "sentence")
-            ]
-            yield Select(
+            Label("Chunking Method:", classes="form-label"),
+            Select(
                 options=chunking_methods,
                 value=chunking_config.get("method", "fixed"),
                 id="config-rag-chunk-method"
-            )
+            ),
             
-            with Container(classes="form-actions"):
-                yield Button("Save RAG Config", id="save-rag-config-form", variant="primary")
-                yield Button("Reset Section", id="reset-rag-config-form")
+            Container(
+                Button("Save RAG Config", id="save-rag-config-form", variant="primary"),
+                Button("Reset Section", id="reset-rag-config-form"),
+                classes="form-actions"
+            ),
+            classes="config-form"
+        )
     
     def _compose_providers_config_form(self) -> ComposeResult:
         """Form for providers configuration."""
-        with Container(classes="config-form"):
-            providers_config = self.config_data.get("providers", {})
-            
-            yield Static("Configure available models for each provider", classes="form-description")
-            
-            for provider, models in providers_config.items():
-                yield Static(f"{provider} Models", classes="form-section-title")
-                models_str = ", ".join(models) if isinstance(models, list) else str(models)
-                yield Label(f"Available Models (comma-separated):", classes="form-label")
-                yield TextArea(
-                    text=models_str,
-                    id=f"config-provider-{provider.lower().replace(' ', '-')}",
-                    classes="provider-models-textarea"
-                )
-            
-            with Container(classes="form-actions"):
-                yield Button("Save Providers Config", id="save-providers-config-form", variant="primary")
-                yield Button("Reset Section", id="reset-providers-config-form")
+        providers_config = self.config_data.get("providers", {})
+        
+        # Build widgets list
+        widgets = [Static("Configure available models for each provider", classes="form-description")]
+        
+        for provider, models in providers_config.items():
+            widgets.append(Static(f"{provider} Models", classes="form-section-title"))
+            models_str = ", ".join(models) if isinstance(models, list) else str(models)
+            widgets.append(Label(f"Available Models (comma-separated):", classes="form-label"))
+            widgets.append(TextArea(
+                text=models_str,
+                id=f"config-provider-{provider.lower().replace(' ', '-')}",
+                classes="provider-models-textarea"
+            ))
+        
+        widgets.append(Container(
+            Button("Save Providers Config", id="save-providers-config-form", variant="primary"),
+            Button("Reset Section", id="reset-providers-config-form"),
+            classes="form-actions"
+        ))
+        
+        yield Container(*widgets, classes="config-form")
     
     def _compose_advanced_config_form(self) -> ComposeResult:
         """Form for advanced configuration options."""
-        with Container(classes="config-form"):
-            yield Static("Advanced settings - modify with caution", classes="form-description")
+        logging_config = self.config_data.get("logging", {})
+        endpoints_config = self.config_data.get("api_endpoints", {})
+        
+        common_endpoints = [
+            ("Llama.cpp", "llama_cpp", "http://localhost:8080"),
+            ("KoboldCPP", "koboldcpp", "http://localhost:5001/api"),
+            ("Oobabooga", "Oobabooga", "http://localhost:5000/api"),
+            ("Ollama", "Ollama", "http://localhost:11434"),
+            ("vLLM", "vLLM", "http://localhost:8000"),
+            ("Custom", "Custom", "http://localhost:1234/v1")
+        ]
+        
+        # Build widgets list
+        widgets = [
+            Static("Advanced settings - modify with caution", classes="form-description"),
             
             # Logging Configuration
-            yield Static("Logging Configuration", classes="form-section-title")
-            logging_config = self.config_data.get("logging", {})
+            Static("Logging Configuration", classes="form-section-title"),
             
-            yield Label("Log Filename:", classes="form-label")
-            yield Input(
+            Label("Log Filename:", classes="form-label"),
+            Input(
                 value=logging_config.get("log_filename", "tldw_cli_app.log"),
                 id="config-logging-filename"
-            )
+            ),
             
-            yield Label("File Log Level:", classes="form-label")
-            yield Input(
+            Label("File Log Level:", classes="form-label"),
+            Input(
                 value=logging_config.get("file_log_level", "INFO"),
                 id="config-logging-file-level"
-            )
+            ),
             
-            yield Label("Log Max Bytes:", classes="form-label")
-            yield Input(
+            Label("Log Max Bytes:", classes="form-label"),
+            Input(
                 value=str(logging_config.get("log_max_bytes", 10485760)),
                 id="config-logging-max-bytes"
-            )
+            ),
             
-            yield Label("Log Backup Count:", classes="form-label")
-            yield Input(
+            Label("Log Backup Count:", classes="form-label"),
+            Input(
                 value=str(logging_config.get("log_backup_count", 5)),
                 id="config-logging-backup-count"
-            )
+            ),
             
             # API Endpoints Configuration
-            yield Static("API Endpoints Configuration", classes="form-section-title")
-            endpoints_config = self.config_data.get("api_endpoints", {})
-            
-            common_endpoints = [
-                ("Llama.cpp", "llama_cpp", "http://localhost:8080"),
-                ("KoboldCPP", "koboldcpp", "http://localhost:5001/api"),
-                ("Oobabooga", "Oobabooga", "http://localhost:5000/api"),
-                ("Ollama", "Ollama", "http://localhost:11434"),
-                ("vLLM", "vLLM", "http://localhost:8000"),
-                ("Custom", "Custom", "http://localhost:1234/v1")
-            ]
-            
-            for display_name, key, default_url in common_endpoints:
-                yield Label(f"{display_name} Endpoint:", classes="form-label")
-                yield Input(
-                    value=endpoints_config.get(key, default_url),
-                    id=f"config-endpoint-{key.lower()}"
-                )
-            
-            with Container(classes="form-actions"):
-                yield Button("Save Advanced Config", id="save-advanced-config-form", variant="primary")
-                yield Button("Reset Section", id="reset-advanced-config-form")
-                yield Button("Export Configuration", id="export-config-button")
-                yield Button("Import Configuration", id="import-config-button")
+            Static("API Endpoints Configuration", classes="form-section-title")
+        ]
+        
+        # Add endpoint inputs
+        for display_name, key, default_url in common_endpoints:
+            widgets.append(Label(f"{display_name} Endpoint:", classes="form-label"))
+            widgets.append(Input(
+                value=endpoints_config.get(key, default_url),
+                id=f"config-endpoint-{key.lower()}"
+            ))
+        
+        # Add action buttons
+        widgets.append(Container(
+            Button("Save Advanced Config", id="save-advanced-config-form", variant="primary"),
+            Button("Reset Section", id="reset-advanced-config-form"),
+            Button("Export Configuration", id="export-config-button"),
+            Button("Import Configuration", id="import-config-button"),
+            classes="form-actions"
+        ))
+        
+        yield Container(*widgets, classes="config-form")
     
     def _compose_database_tools(self) -> ComposeResult:
         """Compose the Database Tools UI."""
@@ -888,12 +921,12 @@ class ToolsSettingsWindow(Container):
     def compose(self) -> ComposeResult:
         with Container(id="tools-settings-nav-pane", classes="tools-nav-pane"):
             yield Static("Navigation", classes="sidebar-title")
-            yield Button("General Settings", id="ts-nav-general-settings", classes="ts-nav-button")
+            yield Button("General Settings", id="ts-nav-general-settings", classes="ts-nav-button active-nav")
             yield Button("Configuration File Settings", id="ts-nav-config-file-settings", classes="ts-nav-button")
             yield Button("Database Tools", id="ts-nav-db-tools", classes="ts-nav-button")
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
 
-        with Container(id="tools-settings-content-pane", classes="tools-content-pane"):
+        with ContentSwitcher(id="tools-settings-content-pane", classes="tools-content-pane", initial="ts-view-general-settings"):
             yield Container(
                 *self._compose_general_settings(),
                 id="ts-view-general-settings",
@@ -1339,28 +1372,34 @@ class ToolsSettingsWindow(Container):
     
     async def _show_view(self, view_id: str) -> None:
         """Show the specified view and hide all others."""
-        # List of all view IDs
-        view_ids = [
-            "ts-view-general-settings",
-            "ts-view-config-file-settings", 
-            "ts-view-db-tools",
-            "ts-view-appearance"
-        ]
-        
-        # Hide all views by removing active class
-        for v_id in view_ids:
-            try:
-                view = self.query_one(f"#{v_id}")
-                view.remove_class("active")
-            except Exception:
-                pass  # View might not exist yet
-        
-        # Show the requested view by adding active class
+        # Use ContentSwitcher to switch views
         try:
-            view = self.query_one(f"#{view_id}")
-            view.add_class("active")
-        except Exception:
-            pass
+            content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
+            content_switcher.current = view_id
+        except Exception as e:
+            # If ContentSwitcher fails, fall back to the old method
+            # List of all view IDs
+            view_ids = [
+                "ts-view-general-settings",
+                "ts-view-config-file-settings", 
+                "ts-view-db-tools",
+                "ts-view-appearance"
+            ]
+            
+            # Hide all views by removing active class
+            for v_id in view_ids:
+                try:
+                    view = self.query_one(f"#{v_id}")
+                    view.remove_class("active")
+                except Exception:
+                    pass  # View might not exist yet
+            
+            # Show the requested view by adding active class
+            try:
+                view = self.query_one(f"#{view_id}")
+                view.add_class("active")
+            except Exception:
+                pass
             
         # Update navigation button styles
         nav_buttons = {
@@ -1382,6 +1421,7 @@ class ToolsSettingsWindow(Container):
     
     async def on_mount(self) -> None:
         """Called when the widget is mounted. Set initial view."""
+        # Ensure only the general settings view is active on mount
         await self._show_view("ts-view-general-settings")
 
 #
