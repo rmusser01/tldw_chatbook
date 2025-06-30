@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import toml
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
-from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher
+from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible
 # Local Imports
 from tldw_chatbook.config import load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, API_MODELS_BY_PROVIDER
 #
@@ -104,8 +104,9 @@ class ToolsSettingsWindow(Container):
     }
     
     .config-editor {
-        height: 30;
+        height: 100%;
         width: 100%;
+        min-height: 30;
     }
     
     .config-button-container {
@@ -182,6 +183,14 @@ class ToolsSettingsWindow(Container):
         text-style: bold;
         margin-top: 1;
         text-align: center;
+    }
+    
+    Collapsible {
+        margin-bottom: 1;
+    }
+    
+    Collapsible > Contents {
+        padding: 1;
     }
     """
     
@@ -749,47 +758,43 @@ class ToolsSettingsWindow(Container):
         
         with Container(classes="settings-container"):
             # Database Status Section
-            yield Static("Database Status", classes="form-section-title")
-            
-            # Show current database sizes
-            yield Label("ChaChaNotes Database:", classes="settings-label")
-            yield Static("Size: Loading...", id="db-size-chachanotes", classes="db-status")
-            
-            yield Label("Prompts Database:", classes="settings-label")
-            yield Static("Size: Loading...", id="db-size-prompts", classes="db-status")
-            
-            yield Label("Media Database:", classes="settings-label")
-            yield Static("Size: Loading...", id="db-size-media", classes="db-status")
+            with Collapsible(title="Database Status", collapsed=False):
+                # Show current database sizes
+                yield Label("ChaChaNotes Database:", classes="settings-label")
+                yield Static("Size: Loading...", id="db-size-chachanotes", classes="db-status")
+                
+                yield Label("Prompts Database:", classes="settings-label")
+                yield Static("Size: Loading...", id="db-size-prompts", classes="db-status")
+                
+                yield Label("Media Database:", classes="settings-label")
+                yield Static("Size: Loading...", id="db-size-media", classes="db-status")
             
             # Database Maintenance Section
-            yield Static("Database Maintenance", classes="form-section-title")
-            
-            yield Button("Vacuum All Databases", id="db-vacuum-all", variant="primary")
-            yield Static("Reclaim unused space and optimize database performance", classes="help-text")
-            
-            yield Button("Backup All Databases", id="db-backup-all", variant="success")
-            yield Static("Create timestamped backups of all databases", classes="help-text")
-            
-            yield Button("Check Database Integrity", id="db-check-integrity", variant="warning")
-            yield Static("Verify database structure and data integrity", classes="help-text")
+            with Collapsible(title="Database Maintenance", collapsed=False):
+                yield Button("Vacuum All Databases", id="db-vacuum-all", variant="primary")
+                yield Static("Reclaim unused space and optimize database performance", classes="help-text")
+                
+                yield Button("Backup All Databases", id="db-backup-all", variant="success")
+                yield Static("Create timestamped backups of all databases", classes="help-text")
+                
+                yield Button("Check Database Integrity", id="db-check-integrity", variant="warning")
+                yield Static("Verify database structure and data integrity", classes="help-text")
             
             # Export/Import Section
-            yield Static("Export & Import", classes="form-section-title")
+            with Collapsible(title="Export & Import", collapsed=False):
+                yield Button("Export Conversations", id="db-export-conversations")
+                yield Button("Export Notes", id="db-export-notes")
+                yield Button("Export Characters", id="db-export-characters")
+                
+                yield Button("Import Data", id="db-import-data", variant="primary")
+                yield Static("Import previously exported data files", classes="help-text")
             
-            yield Button("Export Conversations", id="db-export-conversations")
-            yield Button("Export Notes", id="db-export-notes")
-            yield Button("Export Characters", id="db-export-characters")
-            
-            yield Button("Import Data", id="db-import-data", variant="primary")
-            yield Static("Import previously exported data files", classes="help-text")
-            
-            # Danger Zone
-            yield Static("Danger Zone", classes="form-section-title danger")
-            
-            yield Button("Clear All Conversations", id="db-clear-conversations", variant="error")
-            yield Button("Clear All Notes", id="db-clear-notes", variant="error")
-            yield Button("Reset All Databases", id="db-reset-all", variant="error")
-            yield Static("⚠️ These actions cannot be undone!", classes="danger-warning")
+            # Danger Zone - collapsed by default for safety
+            with Collapsible(title="⚠️ Danger Zone", collapsed=True):
+                yield Static("These actions cannot be undone!", classes="danger-warning")
+                yield Button("Clear All Conversations", id="db-clear-conversations", variant="error")
+                yield Button("Clear All Notes", id="db-clear-notes", variant="error")
+                yield Button("Reset All Databases", id="db-reset-all", variant="error")
     
     def _compose_appearance_settings(self) -> ComposeResult:
         """Compose the Appearance Settings UI."""
