@@ -45,6 +45,7 @@ CSS_MODULES = [
     "features/_ingest_tldw_api_tabs.tcss",
     "features/_evaluation.tcss",
     "features/_metrics.tcss",
+    "features/_embeddings.tcss",
     
     # 5. Utilities - Helpers and Overrides (can override anything)
     "utilities/_helpers.tcss",

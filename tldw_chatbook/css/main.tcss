@@ -48,6 +48,7 @@
 @import "./features/_llm-management.tcss";
 @import "./features/_tools-settings.tcss";
 @import "./features/_ingest.tcss";
+@import "./features/_embeddings.tcss";
 @import "./features/_evaluation.tcss";
 @import "./features/_metrics.tcss";
 

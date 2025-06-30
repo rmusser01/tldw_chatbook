@@ -130,14 +130,21 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     width: 8;      /* Fixed width for better visibility */
     height: 2;     /* Standard button height */
     margin: 0 1;   /* Small margin on sides */
+    padding: 0 1;  /* Padding for text */
     border: none;
-    background: $surface-darken-1;
-    color: $text;
+    background: $primary;
+    color: white;
     text-align: center;
+    text-style: bold;
 }
 .sidebar-resize-button:hover {
-    background: $surface;
-    color: $text;
+    background: $primary-lighten-1;
+    color: white;
+    text-style: bold;
+}
+.sidebar-resize-button:focus {
+    background: $primary-lighten-2;
+    color: white;
     text-style: bold;
 }
 

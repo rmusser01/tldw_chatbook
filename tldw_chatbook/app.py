@@ -884,6 +884,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # LLM Inference Tab
     llm_active_view: reactive[Optional[str]] = reactive(None)
     _initial_llm_view: Optional[str] = "llm-view-llama-cpp"
+    
+    # Embeddings Tab
+    embeddings_active_view: reactive[Optional[str]] = reactive("embeddings-view-create")
+    _initial_embeddings_view: Optional[str] = "embeddings-view-create"
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
     vllm_server_process: Optional[subprocess.Popen] = None
@@ -1263,7 +1267,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
             TAB_CODING: {},  # Empty for now - coding handles its own events
-            TAB_EMBEDDINGS: {},  # Empty for now - embeddings handle their own events
+            TAB_EMBEDDINGS: {
+                "embeddings-nav-create": functools.partial(_handle_nav, prefix="embeddings",
+                                                           reactive_attr="embeddings_active_view"),
+                "embeddings-nav-manage": functools.partial(_handle_nav, prefix="embeddings",
+                                                           reactive_attr="embeddings_active_view"),
+            },
         }
 
     def _setup_logging(self):
@@ -1943,6 +1952,41 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             except QueryError as e:
                 self.loguru_logger.error(f"UI component '{new_view}' not found in #llm-content-pane: {e}",
                                          exc_info=True)
+    
+    def watch_embeddings_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
+        """Shows the correct view in the Embeddings tab and hides others."""
+        if not self._ui_ready or not new_view:
+            return
+        
+        self.loguru_logger.debug(f"Embeddings active view changing from '{old_view}' to: '{new_view}'")
+        
+        try:
+            content_pane = self.query_one("#embeddings-content-pane")
+        except QueryError:
+            self.loguru_logger.error("#embeddings-content-pane not found. Cannot switch Embeddings views.")
+            return
+        
+        # Hide all views
+        for child in content_pane.query(".embeddings-view-area"):
+            child.styles.display = "none"
+        
+        if new_view:
+            try:
+                target_view_id_selector = f"#{new_view}"
+                view_to_show = content_pane.query_one(target_view_id_selector, Container)
+                view_to_show.styles.display = "block"
+                self.loguru_logger.info(f"Switched Embeddings view to: {new_view}")
+                
+                # Update navigation button styles
+                nav_pane = self.query_one("#embeddings-nav-pane")
+                for button in nav_pane.query(".embeddings-nav-button"):
+                    # Convert button ID to view ID format
+                    button_id_as_view = button.id.replace("-nav-", "-view-")
+                    button.set_class(button_id_as_view == new_view, "-active")
+                    
+            except QueryError as e:
+                self.loguru_logger.error(f"UI component '{new_view}' not found in #embeddings-content-pane: {e}",
+                                         exc_info=True)
         else:
             self.loguru_logger.debug("LLM Management active view is None, all LLM views hidden.")
 
@@ -2425,6 +2469,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.call_later(setattr, self, 'llm_active_view', self._initial_llm_view)
         elif new_tab == TAB_EVALS: # Added for Evals tab
             # Placeholder for any specific actions when Evals tab is selected
+            pass
+        elif new_tab == TAB_EMBEDDINGS:
+            if not self.embeddings_active_view:
+                self.loguru_logger.debug(
+                    f"Switched to Embeddings tab, activating initial view: {self._initial_embeddings_view}")
+                self.call_later(setattr, self, 'embeddings_active_view', self._initial_embeddings_view)
             # For example, if EvalsWindow has sub-views or needs initial data loading:
             # if not self.evals_active_view: # Assuming an 'evals_active_view' reactive
             #     self.loguru_logger.debug(f"Switched to Evals tab, activating initial view...")

@@ -29,10 +29,10 @@
 }
 /* Input widget styling (shared) */
 .chat-input { /* Targets TextArea */
-    width: 1fr;
+    width: 2fr;        /* Take 2x the space compared to other flex items */
     height: auto;      /* Allow height to adjust */
     max-height: 100%;  /* Don't overflow parent */
-    margin-right: 1; /* Space before button */
+    margin-right: 1;   /* Space before button */
     border: round $surface;
 }
 

@@ -81,11 +81,23 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 
 /* Sidebar resize buttons */
 .sidebar-resize-button {
-    width: 3;
-    min-width: 3;
+    width: 8;
+    min-width: 8;
     height: 2;
-    padding: 0;
+    padding: 0 1;
     margin: 0 1;
+    text-align: center;
+    background: $primary;
+    color: white;
+    text-style: bold;
+}
+.sidebar-resize-button:hover {
+    background: $primary-lighten-1;
+    color: $text;
+}
+.sidebar-resize-button:focus {
+    background: $primary-lighten-2;
+    color: $text;
 }
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input { width: 100%; margin-bottom: 1; }

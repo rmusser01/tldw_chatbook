@@ -69,11 +69,29 @@
 
 /* Sidebar resize buttons */
 .sidebar-resize-button {
-    width: 3;
-    min-width: 3;
-    height: 2;
-    padding: 0;
+    width: 8;
+    min-width: 8;
+    height: 3;
+    padding: 0 1;
     margin: 0 1;
+    text-align: center;
+    background: $primary;
+    color: $text;
+    text-style: bold;
+    border: tall $primary;
+}
+
+.sidebar-resize-button:hover {
+    background: $primary-lighten-1;
+    color: $text;
+    text-style: bold;
+}
+
+.sidebar-resize-button:focus {
+    background: $primary-lighten-2;
+    color: $text;
+    text-style: bold;
+    border: tall $primary-lighten-2;
 }
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input { width: 100%; margin-bottom: 1; }
