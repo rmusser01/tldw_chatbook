@@ -17,9 +17,7 @@
 
 /* Added to ensure initially hidden specific options are indeed hidden */
 .tldw-api-media-specific-options.hidden {
-     padding: 1;
-     border: round $surface;
-     margin-top: 1;
+     display: none;
 }
 
 .ingest-nav-pane { /* Style for the left navigation pane */
@@ -59,11 +57,7 @@
 
 .ingest-view-area { /* Common class for individual content areas */
     width: 100%;
-    height: 100%; /* Or auto */
-    /* Example content styling */
-    /* align: center middle; */
-    /* border: round $primary; */
-    /* padding: 2; */
+    height: 100%;
 }
 .ingest-label {
     margin-top: 1;
@@ -122,4 +116,76 @@
     border: dashed $primary-darken-2; /* Use 'dashed' instead of 'dotted' */
     margin-bottom: 1;
 }
+
+/* --- Local Media Ingestion Tabs --- */
+#ingest-local-tabs {
+    height: 100%;
+}
+
+#ingest-local-tabs TabPane {
+    padding: 1 0;
+    height: 100%;
+}
+
+.ingest-media-tab-content {
+    height: 100%;
+    overflow-y: auto;
+    padding: 1;
+}
+
+.ingest-file-section {
+    margin-bottom: 2;
+    padding: 1;
+    border: round $primary;
+    background: $surface;
+}
+
+.ingest-options-section {
+    border: round $primary;
+    padding: 1;
+    margin-bottom: 2;
+    background: $surface;
+}
+
+.ingest-metadata-section {
+    margin-bottom: 2;
+    padding: 1;
+    border: round $primary;
+    background: $surface;
+}
+
+.ingest-action-section {
+    border-top: solid $primary;
+    padding-top: 1;
+    padding: 1;
+}
+
+.ingest-controls-row {
+    margin-bottom: 1;
+}
+
+.ingest-form-row {
+    margin-top: 1;
+}
+
+.ingest-form-col {
+    width: 50%;
+    padding-right: 1;
+}
+
+.ingest-textarea-medium {
+    height: 10;
+    margin-bottom: 1;
+}
+
+/* --- Visibility styles for ingest views --- */
+#ingest-view-tldw-api {
+    display: none;  /* Hidden by default, shown by reactive watcher */
+}
+
+/* Ensure the tldw API container is visible when displayed */
+#ingest-view-tldw-api.visible {
+    display: block;
+}
+
 /* --- END OF INTEGRATED NEW CSS --- */

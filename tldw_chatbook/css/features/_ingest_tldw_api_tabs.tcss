@@ -1,0 +1,72 @@
+/* tldw_chatbook/css/features/_ingest_tldw_api_tabs.tcss */
+/* Styles for the IngestTldwApiTabbedWindow */
+
+#tldw-api-tabbed-window {
+    height: 100%;
+    width: 100%;
+    display: block;
+}
+
+.window-title {
+    text-style: bold;
+    text-align: center;
+    padding: 1 0;
+    background: $primary;
+    color: $text;
+}
+
+.back-button {
+    margin: 1 0;
+    dock: top;
+    width: auto;
+    align: left middle;
+}
+
+#tldw-api-tabs {
+    height: 100%;
+    margin: 0;
+}
+
+#tldw-api-tabs TabPane {
+    padding: 0;
+    height: 100%;
+}
+
+/* Ensure the forms inside tabs are scrollable */
+#tldw-api-tabs .ingest-form-scrollable {
+    height: 100%;
+    overflow-y: auto;
+    padding: 1;
+}
+
+/* Style for the tab content area */
+.tldw-api-media-specific-options {
+    margin-top: 2;
+    padding: 1;
+    border: round $primary-lighten-1;
+    background: $surface;
+}
+
+/* Ensure submit buttons are visible */
+#tldw-api-tabs .ingest-submit-button {
+    margin-top: 2;
+    width: 100%;
+}
+
+/* Style the loading indicator */
+#tldw-api-tabs LoadingIndicator {
+    align: center middle;
+    margin: 1 0;
+}
+
+/* Style the status area */
+#tldw-api-tabs .ingest-status-area {
+    min-height: 10;
+    max-height: 20;
+    margin-top: 1;
+}
+
+/* Hidden class for dynamic elements */
+#tldw-api-tabs .hidden {
+    display: none;
+}

@@ -44,6 +44,14 @@
     overflow: auto; /* Changed from overflow-y: auto to allow both horizontal and vertical scrolling if needed */
 }
 
+/* Generic style for all search view areas */
+.search-view-area {
+    height: 100%;
+    width: 100%;
+    display: block;
+    overflow: hidden;
+}
+
 /* -------------------------------------------------------------------------------------- */
 
 /* Web Search Specific Styles within Search Tab */
@@ -75,7 +83,10 @@
 
 /* Embeddings Creation View Styles */
 #search-view-embeddings-creation {
-    padding: 1;
+    height: 100%;
+    width: 100%;
+    display: block;
+    overflow: hidden;
 }
 
 .search-form-container {
@@ -116,7 +127,10 @@
 
 /* Embeddings Management View Styles */
 #search-view-embeddings-management {
-    padding: 1;
+    height: 100%;
+    width: 100%;
+    display: block;
+    overflow: hidden;
 }
 
 .search-management-left-pane {

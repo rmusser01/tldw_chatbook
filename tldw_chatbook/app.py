@@ -53,7 +53,7 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_EMBEDDINGS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -73,7 +73,7 @@ from .Event_Handlers import (
     notes_events as notes_handlers,
     worker_events as worker_handlers, worker_events, ingest_events,
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    search_events, notes_sync_events,
+    search_events, notes_sync_events, embeddings_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -107,6 +107,8 @@ from .UI.Coding_Window import CodingWindow
 from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow import MediaWindow
 from .UI.SearchWindow import SearchWindow
+from .UI.Embeddings_Management_Window import EmbeddingsManagementWindow
+from .UI.Embeddings_Creation_Window import EmbeddingsCreationWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -1256,6 +1258,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_TOOLS_SETTINGS: tools_settings_handlers,
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
+            TAB_CODING: {},  # Empty for now - coding handles its own events
+            TAB_EMBEDDINGS: {},  # Empty for now - embeddings handle their own events
         }
 
     def _setup_logging(self):
@@ -1356,6 +1360,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 ("stats", StatsWindow, "stats-window"),
                 ("evals", EvalsWindow, "evals-window"),
                 ("coding", CodingWindow, "coding-window"),
+                ("embeddings", EmbeddingsManagementWindow, "embeddings-window"),
             ]
             
             for window_name, window_class, window_id in windows:
@@ -1803,7 +1808,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         for child_view_container in content_pane.query(".ingest-view-area"):
             child_id = child_view_container.id # Assuming child_view_container is a DOMNode with an 'id' attribute
             if child_id == new_view:
-                child_view_container.styles.display = "block" # Or "flex" if that's the original display style
+                child_view_container.styles.display = "block"
                 self.loguru_logger.info(f"Displaying Ingest view: {child_id}")
                 found_new_view = True
             else:

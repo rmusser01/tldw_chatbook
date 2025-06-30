@@ -42,6 +42,7 @@ CSS_MODULES = [
     "features/_llm-management.tcss",
     "features/_tools-settings.tcss",
     "features/_ingest.tcss",
+    "features/_ingest_tldw_api_tabs.tcss",
     "features/_evaluation.tcss",
     "features/_metrics.tcss",
     

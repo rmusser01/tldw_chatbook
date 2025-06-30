@@ -74,7 +74,8 @@
       "Bash(python -m pytest Tests/RAG/simplified/ -v --tb=no)",
       "Bash(python -m pytest Tests/RAG/simplified/test_rag_service_basic.py -v)",
       "Bash(python -m pytest Tests/RAG/simplified/test_rag_service_basic.py -v --tb=short)",
-      "Bash(python -m pytest Tests/RAG/simplified/ -v)"
+      "Bash(python -m pytest Tests/RAG/simplified/ -v)",
+      "Bash(python:*)"
     ],
     "deny": []
   }
