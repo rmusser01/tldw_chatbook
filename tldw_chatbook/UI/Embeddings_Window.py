@@ -285,11 +285,13 @@ class EmbeddingsWindow(Container):
                     
                     yield Rule()
                     
-                    # Action Buttons
-                    with Horizontal(classes="embeddings-action-buttons"):
-                        yield Button("Preview Chunks", id="embeddings-preview", classes="embeddings-action-button")
-                        yield Button("Create Embeddings", id="embeddings-create", classes="embeddings-action-button", variant="primary")
-                        yield Button("Clear Form", id="embeddings-clear", classes="embeddings-action-button")
+                    # Action Buttons Section
+                    yield Label("Actions", classes="embeddings-section-title")
+                    
+                    # Try yielding buttons directly without Horizontal container
+                    yield Button("Preview Chunks", id="embeddings-preview", classes="embeddings-action-button")
+                    yield Button("Create Embeddings", id="embeddings-create", classes="embeddings-action-button", variant="primary")
+                    yield Button("Clear Form", id="embeddings-clear", classes="embeddings-action-button")
                     
                     # Progress Section
                     with Container(id="embeddings-progress-container", classes="embeddings-progress-container"):
@@ -303,6 +305,9 @@ class EmbeddingsWindow(Container):
                         classes="embeddings-status-output",
                         read_only=True
                     )
+                    
+                    # Extra spacing at bottom to ensure visibility
+                    yield Static("", classes="embeddings-bottom-spacer")
             
             # Manage embeddings view
             with Container(id="embeddings-view-manage", classes="embeddings-view-area"):
