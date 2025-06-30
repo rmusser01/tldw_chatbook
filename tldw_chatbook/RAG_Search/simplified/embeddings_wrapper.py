@@ -74,9 +74,15 @@ class EmbeddingsServiceWrapper:
         config_dict = self._build_config(model_name, self.device, api_key, base_url)
         
         try:
-            # Initialize factory with our configuration
+            # Import EmbeddingConfigSchema for validation
+            from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingConfigSchema
+            
+            # Validate the configuration
+            validated_config = EmbeddingConfigSchema(**config_dict)
+            
+            # Initialize factory with validated configuration
             self.factory = EmbeddingFactory(
-                cfg=config_dict,
+                cfg=validated_config,
                 max_cached=cache_size,
                 idle_seconds=900,  # 15 minutes idle timeout
                 allow_dynamic_hf=True  # Allow loading HF models not in config
@@ -88,7 +94,7 @@ class EmbeddingsServiceWrapper:
             log_gauge("embeddings_cache_max_size", cache_size)
             
         except Exception as e:
-            logger.error(f"Failed to initialize embeddings service: {e}")
+            logger.error(f"(EW) Failed to initialize embeddings service: {e}")
             log_counter("embeddings_service_init_error", labels={"model": model_name, "error": type(e).__name__})
             raise
         

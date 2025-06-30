@@ -313,27 +313,64 @@ class EmbeddingsManagementWindow(Widget):
         
         try:
             # Load embedding configuration
-            from ..config import get_cli_setting
-            embedding_config = get_cli_setting('embedding_config', {})
+            from ..config import get_cli_setting, load_settings
             
-            if embedding_config:
+            # Get the full settings and extract embedding_config
+            settings = load_settings()
+            embedding_config = settings.get('embedding_config', {})
+            
+            # Create default config that EmbeddingFactory can use directly
+            default_factory_config = {
+                'default_model_id': 'e5-small-v2',
+                'models': {
+                    'e5-small-v2': {
+                        'provider': 'huggingface',
+                        'model_name_or_path': 'intfloat/e5-small-v2',
+                        'dimension': 384
+                    }
+                }
+            }
+            
+            # The EmbeddingFactory constructor will handle validation internally
+            # We pass the raw config and let it do the validation
+            if embedding_config and embedding_config.get('models'):
+                try:
+                    self.embedding_factory = EmbeddingFactory(
+                        embedding_config,
+                        max_cached=2,
+                        idle_seconds=900
+                    )
+                    logger.info("Initialized embedding factory with user configuration")
+                except Exception as e:
+                    logger.error(f"Failed to initialize with user config: {e}, using defaults")
+                    self.embedding_factory = EmbeddingFactory(
+                        default_factory_config,
+                        max_cached=2,
+                        idle_seconds=900
+                    )
+                    logger.info("Initialized embedding factory with default configuration")
+            else:
+                logger.warning("No embedding configuration found, using defaults")
                 self.embedding_factory = EmbeddingFactory(
-                    embedding_config,
+                    default_factory_config,
                     max_cached=2,
                     idle_seconds=900
                 )
-                logger.info("Initialized embedding factory")
-            else:
-                logger.warning("No embedding configuration found")
                 
             # Initialize ChromaDB manager
-            user_id = get_cli_setting('users_name', 'default_user')
-            self.chroma_manager = ChromaDBManager(user_id, embedding_config)
+            user_id = settings.get('USERS_NAME', 'default_user')
+            # ChromaDBManager expects a full config structure with embedding_config inside it
+            chroma_config = {
+                'embedding_config': embedding_config if embedding_config else default_factory_config,
+                'database': settings.get('database', {}),
+                'USER_DB_BASE_DIR': settings.get('database', {}).get('USER_DB_BASE_DIR', '~/.local/share/tldw_cli')
+            }
+            self.chroma_manager = ChromaDBManager(user_id, chroma_config)
             logger.info("Initialized ChromaDB manager")
             
         except Exception as e:
-            logger.error(f"Failed to initialize embeddings: {e}")
-            self._show_error(f"Failed to initialize embeddings: {str(e)}")
+            logger.error(f"(EMW) Failed to initialize embeddings: {e}")
+            self._show_error(f"(EMW) Failed to initialize embeddings: {str(e)}")
     
     async def _load_models_list(self) -> None:
         """Load the list of available embedding models."""
@@ -342,7 +379,7 @@ class EmbeddingsManagementWindow(Widget):
         
         try:
             model_list = self.query_one("#embeddings-model-list", ListView)
-            model_list.clear()
+            await model_list.clear()
             
             # Get models from configuration
             config = self.embedding_factory.config
@@ -350,7 +387,7 @@ class EmbeddingsManagementWindow(Widget):
                 self.available_models = list(config.models.keys())
                 
                 for model_id in self.available_models:
-                    model_list.append(ListItem(Label(model_id), id=f"model-{model_id}"))
+                    await model_list.append(ListItem(Label(model_id), id=f"model-{model_id}"))
                 
                 logger.info(f"Loaded {len(self.available_models)} models")
             
@@ -364,7 +401,7 @@ class EmbeddingsManagementWindow(Widget):
         
         try:
             collection_list = self.query_one("#embeddings-collection-list", ListView)
-            collection_list.clear()
+            await collection_list.clear()
             
             # Get collections from ChromaDB
             # Note: This is a simplified version - actual implementation would need
@@ -425,7 +462,7 @@ class EmbeddingsManagementWindow(Widget):
             self.is_loading = True
             # Prefetch the model to load it into cache
             self.embedding_factory.prefetch([self.selected_model])
-            self.notify(f"Model {self.selected_model} loaded successfully", severity="success")
+            self.notify(f"Model {self.selected_model} loaded successfully", severity="information")
             await self._update_model_info(self.selected_model)
         except Exception as e:
             logger.error(f"Failed to load model: {e}")

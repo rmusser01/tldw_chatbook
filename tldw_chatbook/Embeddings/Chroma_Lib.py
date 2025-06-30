@@ -173,12 +173,16 @@ class ChromaDBManager:
                 self.embedding_config_schema: EmbeddingConfigSchema = self.embedding_factory.config
             else:
                 logger.info("Using legacy EmbeddingFactory")
-                self.embedding_factory = EmbeddingFactory(cfg=embeddings_config_dict)
+                # Validate the configuration before passing to EmbeddingFactory
+                validated_config = EmbeddingConfigSchema(**embeddings_config_dict)
+                self.embedding_factory = EmbeddingFactory(cfg=validated_config)
                 self.embedding_config_schema: EmbeddingConfigSchema = self.embedding_factory.config
         except ImportError:
             # New service not available, use legacy
             logger.info("New embeddings service not available, using legacy EmbeddingFactory")
-            self.embedding_factory = EmbeddingFactory(cfg=embeddings_config_dict)
+            # Validate the configuration before passing to EmbeddingFactory
+            validated_config = EmbeddingConfigSchema(**embeddings_config_dict)
+            self.embedding_factory = EmbeddingFactory(cfg=validated_config)
             self.embedding_config_schema: EmbeddingConfigSchema = self.embedding_factory.config
         except Exception as e:
             logger.critical(f"Failed to initialize embedding system for user '{self.user_id}': {e}", exc_info=True)

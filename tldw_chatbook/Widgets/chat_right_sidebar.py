@@ -30,24 +30,23 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
     with VerticalScroll(id="chat-right-sidebar", classes="sidebar"): # Main ID for the whole sidebar
         # Sidebar header with resize controls
         with Horizontal(classes="sidebar-header-with-resize"):
-            yield Button("◀", id=f"{id_prefix}-sidebar-expand", classes="sidebar-resize-button", variant="default")
+            yield Button("◀◀◀", id=f"{id_prefix}-sidebar-expand", classes="sidebar-resize-button", variant="default", tooltip="Expand sidebar")
             yield Static("Session & Character", classes="sidebar-title flex-grow")
-            yield Button("▶", id=f"{id_prefix}-sidebar-shrink", classes="sidebar-resize-button", variant="default")
+            yield Button("▶▶▶", id=f"{id_prefix}-sidebar-shrink", classes="sidebar-resize-button", variant="default", tooltip="Collapse sidebar")
 
         # Section for current chat session details (title, keywords, etc.)
         with Collapsible(title="Current Chat Details", collapsed=False, id=f"{id_prefix}-chat-details-collapsible"):
-            # NEW "New Chat" Button
+            # "New Chat" Button
             yield Button(
                 "New Temp Chat",
                 id=f"{id_prefix}-new-temp-chat-button",  # New ID
                 classes="sidebar-button",
-                variant="primary"  # Optional: different styling
+                variant="primary"
             )
             yield Button(
                 "New Chat",
-                id=f"{id_prefix}-new-conversation-button", # Matches app.py query
+                id=f"{id_prefix}-new-conversation-button",
                 classes="sidebar-button"
-                # No variant, or choose one like "default"
             )
             yield Label("Conversation ID:", classes="sidebar-label", id=f"{id_prefix}-uuid-label-displayonly")
             yield Input(

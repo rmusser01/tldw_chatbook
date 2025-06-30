@@ -124,6 +124,37 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 .sidebar-textarea { width: 100%; border: round $surface; margin-bottom: 1; }
 .sidebar Select { width: 100%; margin-bottom: 1; }
 
+/* Sidebar resize buttons */
+.sidebar-resize-button {
+    min-width: 8;  /* Increased minimum width to 8 cells */
+    width: 8;      /* Fixed width for better visibility */
+    height: 2;     /* Standard button height */
+    margin: 0 1;   /* Small margin on sides */
+    border: none;
+    background: $surface-darken-1;
+    color: $text;
+    text-align: center;
+}
+.sidebar-resize-button:hover {
+    background: $surface;
+    color: $text;
+    text-style: bold;
+}
+
+/* Header container for sidebar with resize controls */
+.sidebar-header-with-resize {
+    layout: horizontal;
+    height: auto;
+    width: 100%;
+    align: center middle;
+    margin-bottom: 1;
+}
+
+/* Flex grow utility class */
+.flex-grow {
+    width: 1fr;  /* Takes up remaining space in horizontal layout */
+}
+
 .prompt-display-textarea {
     height: 7; /* Example height */
     border: round $primary-lighten-2;

@@ -202,26 +202,102 @@ class EmbeddingsEventHandler:
         """Initialize embedding factory and ChromaDB manager."""
         try:
             # Load embedding configuration
-            embedding_config = get_cli_setting('embedding_config', {})
+            from ..config import load_settings
+            
+            settings = load_settings()
+            embedding_config = settings.get('embedding_config', {})
             
             if embedding_config:
+                # Get models configuration from TOML
+                models_config = embedding_config.get('models', {})
+                
+                # If models_config exists but is empty or invalid, provide a default
+                if not models_config:
+                    logger.warning("No models configured, using default configuration")
+                    models_config = {
+                        'e5-small-v2': {
+                            'provider': 'huggingface',
+                            'model_name_or_path': 'intfloat/e5-small-v2',
+                            'dimension': 384
+                        }
+                    }
+                
+                # Prepare the configuration for validation
+                factory_config = {
+                    'default_model_id': embedding_config.get('default_model_id', 'e5-small-v2'),
+                    'models': models_config
+                }
+                
+                # Validate the configuration using pydantic
+                try:
+                    validated_config = EmbeddingConfigSchema(**factory_config)
+                    
+                    self.embedding_factory = EmbeddingFactory(
+                        validated_config,
+                        max_cached=2,
+                        idle_seconds=900
+                    )
+                    logger.info("Initialized embedding factory with validated configuration in event handler")
+                except Exception as config_error:
+                    logger.error(f"Configuration validation failed: {config_error}")
+                    # Try with a minimal default configuration
+                    default_config = EmbeddingConfigSchema(
+                        default_model_id='e5-small-v2',
+                        models={
+                            'e5-small-v2': {
+                                'provider': 'huggingface',
+                                'model_name_or_path': 'intfloat/e5-small-v2',
+                                'dimension': 384
+                            }
+                        }
+                    )
+                    self.embedding_factory = EmbeddingFactory(
+                        default_config,
+                        max_cached=2,
+                        idle_seconds=900
+                    )
+                    logger.info("Initialized embedding factory with default configuration in event handler")
+            else:
+                logger.warning("No embedding configuration found, using defaults")
+                # Create a default configuration
+                default_config = EmbeddingConfigSchema(
+                    default_model_id='e5-small-v2',
+                    models={
+                        'e5-small-v2': {
+                            'provider': 'huggingface',
+                            'model_name_or_path': 'intfloat/e5-small-v2',
+                            'dimension': 384
+                        }
+                    }
+                )
                 self.embedding_factory = EmbeddingFactory(
-                    embedding_config,
+                    default_config,
                     max_cached=2,
                     idle_seconds=900
                 )
-                logger.info("Initialized embedding factory in event handler")
-            else:
-                logger.warning("No embedding configuration found")
                 
             # Initialize ChromaDB manager
-            user_id = get_cli_setting('users_name', 'default_user')
-            if embedding_config:
-                self.chroma_manager = ChromaDBManager(user_id, embedding_config)
-                logger.info("Initialized ChromaDB manager in event handler")
+            user_id = settings.get('USERS_NAME', 'default_user')
+            # ChromaDBManager expects a full config structure with embedding_config inside it
+            chroma_config = {
+                'embedding_config': embedding_config if embedding_config else {
+                    'default_model_id': 'e5-small-v2',
+                    'models': {
+                        'e5-small-v2': {
+                            'provider': 'huggingface',
+                            'model_name_or_path': 'intfloat/e5-small-v2',
+                            'dimension': 384
+                        }
+                    }
+                },
+                'database': settings.get('database', {}),
+                'USER_DB_BASE_DIR': settings.get('database', {}).get('USER_DB_BASE_DIR', '~/.local/share/tldw_cli')
+            }
+            self.chroma_manager = ChromaDBManager(user_id, chroma_config)
+            logger.info("Initialized ChromaDB manager in event handler")
             
         except Exception as e:
-            logger.error(f"Failed to initialize embeddings in event handler: {e}")
+            logger.error(f"(EE) Failed to initialize embeddings in event handler: {e}")
     
     async def handle_model_load(self, event: EmbeddingModelLoadEvent) -> None:
         """Handle model load event."""
