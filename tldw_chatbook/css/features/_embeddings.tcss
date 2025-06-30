@@ -30,7 +30,7 @@ EmbeddingsWindow {
 #embeddings-content-pane {
     width: 1fr;
     height: 100%;
-    overflow: hidden;
+    overflow: auto;
 }
 
 /* View area containers */
@@ -38,6 +38,7 @@ EmbeddingsWindow {
     width: 100%;
     height: 100%;
     display: none;
+    overflow: auto;
 }
 
 /* Show the active view */
@@ -83,10 +84,9 @@ EmbeddingsCreationWindow {
 
 .embeddings-creation-scroll {
     width: 100%;
-    height: 1fr;
+    height: 100%;
     padding: 1 2;
     overflow-y: auto;
-    overflow-x: hidden;
 }
 
 .embeddings-form-container {
@@ -170,7 +170,8 @@ EmbeddingsCreationWindow {
 }
 
 .embeddings-chunk-preview {
-    height: 15;
+    min-height: 10;
+    max-height: 20;
     border: round $primary-lighten-1;
     background: $surface-darken-1;
     padding: 1;
@@ -203,7 +204,8 @@ EmbeddingsCreationWindow {
 
 .embeddings-status-output {
     margin-top: 2;
-    height: 10;
+    min-height: 8;
+    max-height: 15;
     border: round $primary-background-lighten-2;
     padding: 1;
     background: $surface;
@@ -223,7 +225,8 @@ EmbeddingsCreationWindow {
 }
 
 .embeddings-db-results-container {
-    height: 25;
+    min-height: 15;
+    max-height: 30;
     width: 100%;
     margin-top: 1;
     border: round $primary;
