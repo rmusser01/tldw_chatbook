@@ -42,6 +42,16 @@
 .ingest-nav-pane .ingest-nav-button:hover {
     background: $accent 60%; /* Slightly different hover potentially */
 }
+
+/* Style for sidebar section titles */
+.ingest-nav-pane .sidebar-title {
+    text-style: bold;
+    color: $primary;
+    margin-top: 2;
+    margin-bottom: 1;
+    padding-left: 1;
+    border-left: thick $accent;
+}
 /* Active state for selected ingest nav button (optional) */
 /* .ingest-nav-pane .ingest-nav-button.-active-view {
     background: $accent-darken-1;
@@ -58,7 +68,6 @@
 .ingest-view-area { /* Common class for individual content areas */
     width: 100%;
     height: 100%;
-    display: none; /* Hidden by default until explicitly shown */
 }
 .ingest-label {
     margin-top: 1;
@@ -118,14 +127,10 @@
     margin-bottom: 1;
 }
 
-/* --- Local Media Ingestion Tabs --- */
-#ingest-local-tabs {
+/* Ensure VerticalScroll containers fill their parent */
+.ingest-view-area VerticalScroll {
     height: 100%;
-}
-
-#ingest-local-tabs TabPane {
-    padding: 1 0;
-    height: 100%;
+    width: 100%;
 }
 
 .ingest-media-tab-content {
@@ -174,19 +179,28 @@
     padding-right: 1;
 }
 
+.title-author-row {
+    margin-bottom: 1;
+}
+
+.ingest-textarea-small {
+    height: 3;
+    margin-bottom: 1;
+}
+
 .ingest-textarea-medium {
     height: 10;
     margin-bottom: 1;
 }
 
-/* --- Visibility styles for ingest views --- */
-/* Use hidden/visible classes for view control */
-.ingest-view-area.hidden {
-    display: none !important;
+/* All ingest views are controlled programmatically */
+.ingest-view-area {
+    /* display controlled by app.py watcher */
+    height: 100%;
+    width: 100%;
 }
 
-.ingest-view-area.visible {
-    display: block !important;
-}
+/* --- Visibility styles for ingest views --- */
+/* Views are controlled programmatically via styles.display */
 
 /* --- END OF INTEGRATED NEW CSS --- */

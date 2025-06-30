@@ -7,6 +7,18 @@
     display: block;
 }
 
+/* Ensure the parent container for tldw API view has proper dimensions */
+#ingest-view-tldw-api {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+#ingest-view-tldw-api > #tldw-api-tabbed-window {
+    height: 100%;
+    width: 100%;
+}
+
 .window-title {
     text-style: bold;
     text-align: center;
@@ -37,6 +49,12 @@
     height: 100%;
     overflow-y: auto;
     padding: 1;
+}
+
+/* Ensure VerticalScroll containers fill their parent */
+#tldw-api-tabs VerticalScroll {
+    height: 100%;
+    width: 100%;
 }
 
 /* Style for the tab content area */

@@ -141,6 +141,12 @@ class SearchWindow(Container):
         for view in self.query(".search-view-area"):
             view.display = False
             logger.debug(f"SearchWindow.on_mount: Setting view {view.id} display to False")
+            # Ensure all children of the view are also hidden
+            if view.id == SEARCH_VIEW_RAG_QA:
+                # Special handling for SearchRAGWindow
+                for child in view.children:
+                    child.display = False
+                    logger.debug(f"SearchWindow.on_mount: Also hiding child {child.__class__.__name__} of {view.id}")
 
         # Default to a view based on available dependencies
         default_view = SEARCH_VIEW_RAG_QA
@@ -164,6 +170,11 @@ class SearchWindow(Container):
         try:
             active_view = self.query_one(f"#{initial_sub_tab}")
             active_view.display = True
+            # If it's the RAG QA view, also show its children
+            if initial_sub_tab == SEARCH_VIEW_RAG_QA:
+                for child in active_view.children:
+                    child.display = True
+                    logger.debug(f"SearchWindow.on_mount: Also showing child {child.__class__.__name__} of {initial_sub_tab}")
             logger.debug(f"SearchWindow.on_mount: Set display=True for active view {initial_sub_tab}")
         except Exception as e:
             logger.error(f"SearchWindow.on_mount: Could not display initial active view {initial_sub_tab}: {e}")
@@ -310,10 +321,18 @@ class SearchWindow(Container):
 
         for view in self.query(".search-view-area"):
             view.display = False
+            # Special handling for SearchRAGWindow container
+            if view.id == SEARCH_VIEW_RAG_QA:
+                for child in view.children:
+                    child.display = False
 
         try:
             target_view = self.query_one(f"#{target_view_id}")
             target_view.display = True
+            # If showing the RAG QA view, also show its children
+            if target_view_id == SEARCH_VIEW_RAG_QA:
+                for child in target_view.children:
+                    child.display = True
         except Exception as e:
             logger.error(f"Failed to display target view {target_view_id}: {e}")
             self.app_instance.notify(f"Error displaying view: {target_view_id}", severity="error")

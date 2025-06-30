@@ -210,7 +210,6 @@ class IngestTldwApiTabbedWindow(Vertical):
         logger.debug("Composing IngestTldwApiTabbedWindow UI")
         
         yield Static("Ingest Content via tldw API", classes="window-title")
-        yield Button("← Back to Ingest Menu", id="tldw-api-back-button", classes="back-button")
         
         with TabbedContent(id="tldw-api-tabs"):
             for media_type in MEDIA_TYPES:
@@ -232,11 +231,7 @@ class IngestTldwApiTabbedWindow(Vertical):
         if not button_id:
             return
         
-        if button_id == "tldw-api-back-button":
-            # Let the parent handle going back to the main ingest view
-            event.stop()
-            self.post_message(self.BackButtonPressed())
-        elif button_id.startswith("tldw-api-browse-local-files-button-"):
+        if button_id.startswith("tldw-api-browse-local-files-button-"):
             event.stop()
             media_type = button_id.replace("tldw-api-browse-local-files-button-", "")
             self._current_media_type_for_file_dialog = media_type

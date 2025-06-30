@@ -127,13 +127,6 @@ class ChatWindow(Container):
                 ) # Suggest button
                 logger.debug("'respond-for-me-button' composed.")
                 yield Button(
-                    get_char(EMOJI_STOP, FALLBACK_STOP), 
-                    id="stop-chat-generation", 
-                    classes="stop-button",
-                    disabled=True,
-                    tooltip="Stop generation"
-                )
-                yield Button(
                     get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
                     id="toggle-chat-right-sidebar",
                     classes="sidebar-toggle",

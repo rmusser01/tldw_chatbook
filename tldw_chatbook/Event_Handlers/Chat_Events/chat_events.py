@@ -26,7 +26,8 @@ from tldw_chatbook.Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.titlebar import TitleBar
 from tldw_chatbook.Utils.Emoji_Handling import (
     get_char, EMOJI_THINKING, FALLBACK_THINKING, EMOJI_EDIT, FALLBACK_EDIT,
-    EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_COPIED, FALLBACK_COPIED, EMOJI_COPY, FALLBACK_COPY
+    EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_COPIED, FALLBACK_COPIED, EMOJI_COPY, FALLBACK_COPY,
+    EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
 )
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import load_character_and_image
@@ -88,6 +89,14 @@ async def handle_chat_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) 
 async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the send button press for the main chat tab."""
     prefix = "chat"  # This handler is specific to the main chat tab's send button
+    
+    # Check if there's an active chat generation running
+    if hasattr(app, 'current_chat_worker') and app.current_chat_worker and app.current_chat_worker.is_running:
+        # Stop the generation instead of sending
+        loguru_logger.info("Send button pressed - stopping active generation")
+        await handle_stop_chat_generation_pressed(app, event)
+        return
+    
     loguru_logger.info(f"Send button pressed for '{prefix}' (main chat)") # Use loguru_logger consistently
 
     # --- 1. Query UI Widgets ---
@@ -2862,15 +2871,14 @@ async def handle_stop_chat_generation_pressed(app: 'TldwCli', event: Button.Pres
             loguru_logger.debug(f"current_chat_worker ({app.current_chat_worker.name}) is not running (state: {app.current_chat_worker.state}).")
 
 
-    # Attempt to disable the button immediately, regardless of worker state.
-    # The on_worker_state_changed handler will also try to disable it when the worker eventually stops.
+    # Update the send button to change from stop back to send state
     # This provides immediate visual feedback.
     try:
-        stop_button = app.query_one("#stop-chat-generation", Button) # MODIFIED ID HERE
-        stop_button.disabled = True
-        loguru_logger.debug("Attempted to disable '#stop-chat-generation' button from handler.")
+        send_button = app.query_one("#send-chat", Button)
+        send_button.label = get_char(EMOJI_SEND, FALLBACK_SEND)
+        loguru_logger.debug("Changed send button back to send state.")
     except QueryError:
-        loguru_logger.error("Could not find '#stop-chat-generation' button to disable it directly from handler.") # MODIFIED ID IN LOG
+        loguru_logger.error("Could not find '#send-chat' button to update its state.")
 
 
 async def populate_chat_conversation_character_filter_select(app: 'TldwCli') -> None:

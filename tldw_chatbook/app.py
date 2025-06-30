@@ -59,7 +59,8 @@ from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, EMOJI_TITLE_NOTE, \
-    FALLBACK_TITLE_NOTE, EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH, supports_emoji
+    FALLBACK_TITLE_NOTE, EMOJI_TITLE_SEARCH, FALLBACK_TITLE_SEARCH, supports_emoji, \
+    EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
 from .config import (
     CONFIG_TOML_CONTENT,
     DEFAULT_CONFIG_PATH,
@@ -107,7 +108,7 @@ from .UI.Coding_Window import CodingWindow
 from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow import MediaWindow
 from .UI.SearchWindow import SearchWindow
-from .UI.Embeddings_Management_Window import EmbeddingsManagementWindow
+from .UI.Embeddings_Window import EmbeddingsWindow
 from .UI.Embeddings_Creation_Window import EmbeddingsCreationWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
@@ -858,7 +859,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _initial_search_sub_tab_view: Optional[str] = SEARCH_VIEW_RAG_QA
 
     # Ingest Tab
-    ingest_active_view: reactive[Optional[str]] = reactive(None)
+    ingest_active_view: reactive[Optional[str]] = reactive("ingest-view-prompts")
     _initial_ingest_view: Optional[str] = "ingest-view-prompts"
     selected_prompt_files_for_import: List[Path] = []
     parsed_prompts_for_preview: List[Dict[str, Any]] = []
@@ -1363,7 +1364,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 ("stats", StatsWindow, "stats-window"),
                 ("evals", EvalsWindow, "evals-window"),
                 ("coding", CodingWindow, "coding-window"),
-                ("embeddings", EmbeddingsManagementWindow, "embeddings-window"),
+                ("embeddings", EmbeddingsWindow, "embeddings-window"),
             ]
             
             for window_name, window_class, window_id in windows:
@@ -1806,30 +1807,37 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error("#ingest-content-pane not found. Cannot switch Ingest views.")
             return
 
-        found_new_view = False
-        # Iterate over all child elements of #ingest-content-pane that have the class .ingest-view-area
-        view_count = 0
-        all_views = list(content_pane.query(".ingest-view-area"))
-        self.loguru_logger.info(f"Query found {len(all_views)} elements with class .ingest-view-area")
+        # Hide all views first
+        for child in content_pane.children:
+            if child.id and child.id.startswith("ingest-view-"):
+                child.styles.display = "none"
         
-        for child_view_container in all_views:
-            view_count += 1
-            child_id = child_view_container.id # Assuming child_view_container is a DOMNode with an 'id' attribute
-            self.loguru_logger.info(f"Processing view {view_count}: {child_id}, current styles.display: {child_view_container.styles.display}")
-            if child_id == new_view:
-                child_view_container.styles.display = "block"
-                self.loguru_logger.info(f"Displaying Ingest view: {child_id}, styles.display now: {child_view_container.styles.display}")
-                found_new_view = True
-            else:
-                child_view_container.styles.display = "none"
-                self.loguru_logger.info(f"Hiding Ingest view: {child_id}, styles.display now: {child_view_container.styles.display}")
-        
-        self.loguru_logger.info(f"Total ingest views processed: {view_count}")
-
-        if new_view and not found_new_view:
-            self.loguru_logger.error(f"Target Ingest view '{new_view}' was not found among .ingest-view-area children to display.")
-        elif not new_view: # This case occurs if ingest_active_view is set to None
-            self.loguru_logger.debug("Ingest active view is None, all ingest sub-views are now hidden (handled by loop).")
+        # Show the selected view
+        if new_view:
+            try:
+                target_view_selector = f"#{new_view}"
+                view_to_show = content_pane.query_one(target_view_selector)
+                view_to_show.styles.display = "block"
+                
+                # Schedule a layout refresh after the display change has been processed
+                def refresh_layout():
+                    view_to_show.refresh(layout=True)
+                    content_pane.refresh(layout=True)
+                    # Force the entire ingest window to refresh
+                    try:
+                        ingest_window = self.query_one("#ingest-window")
+                        ingest_window.refresh(layout=True)
+                    except QueryError:
+                        pass
+                    self.loguru_logger.info(f"Layout refreshed for Ingest view: {new_view}")
+                
+                # Use call_later to ensure the display change is processed first
+                self.call_later(refresh_layout)
+                self.loguru_logger.info(f"Switched Ingest view to: {new_view}")
+            except QueryError:
+                self.loguru_logger.error(f"Target Ingest view '{new_view}' was not found to display.")
+        elif not new_view:
+            self.loguru_logger.debug("Ingest active view is None, all ingest sub-views are now hidden.")
 
     def watch_tools_settings_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         self.loguru_logger.debug(f"Tools & Settings active view changing from '{old_view}' to: '{new_view}'")
@@ -2424,15 +2432,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug(f"Switched to Evals tab. Initial sidebar state: collapsed={self.evals_sidebar_collapsed}")
 
 
+    def _log_view_dimensions(self, view, parent):
+        """Helper to log view dimensions after refresh."""
+        self.loguru_logger.info(f"After refresh - View {view.id} dimensions: width={view.size.width}, height={view.size.height}")
+        self.loguru_logger.info(f"After refresh - Parent dimensions: width={parent.size.width}, height={parent.size.height}")
+    
     async def _activate_initial_ingest_view(self) -> None:
         self.loguru_logger.info("Attempting to activate initial ingest view via _activate_initial_ingest_view.")
         
         # First, ensure all views are hidden initially
         try:
             content_pane = self.query_one("#ingest-content-pane")
-            for child_view in content_pane.query(".ingest-view-area"):
-                child_view.styles.display = "none"
-                self.loguru_logger.debug(f"Initially hiding ingest view: {child_view.id}")
+            for child in content_pane.children:
+                if child.id and child.id.startswith("ingest-view-"):
+                    child.styles.display = "none"
+                    self.loguru_logger.debug(f"Initially hiding ingest view: {child.id}")
         except QueryError:
             self.loguru_logger.error("Could not find #ingest-content-pane to hide views initially")
         
@@ -3426,29 +3440,29 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                  worker_name_attr == "respond_for_me_worker"):
 
             self.loguru_logger.debug(f"Chat-related worker '{worker_name_attr}' detected. State: {worker_state}.")
-            stop_button_id_selector = "#stop-chat-generation"  # Correct ID selector
+            send_button_id_selector = "#send-chat"  # Send button selector
 
             if worker_state == WorkerState.RUNNING:
                 self.loguru_logger.info(f"Chat-related worker '{worker_name_attr}' is RUNNING.")
                 try:
-                    # Enable the stop button
-                    stop_button_widget = self.query_one(stop_button_id_selector, Button)
-                    stop_button_widget.disabled = False
-                    self.loguru_logger.info(f"Button '{stop_button_id_selector}' ENABLED.")
+                    # Change send button to stop button
+                    send_button_widget = self.query_one(send_button_id_selector, Button)
+                    send_button_widget.label = get_char(EMOJI_STOP, FALLBACK_STOP)
+                    self.loguru_logger.info(f"Button '{send_button_id_selector}' changed to STOP state.")
                 except QueryError:
-                    self.loguru_logger.error(f"Could not find button '{stop_button_id_selector}' to enable it.")
+                    self.loguru_logger.error(f"Could not find button '{send_button_id_selector}' to change it to stop state.")
                 # Note: The original code delegated SUCCESS/ERROR states.
                 # RUNNING state for chat workers was not explicitly handled here for the stop button.
 
             elif worker_state in [WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED]:
                 self.loguru_logger.info(f"Chat-related worker '{worker_name_attr}' finished with state {worker_state}.")
                 try:
-                    # Disable the stop button
-                    stop_button_widget = self.query_one(stop_button_id_selector, Button)
-                    stop_button_widget.disabled = True
-                    self.loguru_logger.info(f"Button '{stop_button_id_selector}' DISABLED.")
+                    # Change stop button back to send button
+                    send_button_widget = self.query_one(send_button_id_selector, Button)
+                    send_button_widget.label = get_char(EMOJI_SEND, FALLBACK_SEND)
+                    self.loguru_logger.info(f"Button '{send_button_id_selector}' changed back to SEND state.")
                 except QueryError:
-                    self.loguru_logger.error(f"Could not find button '{stop_button_id_selector}' to disable it.")
+                    self.loguru_logger.error(f"Could not find button '{send_button_id_selector}' to change it back to send state.")
 
                 # Existing delegation for SUCCESS/ERROR, which might update UI based on worker result.
                 # The worker_handlers.handle_api_call_worker_state_changed should focus on

@@ -52,6 +52,16 @@
     overflow: hidden;
 }
 
+/* Specific rule for the RAG Q&A view container */
+#search-view-rag-qa {
+    overflow: hidden;
+}
+
+/* Hide the SearchRAGWindow when parent is hidden */
+#search-view-rag-qa SearchRAGWindow {
+    display: block;
+}
+
 /* -------------------------------------------------------------------------------------- */
 
 /* Web Search Specific Styles within Search Tab */
