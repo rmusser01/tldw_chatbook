@@ -18,6 +18,7 @@ from textual.widgets import (
     Button, Input, Label, Select, TextArea, Checkbox, RadioButton, RadioSet,
     Collapsible, LoadingIndicator, ProgressBar, Static, DataTable, Rule
 )
+from textual.binding import Binding
 
 # Local imports
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
@@ -48,6 +49,12 @@ logger = logger.bind(name="Embeddings_Creation_Window")
 
 class EmbeddingsCreationWindow(Widget):
     """Embeddings Creation window with single-pane form layout."""
+    
+    BINDINGS = [
+        Binding("ctrl+a", "select_all", "Select All", show=False),
+        Binding("ctrl+d", "clear_selection", "Deselect All", show=False),
+        Binding("space", "toggle_selection", "Toggle Selection", show=False),
+    ]
     
     DEFAULT_CSS = """
     EmbeddingsCreationWindow {
@@ -163,18 +170,9 @@ class EmbeddingsCreationWindow(Widget):
         background: $surface;
     }
     
-    .embeddings-radio-group {
-        layout: horizontal;
-        align: left middle;
-    }
-    
-    .embeddings-radio-group RadioButton {
-        margin-right: 2;
-    }
-    
-    /* Initially hide file and database input containers */
+    /* Initially hide database input container, show file container by default */
     #file-input-container {
-        display: none;
+        display: block;
     }
     
     #db-input-container {
@@ -184,6 +182,40 @@ class EmbeddingsCreationWindow(Widget):
     #embeddings-progress-container {
         display: none;
     }
+    
+    .embeddings-db-results-container {
+        height: 25;
+        margin-top: 1;
+        border: round $primary;
+        background: $surface;
+    }
+    
+    #embeddings-db-results {
+        height: 1fr;
+    }
+    
+    .embeddings-db-selection-buttons {
+        layout: horizontal;
+        margin-bottom: 1;
+        align-horizontal: left;
+    }
+    
+    .embeddings-db-selection-button {
+        margin-right: 1;
+        min-width: 10;
+    }
+    
+    DataTable > .datatable--cursor {
+        background: $primary 20%;
+    }
+    
+    DataTable > .datatable--hover {
+        background: $primary 10%;
+    }
+    
+    DataTable > .datatable--selected {
+        background: $accent 30%;
+    }
     """
     
     # Input source types
@@ -192,10 +224,13 @@ class EmbeddingsCreationWindow(Widget):
     SOURCE_DATABASE = "database"
     
     # Reactive attributes
-    selected_source: reactive[str] = reactive(SOURCE_TEXT)
+    selected_source: reactive[str] = reactive(SOURCE_FILE)
     selected_model: reactive[Optional[str]] = reactive(None)
     is_processing: reactive[bool] = reactive(False)
     selected_files: reactive[List[Path]] = reactive([])
+    selected_db: reactive[str] = reactive("media")  # "media" or "chachanotes"
+    selected_db_type: reactive[Optional[str]] = reactive("media")
+    selected_db_items: reactive[set] = reactive(set())  # Track selected item IDs
     
     def __init__(self, app_instance: Any, **kwargs):
         """Initialize the Embeddings Creation Window.
@@ -209,6 +244,7 @@ class EmbeddingsCreationWindow(Widget):
         self.media_db = app_instance.media_db if hasattr(app_instance, 'media_db') else None
         self.embedding_factory: Optional[EmbeddingFactory] = None
         self.chroma_manager: Optional[ChromaDBManager] = None
+        
         
         # Check dependencies
         if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
@@ -237,17 +273,16 @@ class EmbeddingsCreationWindow(Widget):
                 # Input Source Section
                 yield Label("Input Source", classes="embeddings-section-title")
                 
-                with RadioSet(id="embeddings-source-type", classes="embeddings-radio-group"):
-                    yield RadioButton("Direct Text", value=self.SOURCE_TEXT, id="source-text-radio")
-                    yield RadioButton("Files", value=self.SOURCE_FILE, id="source-file-radio")
-                    yield RadioButton("Database Query", value=self.SOURCE_DATABASE, id="source-db-radio")
-                
-                # Text input container
-                with Container(id="text-input-container", classes="embeddings-input-source-container"):
-                    yield TextArea(
-                        "Enter text to embed...",
-                        id="embeddings-text-input",
-                        classes="embeddings-form-full-row"
+                with Horizontal(classes="embeddings-form-row"):
+                    yield Label("Source Type:", classes="embeddings-form-label")
+                    yield Select(
+                        [
+                            ("Files", self.SOURCE_FILE),
+                            ("Database Content", self.SOURCE_DATABASE)
+                        ],
+                        id="embeddings-source-type",
+                        classes="embeddings-form-control",
+                        value=self.SOURCE_FILE
                     )
                 
                 # File input container
@@ -265,25 +300,56 @@ class EmbeddingsCreationWindow(Widget):
                 
                 # Database query container
                 with Container(id="db-input-container", classes="embeddings-input-source-container"):
+                    # Database selection from app's loaded databases
+                    with Horizontal(classes="embeddings-form-row"):
+                        yield Label("Database:", classes="embeddings-form-label")
+                        yield Select(
+                            [
+                                ("Media Database", "media"),
+                                ("ChaChaNotes Database", "chachanotes")
+                            ],
+                            id="embeddings-db-select",
+                            classes="embeddings-form-control",
+                            allow_blank=False
+                        )
+                    
                     with Horizontal(classes="embeddings-form-row"):
                         yield Label("Content Type:", classes="embeddings-form-label")
                         yield Select(
                             [
-                                ("media", "Media Content"),
-                                ("conversations", "Conversations"),
-                                ("notes", "Notes"),
-                                ("characters", "Characters")
+                                ("Media Content", "media")
                             ],
                             id="embeddings-db-type",
+                            classes="embeddings-form-control",
+                            allow_blank=False,
+                            value="media"
+                        )
+                    
+                    with Horizontal(classes="embeddings-form-row"):
+                        yield Label("Search:", classes="embeddings-form-label")
+                        yield Input(
+                            placeholder="Search for content...",
+                            id="embeddings-db-filter",
                             classes="embeddings-form-control"
                         )
                     
                     with Horizontal(classes="embeddings-form-row"):
-                        yield Label("Filter (optional):", classes="embeddings-form-label")
-                        yield Input(
-                            placeholder="e.g., keyword search",
-                            id="embeddings-db-filter",
-                            classes="embeddings-form-control"
+                        yield Button("Search Database", id="embeddings-search-db", classes="embeddings-action-button")
+                        yield Label("No items selected", id="embeddings-db-selection-count")
+                    
+                    # Selection control buttons
+                    with Horizontal(classes="embeddings-db-selection-buttons"):
+                        yield Button("Select All", id="embeddings-select-all", classes="embeddings-db-selection-button")
+                        yield Button("Clear Selection", id="embeddings-clear-selection", classes="embeddings-db-selection-button")
+                    
+                    # DataTable to show search results in a scrollable container
+                    with VerticalScroll(classes="embeddings-db-results-container"):
+                        yield DataTable(
+                            id="embeddings-db-results",
+                            show_header=True,
+                            zebra_stripes=True,
+                            cursor_type="row",
+                            show_cursor=True
                         )
                 
                 yield Rule()
@@ -378,9 +444,24 @@ class EmbeddingsCreationWindow(Widget):
         """Handle mount event - initialize embeddings components."""
         await self._initialize_embeddings()
         
-        # Ensure text input container is visible by default
-        text_container = self.query_one("#text-input-container")
-        text_container.styles.display = "block"
+        # Ensure file input container is visible by default
+        file_container = self.query_one("#file-input-container")
+        file_container.styles.display = "block"
+        
+        # Initialize the DataTable
+        table = self.query_one("#embeddings-db-results", DataTable)
+        table.add_columns("✓", "ID", "Title", "Type", "Date")
+        table.cursor_type = "row"
+        
+        # Clear selected items
+        self.selected_db_items = set()
+        
+        # Trigger initial database selection
+        db_select = self.query_one("#embeddings-db-select", Select)
+        # The Select widget should auto-select the first option when allow_blank=False
+        # But we'll manually trigger the change event to set up the content types
+        if db_select.value and db_select.value != Select.BLANK:
+            self.on_database_changed(Select.Changed(db_select, db_select.value))
     
     async def _initialize_embeddings(self) -> None:
         """Initialize embedding factory and ChromaDB manager."""
@@ -424,19 +505,18 @@ class EmbeddingsCreationWindow(Widget):
         return [(method, method.replace('_', ' ').title()) for method in CHUNK_METHODS]
     
     # Event handlers
-    @on(RadioSet.Changed, "#embeddings-source-type")
-    def on_source_changed(self, event: RadioSet.Changed) -> None:
+    @on(Select.Changed, "#embeddings-source-type")
+    def on_source_changed(self, event: Select.Changed) -> None:
         """Handle source type change."""
-        self.selected_source = str(event.value)
-        
-        # Show/hide appropriate containers
-        text_container = self.query_one("#text-input-container")
-        file_container = self.query_one("#file-input-container")
-        db_container = self.query_one("#db-input-container")
-        
-        text_container.styles.display = "block" if self.selected_source == self.SOURCE_TEXT else "none"
-        file_container.styles.display = "block" if self.selected_source == self.SOURCE_FILE else "none"
-        db_container.styles.display = "block" if self.selected_source == self.SOURCE_DATABASE else "none"
+        if event.value and event.value != Select.BLANK:
+            self.selected_source = str(event.value)
+            
+            # Show/hide appropriate containers
+            file_container = self.query_one("#file-input-container")
+            db_container = self.query_one("#db-input-container")
+            
+            file_container.styles.display = "block" if self.selected_source == self.SOURCE_FILE else "none"
+            db_container.styles.display = "block" if self.selected_source == self.SOURCE_DATABASE else "none"
     
     @on(Select.Changed, "#embeddings-model-select")
     def on_model_changed(self, event: Select.Changed) -> None:
@@ -471,6 +551,168 @@ class EmbeddingsCreationWindow(Widget):
         )
         
         self.app.push_screen(file_picker, handle_selected)
+    
+    @on(Select.Changed, "#embeddings-db-select")
+    def on_database_changed(self, event: Select.Changed) -> None:
+        """Handle database selection change."""
+        if event.value and event.value != Select.BLANK:
+            self.selected_db = str(event.value)
+            
+            # Update content type options based on selected database
+            db_type_select = self.query_one("#embeddings-db-type", Select)
+            
+            if self.selected_db == "media":
+                db_type_select.set_options([
+                    ("media", "Media Content")
+                ])
+                # Don't set value - Select will auto-select first option when allow_blank=False
+            else:  # chachanotes
+                db_type_select.set_options([
+                    ("conversations", "Conversations"),
+                    ("notes", "Notes"),
+                    ("characters", "Characters")
+                ])
+                # Don't set value - Select will auto-select first option when allow_blank=False
+            
+            self._update_status(f"Selected {event.value} database")
+    
+    @on(Button.Pressed, "#embeddings-search-db")
+    async def on_search_database(self) -> None:
+        """Search database for content to embed."""
+        db_type = str(self.query_one("#embeddings-db-type", Select).value)
+        search_term = self.query_one("#embeddings-db-filter", Input).value
+        
+        if not db_type:
+            self.notify("Please select a content type", severity="warning")
+            return
+        
+        table = self.query_one("#embeddings-db-results", DataTable)
+        table.clear()
+        
+        try:
+            results = []
+            
+            # Use app's loaded databases
+            media_db = self.media_db
+            chachanotes_db = self.chachanotes_db
+            
+            if db_type == "media" and media_db:
+                # Search media database
+                results = media_db.search_media(search_term) if search_term else media_db.get_all_media(limit=100)
+                for item in results:
+                    item_id = str(item.get('id', ''))
+                    table.add_row(
+                        "" if item_id not in self.selected_db_items else "✓",
+                        item_id,
+                        item.get('title', 'Untitled')[:50],
+                        item.get('type', 'unknown'),
+                        item.get('created_at', '')[:10],
+                        key=item_id  # Add key for easier row identification
+                    )
+            
+            elif db_type == "conversations" and chachanotes_db:
+                # Search conversations
+                results = chachanotes_db.search_conversations_by_keywords(search_term) if search_term else chachanotes_db.get_all_conversations(limit=100)
+                for conv in results:
+                    item_id = str(conv.get('conversation_id', ''))
+                    table.add_row(
+                        "" if item_id not in self.selected_db_items else "✓",
+                        item_id,
+                        conv.get('title', 'Untitled Conversation')[:50],
+                        "conversation",
+                        conv.get('created_at', '')[:10],
+                        key=item_id
+                    )
+            
+            elif db_type == "notes" and chachanotes_db:
+                # Search notes
+                results = chachanotes_db.search_notes(search_term) if search_term else chachanotes_db.get_recent_notes(limit=100)
+                for note in results:
+                    item_id = str(note.get('id', ''))
+                    table.add_row(
+                        "" if item_id not in self.selected_db_items else "✓",
+                        item_id,
+                        note.get('title', 'Untitled Note')[:50],
+                        "note",
+                        note.get('created', '')[:10],
+                        key=item_id
+                    )
+            
+            elif db_type == "characters" and chachanotes_db:
+                # Search characters
+                results = chachanotes_db.search_characters(search_term) if search_term else chachanotes_db.get_all_characters()
+                for char in results:
+                    item_id = str(char.get('id', ''))
+                    table.add_row(
+                        "" if item_id not in self.selected_db_items else "✓",
+                        item_id,
+                        char.get('name', 'Unnamed Character')[:50],
+                        "character",
+                        char.get('created_at', '')[:10],
+                        key=item_id
+                    )
+            
+            count = len(results)
+            self.query_one("#embeddings-db-selection-count", Label).update(f"Found {count} items")
+            
+            if count == 0:
+                self.notify("No items found", severity="information")
+            
+        except Exception as e:
+            logger.error(f"Database search failed: {e}")
+            self.notify(f"Search failed: {str(e)}", severity="error")
+    
+    @on(DataTable.RowSelected, "#embeddings-db-results")
+    def on_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle row selection in results table."""
+        table = self.query_one("#embeddings-db-results", DataTable)
+        row_key = event.row_key
+        
+        if row_key is not None:
+            # Get the ID from the row
+            item_id = str(table.get_cell(row_key, "ID"))
+            
+            # Toggle selection
+            if item_id in self.selected_db_items:
+                self.selected_db_items.discard(item_id)
+                table.update_cell(row_key, "✓", "")
+            else:
+                self.selected_db_items.add(item_id)
+                table.update_cell(row_key, "✓", "✓")
+            
+            # Update selection count
+            self.query_one("#embeddings-db-selection-count", Label).update(
+                f"Selected {len(self.selected_db_items)} items"
+            )
+    
+    @on(Button.Pressed, "#embeddings-select-all")
+    def on_select_all(self) -> None:
+        """Select all items in the results table."""
+        table = self.query_one("#embeddings-db-results", DataTable)
+        
+        # Select all items
+        for row_key in table.rows:
+            item_id = str(table.get_cell(row_key, "ID"))
+            self.selected_db_items.add(item_id)
+            table.update_cell(row_key, "✓", "✓")
+        
+        # Update selection count
+        self.query_one("#embeddings-db-selection-count", Label).update(
+            f"Selected {len(self.selected_db_items)} items"
+        )
+    
+    @on(Button.Pressed, "#embeddings-clear-selection")
+    def on_clear_selection(self) -> None:
+        """Clear all selections in the results table."""
+        table = self.query_one("#embeddings-db-results", DataTable)
+        
+        # Clear all selections
+        self.selected_db_items.clear()
+        for row_key in table.rows:
+            table.update_cell(row_key, "✓", "")
+        
+        # Update selection count
+        self.query_one("#embeddings-db-selection-count", Label).update("No items selected")
     
     @on(Button.Pressed, "#embeddings-preview")
     async def on_preview_chunks(self) -> None:
@@ -552,9 +794,6 @@ class EmbeddingsCreationWindow(Widget):
     @on(Button.Pressed, "#embeddings-clear")
     def on_clear_form(self) -> None:
         """Clear all form inputs."""
-        # Clear text input
-        self.query_one("#embeddings-text-input", TextArea).text = "Enter text to embed..."
-        
         # Clear file selection
         self.selected_files = []
         self.query_one("#embeddings-file-list", TextArea).text = ""
@@ -570,19 +809,23 @@ class EmbeddingsCreationWindow(Widget):
         # Clear status
         self._update_status("")
         
-        # Reset source to text
-        radio_set = self.query_one("#embeddings-source-type", RadioSet)
-        radio_set.pressed_index = 0
+        # Clear database results and selections
+        table = self.query_one("#embeddings-db-results", DataTable)
+        table.clear()
+        self.selected_db_items.clear()
+        self.query_one("#embeddings-db-selection-count", Label).update("No items selected")
+        
+        # Reset database selection - let the Select widget handle its own state
+        
+        # Reset source to files
+        source_select = self.query_one("#embeddings-source-type", Select)
+        source_select.value = self.SOURCE_FILE
         
         self.notify("Form cleared", severity="information")
     
     async def _get_input_text(self) -> str:
         """Get input text based on selected source."""
-        if self.selected_source == self.SOURCE_TEXT:
-            text_area = self.query_one("#embeddings-text-input", TextArea)
-            return text_area.text.strip()
-        
-        elif self.selected_source == self.SOURCE_FILE:
+        if self.selected_source == self.SOURCE_FILE:
             # Read content from selected files
             all_text = []
             for file_path in self.selected_files:
@@ -594,13 +837,59 @@ class EmbeddingsCreationWindow(Widget):
             return "\n\n".join(all_text)
         
         elif self.selected_source == self.SOURCE_DATABASE:
-            # Query database based on type and filter
+            # Get selected items from the DataTable
+            table = self.query_one("#embeddings-db-results", DataTable)
             db_type = str(self.query_one("#embeddings-db-type", Select).value)
-            filter_text = self.query_one("#embeddings-db-filter", Input).value
             
-            # This would be implemented based on actual database queries
-            # For now, return empty string
-            return ""
+            all_text = []
+            
+            # Use app's loaded databases
+            media_db = self.media_db
+            chachanotes_db = self.chachanotes_db
+            
+            for item_id in self.selected_db_items:
+                    
+                    try:
+                        if db_type == "media" and media_db:
+                            # Get media content
+                            media_item = media_db.get_media_item_by_id(int(item_id))
+                            if media_item:
+                                content = media_item.get('content', media_item.get('transcript', ''))
+                                if content:
+                                    all_text.append(f"=== {media_item.get('title', 'Untitled')} ===\n{content}")
+                        
+                        elif db_type == "conversations" and chachanotes_db:
+                            # Get conversation messages
+                            messages = chachanotes_db.get_messages_by_conversation_id(int(item_id))
+                            if messages:
+                                conv_text = []
+                                for msg in messages:
+                                    role = msg.get('role', 'unknown')
+                                    content = msg.get('content', '')
+                                    conv_text.append(f"{role}: {content}")
+                                all_text.append(f"=== Conversation {item_id} ===\n" + "\n\n".join(conv_text))
+                        
+                        elif db_type == "notes" and chachanotes_db:
+                            # Get note content
+                            note = chachanotes_db.get_note_by_id(int(item_id))
+                            if note:
+                                all_text.append(f"=== {note.get('title', 'Untitled Note')} ===\n{note.get('content', '')}")
+                        
+                        elif db_type == "characters" and chachanotes_db:
+                            # Get character data
+                            character = chachanotes_db.get_character_by_id(int(item_id))
+                            if character:
+                                char_text = []
+                                char_text.append(f"Name: {character.get('name', 'Unknown')}")
+                                char_text.append(f"Description: {character.get('description', '')}")
+                                char_text.append(f"Personality: {character.get('personality', '')}")
+                                char_text.append(f"First Message: {character.get('first_message', '')}")
+                                all_text.append(f"=== Character: {character.get('name', 'Unknown')} ===\n" + "\n".join(char_text))
+                    
+                    except Exception as e:
+                        logger.error(f"Failed to get content for {db_type} ID {item_id}: {e}")
+            
+            return "\n\n".join(all_text)
         
         return ""
     
@@ -668,6 +957,46 @@ class EmbeddingsCreationWindow(Widget):
             status_output.scroll_end()
         else:
             status_output.text = ""
+    
+    
+    def action_select_all(self) -> None:
+        """Action handler for Ctrl+A - select all items."""
+        # Only work if database content is visible and has results
+        if self.selected_source == self.SOURCE_DATABASE:
+            table = self.query_one("#embeddings-db-results", DataTable)
+            if table.row_count > 0:
+                self.on_select_all()
+    
+    def action_clear_selection(self) -> None:
+        """Action handler for Ctrl+D - clear all selections."""
+        if self.selected_source == self.SOURCE_DATABASE:
+            table = self.query_one("#embeddings-db-results", DataTable)
+            if table.row_count > 0:
+                self.on_clear_selection()
+    
+    def action_toggle_selection(self) -> None:
+        """Action handler for Space - toggle current row selection."""
+        if self.selected_source == self.SOURCE_DATABASE:
+            table = self.query_one("#embeddings-db-results", DataTable)
+            if table.cursor_coordinate:
+                # Simulate a row selection event for the current cursor position
+                row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+                if row_key is not None:
+                    # Get the ID from the current row
+                    item_id = str(table.get_cell(row_key, "ID"))
+                    
+                    # Toggle selection
+                    if item_id in self.selected_db_items:
+                        self.selected_db_items.discard(item_id)
+                        table.update_cell(row_key, "✓", "")
+                    else:
+                        self.selected_db_items.add(item_id)
+                        table.update_cell(row_key, "✓", "✓")
+                    
+                    # Update selection count
+                    self.query_one("#embeddings-db-selection-count", Label).update(
+                        f"Selected {len(self.selected_db_items)} items"
+                    )
 
 # End of Embeddings_Creation_Window.py
 ########################################################################################################################

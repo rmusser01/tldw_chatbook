@@ -20,7 +20,14 @@ from ..Constants import TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_VIDEO_OPTIONS_ID, TL
 # Local Imports
 from ..Third_Party.textual_fspicker.file_open import FileOpen
 from ..tldw_api.schemas import MediaType, ChunkMethod, PdfEngine  # Import Enums
-from ..Widgets.IngestTldwApiTabbedWindow import IngestTldwApiTabbedWindow
+from ..Widgets.IngestTldwApiVideoWindow import IngestTldwApiVideoWindow
+from ..Widgets.IngestTldwApiAudioWindow import IngestTldwApiAudioWindow
+from ..Widgets.IngestTldwApiPdfWindow import IngestTldwApiPdfWindow
+from ..Widgets.IngestTldwApiEbookWindow import IngestTldwApiEbookWindow
+from ..Widgets.IngestTldwApiDocumentWindow import IngestTldwApiDocumentWindow
+from ..Widgets.IngestTldwApiXmlWindow import IngestTldwApiXmlWindow
+from ..Widgets.IngestTldwApiMediaWikiWindow import IngestTldwApiMediaWikiWindow
+from ..Widgets.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -28,7 +35,7 @@ if TYPE_CHECKING:
 #
 # Functions:
 
-MEDIA_TYPES = ['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump']
+MEDIA_TYPES = ['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump', 'plaintext']
 
 INGEST_VIEW_IDS = [
     "ingest-view-prompts", "ingest-view-characters", "ingest-view-notes",
@@ -39,7 +46,7 @@ INGEST_VIEW_IDS = [
     # tldw API media types
     "ingest-view-api-video", "ingest-view-api-audio", "ingest-view-api-document",
     "ingest-view-api-pdf", "ingest-view-api-ebook", "ingest-view-api-xml",
-    "ingest-view-api-mediawiki"
+    "ingest-view-api-mediawiki", "ingest-view-api-plaintext"
 ]
 INGEST_NAV_BUTTON_IDS = [
     "ingest-nav-prompts", "ingest-nav-characters", "ingest-nav-notes",
@@ -50,7 +57,7 @@ INGEST_NAV_BUTTON_IDS = [
     # tldw API media types
     "ingest-nav-api-video", "ingest-nav-api-audio", "ingest-nav-api-document",
     "ingest-nav-api-pdf", "ingest-nav-api-ebook", "ingest-nav-api-xml",
-    "ingest-nav-api-mediawiki"
+    "ingest-nav-api-mediawiki", "ingest-nav-api-plaintext"
 ]
 
 class IngestWindow(Container):
@@ -150,6 +157,7 @@ class IngestWindow(Container):
             yield Button("Ebook (API)", id="ingest-nav-api-ebook", classes="ingest-nav-button")
             yield Button("XML (API)", id="ingest-nav-api-xml", classes="ingest-nav-button")
             yield Button("MediaWiki Dump (API)", id="ingest-nav-api-mediawiki", classes="ingest-nav-button")
+            yield Button("Plaintext (API)", id="ingest-nav-api-plaintext", classes="ingest-nav-button")
 
 
         with Container(id="ingest-content-pane", classes="ingest-content-pane"):
@@ -249,12 +257,35 @@ class IngestWindow(Container):
                 
             with Vertical(id="ingest-view-api-mediawiki", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("mediawiki_dump")
+                
+            with Vertical(id="ingest-view-api-plaintext", classes="ingest-view-area"):
+                yield from self.compose_tldw_api_view("plaintext")
 
     def compose_tldw_api_view(self, media_type: str) -> ComposeResult:
         """Compose a TLDW API view for a specific media type."""
-        # Create a temporary instance of IngestTldwApiTabbedWindow to reuse its form composition
-        temp_window = IngestTldwApiTabbedWindow(self.app_instance)
-        yield from temp_window.compose_tldw_api_form(media_type)
+        # Use individual window classes for each media type
+        if media_type == "video":
+            window = IngestTldwApiVideoWindow(self.app_instance)
+        elif media_type == "audio":
+            window = IngestTldwApiAudioWindow(self.app_instance)
+        elif media_type == "pdf":
+            window = IngestTldwApiPdfWindow(self.app_instance)
+        elif media_type == "ebook":
+            window = IngestTldwApiEbookWindow(self.app_instance)
+        elif media_type == "document":
+            window = IngestTldwApiDocumentWindow(self.app_instance)
+        elif media_type == "xml":
+            window = IngestTldwApiXmlWindow(self.app_instance)
+        elif media_type == "mediawiki_dump":
+            window = IngestTldwApiMediaWikiWindow(self.app_instance)
+        elif media_type == "plaintext":
+            window = IngestTldwApiPlaintextWindow(self.app_instance)
+        else:
+            logger.error(f"Unknown media type: {media_type}")
+            yield Static(f"Error: Unknown media type '{media_type}'")
+            return
+        
+        yield from window.compose()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
@@ -343,6 +374,11 @@ class IngestWindow(Container):
                 logger.info("Cleared web article URLs")
             except Exception as e:
                 logger.error(f"Error clearing web URLs: {e}")
+        
+        # Handle local plaintext process button
+        elif button_id == "ingest-local-plaintext-process":
+            event.stop()
+            await self.handle_local_plaintext_process()
         
         # If IngestWindow has a superclass that also defines on_button_pressed, consider calling it:
         # else:
@@ -434,7 +470,7 @@ class IngestWindow(Container):
             with Container(classes="ingest-options-section"):
                 yield Static("Analysis Options", classes="sidebar-title")
                 yield Checkbox("Perform Analysis (e.g., Summarization)", True, id="ingest-local-video-perform-analysis")
-                yield Checkbox("Perform Confabulation Check", False, id="ingest-local-video-perform-confabulation-check")
+                yield Checkbox("Perform Confabulation Check", False, id="ingest-local-video-perform-confabulation-check-of-analysis")
                 yield Label("Custom Prompt (for analysis):")
                 yield TextArea(id="ingest-local-video-custom-prompt", classes="ingest-textarea-medium")
                 yield Label("System Prompt (for analysis):")
@@ -944,6 +980,197 @@ class IngestWindow(Container):
                 yield LoadingIndicator(id="ingest-local-plaintext-loading", classes="hidden")
                 yield TextArea("", id="ingest-local-plaintext-status", read_only=True, classes="ingest-status-area")
 
+    async def handle_local_plaintext_process(self) -> None:
+        """Handle processing of local plaintext files."""
+        logger.info("Processing local plaintext files")
+        
+        # Get UI elements
+        try:
+            loading_indicator = self.query_one("#ingest-local-plaintext-loading", LoadingIndicator)
+            status_area = self.query_one("#ingest-local-plaintext-status", TextArea)
+            process_button = self.query_one("#ingest-local-plaintext-process", Button)
+        except Exception as e:
+            logger.error(f"Error finding UI elements: {e}")
+            self.app.notify("Error: UI elements not found", severity="error")
+            return
+        
+        # Show loading state
+        loading_indicator.display = True
+        status_area.clear()
+        status_area.load_text("Processing plaintext files...")
+        status_area.display = True
+        process_button.disabled = True
+        
+        try:
+            # Get selected files
+            local_key = "local_plaintext"
+            selected_files = self.selected_local_files.get(local_key, [])
+            
+            if not selected_files:
+                self.app.notify("Please select at least one text file", severity="warning")
+                return
+            
+            # Get processing options
+            encoding_select = self.query_one("#ingest-local-plaintext-encoding", Select)
+            encoding = str(encoding_select.value)
+            
+            line_ending_select = self.query_one("#ingest-local-plaintext-line-ending", Select)
+            line_ending = str(line_ending_select.value)
+            
+            remove_whitespace = self.query_one("#ingest-local-plaintext-remove-whitespace", Checkbox).value
+            convert_paragraphs = self.query_one("#ingest-local-plaintext-paragraphs", Checkbox).value
+            split_pattern = self.query_one("#ingest-local-plaintext-split-pattern", Input).value.strip()
+            
+            # Get metadata
+            title_override = self.query_one("#ingest-local-plaintext-title", Input).value.strip()
+            author = self.query_one("#ingest-local-plaintext-author", Input).value.strip()
+            keywords_text = self.query_one("#ingest-local-plaintext-keywords", TextArea).text.strip()
+            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
+            
+            # Check if media DB is available
+            if not self.app_instance.media_db:
+                logger.error("Media database not initialized")
+                self.app.notify("Error: Media database not available", severity="error")
+                status_area.load_text("Error: Media database not available")
+                return
+            
+            # Process each file
+            processed_count = 0
+            error_count = 0
+            status_messages = []
+            
+            for file_path in selected_files:
+                try:
+                    # Read file content
+                    content = await self._read_text_file(file_path, encoding)
+                    
+                    if content is None:
+                        error_count += 1
+                        status_messages.append(f"❌ Failed to read: {file_path.name}")
+                        continue
+                    
+                    # Process content based on options
+                    if line_ending != "auto":
+                        content = self._normalize_line_endings(content, line_ending)
+                    
+                    if remove_whitespace:
+                        content = self._remove_extra_whitespace(content)
+                    
+                    if convert_paragraphs:
+                        content = self._convert_to_paragraphs(content)
+                    
+                    if split_pattern:
+                        # For now, we'll just note this option exists
+                        # Actual splitting would be handled by chunking
+                        pass
+                    
+                    # Use filename as title if no override
+                    title = title_override or file_path.stem
+                    
+                    # Add to media database
+                    media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
+                        url=str(file_path),
+                        title=title,
+                        media_type="plaintext",
+                        content=content,
+                        keywords=keywords,
+                        author=author,
+                        ingestion_date=None,  # Will use current time
+                        overwrite=False
+                    )
+                    
+                    if media_id:
+                        processed_count += 1
+                        status_messages.append(f"✅ Processed: {file_path.name} (ID: {media_id})")
+                        logger.info(f"Successfully ingested plaintext file: {file_path}")
+                    else:
+                        error_count += 1
+                        status_messages.append(f"❌ Failed to ingest: {file_path.name} - {msg}")
+                        logger.error(f"Failed to ingest plaintext file: {file_path} - {msg}")
+                        
+                except Exception as e:
+                    error_count += 1
+                    status_messages.append(f"❌ Error processing {file_path.name}: {str(e)}")
+                    logger.error(f"Error processing plaintext file {file_path}: {e}", exc_info=True)
+            
+            # Update status
+            summary = f"## Processing Complete\n\n"
+            summary += f"✅ Successfully processed: {processed_count} files\n"
+            if error_count > 0:
+                summary += f"❌ Errors: {error_count} files\n"
+            summary += "\n### Details:\n"
+            summary += "\n".join(status_messages)
+            
+            status_area.load_text(summary)
+            
+            if processed_count > 0:
+                self.app.notify(f"Successfully processed {processed_count} text files", severity="information")
+            if error_count > 0:
+                self.app.notify(f"Failed to process {error_count} text files", severity="warning")
+                
+        except Exception as e:
+            logger.error(f"Error in plaintext processing: {e}", exc_info=True)
+            self.app.notify(f"Error: {str(e)}", severity="error")
+            status_area.load_text(f"Error: {str(e)}")
+        finally:
+            # Reset UI state
+            loading_indicator.display = False
+            process_button.disabled = False
+    
+    async def _read_text_file(self, file_path: Path, encoding: str) -> str | None:
+        """Read a text file with specified encoding."""
+        try:
+            if encoding == "auto":
+                # Try common encodings
+                for enc in ["utf-8", "latin-1", "ascii"]:
+                    try:
+                        return file_path.read_text(encoding=enc)
+                    except UnicodeDecodeError:
+                        continue
+                # If all fail, use utf-8 with errors='replace'
+                return file_path.read_text(encoding="utf-8", errors="replace")
+            else:
+                return file_path.read_text(encoding=encoding)
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {e}")
+            return None
+    
+    def _normalize_line_endings(self, content: str, line_ending: str) -> str:
+        """Normalize line endings in content."""
+        if line_ending == "lf":
+            return content.replace("\r\n", "\n").replace("\r", "\n")
+        elif line_ending == "crlf":
+            return content.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+        return content
+    
+    def _remove_extra_whitespace(self, content: str) -> str:
+        """Remove extra whitespace from content."""
+        import re
+        # Replace multiple spaces with single space
+        content = re.sub(r' +', ' ', content)
+        # Replace multiple newlines with double newline
+        content = re.sub(r'\n\n+', '\n\n', content)
+        # Strip whitespace from each line
+        lines = [line.strip() for line in content.split('\n')]
+        return '\n'.join(lines)
+    
+    def _convert_to_paragraphs(self, content: str) -> str:
+        """Convert content to paragraph format."""
+        import re
+        # Split on double newlines or more
+        paragraphs = re.split(r'\n\n+', content)
+        # Clean up each paragraph
+        cleaned_paragraphs = []
+        for para in paragraphs:
+            # Replace single newlines with spaces
+            para = para.replace('\n', ' ')
+            # Clean up multiple spaces
+            para = re.sub(r' +', ' ', para)
+            para = para.strip()
+            if para:
+                cleaned_paragraphs.append(para)
+        return '\n\n'.join(cleaned_paragraphs)
+
 #
-# End of Logs_Window.py
+# End of Ingest_Window.py
 #######################################################################################################################

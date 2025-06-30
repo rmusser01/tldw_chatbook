@@ -57,21 +57,8 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
     worker_state = event.state  # Get state from event
     logger.debug(f"Worker '{worker_name}' state changed to {worker_state}")
 
-    stop_button_id_selector = "#stop-chat-generation"
-    if worker_name.startswith("API_Call_chat"): # Only for main chat workers
-        if worker_state == WorkerState.RUNNING:
-            try:
-                app.query_one(stop_button_id_selector, Button).disabled = False
-                logger.info(f"Button '{stop_button_id_selector}' ENABLED.")
-            except QueryError:
-                logger.error(f"Could not find button '{stop_button_id_selector}' to enable it.")
-            return # Don't process RUNNING state further
-        elif worker_state in [WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED]:
-            try:
-                app.query_one(stop_button_id_selector, Button).disabled = True
-                logger.info(f"Button '{stop_button_id_selector}' DISABLED.")
-            except QueryError:
-                logger.error(f"Could not find button '{stop_button_id_selector}' to disable it.")
+    # Button state is now handled in app.py's on_worker_state_changed method
+    # The send button toggles between send/stop states based on worker state
 
     if worker_name == "respond_for_me_worker":
         logger.info(f"Handling state change for 'respond_for_me_worker'. State: {worker_state}")
@@ -321,16 +308,8 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     except Exception as e_final_focus:
                         logger.error(f"Error focusing input after API call processing: {e_final_focus}", exc_info=True)
 
-            # Re-enable Send button and disable Stop button after any API_Call_ worker is done (SUCCESS or ERROR)
-            # This is crucial for non-streaming where StreamDone doesn't naturally occur.
-            try:
-                if worker_name.startswith("API_Call_chat"):
-                    app.query_one("#send-chat", Button).disabled = False
-                    app.query_one("#stop-chat-generation", Button).disabled = True
-                # Add for CCP tab if applicable
-            except QueryError:
-                logger.debug(
-                    f"Could not find send/stop buttons for '{prefix}' to re-enable/disable after worker '{worker_name}'.")
+            # Button state is now handled in app.py's on_worker_state_changed method
+            # The send button toggles between send/stop states based on worker state
 
         except QueryError as qe_outer:
             logger.error(

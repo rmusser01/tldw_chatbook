@@ -28,7 +28,8 @@ from ..tldw_api import (
     APIConnectionError, APIRequestError, APIResponseError, AuthenticationError,
     MediaItemProcessResult, ProcessedMediaWikiPage, BatchMediaProcessResponse,
     ProcessPDFRequest, ProcessEbookRequest, ProcessDocumentRequest,
-    ProcessXMLRequest, ProcessMediaWikiRequest
+    ProcessXMLRequest, ProcessMediaWikiRequest, ProcessPlaintextRequest,
+    BatchProcessXMLResponse
 )
 # Prompts Interop (existing)
 from ..Prompt_Management.Prompts_Interop import (
@@ -826,18 +827,44 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
         current_field_template_for_error = f"#tldw-api-urls-{media_type}"
         data["urls"] = [url.strip() for url in app.query_one(f"#tldw-api-urls-{media_type}", TextArea).text.splitlines() if url.strip()]
 
-        # current_field_template_for_error = f"#tldw-api-local-files-{media_type}" # Old way
-        # data["local_files"] = [fp.strip() for fp in app.query_one(f"#tldw-api-local-files-{media_type}", TextArea).text.splitlines() if fp.strip()] # Old way
-
-        # New way to get local_files from IngestWindow instance
-        if ingest_window and media_type in ingest_window.selected_local_files:
+        # Try to get local files from the individual window's selected_local_files
+        data["local_files"] = []
+        # First try the old way with IngestWindow
+        if ingest_window and hasattr(ingest_window, 'selected_local_files') and media_type in ingest_window.selected_local_files:
             # Convert Path objects to strings as expected by the API client processing functions
             data["local_files"] = [str(p) for p in ingest_window.selected_local_files[media_type]]
         else:
-            data["local_files"] = []
-            if ingest_window: # Only log if ingest_window was found but no files for this media_type
-                logger.info(f"No local files selected in IngestWindow for media type '{media_type}'.")
-            # If ingest_window was None, error already logged above.
+            # Try to find the specific media type window
+            try:
+                # Map media type to window class
+                window_map = {
+                    "video": "IngestTldwApiVideoWindow",
+                    "audio": "IngestTldwApiAudioWindow", 
+                    "pdf": "IngestTldwApiPdfWindow",
+                    "ebook": "IngestTldwApiEbookWindow",
+                    "document": "IngestTldwApiDocumentWindow",
+                    "xml": "IngestTldwApiXmlWindow",
+                    "mediawiki_dump": "IngestTldwApiMediaWikiWindow"
+                }
+                if media_type in window_map:
+                    from ..Widgets import IngestTldwApiVideoWindow, IngestTldwApiAudioWindow, IngestTldwApiPdfWindow, IngestTldwApiEbookWindow, IngestTldwApiDocumentWindow, IngestTldwApiXmlWindow, IngestTldwApiMediaWikiWindow
+                    window_classes = {
+                        "video": IngestTldwApiVideoWindow,
+                        "audio": IngestTldwApiAudioWindow,
+                        "pdf": IngestTldwApiPdfWindow,
+                        "ebook": IngestTldwApiEbookWindow,
+                        "document": IngestTldwApiDocumentWindow,
+                        "xml": IngestTldwApiXmlWindow,
+                        "mediawiki_dump": IngestTldwApiMediaWikiWindow
+                    }
+                    window_class = window_classes.get(media_type)
+                    if window_class:
+                        media_window = app.query_one(window_class)
+                        if hasattr(media_window, 'selected_local_files'):
+                            data["local_files"] = [str(p) for p in media_window.selected_local_files]
+            except:
+                # If we can't find the window, just use empty list
+                pass
 
         current_field_template_for_error = f"#tldw-api-title-{media_type}"
         data["title"] = app.query_one(f"#tldw-api-title-{media_type}", Input).value or None
@@ -888,6 +915,15 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
         current_field_template_for_error = f"#tldw-api-analysis-api-name-{media_type}"
         analysis_api_select = app.query_one(f"#tldw-api-analysis-api-name-{media_type}", Select)
         data["api_name"] = analysis_api_select.value if analysis_api_select.value != Select.BLANK else None
+
+        current_field_template_for_error = f"#tldw-api-analysis-api-key-{media_type}"
+        data["api_key"] = app.query_one(f"#tldw-api-analysis-api-key-{media_type}", Input).value or None
+
+        current_field_template_for_error = f"#tldw-api-use-cookies-{media_type}"
+        data["use_cookies"] = app.query_one(f"#tldw-api-use-cookies-{media_type}", Checkbox).value
+
+        current_field_template_for_error = f"#tldw-api-cookies-{media_type}"
+        data["cookies"] = app.query_one(f"#tldw-api-cookies-{media_type}", TextArea).text or None
 
         current_field_template_for_error = f"#tldw-api-summarize-recursively-{media_type}"
         data["summarize_recursively"] = app.query_one(f"#tldw-api-summarize-recursively-{media_type}", Checkbox).value
@@ -1029,6 +1065,39 @@ def _collect_document_specific_data(app: 'TldwCli', common_data: Dict[str, Any],
         app.notify("Error: Could not prepare document request data.", severity="error")
         raise
 
+def _collect_plaintext_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessPlaintextRequest:
+    """Collect plaintext-specific form data and create request model."""
+    current_field_template_for_error = "Unknown Plaintext Field-{media_type}"
+    try:
+        common_data["keywords"] = [k.strip() for k in common_data.pop("keywords_str", "").split(',') if k.strip()]
+        
+        # Plaintext-specific fields
+        current_field_template_for_error = f"#tldw-api-encoding-{media_type}"
+        common_data["encoding"] = str(app.query_one(f"#tldw-api-encoding-{media_type}", Select).value)
+        
+        current_field_template_for_error = f"#tldw-api-line-ending-{media_type}"
+        common_data["line_ending"] = str(app.query_one(f"#tldw-api-line-ending-{media_type}", Select).value)
+        
+        current_field_template_for_error = f"#tldw-api-remove-whitespace-{media_type}"
+        common_data["remove_extra_whitespace"] = app.query_one(f"#tldw-api-remove-whitespace-{media_type}", Checkbox).value
+        
+        current_field_template_for_error = f"#tldw-api-convert-paragraphs-{media_type}"
+        common_data["convert_to_paragraphs"] = app.query_one(f"#tldw-api-convert-paragraphs-{media_type}", Checkbox).value
+        
+        current_field_template_for_error = f"#tldw-api-split-pattern-{media_type}"
+        split_pattern = app.query_one(f"#tldw-api-split-pattern-{media_type}", Input).value.strip()
+        common_data["split_pattern"] = split_pattern if split_pattern else None
+        
+        return ProcessPlaintextRequest(**common_data)
+    except QueryError as e:
+        logger.error(f"Error querying Plaintext-specific TLDW API form field (around {current_field_template_for_error.format(media_type=media_type)}): {e}")
+        app.notify(f"Error: Missing Plaintext form field. Details: {e}", severity="error")
+        raise
+    except Exception as e:
+        logger.error(f"Error creating ProcessPlaintextRequest for media_type {media_type}: {e}")
+        app.notify("Error: Could not prepare plaintext request data.", severity="error")
+        raise
+
 def _collect_xml_specific_data(app: 'TldwCli', common_api_data: Dict[str, Any], media_type: str) -> ProcessXMLRequest:
     data = {}
     current_field_template_for_error = "Unknown XML Field-{media_type}"
@@ -1063,7 +1132,16 @@ def _collect_mediawiki_specific_data(app: 'TldwCli', common_api_data: Dict[str, 
         data["namespaces_str"] = app.query_one(f"#tldw-api-mediawiki-namespaces-{media_type}", Input).value or None
         current_field_template_for_error = f"#tldw-api-mediawiki-skip-redirects-{media_type}"
         data["skip_redirects"] = app.query_one(f"#tldw-api-mediawiki-skip-redirects-{media_type}", Checkbox).value
-        data["chunk_max_size"] = common_api_data.get("chunk_size", 1000)
+        
+        current_field_template_for_error = f"#tldw-api-mediawiki-chunk-max-size-{media_type}"
+        data["chunk_max_size"] = int(app.query_one(f"#tldw-api-mediawiki-chunk-max-size-{media_type}", Input).value or "1000")
+        
+        current_field_template_for_error = f"#tldw-api-mediawiki-api-name-vector-db-{media_type}"
+        data["api_name_vector_db"] = app.query_one(f"#tldw-api-mediawiki-api-name-vector-db-{media_type}", Input).value or None
+        
+        current_field_template_for_error = f"#tldw-api-mediawiki-api-key-vector-db-{media_type}"
+        data["api_key_vector_db"] = app.query_one(f"#tldw-api-mediawiki-api-key-vector-db-{media_type}", Input).value or None
+        
         return ProcessMediaWikiRequest(**data)
     except QueryError as e:
         logger.error(f"Error querying MediaWiki-specific TLDW API form field (around {current_field_template_for_error.format(media_type=media_type)}): {e}")
@@ -1149,14 +1227,17 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
             # 1.  Look in the active config, then in the environment.
             auth_token = (
                     get_cli_setting("tldw_api", "auth_token")  # ~/.config/tldw_cli/config.toml
+                    or get_cli_setting("tldw_api", "api_key")  # Alternative config key
                     or getenv("TDLW_AUTH_TOKEN")  # optional override
+                    or getenv("TLDW_API_KEY")  # Alternative env var
             )
 
             # 2. Abort early if we still have nothing.
             if not auth_token:
                 msg = (
                     "Auth token not found — add it to the [tldw_api] section as "
-                    "`auth_token = \"<your token>\"` or export TDLW_AUTH_TOKEN."
+                    "`auth_token = \"<your token>\"` or `api_key = \"<your key>\"`, "
+                    "or export TDLW_AUTH_TOKEN or TLDW_API_KEY."
                 )
                 logger.error(msg)
                 app.notify(msg, severity="error")
@@ -1176,7 +1257,6 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
     try:
         common_data = _collect_common_form_data(app, selected_media_type) # Pass selected_media_type
         local_file_paths = common_data.pop("local_files", [])
-        common_data["api_key"] = auth_token
 
         if selected_media_type == "video":
             request_model = _collect_video_specific_data(app, common_data, selected_media_type)
@@ -1188,6 +1268,8 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
             request_model = _collect_ebook_specific_data(app, common_data, selected_media_type)
         elif selected_media_type == "document":
             request_model = _collect_document_specific_data(app, common_data, selected_media_type)
+        elif selected_media_type == "plaintext":
+            request_model = _collect_plaintext_specific_data(app, common_data, selected_media_type)
         elif selected_media_type == "xml":
             request_model = _collect_xml_specific_data(app, common_data, selected_media_type)
         elif selected_media_type == "mediawiki_dump":
@@ -1236,7 +1318,14 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
             return
 
     status_area.load_text("Connecting to TLDW API and sending request...")
-    api_client = TLDWAPIClient(base_url=endpoint_url, token=auth_token)
+    # Determine if auth_token is a Bearer token or API key based on auth_method
+    if auth_method == "custom_token":
+        # Custom token is treated as Bearer token
+        api_client = TLDWAPIClient(base_url=endpoint_url)
+        api_client.bearer_token = auth_token
+    else:
+        # Config token is treated as API key
+        api_client = TLDWAPIClient(base_url=endpoint_url, token=auth_token)
     overwrite_db = common_data.get("overwrite_existing_db", False) # From common_data
 
     # Worker and callbacks remain largely the same but need to use the correct UI element IDs for this tab
@@ -1256,6 +1345,8 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
                 return await api_client.process_ebook(request_model, local_file_paths)
             elif selected_media_type == "document":
                 return await api_client.process_document(request_model, local_file_paths)
+            elif selected_media_type == "plaintext":
+                return await api_client.process_plaintext(request_model, local_file_paths)
             elif selected_media_type == "xml":
                 if not local_file_paths: raise ValueError("XML processing requires a local file path.")
                 return await api_client.process_xml(request_model, local_file_paths[0])
@@ -1307,6 +1398,20 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
         results_to_ingest: List[MediaItemProcessResult] = []
         if isinstance(response_data, BatchMediaProcessResponse):
             results_to_ingest = response_data.results
+        elif isinstance(response_data, BatchProcessXMLResponse):
+            # Convert ProcessXMLResponseItem to MediaItemProcessResult
+            for xml_item in response_data.results:
+                results_to_ingest.append(MediaItemProcessResult(
+                    status=xml_item.status,
+                    input_ref=xml_item.input_ref,
+                    processing_source=xml_item.input_ref,
+                    media_type="xml",
+                    metadata={"title": xml_item.title, "author": xml_item.author, "keywords": xml_item.keywords},
+                    content=xml_item.content,
+                    summary=xml_item.summary,
+                    segments=xml_item.segments,
+                    error=xml_item.error
+                ))
         elif isinstance(response_data, dict) and "results" in response_data:
             if "processed_count" in response_data:
                 raw_results = response_data.get("results", [])
@@ -1330,7 +1435,7 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
                     media_type="mediawiki_article", # or "mediawiki_page"
                     metadata={"title": mw_page.title, "page_id": mw_page.page_id, "namespace": mw_page.namespace, "revision_id": mw_page.revision_id, "timestamp": mw_page.timestamp},
                     content=mw_page.content,
-                    chunks=[{"text": chunk.get("text", ""), "metadata": chunk.get("metadata", {})} for chunk in mw_page.chunks] if mw_page.chunks else None,
+                    chunks=[{"text": chunk.get("text", ""), "metadata": chunk.get("metadata", {})} for chunk in mw_page.chunks] if hasattr(mw_page, 'chunks') and mw_page.chunks else None,
                 ))
         else:
             logger.error(f"Unexpected TLDW API response data type for {selected_media_type}: {type(response_data)}.")

@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field, HttpUrl
 
 # Enum-like Literals from API schema
-MediaType = Literal['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump']
+MediaType = Literal['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump', 'plaintext']
 ChunkMethod = Literal['semantic', 'tokens', 'paragraphs', 'sentences', 'words', 'ebook_chapters', 'json']
 PdfEngine = Literal['pymupdf4llm', 'pymupdf', 'docling']
 ScrapeMethod = Literal["individual", "sitemap", "url_level", "recursive_scraping"]
@@ -91,6 +91,15 @@ class ProcessMediaWikiRequest(BaseModel): # Based on MediaWikiDumpOptionsForm
     chunk_max_size: int = 1000
     api_name_vector_db: Optional[str] = None # For potential embedding if API supports it without DB write
     api_key_vector_db: Optional[str] = None
+
+class ProcessPlaintextRequest(BaseMediaRequest):
+    # Plaintext specific options
+    encoding: Literal['utf-8', 'ascii', 'latin-1', 'auto'] = 'utf-8'
+    line_ending: Literal['auto', 'lf', 'crlf'] = 'auto'
+    remove_extra_whitespace: bool = True
+    convert_to_paragraphs: bool = False
+    split_pattern: Optional[str] = None  # Regex pattern for custom splitting
+    chunk_method: Optional[ChunkMethod] = 'paragraphs'  # Default for plaintext
 
 
 # --- Response Models (from API specification) ---

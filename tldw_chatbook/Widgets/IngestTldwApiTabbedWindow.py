@@ -21,7 +21,7 @@ from ..Constants import (
     TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_VIDEO_OPTIONS_ID, 
     TLDW_API_PDF_OPTIONS_ID, TLDW_API_EBOOK_OPTIONS_ID, 
     TLDW_API_DOCUMENT_OPTIONS_ID, TLDW_API_XML_OPTIONS_ID, 
-    TLDW_API_MEDIAWIKI_OPTIONS_ID
+    TLDW_API_MEDIAWIKI_OPTIONS_ID, TLDW_API_PLAINTEXT_OPTIONS_ID
 )
 from ..tldw_api.schemas import MediaType, ChunkMethod, PdfEngine
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 #
 # Classes:
 
-MEDIA_TYPES = ['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump']
+MEDIA_TYPES = ['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump', 'plaintext']
 
 class IngestTldwApiTabbedWindow(Vertical):
     """A tabbed window containing forms for ingesting different media types via tldw API."""
@@ -99,6 +99,16 @@ class IngestTldwApiTabbedWindow(Vertical):
             yield Label("Keywords (comma-separated):")
             yield TextArea(id=f"tldw-api-keywords-{media_type}", classes="ingest-textarea-small")
             
+            # --- Web Scraping Options (for URLs) ---
+            with Collapsible(title="Web Scraping Options", collapsed=True, id=f"tldw-api-webscraping-collapsible-{media_type}"):
+                yield Checkbox("Use Cookies for Web Scraping", False, id=f"tldw-api-use-cookies-{media_type}")
+                yield Label("Cookies (JSON format):")
+                yield TextArea(
+                    id=f"tldw-api-cookies-{media_type}", 
+                    classes="ingest-textarea-small",
+                    tooltip="Paste cookies in JSON format for authenticated web scraping"
+                )
+            
             # --- Common Processing Options ---
             yield Label("Custom Prompt (for analysis):")
             yield TextArea(id=f"tldw-api-custom-prompt-{media_type}", classes="ingest-textarea-medium")
@@ -108,12 +118,28 @@ class IngestTldwApiTabbedWindow(Vertical):
             yield Label("Analysis API Provider (if analysis enabled):")
             yield Select(analysis_provider_options, id=f"tldw-api-analysis-api-name-{media_type}",
                          prompt="Select API for Analysis...")
+            yield Label("Analysis API Key (if needed):")
+            yield Input(
+                "",
+                id=f"tldw-api-analysis-api-key-{media_type}",
+                placeholder="API key for analysis provider",
+                password=True,
+                tooltip="API key for the selected analysis provider. Leave empty to use default from config."
+            )
             
             # --- Common Chunking Options ---
             with Collapsible(title="Chunking Options", collapsed=True, id=f"tldw-api-chunking-collapsible-{media_type}"):
                 yield Checkbox("Perform Chunking", True, id=f"tldw-api-perform-chunking-{media_type}")
                 yield Label("Chunking Method:")
-                chunk_method_options = [(cm, cm) for cm in ChunkMethod.__args__]
+                chunk_method_options = [
+                    ("semantic", "semantic"),
+                    ("tokens", "tokens"),
+                    ("paragraphs", "paragraphs"),
+                    ("sentences", "sentences"),
+                    ("words", "words"),
+                    ("ebook_chapters", "ebook_chapters"),
+                    ("json", "json")
+                ]
                 yield Select(chunk_method_options, id=f"tldw-api-chunk-method-{media_type}", prompt="Default (per type)")
                 with Horizontal(classes="ingest-form-row"):
                     with Vertical(classes="ingest-form-col"):
@@ -165,7 +191,11 @@ class IngestTldwApiTabbedWindow(Vertical):
                     yield Checkbox("Include Timestamps in Transcription", True, id=f"tldw-api-audio-timestamp-{media_type}")
                     yield Checkbox("Enable VAD (Voice Activity Detection)", False, id=f"tldw-api-audio-vad-{media_type}")
             elif media_type == "pdf":
-                pdf_engine_options = [(engine, engine) for engine in PdfEngine.__args__]
+                pdf_engine_options = [
+                    ("pymupdf4llm", "pymupdf4llm"),
+                    ("pymupdf", "pymupdf"),
+                    ("docling", "docling")
+                ]
                 with Container(id=TLDW_API_PDF_OPTIONS_ID, classes="tldw-api-media-specific-options"):
                     yield Static("PDF Specific Options", classes="sidebar-title")
                     yield Label("PDF Parsing Engine:")
@@ -191,6 +221,31 @@ class IngestTldwApiTabbedWindow(Vertical):
                     yield Label("Namespaces (comma-sep IDs, optional):")
                     yield Input(id=f"tldw-api-mediawiki-namespaces-{media_type}", placeholder="e.g., 0,14")
                     yield Checkbox("Skip Redirect Pages (recommended)", True, id=f"tldw-api-mediawiki-skip-redirects-{media_type}")
+                    yield Label("Chunk Max Size:")
+                    yield Input("1000", id=f"tldw-api-mediawiki-chunk-max-size-{media_type}", type="integer")
+                    yield Label("Vector DB API (optional):")
+                    yield Input(id=f"tldw-api-mediawiki-api-name-vector-db-{media_type}", placeholder="For embeddings")
+                    yield Label("Vector DB API Key (optional):")
+                    yield Input(id=f"tldw-api-mediawiki-api-key-vector-db-{media_type}", password=True, placeholder="API key for vector DB")
+            elif media_type == "plaintext":
+                with Container(id=TLDW_API_PLAINTEXT_OPTIONS_ID, classes="tldw-api-media-specific-options"):
+                    yield Static("Plaintext Specific Options", classes="sidebar-title")
+                    yield Label("Text Encoding:")
+                    yield Select(
+                        [("UTF-8", "utf-8"), ("ASCII", "ascii"), ("Latin-1", "latin-1"), ("Auto-detect", "auto")],
+                        id=f"tldw-api-encoding-{media_type}",
+                        value="utf-8"
+                    )
+                    yield Label("Line Ending:")
+                    yield Select(
+                        [("Auto", "auto"), ("Unix (LF)", "lf"), ("Windows (CRLF)", "crlf")],
+                        id=f"tldw-api-line-ending-{media_type}",
+                        value="auto"
+                    )
+                    yield Checkbox("Remove Extra Whitespace", True, id=f"tldw-api-remove-whitespace-{media_type}")
+                    yield Checkbox("Convert to Paragraphs", False, id=f"tldw-api-convert-paragraphs-{media_type}")
+                    yield Label("Split Pattern (Regex, optional):")
+                    yield Input(id=f"tldw-api-split-pattern-{media_type}", placeholder="e.g., \\n\\n+ for double newlines")
             
             yield Static("Local Database Options", classes="sidebar-title")
             yield Checkbox("Overwrite if media exists in local DB", False, id=f"tldw-api-overwrite-db-{media_type}")
