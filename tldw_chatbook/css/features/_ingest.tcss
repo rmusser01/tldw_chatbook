@@ -58,6 +58,7 @@
 .ingest-view-area { /* Common class for individual content areas */
     width: 100%;
     height: 100%;
+    display: none; /* Hidden by default until explicitly shown */
 }
 .ingest-label {
     margin-top: 1;
@@ -179,13 +180,13 @@
 }
 
 /* --- Visibility styles for ingest views --- */
-#ingest-view-tldw-api {
-    display: none;  /* Hidden by default, shown by reactive watcher */
+/* Use hidden/visible classes for view control */
+.ingest-view-area.hidden {
+    display: none !important;
 }
 
-/* Ensure the tldw API container is visible when displayed */
-#ingest-view-tldw-api.visible {
-    display: block;
+.ingest-view-area.visible {
+    display: block !important;
 }
 
 /* --- END OF INTEGRATED NEW CSS --- */

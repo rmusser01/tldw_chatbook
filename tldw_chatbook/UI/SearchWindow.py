@@ -195,7 +195,8 @@ class SearchWindow(Container):
             # Import and use the new SearchRAGWindow for RAG Q&A
             try:
                 from .SearchRAGWindow import SearchRAGWindow
-                yield SearchRAGWindow(app_instance=self.app_instance, id=SEARCH_VIEW_RAG_QA)
+                with Container(id=SEARCH_VIEW_RAG_QA, classes="search-view-area"):
+                    yield SearchRAGWindow(app_instance=self.app_instance)
             except ImportError as e:
                 logger.warning(f"Could not import SearchRAGWindow: {e}")
                 # Create a placeholder container with a message

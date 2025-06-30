@@ -188,6 +188,15 @@ class IngestWindow(Container):
         if not button_id: # Should always have an ID
             return
 
+        # Log all button presses for debugging
+        logger.info(f"IngestWindow.on_button_pressed: Received button press for ID: '{button_id}'")
+        
+        # Check if this is a navigation button - if so, don't handle it here
+        if button_id in INGEST_NAV_BUTTON_IDS:
+            logger.info(f"IngestWindow.on_button_pressed: Navigation button '{button_id}' pressed, not handling here")
+            # Don't call event.stop() so it bubbles up to app level
+            return
+
         if button_id.startswith("tldw-api-browse-local-files-button-"):
             event.stop()
             media_type = button_id.replace("tldw-api-browse-local-files-button-", "")

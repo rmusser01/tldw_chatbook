@@ -1151,8 +1151,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         async def _handle_nav(app: 'TldwCli', event: Button.Pressed, *, prefix: str, reactive_attr: str) -> None:
             """Generic handler for switching views within a tab."""
             view_to_activate = event.button.id.replace(f"{prefix}-nav-", f"{prefix}-view-")
-            app.loguru_logger.debug(f"Nav button '{event.button.id}' pressed. Activating view '{view_to_activate}'.")
+            app.loguru_logger.info(f"_handle_nav called: Nav button '{event.button.id}' pressed. Prefix: '{prefix}', Reactive attr: '{reactive_attr}', Activating view '{view_to_activate}'.")
+            old_value = getattr(app, reactive_attr, None)
             setattr(app, reactive_attr, view_to_activate)
+            new_value = getattr(app, reactive_attr, None)
+            app.loguru_logger.info(f"_handle_nav: Set {reactive_attr} from '{old_value}' to '{new_value}'")
 
         async def _handle_sidebar_toggle(app: 'TldwCli', event: Button.Pressed, *, reactive_attr: str) -> None:
             """Generic handler for toggling a sidebar's collapsed state."""
@@ -1805,15 +1808,23 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         found_new_view = False
         # Iterate over all child elements of #ingest-content-pane that have the class .ingest-view-area
-        for child_view_container in content_pane.query(".ingest-view-area"):
+        view_count = 0
+        all_views = list(content_pane.query(".ingest-view-area"))
+        self.loguru_logger.info(f"Query found {len(all_views)} elements with class .ingest-view-area")
+        
+        for child_view_container in all_views:
+            view_count += 1
             child_id = child_view_container.id # Assuming child_view_container is a DOMNode with an 'id' attribute
+            self.loguru_logger.info(f"Processing view {view_count}: {child_id}, current styles.display: {child_view_container.styles.display}")
             if child_id == new_view:
                 child_view_container.styles.display = "block"
-                self.loguru_logger.info(f"Displaying Ingest view: {child_id}")
+                self.loguru_logger.info(f"Displaying Ingest view: {child_id}, styles.display now: {child_view_container.styles.display}")
                 found_new_view = True
             else:
                 child_view_container.styles.display = "none"
-                self.loguru_logger.debug(f"Hiding Ingest view: {child_id}")
+                self.loguru_logger.info(f"Hiding Ingest view: {child_id}, styles.display now: {child_view_container.styles.display}")
+        
+        self.loguru_logger.info(f"Total ingest views processed: {view_count}")
 
         if new_view and not found_new_view:
             self.loguru_logger.error(f"Target Ingest view '{new_view}' was not found among .ingest-view-area children to display.")
@@ -2415,6 +2426,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def _activate_initial_ingest_view(self) -> None:
         self.loguru_logger.info("Attempting to activate initial ingest view via _activate_initial_ingest_view.")
+        
+        # First, ensure all views are hidden initially
+        try:
+            content_pane = self.query_one("#ingest-content-pane")
+            for child_view in content_pane.query(".ingest-view-area"):
+                child_view.styles.display = "none"
+                self.loguru_logger.debug(f"Initially hiding ingest view: {child_view.id}")
+        except QueryError:
+            self.loguru_logger.error("Could not find #ingest-content-pane to hide views initially")
+        
         if not self.ingest_active_view: # Check if it hasn't been set by some other means already
             self.loguru_logger.debug(f"Setting ingest_active_view to initial: {self._initial_ingest_view}")
             self.ingest_active_view = self._initial_ingest_view
@@ -3018,7 +3039,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 window = self.query_one(f"#{window_id}")
                 # Check if the window has an on_button_pressed method
                 if hasattr(window, "on_button_pressed") and callable(window.on_button_pressed):
-                    window.on_button_pressed(event)
+                    # Call the window's button handler - it might be async
+                    result = window.on_button_pressed(event)
+                    if inspect.isawaitable(result):
+                        await result
                     # Check if event has been stopped (some event types don't have is_stopped)
                     if hasattr(event, 'is_stopped') and event.is_stopped:
                         return
@@ -3031,6 +3055,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # 3. Use the handler map for buttons not handled by window components
         current_tab_handlers = self.button_handler_map.get(self.current_tab, {})
         handler = current_tab_handlers.get(button_id)
+        
+        self.loguru_logger.debug(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
+        self.loguru_logger.debug(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
 
         if handler:
             if callable(handler):
