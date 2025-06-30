@@ -109,7 +109,6 @@ from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow import MediaWindow
 from .UI.SearchWindow import SearchWindow
 from .UI.Embeddings_Window import EmbeddingsWindow
-from .UI.Embeddings_Creation_Window import EmbeddingsCreationWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,

@@ -221,21 +221,12 @@ class SearchWindow(Container):
             yield Container(id=SEARCH_VIEW_RAG_CHAT, classes="search-view-area")
             yield Container(id=SEARCH_VIEW_RAG_MANAGEMENT, classes="search-view-area")
 
-            if EMBEDDINGS_GENERATION_AVAILABLE and VECTORDB_AVAILABLE:
-                try:
-                    from .Embeddings_Creation_Window import EmbeddingsCreationWindow
-                    yield EmbeddingsCreationWindow(app_instance=self.app_instance, id=SEARCH_VIEW_EMBEDDINGS_CREATION, classes="search-view-area")
-                except ImportError as e:
-                    logger.warning(f"Could not import EmbeddingsCreationWindow: {e}")
-                    with Container(id=SEARCH_VIEW_EMBEDDINGS_CREATION, classes="search-view-area"):
-                        with VerticalScroll():
-                            yield Markdown(
-                                "### Embeddings Creation Is Not Currently Available\n\nThe required dependencies for embeddings creation are not installed. Please install the necessary packages to use this feature.")
-            else:  # Embeddings not available
-                with Container(id=SEARCH_VIEW_EMBEDDINGS_CREATION, classes="search-view-area"):
-                    with VerticalScroll():
-                        yield Markdown(
-                            "### Embeddings Creation Is Not Currently Available\n\nThe required dependencies for embeddings creation are not installed. Please install the necessary packages to use this feature.")
+            # Embeddings creation has been moved to the dedicated Embeddings tab
+            # This view shows a redirect message
+            with Container(id=SEARCH_VIEW_EMBEDDINGS_CREATION, classes="search-view-area"):
+                with VerticalScroll():
+                    yield Markdown(
+                        "### Embeddings Creation Has Moved\n\nEmbeddings creation functionality is now available in the dedicated **Embeddings** tab.\n\nPlease use the Embeddings tab for creating and managing embeddings.")
 
             # --- Embeddings Management View (Single Scrollable Pane) ---
             if VECTORDB_AVAILABLE:
