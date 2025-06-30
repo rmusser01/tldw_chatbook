@@ -80,7 +80,10 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
         counter = _get_or_create_metric('counter', metric_name, documentation, label_keys)
-        counter.labels(**eff_labels).inc(value)
+        if label_keys:
+            counter.labels(**eff_labels).inc(value)
+        else:
+            counter.inc(value)
     except Exception as e:
         logging.error(f"Failed to log counter {metric_name}: {e}")
 
@@ -94,7 +97,10 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
         histogram = _get_or_create_metric('histogram', metric_name, documentation, label_keys)
-        histogram.labels(**eff_labels).observe(value)
+        if label_keys:
+            histogram.labels(**eff_labels).observe(value)
+        else:
+            histogram.observe(value)
     except Exception as e:
         logging.error(f"Failed to log histogram {metric_name}: {e}")
 
@@ -109,7 +115,10 @@ def log_gauge(metric_name, value, labels=None, documentation=""):
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
         gauge = _get_or_create_metric('gauge', metric_name, documentation, label_keys)
-        gauge.labels(**eff_labels).set(value)
+        if label_keys:
+            gauge.labels(**eff_labels).set(value)
+        else:
+            gauge.set(value)
     except Exception as e:
         logging.error(f"Failed to log gauge {metric_name}: {e}")
 
@@ -153,7 +162,7 @@ def timeit(metric_name=None, documentation="Execution time of a function."):
     return decorator
 
 
-def log_resource_usage():
+def log_resource_usage(labels=None):
     """Logs current CPU and Memory usage of the process as gauges."""
     process = psutil.Process()
     memory_mb = process.memory_info().rss / (1024 ** 2)
@@ -162,11 +171,13 @@ def log_resource_usage():
     log_gauge(
         "process_memory_mb",
         memory_mb,
+        labels=labels,
         documentation="Current memory usage of the process in Megabytes."
     )
     log_gauge(
         "process_cpu_percent",
         cpu_percent,
+        labels=labels,
         documentation="Current CPU usage of the process as a percentage."
     )
 

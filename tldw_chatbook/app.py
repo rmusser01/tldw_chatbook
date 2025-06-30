@@ -1287,7 +1287,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     def compose(self) -> ComposeResult:
         compose_start = time.perf_counter()
+        self._ui_compose_start_time = compose_start  # Store for later reference
         logging.debug("App composing UI...")
+        log_counter("ui_compose_started", 1, documentation="UI composition started")
         
         # Track individual component creation
         component_start = time.perf_counter()
@@ -1325,8 +1327,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                      documentation="Time to create UI component")
         
         compose_duration = time.perf_counter() - compose_start
+        self._ui_compose_end_time = time.perf_counter()  # Store compose end time
         log_histogram("app_compose_duration_seconds", compose_duration,
                      documentation="Total time for compose() method")
+        log_counter("ui_compose_completed", 1, documentation="UI composition completed")
         logging.debug(f"App compose finished in {compose_duration:.3f} seconds")
         log_resource_usage()  # Check memory after compose
 
@@ -1337,6 +1341,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     ###########################################################
     def compose_content_area(self) -> ComposeResult:
         """Yields the main window component for each tab."""
+        content_area_start = time.perf_counter()
         with Container(id="content"):
             windows = [
                 ("chat", ChatWindow, "chat-window"),
@@ -1356,9 +1361,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             for window_name, window_class, window_id in windows:
                 window_start = time.perf_counter()
                 yield window_class(self, id=window_id, classes="window")
-                log_histogram("app_window_creation_duration_seconds", time.perf_counter() - window_start,
+                window_duration = time.perf_counter() - window_start
+                log_histogram("app_window_creation_duration_seconds", window_duration,
                              labels={"window": window_name}, 
                              documentation="Time to create individual window")
+                
+        # Log total content area creation time
+        content_area_duration = time.perf_counter() - content_area_start
+        log_histogram("ui_content_area_duration_seconds", content_area_duration,
+                     documentation="Total time to create all content windows")
+        log_counter("ui_windows_created", len(windows), 
+                   documentation="Number of UI windows created")
 
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
@@ -2115,18 +2128,49 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
         # CRITICAL: Set UI ready state after all bindings and initializations
         self._ui_ready = True
+        ui_ready_time = time.perf_counter()
 
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
         
+        # Log UI loading metrics
+        if hasattr(self, '_ui_compose_start_time'):
+            ui_loading_time = ui_ready_time - self._ui_compose_start_time
+            log_histogram("ui_loading_duration_seconds", ui_loading_time,
+                         documentation="Total time from compose start to UI ready")
+            log_counter("ui_loading_complete", 1, documentation="UI loading completed successfully")
+            self.loguru_logger.info(f"UI loading completed in {ui_loading_time:.3f} seconds")
+        
+        # Log post-mount setup duration
+        post_mount_duration = ui_ready_time - post_mount_start
+        log_histogram("app_post_mount_total_duration_seconds", post_mount_duration,
+                     documentation="Total time for post-mount setup")
+        
         # Log total startup time (from __init__ start to fully ready)
         if hasattr(self, '_startup_start_time'):
-            total_startup_time = time.perf_counter() - self._startup_start_time
+            total_startup_time = ui_ready_time - self._startup_start_time
             log_histogram("app_startup_complete_duration_seconds", total_startup_time,
                          documentation="Total time from app initialization start to fully ready")
             log_counter("app_startup_complete", 1, documentation="Application startup completed successfully")
             
+            # Log breakdown of startup phases
+            backend_init_time = self._ui_compose_start_time - self._startup_start_time if hasattr(self, '_ui_compose_start_time') else 0
+            ui_compose_time = getattr(self, '_ui_compose_end_time', ui_ready_time) - self._ui_compose_start_time if hasattr(self, '_ui_compose_start_time') else 0
+            
+            log_histogram("app_startup_breakdown_seconds", backend_init_time,
+                         labels={"phase": "backend_initialization"},
+                         documentation="Breakdown of application startup phases")
+            log_histogram("app_startup_breakdown_seconds", ui_compose_time,
+                         labels={"phase": "ui_composition"},
+                         documentation="Breakdown of application startup phases")
+            log_histogram("app_startup_breakdown_seconds", post_mount_duration,
+                         labels={"phase": "post_mount_setup"},
+                         documentation="Breakdown of application startup phases")
+            
             self.loguru_logger.info(f"=== APPLICATION STARTUP COMPLETE ===")
             self.loguru_logger.info(f"Total startup time: {total_startup_time:.3f} seconds")
+            self.loguru_logger.info(f"  - Backend init: {backend_init_time:.3f}s")
+            self.loguru_logger.info(f"  - UI composition: {ui_compose_time:.3f}s")
+            self.loguru_logger.info(f"  - Post-mount setup: {post_mount_duration:.3f}s")
             self.loguru_logger.info(f"===================================")
             
             # Final memory usage
