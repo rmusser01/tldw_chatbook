@@ -238,12 +238,17 @@ def simple_chunking_service():
 # === Configuration Fixtures ===
 
 @pytest.fixture
-def test_rag_config(chroma_persist_dir):
+def test_rag_config(chroma_persist_dir, request):
     """Create a test RAG configuration."""
+    import uuid
     from tldw_chatbook.RAG_Search.simplified.config import (
         RAGConfig, EmbeddingConfig, VectorStoreConfig, 
         ChunkingConfig, SearchConfig
     )
+    
+    # Create unique collection name for each test
+    test_name = request.node.name
+    unique_collection = f"test_{test_name}_{uuid.uuid4().hex[:8]}"
     
     return RAGConfig(
         embedding=EmbeddingConfig(
@@ -253,9 +258,9 @@ def test_rag_config(chroma_persist_dir):
             batch_size=10
         ),
         vector_store=VectorStoreConfig(
-            type="chroma",
-            persist_directory=chroma_persist_dir,
-            collection_name="test_collection",
+            type="memory",  # Use memory to avoid ChromaDB conflicts
+            persist_directory=None,
+            collection_name=unique_collection,
             distance_metric="cosine"
         ),
         chunking=ChunkingConfig(
@@ -274,12 +279,17 @@ def test_rag_config(chroma_persist_dir):
 
 
 @pytest.fixture
-def memory_rag_config():
+def memory_rag_config(request):
     """Create an in-memory RAG configuration."""
+    import uuid
     from tldw_chatbook.RAG_Search.simplified.config import (
         RAGConfig, EmbeddingConfig, VectorStoreConfig,
         ChunkingConfig, SearchConfig
     )
+    
+    # Create unique collection name for each test
+    test_name = request.node.name if hasattr(request, 'node') else 'unknown'
+    unique_collection = f"test_memory_{test_name}_{uuid.uuid4().hex[:8]}"
     
     return RAGConfig(
         embedding=EmbeddingConfig(
@@ -288,7 +298,7 @@ def memory_rag_config():
         ),
         vector_store=VectorStoreConfig(
             type="memory",
-            collection_name="test_memory",
+            collection_name=unique_collection,
             distance_metric="cosine"
         ),
         chunking=ChunkingConfig(

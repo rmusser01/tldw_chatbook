@@ -350,11 +350,8 @@ class RAGService:
         
         # Create correlation ID for tracking
         correlation_id = str(uuid.uuid4())
-        logger_ctx = logging.getLogger(__name__).bind(
-            correlation_id=correlation_id,
-            query=query[:50],  # Truncate long queries
-            search_type=search_type
-        )
+        # Standard Python logger doesn't have bind(), so we'll just use the regular logger
+        logger_ctx = logger
         
         # Log search metrics
         log_counter("rag_search_attempt", labels={"type": search_type})
