@@ -12,7 +12,7 @@ from textual.widgets import Button, TextArea, Static, Label
 # Local Imports
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
-from ..Widgets.notes_sync_widget import NotesSyncWidget
+from ..Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
 # Import EmojiSelected and EmojiPickerScreen
 from ..Widgets.emoji_picker import EmojiSelected, EmojiPickerScreen
 # from ..Constants import TAB_NOTES # Not strictly needed if IDs are hardcoded here
@@ -89,7 +89,7 @@ class NotesWindow(Container):
         """Handles button presses within the NotesWindow."""
         if event.button.id == "notes-sync-button":
             # Push the sync widget as a modal screen
-            self.app.push_screen(NotesSyncWidget(self.app_instance))
+            self.app.push_screen(NotesSyncWidgetImproved(self.app_instance))
             event.stop()
         # Add other button ID checks here if necessary for this window's specific buttons.
         # For example, the sidebar toggles are often handled at the app level via actions,

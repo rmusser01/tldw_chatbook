@@ -320,17 +320,16 @@ This allows the natural scroll hierarchy to work:
 - Removing nested VerticalScroll (wasn't the issue)
 - Changing DataTable heights (couldn't overcome parent blocking)
 - Trying to use 'visible' (invalid in Textual)
+- CSS-only fixes (the issue was structural, not styling)
 
 ### What Worked
 - Identifying the parent-level constraint
 - Using 'auto' instead of 'visible' 
-- Applying override at the window ID level with !important
-
-The scrolling should now work properly in the Create Embeddings window!
+- **Most importantly**: Restructuring the widget hierarchy to match LLM Management pattern
 
 ---
 
-## Attempt 3: Still Not Working
+## Attempt 3: Still Not Working - Structural Fix Required
 *Date: 2025-01-30*
 
 **User Feedback:** The scrolling still doesn't work and buttons at the bottom are not visible.
@@ -442,3 +441,238 @@ Move the entire compose logic from EmbeddingsCreationWindow into Embeddings_Wind
 
 ### Recommendation:
 Restructure the code to follow the LLM Management pattern. This requires code changes, not CSS fixes.
+
+---
+
+## Final Solution: Complete Widget Restructuring
+*Date: 2025-01-30*
+
+### What Was Done:
+
+1. **Migrated EmbeddingsCreationWindow content directly into Embeddings_Window.py**
+   - Removed the Widget wrapper entirely
+   - Moved all reactive attributes to the parent EmbeddingsWindow class
+   - Moved all event handlers and methods to the parent class
+   - Content now yields directly into VerticalScroll
+
+2. **Fixed Widget Hierarchy**
+   Changed from:
+   ```
+   Container (embeddings-view-area)
+   └── EmbeddingsCreationWindow (Widget)
+       └── VerticalScroll
+           └── content
+   ```
+   
+   To:
+   ```
+   Container (embeddings-view-area)  
+   └── VerticalScroll
+       └── content (all form elements)
+   ```
+
+3. **Removed CSS Workarounds**
+   - Removed `overflow: auto !important` override
+   - Simplified CSS to match LLM Management patterns
+   - Added proper padding for scroll container
+
+4. **Fixed Button Rendering Issue**
+   - Initial issue: Buttons inside Horizontal container didn't render
+   - Solution: Removed Horizontal container, yielded buttons directly
+   - Buttons now stack vertically with full width
+
+5. **Cleaned Up Codebase**
+   - Deleted obsolete Embeddings_Creation_Window.py file
+   - Removed unused imports
+   - Updated references in other files
+
+### Key Lessons Learned:
+
+1. **Textual Layout Rules**:
+   - VerticalScroll must be a direct child of its container for proper sizing
+   - Extra Widget wrappers break the layout flow
+   - Horizontal containers inside VerticalScroll can cause rendering issues
+
+2. **Migration Strategy**:
+   - When refactoring Textual UIs, maintain the working pattern exactly
+   - Don't add unnecessary wrapper widgets
+   - Test incrementally - scrolling first, then features
+
+3. **Event Handler Migration**:
+   - All @on decorators must be moved to the new parent class
+   - Reactive attributes must be defined at the class level
+   - Method references (self.) work the same after migration
+
+### RadioSet Implementation Issue:
+*Date: 2025-01-30*
+
+**Problem**: RadioSet doesn't accept `value` parameter in constructor
+- Initial attempt: `RadioSet(id="embeddings-db-mode-set", value="search")` 
+- Error: `TypeError: RadioSet.__init__() got an unexpected keyword argument 'value'`
+
+**Solution**: 
+1. Remove `value` parameter from RadioSet constructor
+2. Set default selection in `on_mount()` method by setting RadioButton.value = True
+3. In event handler, use button ID instead of value to determine selection
+
+**Working Code**:
+```python
+# In compose():
+with RadioSet(id="embeddings-db-mode-set"):
+    yield RadioButton("Search & Select", id="embeddings-mode-search")
+    yield RadioButton("All Items", id="embeddings-mode-all")
+    # etc...
+
+# In on_mount():
+search_radio = self.query_one("#embeddings-mode-search", RadioButton)
+search_radio.value = True
+
+# In event handler:
+if event.pressed:
+    button_id = event.pressed.id
+    if button_id == "embeddings-mode-search":
+        self.selected_db_mode = "search"
+    # etc...
+```
+
+### Result:
+✅ Scrolling works correctly
+✅ All buttons are visible and functional
+✅ RadioSet selection modes implemented
+✅ Dynamic UI based on selection mode
+✅ All functionality preserved from original implementation
+
+---
+
+## Database Content Selection Issue Fix
+*Date: 2025-01-30*
+
+### Problem:
+When the user selects "Database Content" in the embeddings creation window, nothing shows or happens. The media database search and retrieval functions were calling deprecated/renamed methods that no longer exist.
+
+### Root Cause:
+The `Client_Media_DB_v2.py` module had renamed several methods to be more descriptive and consistent:
+- `get_all_media()` → `get_all_active_media_for_embedding()`
+- `search_media()` → `search_media_db()`
+- `get_media_item_by_id()` → `get_media_by_id()`
+
+The Embeddings_Window.py file was still using the old method names, causing failures when trying to load database content.
+
+### Solution:
+Updated all media database method calls in Embeddings_Window.py to use the correct method names:
+
+1. **In `on_search_database` method** (lines 665-865):
+   - Line 688: `media_db.get_all_media(limit=1000)` → `media_db.get_all_active_media_for_embedding(limit=1000)`
+   - Line 709: `media_db.get_media_item_by_id(item_id)` → `media_db.get_media_by_id(item_id)`
+   - Line 773: `media_db.search_media(search_term)` → `media_db.search_media_db(search_term)`
+   - Line 773: `media_db.get_all_media(limit=100)` → `media_db.get_all_active_media_for_embedding(limit=100)`
+
+2. **In `_get_input_text` method** (lines 1040-1200):
+   - Line 1068: `media_db.get_all_media(limit=10000)` → `media_db.get_all_active_media_for_embedding(limit=10000)`
+   - Line 1088: `media_db.get_media_item_by_id(item_id)` → `media_db.get_media_by_id(item_id)`
+   - Line 1158: `media_db.get_media_item_by_id(int(item_id))` → `media_db.get_media_by_id(int(item_id))`
+
+### Implementation Details:
+Used the `MultiEdit` tool with `replace_all: true` for the duplicated method call to update all occurrences in a single operation.
+
+### Result:
+✅ Database content now loads correctly when selected
+✅ All database selection modes work (search, all items, specific IDs, keywords)
+✅ Media items can be properly retrieved for embedding creation
+
+---
+
+## Source Dropdown Not Working Issue Fix
+*Date: 2025-01-30*
+
+### Problem:
+When selecting "Database Content" from the source dropdown, nothing happens - the file input container remains visible and the database input container stays hidden.
+
+### Root Cause:
+The CSS file had hard-coded display properties that were overriding the JavaScript attempts to change visibility:
+```css
+/* In _embeddings.tcss */
+#file-input-container {
+    display: block;
+}
+
+#db-input-container {
+    display: none;
+}
+```
+
+These CSS rules have higher specificity than inline styles set via JavaScript, causing the container visibility to remain unchanged regardless of the dropdown selection.
+
+### Solution:
+1. **Removed hard-coded CSS display rules** from `_embeddings.tcss`:
+   - Removed the fixed `display: block` for `#file-input-container`
+   - Removed the fixed `display: none` for `#db-input-container`
+   - Replaced with a comment indicating display is controlled dynamically
+
+2. **Updated `_update_source_containers` method** in `Embeddings_Window.py`:
+   - Removed the `styles.clear()` call that was clearing all styles including CSS classes
+   - Now only sets the display property while preserving other styles
+   - Added a default fallback to show file input if source type is unknown
+
+### Implementation Details:
+- The event handler was already correctly set up with debugging
+- The issue was purely CSS specificity overriding JavaScript
+- The fix allows the Python code to control container visibility dynamically
+
+### Result:
+✅ Source dropdown now properly switches between "Files" and "Database Content"
+✅ Database input container shows when "Database Content" is selected
+✅ File input container shows when "Files" is selected
+✅ Initial state correctly shows file input by default
+
+---
+
+## Source Dropdown Still Not Working - Textual Refresh Issue Fix
+*Date: 2025-01-30*
+
+### Problem:
+Even after removing CSS overrides, the database container still doesn't show when selected. The logs show the event fires correctly ("Containers updated - File: hidden, DB: visible") but the UI doesn't update visually.
+
+### Root Cause:
+Textual's style system wasn't properly refreshing when using direct style manipulation (`styles.display = "block/none"`). This is a known issue where dynamic style changes don't always trigger proper UI updates.
+
+### Solution:
+Switched to using CSS classes with `add_class()` and `remove_class()` which Textual handles more reliably:
+
+1. **Updated `_update_source_containers` method**:
+   ```python
+   # Instead of setting styles.display directly
+   if self.selected_source == self.SOURCE_FILE:
+       file_container.remove_class("hidden")
+       db_container.add_class("hidden")
+   elif self.selected_source == self.SOURCE_DATABASE:
+       file_container.add_class("hidden")
+       db_container.remove_class("hidden")
+   ```
+
+2. **Added `.hidden` CSS class** in `_embeddings.tcss`:
+   ```css
+   .hidden {
+       display: none !important;
+   }
+   ```
+
+3. **Enhanced refresh mechanism**:
+   - Added `refresh(layout=True)` to force layout recalculation
+   - Refresh both containers and parent widget
+   - Added debug logging to verify class changes
+
+4. **Set initial state in compose**:
+   - File container: `classes="embeddings-input-source-container"`
+   - Database container: `classes="embeddings-input-source-container hidden"`
+
+### Implementation Details:
+- Using CSS classes is more reliable than direct style manipulation in Textual
+- The `!important` flag ensures the hidden class takes precedence
+- Layout refresh forces Textual to recalculate the widget tree
+- Initial classes ensure correct visibility on load
+
+### Result:
+✅ Database container now shows/hides properly when dropdown changes
+✅ Textual properly refreshes the UI when classes change
+✅ More reliable than direct style manipulation

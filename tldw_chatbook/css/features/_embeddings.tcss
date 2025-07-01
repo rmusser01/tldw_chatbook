@@ -184,15 +184,7 @@ EmbeddingsWindow {
     margin-bottom: 1;
 }
 
-.embeddings-action-buttons {
-    layout: horizontal;
-    margin-top: 2;
-    margin-bottom: 2;
-    align-horizontal: center;
-    width: 100%;
-    height: auto;
-    min-height: 3;
-}
+/* Action buttons container no longer used - buttons yielded directly */
 
 .embeddings-action-button {
     margin: 1 2;
@@ -213,17 +205,46 @@ EmbeddingsWindow {
     background: $surface;
 }
 
-/* Initially hide database input container, show file container by default */
-#file-input-container {
-    display: block;
-}
-
-#db-input-container {
-    display: none;
+/* Container display controlled dynamically using classes */
+.hidden {
+    display: none !important;
 }
 
 #embeddings-progress-container {
     display: none;
+}
+
+/* Mode-specific containers */
+.embeddings-mode-container {
+    width: 100%;
+    display: none;
+}
+
+#embeddings-search-container {
+    display: block;  /* Default mode */
+}
+
+#embeddings-specific-container {
+    display: none;
+}
+
+#embeddings-keywords-container {
+    display: none;
+}
+
+/* RadioSet styling */
+#embeddings-db-mode-set {
+    layout: horizontal;
+    margin: 1 0;
+    width: 100%;
+    padding: 1;
+    background: $surface;
+    border: round $primary;
+}
+
+#embeddings-db-mode-set RadioButton {
+    margin-right: 2;
+    padding: 0 1;
 }
 
 .embeddings-db-results-container {

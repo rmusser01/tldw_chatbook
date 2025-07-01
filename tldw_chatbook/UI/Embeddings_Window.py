@@ -88,6 +88,9 @@ class EmbeddingsWindow(Container):
     selected_db: reactive[str] = reactive("media")  # "media" or "chachanotes"
     selected_db_type: reactive[Optional[str]] = reactive("media")
     selected_db_items: reactive[set] = reactive(set())  # Track selected item IDs
+    selected_db_mode: reactive[str] = reactive("search")  # "all", "specific", "keywords", "search"
+    specific_item_ids: reactive[str] = reactive("")  # Comma-separated IDs
+    keyword_filter: reactive[str] = reactive("")  # Comma-separated keywords
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
@@ -149,7 +152,7 @@ class EmbeddingsWindow(Container):
                             value=self.SOURCE_FILE
                         )
                     
-                    # File input container
+                    # File input container (visible by default)
                     with Container(id="file-input-container", classes="embeddings-input-source-container"):
                         with Horizontal(classes="embeddings-form-row"):
                             yield Button("Select Files", id="embeddings-select-files", classes="embeddings-action-button")
@@ -162,8 +165,8 @@ class EmbeddingsWindow(Container):
                             read_only=True
                         )
                     
-                    # Database query container
-                    with Container(id="db-input-container", classes="embeddings-input-source-container"):
+                    # Database query container (hidden by default)
+                    with Container(id="db-input-container", classes="embeddings-input-source-container hidden"):
                         # Database selection from app's loaded databases
                         with Horizontal(classes="embeddings-form-row"):
                             yield Label("Database:", classes="embeddings-form-label")
@@ -189,16 +192,49 @@ class EmbeddingsWindow(Container):
                                 value="media"
                             )
                         
-                        with Horizontal(classes="embeddings-form-row"):
-                            yield Label("Search:", classes="embeddings-form-label")
-                            yield Input(
-                                placeholder="Search for content...",
-                                id="embeddings-db-filter",
-                                classes="embeddings-form-control"
-                            )
+                        yield Rule()
+                        
+                        # Selection mode
+                        yield Label("Selection Mode", classes="embeddings-section-title")
+                        with Container(classes="embeddings-form-full-row"):
+                            with RadioSet(id="embeddings-db-mode-set"):
+                                yield RadioButton("Search & Select", id="embeddings-mode-search")
+                                yield RadioButton("All Items", id="embeddings-mode-all")
+                                yield RadioButton("Specific IDs", id="embeddings-mode-specific")
+                                yield RadioButton("By Keywords", id="embeddings-mode-keywords")
+                        
+                        # Search input (shown for search mode)
+                        with Container(id="embeddings-search-container", classes="embeddings-mode-container"):
+                            with Horizontal(classes="embeddings-form-row"):
+                                yield Label("Search:", classes="embeddings-form-label")
+                                yield Input(
+                                    placeholder="Search for content...",
+                                    id="embeddings-db-filter",
+                                    classes="embeddings-form-control"
+                                )
+                        
+                        # Specific IDs input (shown for specific mode)
+                        with Container(id="embeddings-specific-container", classes="embeddings-mode-container"):
+                            with Horizontal(classes="embeddings-form-row"):
+                                yield Label("Item IDs:", classes="embeddings-form-label")
+                                yield Input(
+                                    placeholder="Enter comma-separated IDs (e.g., 1,2,3)",
+                                    id="embeddings-specific-ids",
+                                    classes="embeddings-form-control"
+                                )
+                        
+                        # Keywords input (shown for keywords mode)
+                        with Container(id="embeddings-keywords-container", classes="embeddings-mode-container"):
+                            with Horizontal(classes="embeddings-form-row"):
+                                yield Label("Keywords:", classes="embeddings-form-label")
+                                yield Input(
+                                    placeholder="Enter comma-separated keywords",
+                                    id="embeddings-keywords-input",
+                                    classes="embeddings-form-control"
+                                )
                         
                         with Horizontal(classes="embeddings-form-row"):
-                            yield Button("Search Database", id="embeddings-search-db", classes="embeddings-action-button")
+                            yield Button("Load Items", id="embeddings-search-db", classes="embeddings-action-button")
                             yield Label("No items selected", id="embeddings-db-selection-count")
                         
                         # Selection control buttons
@@ -315,11 +351,38 @@ class EmbeddingsWindow(Container):
     
     async def on_mount(self) -> None:
         """Handle mount event - initialize embeddings components."""
+        logger.debug("EmbeddingsWindow on_mount called")
         await self._initialize_embeddings()
         
-        # Ensure file input container is visible by default
-        file_container = self.query_one("#file-input-container")
-        file_container.styles.display = "block"
+        # Initialize container visibility
+        self._update_source_containers()
+        logger.debug("Initial container visibility set")
+        
+        # Check initial Select value
+        try:
+            source_select = self.query_one("#embeddings-source-type", Select)
+            logger.info(f"Initial source select value: {source_select.value}")
+        except Exception as e:
+            logger.error(f"Could not query source select: {e}")
+        
+        # Set default radio button selection
+        try:
+            radio_set = self.query_one("#embeddings-db-mode-set", RadioSet)
+            # Press the first radio button (search mode)
+            search_radio = self.query_one("#embeddings-mode-search", RadioButton)
+            search_radio.value = True
+            
+            # Ensure search container is visible by default for database mode
+            search_container = self.query_one("#embeddings-search-container")
+            search_container.styles.display = "block"
+            
+            specific_container = self.query_one("#embeddings-specific-container")
+            specific_container.styles.display = "none"
+            
+            keywords_container = self.query_one("#embeddings-keywords-container")
+            keywords_container.styles.display = "none"
+        except Exception as e:
+            logger.debug(f"Mode containers not yet available: {e}")
         
         # Initialize the DataTable
         table = self.query_one("#embeddings-db-results", DataTable)
@@ -472,15 +535,19 @@ class EmbeddingsWindow(Container):
     @on(Select.Changed, "#embeddings-source-type")
     def on_source_changed(self, event: Select.Changed) -> None:
         """Handle source type change."""
+        logger.info("=== on_source_changed CALLED ===")
+        logger.debug(f"Source type changed event triggered. Value: {event.value}")
+        
+        # Show a notification to confirm the event is firing
+        self.notify(f"Source changed to: {event.value}", severity="information")
         if event.value and event.value != Select.BLANK:
             self.selected_source = str(event.value)
+            logger.debug(f"Selected source set to: {self.selected_source}")
+            logger.debug(f"SOURCE_FILE constant: {self.SOURCE_FILE}")
+            logger.debug(f"SOURCE_DATABASE constant: {self.SOURCE_DATABASE}")
             
             # Show/hide appropriate containers
-            file_container = self.query_one("#file-input-container")
-            db_container = self.query_one("#db-input-container")
-            
-            file_container.styles.display = "block" if self.selected_source == self.SOURCE_FILE else "none"
-            db_container.styles.display = "block" if self.selected_source == self.SOURCE_DATABASE else "none"
+            self._update_source_containers()
     
     @on(Select.Changed, "#embeddings-model-select")
     def on_model_changed(self, event: Select.Changed) -> None:
@@ -516,6 +583,69 @@ class EmbeddingsWindow(Container):
         
         self.app.push_screen(file_picker, handle_selected)
     
+    @on(Input.Changed, "#embeddings-specific-ids")
+    def on_specific_ids_changed(self, event: Input.Changed) -> None:
+        """Track specific IDs input."""
+        self.specific_item_ids = event.value
+    
+    @on(Input.Changed, "#embeddings-keywords-input")
+    def on_keywords_changed(self, event: Input.Changed) -> None:
+        """Track keywords input."""
+        self.keyword_filter = event.value
+    
+    @on(RadioSet.Changed, "#embeddings-db-mode-set")
+    def on_db_mode_changed(self, event: RadioSet.Changed) -> None:
+        """Handle database selection mode change."""
+        if event.pressed:
+            # Determine which radio button was pressed based on its ID
+            button_id = event.pressed.id
+            if button_id == "embeddings-mode-search":
+                self.selected_db_mode = "search"
+            elif button_id == "embeddings-mode-all":
+                self.selected_db_mode = "all"
+            elif button_id == "embeddings-mode-specific":
+                self.selected_db_mode = "specific"
+            elif button_id == "embeddings-mode-keywords":
+                self.selected_db_mode = "keywords"
+            else:
+                return
+            
+            # Show/hide appropriate containers
+            search_container = self.query_one("#embeddings-search-container")
+            specific_container = self.query_one("#embeddings-specific-container")
+            keywords_container = self.query_one("#embeddings-keywords-container")
+            
+            # Hide all first
+            search_container.styles.display = "none"
+            specific_container.styles.display = "none"
+            keywords_container.styles.display = "none"
+            
+            # Show the appropriate one
+            if self.selected_db_mode == "search":
+                search_container.styles.display = "block"
+            elif self.selected_db_mode == "specific":
+                specific_container.styles.display = "block"
+            elif self.selected_db_mode == "keywords":
+                keywords_container.styles.display = "block"
+            # "all" mode doesn't need any input container
+            
+            # Clear previous selections when switching modes
+            self.selected_db_items.clear()
+            table = self.query_one("#embeddings-db-results", DataTable)
+            table.clear()
+            self.query_one("#embeddings-db-selection-count", Label).update("No items selected")
+            
+            # Update button text based on mode
+            button = self.query_one("#embeddings-search-db", Button)
+            if self.selected_db_mode == "all":
+                button.label = "Load All Items"
+            elif self.selected_db_mode == "specific":
+                button.label = "Load Specific Items"
+            elif self.selected_db_mode == "keywords":
+                button.label = "Load by Keywords"
+            else:
+                button.label = "Search Database"
+    
     @on(Select.Changed, "#embeddings-db-select")
     def on_database_changed(self, event: Select.Changed) -> None:
         """Handle database selection change."""
@@ -542,9 +672,8 @@ class EmbeddingsWindow(Container):
     
     @on(Button.Pressed, "#embeddings-search-db")
     async def on_search_database(self) -> None:
-        """Search database for content to embed."""
+        """Load database items based on selected mode."""
         db_type = str(self.query_one("#embeddings-db-type", Select).value)
-        search_term = self.query_one("#embeddings-db-filter", Input).value
         
         if not db_type:
             self.notify("Please select a content type", severity="warning")
@@ -560,9 +689,96 @@ class EmbeddingsWindow(Container):
             media_db = self.media_db
             chachanotes_db = self.chachanotes_db
             
+            # Handle different modes
+            if self.selected_db_mode == "all":
+                # Get all items with a reasonable limit
+                if db_type == "media" and media_db:
+                    results = media_db.get_all_active_media_for_embedding(limit=1000)
+                elif db_type == "conversations" and chachanotes_db:
+                    results = chachanotes_db.get_all_conversations(limit=1000)
+                elif db_type == "notes" and chachanotes_db:
+                    results = chachanotes_db.get_recent_notes(limit=1000)
+                elif db_type == "characters" and chachanotes_db:
+                    results = chachanotes_db.get_all_characters()
+                    
+            elif self.selected_db_mode == "specific":
+                # Get specific items by IDs
+                ids_input = self.query_one("#embeddings-specific-ids", Input).value.strip()
+                if not ids_input:
+                    self.notify("Please enter item IDs", severity="warning")
+                    return
+                    
+                try:
+                    # Parse comma-separated IDs
+                    item_ids = [int(id.strip()) for id in ids_input.split(",") if id.strip()]
+                    
+                    if db_type == "media" and media_db:
+                        for item_id in item_ids:
+                            item = media_db.get_media_by_id(item_id)
+                            if item:
+                                results.append(item)
+                    elif db_type == "conversations" and chachanotes_db:
+                        for item_id in item_ids:
+                            conv = chachanotes_db.get_conversation_by_id(item_id)
+                            if conv:
+                                results.append(conv)
+                    elif db_type == "notes" and chachanotes_db:
+                        for item_id in item_ids:
+                            note = chachanotes_db.get_note_by_id(item_id)
+                            if note:
+                                results.append(note)
+                    elif db_type == "characters" and chachanotes_db:
+                        for item_id in item_ids:
+                            char = chachanotes_db.get_character_by_id(item_id)
+                            if char:
+                                results.append(char)
+                except ValueError:
+                    self.notify("Invalid ID format. Please enter numeric IDs separated by commas.", severity="error")
+                    return
+                    
+            elif self.selected_db_mode == "keywords":
+                # Get items by keywords
+                keywords_input = self.query_one("#embeddings-keywords-input", Input).value.strip()
+                if not keywords_input:
+                    self.notify("Please enter keywords", severity="warning")
+                    return
+                    
+                # Parse comma-separated keywords
+                keywords = [kw.strip() for kw in keywords_input.split(",") if kw.strip()]
+                
+                if db_type == "media" and media_db:
+                    # Use the fetch_media_for_keywords method
+                    keyword_results = media_db.fetch_media_for_keywords(keywords)
+                    # Flatten the results from the dictionary
+                    seen_ids = set()
+                    for keyword, items in keyword_results.items():
+                        for item in items:
+                            if item['id'] not in seen_ids:
+                                results.append(item)
+                                seen_ids.add(item['id'])
+                elif db_type in ["conversations", "notes", "characters"] and chachanotes_db:
+                    # For chachanotes, use keyword search
+                    for keyword in keywords:
+                        if db_type == "conversations":
+                            keyword_results = chachanotes_db.search_conversations_by_keywords(keyword)
+                        elif db_type == "notes":
+                            keyword_results = chachanotes_db.search_notes(keyword)
+                        else:  # characters
+                            keyword_results = chachanotes_db.search_characters(keyword)
+                        
+                        # Add unique results
+                        for item in keyword_results:
+                            item_id = item.get('conversation_id' if db_type == "conversations" else 'id')
+                            if not any(r.get('conversation_id' if db_type == "conversations" else 'id') == item_id for r in results):
+                                results.append(item)
+                                
+            else:  # search mode
+                # Original search behavior
+                search_term = self.query_one("#embeddings-db-filter", Input).value
+            
             if db_type == "media" and media_db:
                 # Search media database
-                results = media_db.search_media(search_term) if search_term else media_db.get_all_media(limit=100)
+                results = media_db.search_media_db(search_term) if search_term else media_db.get_all_active_media_for_embedding(limit=100)
                 for item in results:
                     item_id = str(item.get('id', ''))
                     table.add_row(
@@ -617,10 +833,39 @@ class EmbeddingsWindow(Container):
                     )
             
             count = len(results)
-            self.query_one("#embeddings-db-selection-count", Label).update(f"Found {count} items")
+            
+            # Update status based on mode
+            if self.selected_db_mode == "all":
+                self.query_one("#embeddings-db-selection-count", Label).update(f"Loaded all {count} items")
+                # Auto-select all items for "all" mode
+                for row_key in table.rows:
+                    item_id = str(table.get_cell(row_key, "ID"))
+                    self.selected_db_items.add(item_id)
+                    table.update_cell(row_key, "✓", "✓")
+            elif self.selected_db_mode == "specific":
+                self.query_one("#embeddings-db-selection-count", Label).update(f"Loaded {count} specific items")
+                # Auto-select all loaded items
+                for row_key in table.rows:
+                    item_id = str(table.get_cell(row_key, "ID"))
+                    self.selected_db_items.add(item_id)
+                    table.update_cell(row_key, "✓", "✓")
+            elif self.selected_db_mode == "keywords":
+                self.query_one("#embeddings-db-selection-count", Label).update(f"Found {count} items matching keywords")
+                # Auto-select all keyword matches
+                for row_key in table.rows:
+                    item_id = str(table.get_cell(row_key, "ID"))
+                    self.selected_db_items.add(item_id)
+                    table.update_cell(row_key, "✓", "✓")
+            else:
+                self.query_one("#embeddings-db-selection-count", Label).update(f"Found {count} items")
             
             if count == 0:
-                self.notify("No items found", severity="information")
+                if self.selected_db_mode == "specific":
+                    self.notify("No items found with the specified IDs", severity="warning")
+                elif self.selected_db_mode == "keywords":
+                    self.notify("No items found matching the keywords", severity="warning")
+                else:
+                    self.notify("No items found", severity="information")
             
         except Exception as e:
             logger.error(f"Database search failed: {e}")
@@ -738,6 +983,19 @@ class EmbeddingsWindow(Container):
             self.is_processing = True
             self._show_progress(True)
             
+            # Provide feedback based on mode
+            if self.selected_source == self.SOURCE_DATABASE:
+                if self.selected_db_mode == "all":
+                    self._update_status(f"Creating embeddings for ALL items in {self.selected_db} database...")
+                elif self.selected_db_mode == "specific":
+                    self._update_status(f"Creating embeddings for specific items: {self.specific_item_ids}")
+                elif self.selected_db_mode == "keywords":
+                    self._update_status(f"Creating embeddings for items matching keywords: {self.keyword_filter}")
+                else:
+                    self._update_status(f"Creating embeddings for {len(self.selected_db_items)} selected items")
+            else:
+                self._update_status(f"Creating embeddings for {len(self.selected_files)} files")
+            
             # Get input text
             text = await self._get_input_text()
             if not text:
@@ -801,8 +1059,6 @@ class EmbeddingsWindow(Container):
             return "\n\n".join(all_text)
         
         elif self.selected_source == self.SOURCE_DATABASE:
-            # Get selected items from the DataTable
-            table = self.query_one("#embeddings-db-results", DataTable)
             db_type = str(self.query_one("#embeddings-db-type", Select).value)
             
             all_text = []
@@ -811,47 +1067,141 @@ class EmbeddingsWindow(Container):
             media_db = self.media_db
             chachanotes_db = self.chachanotes_db
             
-            for item_id in self.selected_db_items:
+            # Determine which items to process based on mode
+            items_to_process = []
+            
+            if self.selected_db_mode == "all":
+                # For "all" mode, fetch all items directly
+                if db_type == "media" and media_db:
+                    items = media_db.get_all_active_media_for_embedding(limit=10000)  # Higher limit for embeddings
+                    items_to_process = [(str(item.get('id', '')), item) for item in items]
+                elif db_type == "conversations" and chachanotes_db:
+                    items = chachanotes_db.get_all_conversations(limit=10000)
+                    items_to_process = [(str(item.get('conversation_id', '')), item) for item in items]
+                elif db_type == "notes" and chachanotes_db:
+                    items = chachanotes_db.get_recent_notes(limit=10000)
+                    items_to_process = [(str(item.get('id', '')), item) for item in items]
+                elif db_type == "characters" and chachanotes_db:
+                    items = chachanotes_db.get_all_characters()
+                    items_to_process = [(str(item.get('id', '')), item) for item in items]
                     
+            elif self.selected_db_mode == "specific":
+                # For specific mode, parse IDs and fetch items
+                if self.specific_item_ids:
                     try:
-                        if db_type == "media" and media_db:
-                            # Get media content
-                            media_item = media_db.get_media_item_by_id(int(item_id))
-                            if media_item:
-                                content = media_item.get('content', media_item.get('transcript', ''))
-                                if content:
-                                    all_text.append(f"=== {media_item.get('title', 'Untitled')} ===\n{content}")
+                        item_ids = [int(id.strip()) for id in self.specific_item_ids.split(",") if id.strip()]
                         
+                        if db_type == "media" and media_db:
+                            for item_id in item_ids:
+                                item = media_db.get_media_by_id(item_id)
+                                if item:
+                                    items_to_process.append((str(item_id), item))
                         elif db_type == "conversations" and chachanotes_db:
-                            # Get conversation messages
-                            messages = chachanotes_db.get_messages_by_conversation_id(int(item_id))
+                            for item_id in item_ids:
+                                item = chachanotes_db.get_conversation_by_id(item_id)
+                                if item:
+                                    items_to_process.append((str(item_id), item))
+                        elif db_type == "notes" and chachanotes_db:
+                            for item_id in item_ids:
+                                item = chachanotes_db.get_note_by_id(item_id)
+                                if item:
+                                    items_to_process.append((str(item_id), item))
+                        elif db_type == "characters" and chachanotes_db:
+                            for item_id in item_ids:
+                                item = chachanotes_db.get_character_by_id(item_id)
+                                if item:
+                                    items_to_process.append((str(item_id), item))
+                    except ValueError:
+                        logger.error("Invalid ID format in specific IDs")
+                        
+            elif self.selected_db_mode == "keywords":
+                # For keywords mode, fetch by keywords
+                if self.keyword_filter:
+                    keywords = [kw.strip() for kw in self.keyword_filter.split(",") if kw.strip()]
+                    
+                    if db_type == "media" and media_db:
+                        keyword_results = media_db.fetch_media_for_keywords(keywords)
+                        seen_ids = set()
+                        for keyword, items in keyword_results.items():
+                            for item in items:
+                                if item['id'] not in seen_ids:
+                                    items_to_process.append((str(item['id']), item))
+                                    seen_ids.add(item['id'])
+                    elif chachanotes_db:
+                        # For chachanotes, aggregate results from keyword searches
+                        seen_ids = set()
+                        for keyword in keywords:
+                            if db_type == "conversations":
+                                results = chachanotes_db.search_conversations_by_keywords(keyword)
+                                for item in results:
+                                    item_id = str(item.get('conversation_id', ''))
+                                    if item_id not in seen_ids:
+                                        items_to_process.append((item_id, item))
+                                        seen_ids.add(item_id)
+                            elif db_type == "notes":
+                                results = chachanotes_db.search_notes(keyword)
+                                for item in results:
+                                    item_id = str(item.get('id', ''))
+                                    if item_id not in seen_ids:
+                                        items_to_process.append((item_id, item))
+                                        seen_ids.add(item_id)
+                            elif db_type == "characters":
+                                results = chachanotes_db.search_characters(keyword)
+                                for item in results:
+                                    item_id = str(item.get('id', ''))
+                                    if item_id not in seen_ids:
+                                        items_to_process.append((item_id, item))
+                                        seen_ids.add(item_id)
+                                        
+            else:  # search mode - use selected items from table
+                # Original behavior - process selected items
+                for item_id in self.selected_db_items:
+                    items_to_process.append((item_id, None))  # We'll fetch the item below
+            
+            # Process the items
+            for item_id, item in items_to_process:
+                try:
+                    if db_type == "media" and media_db:
+                        # Use provided item or fetch it
+                        media_item = item if item else media_db.get_media_by_id(int(item_id))
+                        if media_item:
+                            content = media_item.get('content', media_item.get('transcript', ''))
+                            if content:
+                                all_text.append(f"=== {media_item.get('title', 'Untitled')} ===\n{content}")
+                        
+                    elif db_type == "conversations" and chachanotes_db:
+                        # For conversations, we always need to fetch messages
+                        conv = item if item else chachanotes_db.get_conversation_by_id(int(item_id))
+                        if conv:
+                            conv_id = conv.get('conversation_id') or conv.get('id')
+                            messages = chachanotes_db.get_messages_by_conversation_id(int(conv_id))
                             if messages:
                                 conv_text = []
                                 for msg in messages:
                                     role = msg.get('role', 'unknown')
                                     content = msg.get('content', '')
                                     conv_text.append(f"{role}: {content}")
-                                all_text.append(f"=== Conversation {item_id} ===\n" + "\n\n".join(conv_text))
-                        
-                        elif db_type == "notes" and chachanotes_db:
-                            # Get note content
-                            note = chachanotes_db.get_note_by_id(int(item_id))
-                            if note:
-                                all_text.append(f"=== {note.get('title', 'Untitled Note')} ===\n{note.get('content', '')}")
-                        
-                        elif db_type == "characters" and chachanotes_db:
-                            # Get character data
-                            character = chachanotes_db.get_character_by_id(int(item_id))
-                            if character:
-                                char_text = []
-                                char_text.append(f"Name: {character.get('name', 'Unknown')}")
-                                char_text.append(f"Description: {character.get('description', '')}")
-                                char_text.append(f"Personality: {character.get('personality', '')}")
-                                char_text.append(f"First Message: {character.get('first_message', '')}")
-                                all_text.append(f"=== Character: {character.get('name', 'Unknown')} ===\n" + "\n".join(char_text))
+                                all_text.append(f"=== {conv.get('title', f'Conversation {conv_id}')} ===\n" + "\n\n".join(conv_text))
                     
-                    except Exception as e:
-                        logger.error(f"Failed to get content for {db_type} ID {item_id}: {e}")
+                    elif db_type == "notes" and chachanotes_db:
+                        # Use provided item or fetch it
+                        note = item if item else chachanotes_db.get_note_by_id(int(item_id))
+                        if note:
+                            all_text.append(f"=== {note.get('title', 'Untitled Note')} ===\n{note.get('content', '')}")
+                    
+                    elif db_type == "characters" and chachanotes_db:
+                        # Use provided item or fetch it
+                        character = item if item else chachanotes_db.get_character_by_id(int(item_id))
+                        if character:
+                            char_text = []
+                            char_text.append(f"Name: {character.get('name', 'Unknown')}")
+                            char_text.append(f"Description: {character.get('description', '')}")
+                            char_text.append(f"Personality: {character.get('personality', '')}")
+                            char_text.append(f"First Message: {character.get('first_message', '')}")
+                            all_text.append(f"=== Character: {character.get('name', 'Unknown')} ===\n" + "\n".join(char_text))
+                    
+                except Exception as e:
+                    logger.error(f"Failed to get content for {db_type} ID {item_id}: {e}")
             
             return "\n\n".join(all_text)
         
@@ -921,6 +1271,49 @@ class EmbeddingsWindow(Container):
             status_output.scroll_end()
         else:
             status_output.text = ""
+    
+    def _update_source_containers(self) -> None:
+        """Update visibility of source containers based on selected source."""
+        try:
+            file_container = self.query_one("#file-input-container")
+            db_container = self.query_one("#db-input-container")
+            
+            logger.debug(f"_update_source_containers called. Selected source: {self.selected_source}")
+            
+            # Don't clear all styles - just set display property
+            # This preserves the CSS class styles
+            
+            # Use add_class/remove_class for better Textual compatibility
+            if self.selected_source == self.SOURCE_FILE:
+                file_container.remove_class("hidden")
+                db_container.add_class("hidden")
+            elif self.selected_source == self.SOURCE_DATABASE:
+                file_container.add_class("hidden")
+                db_container.remove_class("hidden")
+            else:
+                logger.warning(f"Unknown source type: {self.selected_source}")
+                # Default to file input
+                file_container.remove_class("hidden")
+                db_container.add_class("hidden")
+                
+            # Force a full layout refresh to ensure the UI updates
+            file_container.refresh(layout=True)
+            db_container.refresh(layout=True)
+            
+            # Also refresh the parent container and the entire widget
+            self.refresh(layout=True)
+            
+            # Debug check after refresh
+            self.app.call_later(lambda: logger.debug(
+                f"Post-refresh check - File container classes: {file_container.classes}, "
+                f"DB container classes: {db_container.classes}"
+            ))
+            
+            logger.info(f"Containers updated - File: {'visible' if file_container.styles.display == 'block' else 'hidden'}, DB: {'visible' if db_container.styles.display == 'block' else 'hidden'}")
+        except Exception as e:
+            logger.error(f"Error updating source containers: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     
     def action_select_all(self) -> None:
