@@ -53,7 +53,6 @@ jobs:
           --cov=tldw_chatbook \
           --cov-report=xml:coverage-unit-${{ matrix.os }}-${{ matrix.python-version }}.xml \
           --cov-report=term-missing \
-          --timeout=${{ env.PYTEST_TIMEOUT }} \
           -v
     
     - name: Upload test results
