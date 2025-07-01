@@ -12,8 +12,7 @@ authors = [
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "AGPL-3.0-or-later" }
-license-files = ["LICENSE"]
+license = {text = "AGPL-3.0-or-later"}
 keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -55,7 +54,10 @@ dependencies = [
     "pycryptodomex",
     "keyring",
     "markdownify",
-    "prometheus_client",#metrics library
+    # Metrics library
+    "prometheus_client",
+    # Additional dependencies found in codebase
+    "aiofiles",
 ]
 
 # --- Optional Dependencies ---
@@ -85,6 +87,10 @@ embeddings_rag = [
     "numpy",
     "pydantic",
     "transformers",
+    "chromadb>=0.4.0",
+    "sentence-transformers",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
 ]
 websearch = [
     "lxml",
@@ -132,12 +138,16 @@ include = ["tldw_chatbook*"]
 exclude = ["Tests*", ".venv*"]
 
 [tool.setuptools.package-data]
-# Include .tcss files in the tldw_chatbook.css package/submodule
-"tldw_chatbook.css" = ["*.tcss"]
+# Include all .tcss files in css directory and subdirectories
+"tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]
 # Include theme files
 "tldw_chatbook.css.Themes" = ["*.tcss"]
-# Include JSON template files
-"tldw_chatbook.Config_Files" = ["*.json"]
+# Include JSON template files and guides
+"tldw_chatbook.Config_Files" = ["*.json", "*.md"]
+# Include CSS files in subdirectories
+"tldw_chatbook.css.core" = ["*.tcss"]
+"tldw_chatbook.css.features" = ["*.tcss"]
+"tldw_chatbook.css.layout" = ["*.tcss"]
 # If you have other assets inside your tldw_chatbook package (e.g., tldw_chatbook/assets/), add them here:
 # "tldw_chatbook.assets" = ["*"]
 
@@ -154,5 +164,6 @@ markers = [
     "integration: marks tests as integration tests",
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
+    "optional: marks tests that require optional dependencies",
 ]
 

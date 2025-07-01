@@ -763,3 +763,63 @@ Replaced the manual show/hide logic with Textual's ContentSwitcher widget, which
 ✅ File container shows when "Files" is selected
 ✅ No manual visibility management needed
 ✅ Works reliably within VerticalScroll containers
+
+---
+
+## Final Implementation Summary
+*Date: 2025-01-30*
+
+### Problems Addressed:
+1. **Database content not loading** - Fixed deprecated method calls
+2. **Container visibility not updating** - Replaced manual show/hide with ContentSwitcher
+3. **Indentation errors** - Fixed improper indentation in compose method
+
+### Key Decisions Made:
+
+1. **ContentSwitcher over manual visibility control**:
+   - Manual display/visibility manipulation wasn't working reliably within VerticalScroll
+   - ContentSwitcher is Textual's native solution for this exact use case
+   - Cleaner code with less complexity
+
+2. **Removed all CSS display rules**:
+   - No more `.hidden` class or display properties
+   - ContentSwitcher handles everything internally
+   - Prevents CSS conflicts and specificity issues
+
+3. **Simplified event handling**:
+   - Single line to switch containers: `switcher.current = self.selected_source`
+   - No more complex refresh chains or class manipulation
+   - Fallback to old method kept for safety
+
+### Final Code Structure:
+```python
+# In compose():
+with ContentSwitcher(initial=self.SOURCE_FILE, id="embeddings-source-switcher"):
+    with Container(id="file-input-container", ...):
+        # File input widgets
+    with Container(id="db-input-container", ...):
+        # Database input widgets
+
+# In event handler:
+switcher = self.query_one("#embeddings-source-switcher", ContentSwitcher)
+switcher.current = self.selected_source
+```
+
+### Lessons Learned:
+1. **Use Textual's built-in widgets** - They handle edge cases and rendering complexities
+2. **Visibility within VerticalScroll is tricky** - Native widgets work better than manual control
+3. **Indentation matters** - Python's significant whitespace requires careful attention when refactoring
+4. **Keep it simple** - The ContentSwitcher solution is much simpler than all the manual approaches
+
+### Database Method Updates:
+- `get_all_media()` → `get_all_active_media_for_embedding()`
+- `search_media()` → `search_media_db()`  
+- `get_media_item_by_id()` → `get_media_by_id()`
+
+### Files Modified:
+1. `tldw_chatbook/UI/Embeddings_Window.py` - Main implementation changes
+2. `tldw_chatbook/css/features/_embeddings.tcss` - Removed display rules
+3. `Embeddings-UI.md` - Documentation of all changes and decisions
+
+### Result:
+The embeddings creation window now properly switches between file and database input modes, with database content loading correctly when selected.

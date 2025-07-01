@@ -14,6 +14,12 @@ env:
   PYTEST_TIMEOUT: 300
   PYTHONDONTWRITEBYTECODE: 1
   PYTHONUNBUFFERED: 1
+  # Force color output for better readability
+  FORCE_COLOR: 1
+  
+defaults:
+  run:
+    shell: bash
 
 jobs:
   unit-tests:
@@ -45,7 +51,14 @@ jobs:
         pip install -r requirements-test.txt
         pip install pytest-json-report pytest-cov
     
+    - name: Install Windows-specific dependencies
+      if: runner.os == 'Windows'
+      run: |
+        # Install Windows-specific packages if needed
+        pip install windows-curses || echo "windows-curses not needed"
+    
     - name: Run unit tests
+      shell: bash
       run: |
         pytest -m unit \
           --json-report \
