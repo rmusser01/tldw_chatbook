@@ -117,7 +117,6 @@ jobs:
           --cov=tldw_chatbook \
           --cov-report=xml:coverage-integration-${{ matrix.python-version }}.xml \
           --cov-report=term-missing \
-          --timeout=${{ env.PYTEST_TIMEOUT }} \
           -v
     
     - name: Upload test results
@@ -156,7 +155,6 @@ jobs:
         pytest -m ui \
           --json-report \
           --json-report-file=ui-test-results.json \
-          --timeout=${{ env.PYTEST_TIMEOUT }} \
           -v
     
     - name: Upload test results
@@ -202,7 +200,6 @@ jobs:
           --cov-report=xml:coverage-all.xml \
           --cov-report=html:htmlcov \
           --cov-report=term-missing \
-          --timeout=${{ env.PYTEST_TIMEOUT }} \
           -v
     
     - name: Upload test results
