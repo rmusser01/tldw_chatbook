@@ -55,6 +55,7 @@ dependencies = [
     "pycryptodomex",
     "keyring",
     "markdownify",
+    "prometheus_client",#metrics library
 ]
 
 # --- Optional Dependencies ---
