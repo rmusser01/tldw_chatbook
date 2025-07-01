@@ -1954,7 +1954,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     
     def watch_embeddings_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         """Shows the correct view in the Embeddings tab and hides others."""
-        if not self._ui_ready or not new_view:
+        if not hasattr(self, "app") or not self.app:  # Check if app is ready
+            return
+        if not self._ui_ready:
             return
         
         self.loguru_logger.debug(f"Embeddings active view changing from '{old_view}' to: '{new_view}'")
@@ -1965,7 +1967,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error("#embeddings-content-pane not found. Cannot switch Embeddings views.")
             return
         
-        # Hide all views
+        # Hide all views first
         for child in content_pane.query(".embeddings-view-area"):
             child.styles.display = "none"
         
@@ -1977,17 +1979,23 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.loguru_logger.info(f"Switched Embeddings view to: {new_view}")
                 
                 # Update navigation button styles
-                nav_pane = self.query_one("#embeddings-nav-pane")
-                for button in nav_pane.query(".embeddings-nav-button"):
-                    # Convert button ID to view ID format
-                    button_id_as_view = button.id.replace("-nav-", "-view-")
-                    button.set_class(button_id_as_view == new_view, "-active")
+                try:
+                    nav_pane = self.query_one("#embeddings-nav-pane")
+                    for button in nav_pane.query(".embeddings-nav-button"):
+                        button.remove_class("-active")
+                    
+                    # Add active class to the clicked button
+                    button_id = new_view.replace("-view-", "-nav-")
+                    active_button = nav_pane.query_one(f"#{button_id}", Button)
+                    active_button.add_class("-active")
+                except QueryError as e:
+                    self.loguru_logger.warning(f"Could not update navigation button styles: {e}")
                     
             except QueryError as e:
                 self.loguru_logger.error(f"UI component '{new_view}' not found in #embeddings-content-pane: {e}",
                                          exc_info=True)
         else:
-            self.loguru_logger.debug("LLM Management active view is None, all LLM views hidden.")
+            self.loguru_logger.debug("Embeddings active view is None, all views hidden.")
 
     def watch_current_chat_is_ephemeral(self, is_ephemeral: bool) -> None:
         self.loguru_logger.debug(f"Chat ephemeral state changed to: {is_ephemeral}")

@@ -41,9 +41,12 @@ EmbeddingsWindow {
     display: none;
 }
 
-/* Show the active view with proper sizing */
+/* Both views should be properly sized when shown by the watcher */
 #embeddings-view-create {
-    display: block;
+    height: 100%;
+}
+
+#embeddings-view-manage {
     height: 100%;
 }
 

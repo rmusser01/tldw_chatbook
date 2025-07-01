@@ -19,6 +19,7 @@ rich-pixels>=3.0.0
 pycryptodomex
 keyring
 markdownify
+prometheus_client
 # Chunk Library
 #tqdm
 #langdetect
