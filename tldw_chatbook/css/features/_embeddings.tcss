@@ -208,9 +208,10 @@ EmbeddingsWindow {
     background: $surface;
 }
 
-/* Container display controlled dynamically using classes */
-.hidden {
-    display: none !important;
+/* ContentSwitcher handles visibility automatically */
+#embeddings-source-switcher {
+    width: 100%;
+    height: auto;
 }
 
 #embeddings-progress-container {

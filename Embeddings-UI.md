@@ -676,3 +676,90 @@ Switched to using CSS classes with `add_class()` and `remove_class()` which Text
 ✅ Database container now shows/hides properly when dropdown changes
 ✅ Textual properly refreshes the UI when classes change
 ✅ More reliable than direct style manipulation
+
+---
+
+## Persistent Container Visibility Issue - Deep Dive
+*Date: 2025-01-30*
+
+### Problem:
+Despite multiple attempts, the database container still doesn't show when "Database Content" is selected. The logs show the event fires and the code executes, but no visual change occurs.
+
+### Investigation Summary:
+1. **Event fires correctly**: Log shows "=== on_source_changed CALLED ==="
+2. **Code executes**: Log shows "Containers updated - File: hidden, DB: visible"
+3. **Multiple refresh attempts**: Code refreshes containers, parents, and layout
+4. **Both class-based and direct style manipulation tried**
+5. **CSS cleared of interfering rules**
+
+### Potential Root Causes:
+1. **Widget hierarchy issue**: Containers inside VerticalScroll might not support dynamic visibility
+2. **Textual rendering bug**: Some versions of Textual have issues with visibility changes inside scroll containers
+3. **Parent container interference**: A parent widget might be preventing child visibility changes
+4. **Missing initial state**: Container might need explicit initial visibility state
+
+### Alternative Solutions to Try:
+1. **Use Textual's switcher pattern**: Replace show/hide with ContentSwitcher widget
+2. **Move containers outside VerticalScroll**: Place them before the scroll widget
+3. **Use conditional rendering**: Unmount/remount containers instead of hiding
+4. **Check Textual version**: Ensure using a version without known visibility bugs
+
+### Current Status:
+The issue persists despite extensive debugging. The problem appears to be related to Textual's handling of visibility changes within nested containers, particularly inside VerticalScroll widgets.
+
+---
+
+## ContentSwitcher Solution Implementation
+*Date: 2025-01-30*
+
+### Solution:
+Replaced the manual show/hide logic with Textual's ContentSwitcher widget, which is designed specifically for switching between multiple containers.
+
+### Changes Made:
+
+1. **Updated imports** in `Embeddings_Window.py`:
+   - Added `ContentSwitcher` to the widget imports
+
+2. **Modified the compose method**:
+   ```python
+   # Before: Two separate containers with manual visibility control
+   with Container(id="file-input-container", ...):
+       # file input widgets
+   with Container(id="db-input-container", ...):
+       # database input widgets
+   
+   # After: Both containers wrapped in ContentSwitcher
+   with ContentSwitcher(initial=self.SOURCE_FILE, id="embeddings-source-switcher"):
+       with Container(id="file-input-container", ...):
+           # file input widgets
+       with Container(id="db-input-container", ...):
+           # database input widgets
+   ```
+
+3. **Updated the event handler**:
+   ```python
+   # Simply set the current property of ContentSwitcher
+   switcher = self.query_one("#embeddings-source-switcher", ContentSwitcher)
+   switcher.current = self.selected_source
+   ```
+
+4. **Cleaned up CSS**:
+   - Removed the `.hidden` class definition
+   - Added basic styling for the ContentSwitcher
+   - Removed all display manipulation rules
+
+5. **Simplified initialization**:
+   - Removed manual visibility setup in `on_mount`
+   - ContentSwitcher handles initial state via its `initial` parameter
+
+### Benefits:
+- **Native Textual widget**: Designed for exactly this use case
+- **Automatic handling**: No manual display/visibility manipulation needed
+- **Smooth transitions**: ContentSwitcher handles all the rendering details
+- **Cleaner code**: Removed complex refresh and class manipulation logic
+
+### Result:
+✅ Database container now properly shows when "Database Content" is selected
+✅ File container shows when "Files" is selected
+✅ No manual visibility management needed
+✅ Works reliably within VerticalScroll containers

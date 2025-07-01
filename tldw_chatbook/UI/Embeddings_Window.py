@@ -5,6 +5,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, List, Dict, Any
 from pathlib import Path
+import asyncio
 
 # 3rd-Party Imports
 from loguru import logger
@@ -15,7 +16,7 @@ from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import (
     Static, Button, Input, Label, Select, TextArea, Checkbox, RadioButton, RadioSet,
-    Collapsible, LoadingIndicator, ProgressBar, DataTable, Rule
+    Collapsible, LoadingIndicator, ProgressBar, DataTable, Rule, ContentSwitcher
 )
 
 # Configure logger with context
@@ -152,25 +153,27 @@ class EmbeddingsWindow(Container):
                             value=self.SOURCE_FILE
                         )
                     
-                    # File input container (visible by default)
-                    with Container(id="file-input-container", classes="embeddings-input-source-container"):
-                        with Horizontal(classes="embeddings-form-row"):
-                            yield Button("Select Files", id="embeddings-select-files", classes="embeddings-action-button")
-                            yield Label("Selected: 0 files", id="embeddings-file-count")
+                    # Use ContentSwitcher for source type switching
+                    with ContentSwitcher(initial=self.SOURCE_FILE, id="embeddings-source-switcher"):
+                        # File input container
+                        with Container(id="file-input-container", classes="embeddings-input-source-container"):
+                            with Horizontal(classes="embeddings-form-row"):
+                                yield Button("Select Files", id="embeddings-select-files", classes="embeddings-action-button")
+                                yield Label("Selected: 0 files", id="embeddings-file-count")
+                            
+                            yield TextArea(
+                                "",
+                                id="embeddings-file-list",
+                                classes="embeddings-file-list",
+                                read_only=True
+                            )
                         
-                        yield TextArea(
-                            "",
-                            id="embeddings-file-list",
-                            classes="embeddings-file-list",
-                            read_only=True
-                        )
-                    
-                    # Database query container (hidden by default)
-                    with Container(id="db-input-container", classes="embeddings-input-source-container hidden"):
-                        # Database selection from app's loaded databases
-                        with Horizontal(classes="embeddings-form-row"):
-                            yield Label("Database:", classes="embeddings-form-label")
-                            yield Select(
+                        # Database query container
+                        with Container(id="db-input-container", classes="embeddings-input-source-container"):
+                            # Database selection from app's loaded databases
+                            with Horizontal(classes="embeddings-form-row"):
+                                yield Label("Database:", classes="embeddings-form-label")
+                                yield Select(
                                 [
                                     ("Media Database", "media"),
                                     ("ChaChaNotes Database", "chachanotes")
@@ -179,78 +182,78 @@ class EmbeddingsWindow(Container):
                                 classes="embeddings-form-control",
                                 allow_blank=False
                             )
-                        
-                        with Horizontal(classes="embeddings-form-row"):
-                            yield Label("Content Type:", classes="embeddings-form-label")
-                            yield Select(
-                                [
-                                    ("Media Content", "media")
-                                ],
-                                id="embeddings-db-type",
-                                classes="embeddings-form-control",
-                                allow_blank=False,
-                                value="media"
-                            )
-                        
-                        yield Rule()
-                        
-                        # Selection mode
-                        yield Label("Selection Mode", classes="embeddings-section-title")
-                        with Container(classes="embeddings-form-full-row"):
-                            with RadioSet(id="embeddings-db-mode-set"):
-                                yield RadioButton("Search & Select", id="embeddings-mode-search")
-                                yield RadioButton("All Items", id="embeddings-mode-all")
-                                yield RadioButton("Specific IDs", id="embeddings-mode-specific")
-                                yield RadioButton("By Keywords", id="embeddings-mode-keywords")
-                        
-                        # Search input (shown for search mode)
-                        with Container(id="embeddings-search-container", classes="embeddings-mode-container"):
+                            
                             with Horizontal(classes="embeddings-form-row"):
-                                yield Label("Search:", classes="embeddings-form-label")
-                                yield Input(
-                                    placeholder="Search for content...",
-                                    id="embeddings-db-filter",
-                                    classes="embeddings-form-control"
+                                yield Label("Content Type:", classes="embeddings-form-label")
+                                yield Select(
+                                    [
+                                        ("Media Content", "media")
+                                    ],
+                                    id="embeddings-db-type",
+                                    classes="embeddings-form-control",
+                                    allow_blank=False,
+                                    value="media"
                                 )
-                        
-                        # Specific IDs input (shown for specific mode)
-                        with Container(id="embeddings-specific-container", classes="embeddings-mode-container"):
+                            
+                            yield Rule()
+                            
+                            # Selection mode
+                            yield Label("Selection Mode", classes="embeddings-section-title")
+                            with Container(classes="embeddings-form-full-row"):
+                                with RadioSet(id="embeddings-db-mode-set"):
+                                    yield RadioButton("Search & Select", id="embeddings-mode-search")
+                                    yield RadioButton("All Items", id="embeddings-mode-all")
+                                    yield RadioButton("Specific IDs", id="embeddings-mode-specific")
+                                    yield RadioButton("By Keywords", id="embeddings-mode-keywords")
+                            
+                            # Search input (shown for search mode)
+                            with Container(id="embeddings-search-container", classes="embeddings-mode-container"):
+                                with Horizontal(classes="embeddings-form-row"):
+                                    yield Label("Search:", classes="embeddings-form-label")
+                                    yield Input(
+                                        placeholder="Search for content...",
+                                        id="embeddings-db-filter",
+                                        classes="embeddings-form-control"
+                                    )
+                            
+                            # Specific IDs input (shown for specific mode)
+                            with Container(id="embeddings-specific-container", classes="embeddings-mode-container"):
+                                with Horizontal(classes="embeddings-form-row"):
+                                    yield Label("Item IDs:", classes="embeddings-form-label")
+                                    yield Input(
+                                        placeholder="Enter comma-separated IDs (e.g., 1,2,3)",
+                                        id="embeddings-specific-ids",
+                                        classes="embeddings-form-control"
+                                    )
+                            
+                            # Keywords input (shown for keywords mode)
+                            with Container(id="embeddings-keywords-container", classes="embeddings-mode-container"):
+                                with Horizontal(classes="embeddings-form-row"):
+                                    yield Label("Keywords:", classes="embeddings-form-label")
+                                    yield Input(
+                                        placeholder="Enter comma-separated keywords",
+                                        id="embeddings-keywords-input",
+                                        classes="embeddings-form-control"
+                                    )
+                            
                             with Horizontal(classes="embeddings-form-row"):
-                                yield Label("Item IDs:", classes="embeddings-form-label")
-                                yield Input(
-                                    placeholder="Enter comma-separated IDs (e.g., 1,2,3)",
-                                    id="embeddings-specific-ids",
-                                    classes="embeddings-form-control"
+                                yield Button("Load Items", id="embeddings-search-db", classes="embeddings-action-button")
+                                yield Label("No items selected", id="embeddings-db-selection-count")
+                            
+                            # Selection control buttons
+                            with Horizontal(classes="embeddings-db-selection-buttons"):
+                                yield Button("Select All", id="embeddings-select-all", classes="embeddings-db-selection-button")
+                                yield Button("Clear Selection", id="embeddings-clear-selection", classes="embeddings-db-selection-button")
+                            
+                            # DataTable to show search results in a container
+                            with Container(classes="embeddings-db-results-container"):
+                                yield DataTable(
+                                    id="embeddings-db-results",
+                                    show_header=True,
+                                    zebra_stripes=True,
+                                    cursor_type="row",
+                                    show_cursor=True
                                 )
-                        
-                        # Keywords input (shown for keywords mode)
-                        with Container(id="embeddings-keywords-container", classes="embeddings-mode-container"):
-                            with Horizontal(classes="embeddings-form-row"):
-                                yield Label("Keywords:", classes="embeddings-form-label")
-                                yield Input(
-                                    placeholder="Enter comma-separated keywords",
-                                    id="embeddings-keywords-input",
-                                    classes="embeddings-form-control"
-                                )
-                        
-                        with Horizontal(classes="embeddings-form-row"):
-                            yield Button("Load Items", id="embeddings-search-db", classes="embeddings-action-button")
-                            yield Label("No items selected", id="embeddings-db-selection-count")
-                        
-                        # Selection control buttons
-                        with Horizontal(classes="embeddings-db-selection-buttons"):
-                            yield Button("Select All", id="embeddings-select-all", classes="embeddings-db-selection-button")
-                            yield Button("Clear Selection", id="embeddings-clear-selection", classes="embeddings-db-selection-button")
-                        
-                        # DataTable to show search results in a container
-                        with Container(classes="embeddings-db-results-container"):
-                            yield DataTable(
-                                id="embeddings-db-results",
-                                show_header=True,
-                                zebra_stripes=True,
-                                cursor_type="row",
-                                show_cursor=True
-                            )
                     
                     yield Rule()
                     
@@ -354,9 +357,11 @@ class EmbeddingsWindow(Container):
         logger.debug("EmbeddingsWindow on_mount called")
         await self._initialize_embeddings()
         
-        # Initialize container visibility
-        self._update_source_containers()
-        logger.debug("Initial container visibility set")
+        # Small delay to ensure DOM is fully ready
+        await asyncio.sleep(0.1)
+        
+        # ContentSwitcher handles initial visibility automatically
+        logger.debug("ContentSwitcher handles initial container visibility")
         
         # Check initial Select value
         try:
@@ -536,18 +541,28 @@ class EmbeddingsWindow(Container):
     def on_source_changed(self, event: Select.Changed) -> None:
         """Handle source type change."""
         logger.info("=== on_source_changed CALLED ===")
-        logger.debug(f"Source type changed event triggered. Value: {event.value}")
+        logger.debug(f"Source type changed event triggered. Value: {event.value}, Type: {type(event.value)}")
         
         # Show a notification to confirm the event is firing
         self.notify(f"Source changed to: {event.value}", severity="information")
+        
         if event.value and event.value != Select.BLANK:
             self.selected_source = str(event.value)
             logger.debug(f"Selected source set to: {self.selected_source}")
             logger.debug(f"SOURCE_FILE constant: {self.SOURCE_FILE}")
             logger.debug(f"SOURCE_DATABASE constant: {self.SOURCE_DATABASE}")
             
-            # Show/hide appropriate containers
-            self._update_source_containers()
+            # Use ContentSwitcher to switch between containers
+            try:
+                switcher = self.query_one("#embeddings-source-switcher", ContentSwitcher)
+                switcher.current = self.selected_source
+                logger.info(f"ContentSwitcher updated to show: {self.selected_source}")
+            except Exception as e:
+                logger.error(f"Failed to update ContentSwitcher: {e}")
+                # Fallback to old method
+                self._update_source_containers()
+        else:
+            logger.warning(f"Invalid or blank value received: {event.value}")
     
     @on(Select.Changed, "#embeddings-model-select")
     def on_model_changed(self, event: Select.Changed) -> None:
@@ -1278,38 +1293,77 @@ class EmbeddingsWindow(Container):
             file_container = self.query_one("#file-input-container")
             db_container = self.query_one("#db-input-container")
             
-            logger.debug(f"_update_source_containers called. Selected source: {self.selected_source}")
+            logger.info(f"=== _update_source_containers CALLED ===")
+            logger.info(f"Selected source: {self.selected_source}")
+            logger.info(f"SOURCE_FILE: {self.SOURCE_FILE}, SOURCE_DATABASE: {self.SOURCE_DATABASE}")
             
-            # Don't clear all styles - just set display property
-            # This preserves the CSS class styles
+            # Log current state before changes
+            logger.info(f"Before - File container classes: {file_container.classes}, DB container classes: {db_container.classes}")
             
             # Use add_class/remove_class for better Textual compatibility
             if self.selected_source == self.SOURCE_FILE:
                 file_container.remove_class("hidden")
                 db_container.add_class("hidden")
+                # Also set display style directly as a fallback
+                file_container.styles.display = "block"
+                db_container.styles.display = "none"
+                logger.info("ACTION: Showing file container, hiding db container")
             elif self.selected_source == self.SOURCE_DATABASE:
                 file_container.add_class("hidden")
                 db_container.remove_class("hidden")
+                # Also set display style directly as a fallback
+                file_container.styles.display = "none"
+                db_container.styles.display = "block"
+                logger.info("ACTION: Hiding file container, showing db container")
             else:
                 logger.warning(f"Unknown source type: {self.selected_source}")
                 # Default to file input
                 file_container.remove_class("hidden")
                 db_container.add_class("hidden")
-                
-            # Force a full layout refresh to ensure the UI updates
+                file_container.styles.display = "block"
+                db_container.styles.display = "none"
+            
+            # Log state after changes
+            logger.info(f"After - File container classes: {file_container.classes}, DB container classes: {db_container.classes}")
+            
+            # Find the parent VerticalScroll and refresh it
+            try:
+                # The containers are inside a VerticalScroll widget
+                scroll_widget = file_container.parent
+                if scroll_widget:
+                    logger.debug(f"Refreshing parent widget: {scroll_widget.__class__.__name__}")
+                    scroll_widget.refresh(layout=True)
+                    
+                    # Also refresh the grandparent (the view container)
+                    view_container = scroll_widget.parent
+                    if view_container:
+                        logger.debug(f"Refreshing view container: {view_container.__class__.__name__}")
+                        view_container.refresh(layout=True)
+            except Exception as e:
+                logger.debug(f"Could not refresh parent widgets: {e}")
+            
+            # Force refresh on the containers themselves
             file_container.refresh(layout=True)
             db_container.refresh(layout=True)
             
-            # Also refresh the parent container and the entire widget
+            # Refresh the entire embeddings window
             self.refresh(layout=True)
             
             # Debug check after refresh
-            self.app.call_later(lambda: logger.debug(
-                f"Post-refresh check - File container classes: {file_container.classes}, "
-                f"DB container classes: {db_container.classes}"
-            ))
+            def debug_check():
+                has_hidden_class_file = "hidden" in file_container.classes
+                has_hidden_class_db = "hidden" in db_container.classes
+                logger.debug(
+                    f"Post-refresh check - File container hidden class: {has_hidden_class_file}, "
+                    f"DB container hidden class: {has_hidden_class_db}"
+                )
+                logger.info(
+                    f"Containers updated - File: {'hidden' if has_hidden_class_file else 'visible'}, "
+                    f"DB: {'hidden' if has_hidden_class_db else 'visible'}"
+                )
             
-            logger.info(f"Containers updated - File: {'visible' if file_container.styles.display == 'block' else 'hidden'}, DB: {'visible' if db_container.styles.display == 'block' else 'hidden'}")
+            self.app.call_later(debug_check)
+            
         except Exception as e:
             logger.error(f"Error updating source containers: {e}")
             import traceback
