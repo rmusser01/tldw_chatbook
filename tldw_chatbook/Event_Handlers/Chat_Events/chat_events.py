@@ -499,8 +499,8 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     }
     loguru_logger.debug(f"API parameters: {api_params}")
 
-    # Set current_chat_is_streaming before running the worker
-    app.current_chat_is_streaming = should_stream
+    # Set current_chat_is_streaming before running the worker using thread-safe method
+    app.set_current_chat_is_streaming(should_stream)
     loguru_logger.info(f"Set app.current_chat_is_streaming to: {should_stream}")
 
     worker_target = lambda: app.chat_wrapper(

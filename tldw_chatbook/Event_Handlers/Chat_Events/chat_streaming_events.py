@@ -203,6 +203,10 @@ async def handle_stream_done(self, event: StreamDone) -> None:
         # Crucial for resetting state and UI.
         self.current_ai_message_widget = None  # Clear the reference to the AI message widget
         logger.debug("Cleared current_ai_message_widget in on_stream_done's finally block.")
+        
+        # Reset streaming state using thread-safe method
+        self.set_current_chat_is_streaming(False)
+        logger.debug("Reset current_chat_is_streaming to False in on_stream_done's finally block.")
 
         # Focus the appropriate input based on the current tab
         input_id_to_focus = None
