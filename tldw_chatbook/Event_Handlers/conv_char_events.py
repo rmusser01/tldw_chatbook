@@ -2580,9 +2580,14 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
     logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Export character card button pressed.")
     
-    if not app.current_character_id:
+    # Get the current character details from the reactive attribute
+    current_details = cast(Optional[Dict[str, Any]], app.current_ccp_character_details)
+    
+    if not current_details or not current_details.get('id'):
         app.notify("No character loaded to export.", severity="warning")
         return
+        
+    character_id = current_details['id']
         
     if not app.notes_service:
         app.notify("Database service not available.", severity="error")
@@ -2591,11 +2596,8 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
     try:
         db = app.notes_service._get_db(app.notes_user_id)
         
-        # Get character data
-        char_data = db.get_character_card_by_id(app.current_character_id)
-        if not char_data:
-            app.notify("Character not found in database.", severity="error")
-            return
+        # The character data is already loaded in current_details
+        char_data = current_details
             
         char_name = char_data.get('name', 'character').replace('/', '_').replace('\\', '_')
         
@@ -2604,7 +2606,7 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
         export_dir.mkdir(parents=True, exist_ok=True)
         
         # Export as JSON
-        json_content = ccl.export_character_card_to_json(db, app.current_character_id, include_image=True)
+        json_content = ccl.export_character_card_to_json(db, character_id, include_image=True)
         if json_content:
             json_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             json_path = export_dir / json_filename
@@ -2615,7 +2617,7 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
         # Export as PNG with embedded metadata
         png_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
         png_path = export_dir / png_filename
-        success = ccl.export_character_card_to_png(db, app.current_character_id, str(png_path))
+        success = ccl.export_character_card_to_png(db, character_id, str(png_path))
         
         if success:
             app.notify(f"Character exported to:\n{json_path}\n{png_path}", severity="information", timeout=10)
