@@ -1491,10 +1491,30 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one("#ccp-card-keywords-display", Static).update(", ".join(keywords) if keywords else "None")
 
                         image_placeholder = self.query_one("#ccp-card-image-placeholder", Static)
-                        if self.current_ccp_character_image:
-                            image_placeholder.update("Character image loaded (display not implemented)")
+                        # Check if the character has an image in the database
+                        if details.get("image"):
+                            try:
+                                # Convert image bytes to PIL Image for display
+                                from PIL import Image
+                                import io
+                                import base64
+                                
+                                image_bytes = details["image"]
+                                img = Image.open(io.BytesIO(image_bytes))
+                                
+                                # For now, just show image info until we implement proper image display
+                                # In a real implementation, you'd convert to a displayable format
+                                image_info = f"PNG Image: {img.width}x{img.height} pixels"
+                                image_placeholder.update(image_info)
+                                
+                                # Store the PIL image for potential future use
+                                self.current_ccp_character_image = img
+                            except Exception as e:
+                                loguru_logger.error(f"Error processing character image: {e}")
+                                image_placeholder.update("Error loading image")
                         else:
                             image_placeholder.update("No image available")
+                            self.current_ccp_character_image = None
                         loguru_logger.debug("Character card widgets populated.")
                     except QueryError as qe:
                         loguru_logger.error(f"QueryError populating character card: {qe}", exc_info=True)
@@ -1518,6 +1538,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one("#ccp-card-keywords-display", Static).update("None")
                         
                         self.query_one("#ccp-card-image-placeholder", Static).update("No character loaded")
+                        self.current_ccp_character_image = None
                         loguru_logger.debug("Character card widgets cleared.")
                     except QueryError as qe:
                         loguru_logger.error(f"QueryError clearing character card: {qe}", exc_info=True)

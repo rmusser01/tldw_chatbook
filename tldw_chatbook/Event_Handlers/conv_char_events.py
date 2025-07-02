@@ -1541,7 +1541,6 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
             "scenario": scenario,
             "first_message": first_message,
             "keywords": keywords_list,
-            "image_path": avatar_path,  # Storing avatar path as image_path
             # V2 Character Card fields
             "creator_notes": creator_notes,
             "system_prompt": system_prompt,
@@ -1552,6 +1551,53 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
             "character_version": character_version,
             "extensions": {}  # Empty dict for now, can be extended later
         }
+        
+        # Handle image data - prioritize uploaded image over URL
+        if hasattr(app, 'temp_character_image_bytes') and app.temp_character_image_bytes:
+            # Use the uploaded image bytes
+            character_data_for_db_op["image"] = app.temp_character_image_bytes
+            logger.info("Using uploaded image bytes for character")
+        elif avatar_path:
+            # Try to load image from URL or path
+            try:
+                import httpx
+                from PIL import Image
+                import io
+                
+                if avatar_path.startswith(('http://', 'https://')):
+                    # Download from URL
+                    logger.info(f"Downloading image from URL: {avatar_path}")
+                    response = httpx.get(avatar_path, timeout=10.0)
+                    response.raise_for_status()
+                    image_bytes = response.content
+                    
+                    # Validate it's a PNG
+                    img = Image.open(io.BytesIO(image_bytes))
+                    if img.format != 'PNG':
+                        app.notify("URL image must be PNG format.", severity="error")
+                        logger.error(f"Image from URL is not PNG: {img.format}")
+                        return
+                    
+                    character_data_for_db_op["image"] = image_bytes
+                else:
+                    # Load from local file path
+                    logger.info(f"Loading image from local path: {avatar_path}")
+                    with open(avatar_path, 'rb') as f:
+                        image_bytes = f.read()
+                    
+                    # Validate it's a PNG
+                    img = Image.open(io.BytesIO(image_bytes))
+                    if img.format != 'PNG':
+                        app.notify("Image file must be PNG format.", severity="error")
+                        logger.error(f"Image file is not PNG: {img.format}")
+                        return
+                    
+                    character_data_for_db_op["image"] = image_bytes
+                    
+            except Exception as e:
+                logger.error(f"Failed to load image from {avatar_path}: {e}")
+                app.notify(f"Failed to load image: {str(e)}", severity="warning")
+                # Continue without image rather than failing entirely
 
         saved_character_details: Optional[Dict[str, Any]] = None
         current_editing_id = app.current_editing_character_id
@@ -1567,6 +1613,9 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
                 app.current_editing_character_id = str(new_character_id)
                 app.current_editing_character_data = character_data_for_db_op
                 app.current_editing_character_data["id"] = str(new_character_id)
+                # Clear temporary image bytes after successful save
+                if hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
             else:
                 logger.error(f"Failed to save new character '{char_name}'. DB response: {new_character_id}")
                 app.notify(f"Failed to save new character '{char_name}'.", severity="error")
@@ -1592,6 +1641,9 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
             if saved_character_details:
                 logger.info(f"Character '{char_name}' (ID: {current_editing_id}) updated successfully.")
                 app.notify(f"Character '{char_name}' updated successfully.", severity="information")
+                # Clear temporary image bytes after successful save
+                if hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
             else:
                 logger.error(f"Failed to update character '{char_name}'. DB response: {saved_character_details}")
                 app.notify(f"Failed to update character '{char_name}'.", severity="error")
@@ -1652,6 +1704,17 @@ async def _helper_ccp_clear_center_pane_character_editor_fields(app: 'TldwCli') 
         app.query_one("#ccp-editor-char-tags-input", Input).value = ""
         app.query_one("#ccp-editor-char-creator-input", Input).value = ""
         app.query_one("#ccp-editor-char-version-input", Input).value = ""
+        
+        # Clear image status display
+        try:
+            status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+            status_widget.update("No image selected")
+        except QueryError:
+            pass
+        
+        # Clear any temporary image bytes
+        if hasattr(app, 'temp_character_image_bytes'):
+            app.temp_character_image_bytes = None
 
         loguru_logger.debug("Cleared character editor fields in CCP center pane.")
     except QueryError as e:
@@ -1704,6 +1767,21 @@ async def _helper_ccp_load_character_into_center_pane_editor(app: 'TldwCli', cha
             app.query_one("#ccp-editor-char-tags-input", Input).value = ", ".join(tags_list) if tags_list else ""
             app.query_one("#ccp-editor-char-creator-input", Input).value = char_data.get("creator", "")
             app.query_one("#ccp-editor-char-version-input", Input).value = char_data.get("character_version", "")
+            
+            # Update image status display
+            try:
+                status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+                if char_data.get("image"):
+                    # Character has an image in the database
+                    status_widget.update("Image stored in database")
+                else:
+                    status_widget.update("No image selected")
+            except QueryError:
+                loguru_logger.warning("Could not find image status widget")
+            
+            # Clear any temporary image bytes when loading a character
+            if hasattr(app, 'temp_character_image_bytes'):
+                app.temp_character_image_bytes = None
 
             app.query_one("#ccp-editor-char-name-input", Input).focus()
             app.notify(f"Character '{char_data.get('name', 'Unknown')}' loaded into center editor.", severity="information")
@@ -1939,6 +2017,96 @@ async def handle_ccp_editor_char_delete_button_pressed(app: 'TldwCli', event: Bu
     except Exception as e_unexp:
         logger.error(f"Unexpected error deleting character {character_id_to_delete} from editor: {e_unexp}", exc_info=True)
         app.notify(f"Unexpected error deleting: {type(e_unexp).__name__}", severity="error")
+
+
+async def handle_ccp_editor_char_image_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Choose Image button for character editor."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Editor: Choose Image button pressed.")
+    
+    from pathlib import Path
+    
+    # Define filters for PNG files only
+    defined_filters = Filters(
+        ("PNG files (*.png)", lambda p: p.suffix.lower() == ".png"),
+        ("All files (*.*)", lambda p: True)
+    )
+    
+    async def _image_upload_callback(app: 'TldwCli', selected_path: Optional[str]) -> None:
+        if selected_path:
+            logger.info(f"Image file selected: {selected_path}")
+            try:
+                # Read and validate the image
+                with open(selected_path, 'rb') as f:
+                    image_bytes = f.read()
+                
+                # Validate it's a valid PNG using PIL
+                from PIL import Image
+                import io
+                
+                img = Image.open(io.BytesIO(image_bytes))
+                if img.format != 'PNG':
+                    app.notify("Only PNG images are supported.", severity="error")
+                    return
+                
+                # Check image size (limit to 5MB)
+                if len(image_bytes) > 5 * 1024 * 1024:
+                    app.notify("Image size must be less than 5MB.", severity="error")
+                    return
+                
+                # Check dimensions (limit to 1024x1024)
+                if img.width > 1024 or img.height > 1024:
+                    app.notify("Image dimensions must not exceed 1024x1024 pixels.", severity="error")
+                    return
+                
+                # Store the image bytes in app state
+                if not hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
+                app.temp_character_image_bytes = image_bytes
+                
+                # Update the status display
+                try:
+                    status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+                    filename = Path(selected_path).name
+                    status_widget.update(f"Selected: {filename} ({len(image_bytes) // 1024}KB)")
+                except QueryError:
+                    logger.error("Could not find image status widget")
+                
+                app.notify(f"Image selected: {Path(selected_path).name}", severity="information")
+                
+            except Exception as e:
+                logger.error(f"Error loading image file: {e}", exc_info=True)
+                app.notify(f"Error loading image: {str(e)}", severity="error")
+        else:
+            logger.info("Image selection cancelled.")
+    
+    await app.push_screen(
+        FileOpen(
+            location=str(Path.home() / "Pictures"),
+            title="Select Character Image (PNG only)",
+            filters=defined_filters
+        ),
+        callback=lambda path: _image_upload_callback(app, path)
+    )
+
+
+async def handle_ccp_editor_char_clear_image_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Clear Image button for character editor."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Editor: Clear Image button pressed.")
+    
+    # Clear the temporary image bytes
+    if hasattr(app, 'temp_character_image_bytes'):
+        app.temp_character_image_bytes = None
+    
+    # Update the status display
+    try:
+        status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+        status_widget.update("No image selected")
+    except QueryError:
+        logger.error("Could not find image status widget")
+    
+    app.notify("Image cleared.", severity="information")
 
 
 async def _finish_new_prompt_setup(app: 'TldwCli') -> None:

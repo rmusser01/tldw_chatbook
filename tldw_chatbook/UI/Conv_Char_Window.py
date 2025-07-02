@@ -117,8 +117,13 @@ class CCPWindow(Container):
                 yield Label("Character Name:", classes="sidebar-label")
                 yield Input(id="ccp-editor-char-name-input", placeholder="Character name...", classes="sidebar-input")
                 yield Button("✨ Generate All Fields", id="ccp-generate-all-button", classes="ai-generate-all-button", variant="success")
-                yield Label("Avatar Path/URL:", classes="sidebar-label")
-                yield Input(id="ccp-editor-char-avatar-input", placeholder="Path or URL to avatar image...", classes="sidebar-input")
+                yield Label("Character Image:", classes="sidebar-label")
+                with Horizontal(classes="image-upload-controls"):
+                    yield Button("Choose Image", id="ccp-editor-char-image-button", variant="primary", classes="image-upload-button")
+                    yield Button("Clear Image", id="ccp-editor-char-clear-image-button", variant="warning", classes="image-clear-button")
+                yield Static("No image selected", id="ccp-editor-char-image-status", classes="image-status-display")
+                yield Label("Image URL (optional):", classes="sidebar-label")
+                yield Input(id="ccp-editor-char-avatar-input", placeholder="URL to avatar image (if not uploading)...", classes="sidebar-input")
                 yield Label("Description:", classes="sidebar-label")
                 with Horizontal(classes="field-with-ai-button"):
                     yield TextArea(id="ccp-editor-char-description-textarea", classes="sidebar-textarea ccp-prompt-textarea")

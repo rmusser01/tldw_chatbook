@@ -2648,8 +2648,8 @@ def export_character_card_to_json(
                 "name": char_data.get('name', ''),
                 "description": char_data.get('description', ''),
                 "personality": char_data.get('personality', ''),
-                "scenario": char_data.get('scenario', ''),
-                "first_mes": char_data.get('first_message', ''),
+                "scenario": char_data.get('scenario') or '',  # Ensure string
+                "first_mes": char_data.get('first_message') or '',  # Ensure string
                 "mes_example": char_data.get('example_messages', ''),
                 "creator_notes": char_data.get('creator_notes', ''),
                 "system_prompt": char_data.get('system_prompt', ''),
