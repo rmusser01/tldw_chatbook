@@ -2601,11 +2601,10 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
             
         char_name = char_data.get('name', 'character').replace('/', '_').replace('\\', '_')
         
-        # Export as both JSON and PNG
         export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         
-        # Export as JSON
+        # Always export as JSON
         json_content = ccl.export_character_card_to_json(db, character_id, include_image=True)
         if json_content:
             json_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -2614,16 +2613,24 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
                 f.write(json_content)
             logger.info(f"Exported character to JSON: {json_path}")
             
-        # Export as PNG with embedded metadata
-        png_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-        png_path = export_dir / png_filename
-        success = ccl.export_character_card_to_png(db, character_id, str(png_path))
-        
-        if success:
-            app.notify(f"Character exported to:\n{json_path}\n{png_path}", severity="information", timeout=10)
-            logger.info(f"Exported character to PNG: {png_path}")
+            # Check if character has an image for PNG export
+            if char_data.get('image'):
+                # Export as PNG with embedded metadata only if image exists
+                png_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                png_path = export_dir / png_filename
+                success = ccl.export_character_card_to_png(db, character_id, str(png_path))
+                
+                if success:
+                    app.notify(f"Character exported to:\n{json_path}\n{png_path}", severity="information", timeout=10)
+                    logger.info(f"Exported character to PNG: {png_path}")
+                else:
+                    app.notify(f"Character JSON exported to: {json_path}\nPNG export failed.", severity="warning", timeout=10)
+            else:
+                # No image available - JSON export only
+                app.notify(f"Character exported to:\n{json_path}\n(No image available - exported as JSON only)", severity="information", timeout=10)
+                logger.info(f"Character exported as JSON only (no image): {json_path}")
         else:
-            app.notify(f"Character JSON exported to: {json_path}\nPNG export failed.", severity="warning", timeout=10)
+            app.notify("Failed to export character.", severity="error")
             
     except Exception as e:
         logger.error(f"Error exporting character card: {e}", exc_info=True)
