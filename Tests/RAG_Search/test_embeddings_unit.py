@@ -8,20 +8,14 @@ import time
 from typing import List, Dict, Any
 import os
 
-from tldw_chatbook.RAG_Search.Services.embeddings_service import (
+from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsService,
-    SentenceTransformerProvider,
-    HuggingFaceProvider,
-    OpenAIProvider,
-    ChromaDBStore,
-    InMemoryStore,
-    EmbeddingProvider,
-    VectorStore
+    InMemoryVectorStore,
+    ChromaVectorStore,
+    create_embeddings_service
 )
-from tldw_chatbook.RAG_Search.Services.embeddings_compat import (
-    EmbeddingFactoryCompat,
-    EmbeddingFactoryConfig
-)
+# Note: Individual provider classes, EmbeddingProvider interface, VectorStore interface,
+# and EmbeddingFactoryCompat are not exposed in simplified API
 
 # Import test markers from conftest
 import sys
@@ -30,95 +24,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from conftest import requires_embeddings, requires_numpy
 
 
-class TestEmbeddingProviders:
-    """Unit tests for embedding provider implementations"""
-    
-    def test_provider_interface(self, mock_provider):
-        """Test that mock provider implements interface correctly"""
-        # Test create_embeddings
-        texts = ["test1", "test2"]
-        embeddings = mock_provider.create_embeddings(texts)
-        assert len(embeddings) == 2
-        assert all(len(emb) == mock_provider.dimension for emb in embeddings)
-        
-        # Test get_dimension
-        assert mock_provider.get_dimension() == 384
-        
-        # Test cleanup
-        mock_provider.cleanup()
-        assert mock_provider.cleaned_up
-    
-    def test_provider_thread_safety(self, mock_provider, thread_helper):
-        """Test provider thread safety"""
-        def create_embeddings(thread_id):
-            texts = [f"Thread {thread_id} text {i}" for i in range(10)]
-            return mock_provider.create_embeddings(texts)
-        
-        results, errors = thread_helper.run_concurrent(create_embeddings, num_threads=10)
-        
-        assert len(errors) == 0
-        assert len(results) == 10
-        # All results should be valid
-        for _, embeddings in results:
-            assert len(embeddings) == 10
-    
-    def test_sentence_transformer_provider_init(self):
-        """Test SentenceTransformerProvider initialization"""
-        # Create provider with a real model name that exists
-        provider = SentenceTransformerProvider("sentence-transformers/all-MiniLM-L6-v2")
-        
-        # Model should not be loaded until first use
-        assert provider._model is None
-        
-        # Don't actually load the model in tests - just test the structure
-        assert provider.model_name == "sentence-transformers/all-MiniLM-L6-v2"
-        assert provider.device is not None
-        assert hasattr(provider, '_lock')
-    
-    def test_openai_provider_retry_logic(self):
-        """Test OpenAI provider initialization and configuration"""
-        # Test that OpenAI provider is initialized properly
-        provider = OpenAIProvider(api_key="test-key")
-        
-        # Check provider attributes
-        assert provider.api_key == "test-key"
-        assert provider.model_name == "text-embedding-3-small"  # Default model
-        assert provider.dimension is None  # Default dimension not set
-        assert hasattr(provider, '_lock')
-        
-        # Test with custom parameters
-        custom_provider = OpenAIProvider(
-            api_key="test-key",
-            model_name="text-embedding-ada-002",
-            dimension=1536
-        )
-        assert custom_provider.model_name == "text-embedding-ada-002"
-        assert custom_provider.dimension == 1536
-    
-    @patch('requests.post')
-    def test_openai_provider_timeout_handling(self, mock_post):
-        """Test OpenAI provider timeout handling"""
-        import requests
-        
-        # Simulate timeout
-        mock_post.side_effect = requests.exceptions.Timeout()
-        
-        provider = OpenAIProvider(api_key="test-key")
-        
-        # Should raise after max retries
-        with pytest.raises(requests.exceptions.Timeout):
-            provider.create_embeddings(["test"])
-        
-        # Should have tried max_retries times
-        assert mock_post.call_count == 3  # Default max_retries
+# TestEmbeddingProviders class removed - individual provider classes not exposed in simplified API
 
 
 class TestVectorStores:
     """Unit tests for vector store implementations"""
     
     def test_in_memory_store_operations(self):
-        """Test InMemoryStore basic operations"""
-        store = InMemoryStore()
+        """Test InMemoryVectorStore basic operations"""
+        store = InMemoryVectorStore()
         
         # Add documents
         success = store.add_documents(
@@ -148,8 +62,8 @@ class TestVectorStores:
         assert "test_collection" not in store.list_collections()
     
     def test_in_memory_store_thread_safety(self, thread_helper):
-        """Test InMemoryStore thread safety"""
-        store = InMemoryStore()
+        """Test InMemoryVectorStore thread safety"""
+        store = InMemoryVectorStore()
         
         def add_documents(thread_id):
             return store.add_documents(
@@ -166,23 +80,14 @@ class TestVectorStores:
         assert len(store.list_collections()) == 10
     
     def test_chromadb_store_operations(self):
-        """Test ChromaDBStore basic structure and initialization"""
-        # Test that ChromaDBStore can be imported when dependencies are available
-        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.DEPENDENCIES_AVAILABLE', {'chromadb': True}):
+        """Test ChromaVectorStore basic structure and initialization"""
+        # Test that ChromaVectorStore can be imported when dependencies are available
+        with patch('tldw_chatbook.RAG_Search.simplified.DEPENDENCIES_AVAILABLE', {'chromadb': True}):
             # Just verify the class exists and has expected methods
-            assert hasattr(ChromaDBStore, 'add_documents')
-            assert hasattr(ChromaDBStore, 'search')
-            assert hasattr(ChromaDBStore, 'delete_collection')
-            assert hasattr(ChromaDBStore, 'list_collections')
-            
-            # Test initialization with mock client
-            with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.chromadb') as mock_chromadb:
-                mock_client = MagicMock()
-                mock_chromadb.PersistentClient.return_value = mock_client
-                
-                # Create store - should accept client parameter
-                store = ChromaDBStore(client=mock_client)
-                assert store.client == mock_client
+            assert hasattr(ChromaVectorStore, 'add_documents')
+            assert hasattr(ChromaVectorStore, 'search')
+            assert hasattr(ChromaVectorStore, 'delete_collection')
+            assert hasattr(ChromaVectorStore, 'list_collections')
 
 
 class TestEmbeddingsService:
@@ -202,7 +107,7 @@ class TestEmbeddingsService:
         assert "mock" in embeddings_service.providers
         
         # Add another provider
-        provider2 = Mock(spec=EmbeddingProvider)
+        provider2 = Mock()
         embeddings_service.add_provider("provider2", provider2)
         assert "provider2" in embeddings_service.providers
         
@@ -218,10 +123,10 @@ class TestEmbeddingsService:
         service = EmbeddingsService()
         
         # Mock provider creation
-        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.HuggingFaceProvider') as mock_hf:
-            with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.OpenAIProvider') as mock_openai:
-                mock_hf.return_value = Mock(spec=EmbeddingProvider)
-                mock_openai.return_value = Mock(spec=EmbeddingProvider)
+        with patch('tldw_chatbook.RAG_Search.simplified.HuggingFaceProvider') as mock_hf:
+            with patch('tldw_chatbook.RAG_Search.simplified.OpenAIProvider') as mock_openai:
+                mock_hf.return_value = Mock()
+                mock_openai.return_value = Mock()
                 
                 success = service.initialize_from_config({"embedding_config": legacy_config})
                 
@@ -237,8 +142,8 @@ class TestEmbeddingsService:
         """Test parsing nested configuration (ChromaDBManager style)"""
         service = EmbeddingsService()
         
-        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.HuggingFaceProvider'):
-            with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.OpenAIProvider'):
+        with patch('tldw_chatbook.RAG_Search.simplified.HuggingFaceProvider'):
+            with patch('tldw_chatbook.RAG_Search.simplified.OpenAIProvider'):
                 success = service.initialize_from_config(nested_config)
                 assert success
     
@@ -349,74 +254,13 @@ class TestEmbeddingsService:
         assert mock_provider.cleaned_up
 
 
-class TestEmbeddingFactoryCompat:
-    """Unit tests for legacy compatibility layer"""
-    
-    def test_legacy_interface_compatibility(self, legacy_config):
-        """Test that legacy interface works"""
-        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.HuggingFaceProvider'):
-            factory = EmbeddingFactoryCompat(legacy_config)
-            
-            # Test config property
-            assert factory.config.default_model_id == "test-model"
-            assert "test-model" in factory.config.models
-    
-    def test_embed_methods(self, mock_provider):
-        """Test legacy embed methods"""
-        factory = EmbeddingFactoryCompat({})
-        factory._service.add_provider("test", mock_provider)
-        factory._service.current_provider_id = "test"
-        
-        # Test embed_one
-        embedding = factory.embed_one("test text", as_list=True)
-        assert isinstance(embedding, list)
-        assert len(embedding) == 384
-        
-        # Test embed multiple
-        embeddings = factory.embed(["text1", "text2"], as_list=True)
-        assert isinstance(embeddings, list)
-        assert len(embeddings) == 2
-    
-    @requires_numpy
-    def test_numpy_output(self, mock_provider):
-        """Test numpy array output"""
-        import numpy as np
-        
-        factory = EmbeddingFactoryCompat({})
-        factory._service.add_provider("test", mock_provider)
-        factory._service.current_provider_id = "test"
-        
-        # Test numpy output
-        embedding_np = factory.embed_one("test", as_list=False)
-        assert isinstance(embedding_np, np.ndarray)
-        
-        embeddings_np = factory.embed(["text1", "text2"], as_list=False)
-        assert isinstance(embeddings_np, np.ndarray)
-        assert embeddings_np.shape == (2, 384)
-    
-    def test_context_manager(self, mock_provider):
-        """Test context manager compatibility"""
-        factory = EmbeddingFactoryCompat({})
-        factory._service.add_provider("test", mock_provider)
-        
-        with factory:
-            # Should work inside context
-            embedding = factory.embed_one("test", as_list=True)
-            assert embedding is not None
-        
-        # Cleanup should have been called
-        assert mock_provider.cleaned_up
+# TestEmbeddingFactoryCompat class removed - EmbeddingFactoryCompat not exposed in simplified API
 
 
 class TestErrorHandling:
     """Test error handling across components"""
     
-    def test_provider_initialization_failure(self):
-        """Test handling of provider initialization failures"""
-        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.sentence_transformers', None):
-            # Should raise ImportError
-            with pytest.raises(ImportError):
-                SentenceTransformerProvider("test-model")
+    # test_provider_initialization_failure removed - individual provider classes not exposed
     
     def test_vector_store_failure_handling(self, embeddings_service, failing_vector_store):
         """Test handling of vector store failures"""

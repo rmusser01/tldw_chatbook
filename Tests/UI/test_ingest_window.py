@@ -66,14 +66,17 @@ async def app_pilot() -> Pilot:
 # Test Class
 class TestIngestWindowTLDWAPI:
 
+    @pytest.mark.asyncio
     async def test_initial_tldw_api_nav_buttons_and_views(self, app_pilot: Pilot):
         ingest_window = await get_ingest_window(app_pilot)
         # The IngestWindow itself is a container, nav buttons are direct children of its "ingest-nav-pane"
         nav_pane = ingest_window.query_one("#ingest-nav-pane")
 
         for mt in MEDIA_TYPES:
-            nav_button_id = f"ingest-nav-tldw-api-{mt}"  # IDs don't have #
-            view_id = f"ingest-view-tldw-api-{mt}"
+            # Handle the special case where mediawiki_dump becomes just mediawiki in the UI
+            ui_mt = "mediawiki" if mt == "mediawiki_dump" else mt
+            nav_button_id = f"ingest-nav-api-{ui_mt}"  # IDs don't have #
+            view_id = f"ingest-view-api-{ui_mt}"
 
             # Check navigation button exists
             nav_button = nav_pane.query_one(f"#{nav_button_id}", Button)
@@ -81,10 +84,14 @@ class TestIngestWindowTLDWAPI:
             expected_label_part = mt.replace('_', ' ').title()
             if mt == "mediawiki_dump":
                 expected_label_part = "MediaWiki Dump"
+            elif mt == "pdf":
+                expected_label_part = "PDF"
+            elif mt == "xml":
+                expected_label_part = "XML"
             assert expected_label_part in str(nav_button.label), f"Label for {nav_button_id} incorrect"
 
             # Check view area exists
-            view_area = ingest_window.query_one(f"#{view_id}", Container)
+            view_area = ingest_window.query_one(f"#{view_id}")
             assert view_area is not None, f"View area {view_id} not found"
 
             # Check initial visibility based on app's active ingest view
@@ -97,11 +104,14 @@ class TestIngestWindowTLDWAPI:
             else:
                 assert view_area.display is True, f"{view_id} should be visible as it's the active ingest view ('{active_ingest_view_on_app}')"
 
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("media_type", MEDIA_TYPES)
     async def test_tldw_api_navigation_and_view_display(self, app_pilot: Pilot, media_type: str):
         ingest_window = await get_ingest_window(app_pilot)
-        nav_button_id = f"ingest-nav-tldw-api-{media_type}"
-        target_view_id = f"ingest-view-tldw-api-{media_type}"
+        # Handle the special case where mediawiki_dump becomes just mediawiki in the UI
+        ui_media_type = "mediawiki" if media_type == "mediawiki_dump" else media_type
+        nav_button_id = f"ingest-nav-api-{ui_media_type}"
+        target_view_id = f"ingest-view-api-{ui_media_type}"
 
         # Click the navigation button - use offset to click on visible portion
         try:
@@ -113,15 +123,16 @@ class TestIngestWindowTLDWAPI:
         await app_pilot.pause()  # Allow watchers to update display properties
 
         # Verify target view is visible
-        target_view_area = ingest_window.query_one(f"#{target_view_id}", Container)
+        target_view_area = ingest_window.query_one(f"#{target_view_id}")
         assert target_view_area.display is True, f"{target_view_id} should be visible after clicking {nav_button_id}"
         assert app_pilot.app.ingest_active_view == target_view_id, f"App's active ingest view should be {target_view_id}"
 
         # Verify other TLDW API views are hidden
         for other_mt in MEDIA_TYPES:
             if other_mt != media_type:
-                other_view_id = f"ingest-view-tldw-api-{other_mt}"
-                other_view_area = ingest_window.query_one(f"#{other_view_id}", Container)
+                ui_other_mt = "mediawiki" if other_mt == "mediawiki_dump" else other_mt
+                other_view_id = f"ingest-view-api-{ui_other_mt}"
+                other_view_area = ingest_window.query_one(f"#{other_view_id}")
                 assert other_view_area.display is False, f"{other_view_id} should be hidden when {target_view_id} is active"
 
         # Verify common form elements exist with dynamic IDs
@@ -133,27 +144,27 @@ class TestIngestWindowTLDWAPI:
 
         # Verify media-specific options container and its widgets
         if media_type == "video":
-            opts_container = target_view_area.query_one("#tldw-api-video-options", Container)
+            opts_container = target_view_area.query_one("#tldw-api-video-options")
             assert opts_container.display is True
             widget = opts_container.query_one(f"#tldw-api-video-transcription-model-{media_type}", Input)
             assert widget is not None
         elif media_type == "audio":
-            opts_container = target_view_area.query_one("#tldw-api-audio-options", Container)
+            opts_container = target_view_area.query_one("#tldw-api-audio-options")
             assert opts_container.display is True
             widget = opts_container.query_one(f"#tldw-api-audio-transcription-model-{media_type}", Input)
             assert widget is not None
         elif media_type == "pdf":
-            opts_container = target_view_area.query_one("#tldw-api-pdf-options", Container)
+            opts_container = target_view_area.query_one("#tldw-api-pdf-options")
             assert opts_container.display is True
             widget = opts_container.query_one(f"#tldw-api-pdf-engine-{media_type}", Select)
             assert widget is not None
         elif media_type == "ebook":
-            opts_container = target_view_area.query_one("#tldw-api-ebook-options", Container)
+            opts_container = target_view_area.query_one("#tldw-api-ebook-options")
             assert opts_container.display is True
             widget = opts_container.query_one(f"#tldw-api-ebook-extraction-method-{media_type}", Select)
             assert widget is not None
         elif media_type == "document":  # Has minimal specific options currently
-            opts_container = target_view_area.query_one("#tldw-api-document-options", Container)
+            opts_container = target_view_area.query_one("#tldw-api-document-options")
             assert opts_container.display is True
             # Example: find the label if one exists
             try:
@@ -162,22 +173,24 @@ class TestIngestWindowTLDWAPI:
             except QueryError:  # If no labels, this is fine for doc
                 pass
         elif media_type == "xml":
-            opts_container = target_view_area.query_one("#tldw-api-xml-options", Container)
+            opts_container = target_view_area.query_one("#tldw-api-xml-options")
             assert opts_container.display is True
             widget = opts_container.query_one(f"#tldw-api-xml-auto-summarize-{media_type}", Checkbox)
             assert widget is not None
         elif media_type == "mediawiki_dump":
-            opts_container = target_view_area.query_one("#tldw-api-mediawiki-options", Container)
+            opts_container = target_view_area.query_one("#tldw-api-mediawiki-options")
             assert opts_container.display is True
             widget = opts_container.query_one(f"#tldw-api-mediawiki-wiki-name-{media_type}", Input)
             assert widget is not None
 
+    @pytest.mark.asyncio
     async def test_tldw_api_video_submission_data_collection(self, app_pilot: Pilot, mocker: MockerFixture):
         media_type = "video"
         ingest_window = await get_ingest_window(app_pilot)
 
         # Navigate to video tab by clicking its nav button
-        nav_button_id = f"ingest-nav-tldw-api-{media_type}"
+        ui_media_type = "mediawiki" if media_type == "mediawiki_dump" else media_type
+        nav_button_id = f"ingest-nav-api-{ui_media_type}"
         
         # Click the navigation button - use offset to click on visible portion
         try:
@@ -188,8 +201,8 @@ class TestIngestWindowTLDWAPI:
             await app_pilot.click(nav_button, offset=(5, 5))
         await app_pilot.pause()  # Allow UI to update
 
-        target_view_id = f"ingest-view-tldw-api-{media_type}"
-        target_view_area = ingest_window.query_one(f"#{target_view_id}", Container)
+        target_view_id = f"ingest-view-api-{ui_media_type}"
+        target_view_area = ingest_window.query_one(f"#{target_view_id}")
         assert target_view_area.display is True, "Video view area not displayed after click"
 
         # Mock the API client and its methods

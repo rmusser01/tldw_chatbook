@@ -77,7 +77,15 @@
       "Bash(python -m pytest Tests/RAG/simplified/ -v)",
       "Bash(python:*)",
       "Bash(git checkout:*)",
-      "Bash(./build_css.sh)"
+      "Bash(./build_css.sh)",
+      "Bash(jq:*)",
+      "Bash(cat:*)",
+      "Bash(touch:*)",
+      "Bash(PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -c pytest_simple.ini ./Tests/Utils/ -v --tb=short)",
+      "Bash(timeout 30 python -m pytest:*)",
+      "Bash(PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest Tests/Chat/test_prompt_template_manager.py Tests/Chat/test_token_counter.py Tests/Chat/test_chat_sidebar_media_search.py -v --tb=short)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": []
   }

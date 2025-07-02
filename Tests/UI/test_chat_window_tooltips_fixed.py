@@ -25,11 +25,11 @@ class TestChatWindowTooltips:
             
             # Expected tooltips for each button ID
             expected_tooltips = {
-                "toggle-chat-left-sidebar": "Toggle left sidebar",
-                "send-chat": "Send message",
+                "toggle-chat-left-sidebar": "Toggle left sidebar (Ctrl+[)",
+                "send-chat": "Send message (Enter)",
                 "respond-for-me-button": "Suggest a response",
                 "stop-chat-generation": "Stop generation",
-                "toggle-chat-right-sidebar": "Toggle right sidebar"
+                "toggle-chat-right-sidebar": "Toggle right sidebar (Ctrl+])"
             }
             
             # Wait a moment for the UI to fully compose
@@ -97,7 +97,7 @@ async def test_chat_window_tooltip_interactions(widget_pilot):
         
         # In a real scenario, we would check if tooltip is visible
         # For now, we just verify the tooltip text is set
-        assert send_button.tooltip == "Send message"
+        assert send_button.tooltip == "Send message (Enter)"
 
 
 @pytest.mark.asyncio  

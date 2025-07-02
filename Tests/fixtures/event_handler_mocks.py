@@ -56,21 +56,23 @@ def create_comprehensive_app_mock():
     app.current_ai_message_widget = None
     app.current_sidebar_media_item = None
     app.current_chat_is_streaming = False
+    app.current_chat_worker = None  # No worker running initially
     app.current_tab = "Chat"
     
     # Mock app methods
     app.query_one = MagicMock()
     app.query = MagicMock()
-    app.notify = AsyncMock()
+    app.notify = MagicMock()  # notify is called synchronously in event handlers
     app.copy_to_clipboard = MagicMock()
     app.set_timer = MagicMock()
     app.run_worker = MagicMock()
-    app.chat_wrapper = AsyncMock()
+    app.chat_wrapper = MagicMock()  # Called synchronously in worker thread
     app.call_from_thread = MagicMock(side_effect=lambda func, *args: func(*args))
     
     # Thread-safe methods are synchronous
     app.get_current_ai_message_widget = MagicMock(return_value=None)
     app.set_current_ai_message_widget = MagicMock()
+    app.set_current_chat_worker = MagicMock()
     
     # Timers
     app._conversation_search_timer = None
@@ -91,6 +93,8 @@ def setup_mock_widgets(app):
     # Create mock widgets with proper async/sync methods
     mock_chat_log = create_widget_mock(VerticalScroll, async_methods=['mount', 'remove_children', 'clear', 'append', 'scroll_end'])
     mock_chat_log.query = MagicMock(return_value=[])
+    # scroll_end is actually synchronous in Textual, override the async setting
+    mock_chat_log.scroll_end = MagicMock()
     
     # Create text area mocks with proper methods
     mock_text_area = create_widget_mock(TextArea, sync_methods=['clear'])
@@ -141,10 +145,10 @@ def setup_mock_widgets(app):
         "#chat-media-search-results-listview": create_widget_mock(ListView, async_methods=['clear', 'append']),
         "#chat-media-search-input": create_widget_mock(Input, value=""),
         "#chat-media-keyword-filter-input": create_widget_mock(Input, value=""),
-        "#chat-media-title-display": create_widget_mock(TextArea, sync_methods=['clear']),
-        "#chat-media-content-display": create_widget_mock(TextArea, sync_methods=['clear']),
-        "#chat-media-author-display": create_widget_mock(TextArea, sync_methods=['clear']),
-        "#chat-media-url-display": create_widget_mock(TextArea, sync_methods=['clear']),
+        "#chat-media-title-display": create_widget_mock(TextArea, sync_methods=['clear', 'load_text']),
+        "#chat-media-content-display": create_widget_mock(TextArea, sync_methods=['clear', 'load_text']),
+        "#chat-media-author-display": create_widget_mock(TextArea, sync_methods=['clear', 'load_text']),
+        "#chat-media-url-display": create_widget_mock(TextArea, sync_methods=['clear', 'load_text']),
         "#chat-media-copy-title-button": create_widget_mock(Button, disabled=False),
         "#chat-media-copy-content-button": create_widget_mock(Button, disabled=False),
         "#chat-media-copy-author-button": create_widget_mock(Button, disabled=False),

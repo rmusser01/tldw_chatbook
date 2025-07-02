@@ -9,11 +9,12 @@ import time
 from typing import List, Dict, Any, Set
 import hashlib
 
-from tldw_chatbook.RAG_Search.Services.embeddings_service import (
+from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsService,
-    InMemoryStore
+    InMemoryVectorStore,
+    create_embeddings_service
 )
-from tldw_chatbook.RAG_Search.Services.embeddings_compat import EmbeddingFactoryCompat
+# Note: EmbeddingFactoryCompat is no longer available in simplified API
 
 # Import test utilities from conftest
 import sys
@@ -81,7 +82,7 @@ class TestEmbeddingProperties:
     def test_embedding_determinism(self, texts):
         """Same text should always produce same embedding"""
         provider = MockEmbeddingProvider(dimension=384)
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         # Create embeddings twice
@@ -103,7 +104,7 @@ class TestEmbeddingProperties:
     def test_embedding_dimension_consistency(self, texts, dimension):
         """All embeddings should have consistent dimension"""
         provider = MockEmbeddingProvider(dimension=dimension)
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         embeddings = service.create_embeddings(texts)
@@ -116,7 +117,7 @@ class TestEmbeddingProperties:
     def test_embedding_count_matches_input(self, texts):
         """Number of embeddings should match number of input texts"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         embeddings = service.create_embeddings(texts)
@@ -131,7 +132,7 @@ class TestEmbeddingProperties:
     def test_batch_processing_consistency(self, texts, batch_size):
         """Batch processing should produce same results as single processing"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         # Process without batching
@@ -154,7 +155,7 @@ class TestEmbeddingProperties:
     )
     def test_provider_isolation(self, texts, num_providers):
         """Different providers should not interfere with each other"""
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         
         # Add multiple providers with different dimensions
         dimensions = [384, 512, 768, 1024, 1536]
@@ -188,7 +189,7 @@ class TestVectorStoreProperties:
     )
     def test_collection_lifecycle(self, collection_names):
         """Collections should be created, listed, and deleted correctly"""
-        store = InMemoryStore()
+        store = InMemoryVectorStore()
         
         # Create collections
         for name in collection_names:
@@ -219,7 +220,7 @@ class TestVectorStoreProperties:
     def test_search_result_bounds(self, texts, n_results):
         """Search should never return more than n_results"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         # Add documents
@@ -255,7 +256,7 @@ class TestVectorStoreProperties:
     )
     def test_document_id_uniqueness(self, doc_ids):
         """Document IDs should be unique within a collection"""
-        store = InMemoryStore()
+        store = InMemoryVectorStore()
         
         # Add documents with unique IDs
         texts = [f"Document {id}" for id in doc_ids]
@@ -287,7 +288,7 @@ class TestThreadSafetyProperties:
     def test_concurrent_embedding_creation(self, num_threads, texts_per_thread):
         """Concurrent embedding creation should be thread-safe"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         results = []
@@ -330,7 +331,7 @@ class TestThreadSafetyProperties:
     )
     def test_concurrent_provider_management(self, num_operations, operation_types):
         """Concurrent provider management should be thread-safe"""
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         
         # Add initial providers
         for i in range(3):
@@ -379,7 +380,7 @@ class EmbeddingServiceStateMachine(RuleBasedStateMachine):
     
     def __init__(self):
         super().__init__()
-        self.service = EmbeddingsService(vector_store=InMemoryStore())
+        self.service = EmbeddingsService(vector_store=InMemoryVectorStore())
         self.providers = {}
         self.collections = set()
         self.documents = {}  # collection -> list of doc ids
@@ -479,66 +480,8 @@ class EmbeddingServiceStateMachine(RuleBasedStateMachine):
             assert self.service.current_provider_id in self.service.providers
 
 
-class TestCompatibilityProperties:
-    """Property-based tests for legacy compatibility"""
-    
-    @given(
-        texts=text_batch(),
-        use_numpy=st.booleans()
-    )
-    @requires_numpy
-    def test_legacy_output_format(self, texts, use_numpy):
-        """Legacy factory should support both list and numpy output"""
-        import numpy as np
-        
-        factory = EmbeddingFactoryCompat({})
-        provider = MockEmbeddingProvider()
-        factory._service.add_provider("test", provider)
-        factory._service.current_provider_id = "test"
-        
-        # Test embed with as_list parameter
-        embeddings = factory.embed(texts, as_list=not use_numpy)
-        
-        if use_numpy:
-            assert isinstance(embeddings, np.ndarray)
-            assert embeddings.shape == (len(texts), provider.dimension)
-        else:
-            assert isinstance(embeddings, list)
-            assert len(embeddings) == len(texts)
-    
-    @given(
-        config=st.fixed_dictionaries({
-            "default_model_id": st.text(min_size=1, max_size=20),
-            "models": st.dictionaries(
-                st.text(min_size=1, max_size=20),
-                st.fixed_dictionaries({
-                    "provider": st.sampled_from(["huggingface", "openai", "sentence_transformers"]),
-                    "model_name_or_path": st.text(min_size=1, max_size=50),
-                    "dimension": embedding_dimension()
-                }),
-                min_size=1,
-                max_size=3
-            )
-        })
-    )
-    def test_config_parsing_robustness(self, config):
-        """Configuration parsing should handle various formats"""
-        # Ensure default_model_id is in models
-        if config["default_model_id"] not in config["models"]:
-            model_ids = list(config["models"].keys())
-            config["default_model_id"] = model_ids[0] if model_ids else None
-        
-        service = EmbeddingsService()
-        
-        # Mock provider creation
-        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.HuggingFaceProvider'):
-            with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.OpenAIProvider'):
-                with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.SentenceTransformerProvider'):
-                    success = service.initialize_from_config({"embedding_config": config})
-                    
-                    if config["models"]:
-                        assert success
-                        assert len(service.providers) == len(config["models"])
+# TestCompatibilityProperties class removed as EmbeddingFactoryCompat is no longer available in simplified API
+# The simplified API doesn't expose legacy compatibility features
 
 
 # Run stateful tests

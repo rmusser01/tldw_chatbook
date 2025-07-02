@@ -10,16 +10,13 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any
 
-from tldw_chatbook.RAG_Search.Services.embeddings_service import (
+from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsService,
-    SentenceTransformerProvider,
-    HuggingFaceProvider,
-    OpenAIProvider,
-    ChromaDBStore,
-    InMemoryStore
+    InMemoryVectorStore,
+    ChromaVectorStore,
+    create_embeddings_service
 )
-from tldw_chatbook.RAG_Search.Services.cache_service import CacheService
-from tldw_chatbook.RAG_Search.Services.memory_management_service import MemoryManagementService
+# Note: Individual provider classes and cache/memory services are not exposed in simplified API
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 # Test marker for integration tests
@@ -92,24 +89,10 @@ def sample_texts():
     ]
 
 
-@pytest.fixture
-def real_cache_service(cache_dir):
-    """Create a real cache service"""
-    return CacheService(cache_dir=cache_dir)
+# Cache service fixture removed - not exposed in simplified API
 
 
-@pytest.fixture
-def real_memory_service(real_embedding_service):
-    """Create a real memory management service"""
-    from tldw_chatbook.RAG_Search.Services.memory_management_service import MemoryManagementConfig
-    config = MemoryManagementConfig(
-        max_total_size_mb=1024.0,
-        max_collection_size_mb=512.0
-    )
-    return MemoryManagementService(
-        embeddings_service=real_embedding_service,
-        config=config
-    )
+# Memory service fixture removed - not exposed in simplified API
 
 
 #######################################################################################################################
@@ -124,14 +107,9 @@ class TestRealEmbeddingsWorkflow:
         """Test complete RAG workflow with real sentence transformer model"""
         # Create service with real ChromaDB if available
         if DEPENDENCIES_AVAILABLE.get('chromadb', False):
-            from tldw_chatbook.RAG_Search.Services.embeddings_service import ChromaDBStore
-            import chromadb
-            from chromadb.config import Settings
-            settings = Settings(anonymized_telemetry=False, allow_reset=True)
-            client = chromadb.PersistentClient(path=str(persist_dir), settings=settings)
-            vector_store = ChromaDBStore(client)
+            vector_store = ChromaVectorStore()
         else:
-            vector_store = InMemoryStore()
+            vector_store = InMemoryVectorStore()
         
         service = EmbeddingsService(
             persist_directory=persist_dir,
@@ -183,37 +161,8 @@ class TestRealEmbeddingsWorkflow:
         # Cleanup
         service.delete_collection(collection_name)
     
-    @requires_sentence_transformers
-    @requires_torch
-    def test_multiple_real_providers(self, persist_dir):
-        """Test using multiple real embedding providers"""
-        service = EmbeddingsService(persist_directory=persist_dir)
-        
-        # Add multiple real providers
-        st_provider = SentenceTransformerProvider("all-MiniLM-L6-v2")
-        service.add_provider("minilm", st_provider)
-        
-        # Try to add HuggingFace provider if available
-        if DEPENDENCIES_AVAILABLE.get('transformers', False):
-            hf_provider = HuggingFaceProvider("sentence-transformers/all-MiniLM-L6-v2")
-            service.add_provider("huggingface", hf_provider)
-        
-        # Create embeddings with different providers
-        test_text = ["Machine learning with Python is powerful"]
-        
-        # Use sentence transformers provider
-        service.set_provider("minilm")
-        st_embeddings = service.create_embeddings(test_text)
-        assert st_embeddings is not None
-        assert len(st_embeddings[0]) == 384
-        
-        # If HuggingFace is available, compare embeddings
-        if "huggingface" in service.providers:
-            service.set_provider("huggingface")
-            hf_embeddings = service.create_embeddings(test_text)
-            assert hf_embeddings is not None
-            # Embeddings should be similar but not identical due to implementation differences
-            assert len(hf_embeddings[0]) == len(st_embeddings[0])
+    # Test removed - individual provider classes not exposed in simplified API
+    # The simplified API manages providers internally
     
     @requires_sentence_transformers
     def test_real_concurrent_operations(self, persist_dir, sample_texts):
@@ -385,99 +334,12 @@ class TestRealChromaDBIntegration:
         assert len(python_results) == 2
 
 
-class TestRealCacheIntegration:
-    """Test real cache service integration"""
-    
-    @requires_sentence_transformers
-    def test_embeddings_with_real_cache(self, persist_dir, cache_dir, sample_texts):
-        """Test embedding service with real cache"""
-        # Create cache service
-        cache_service = CacheService(cache_dir=cache_dir)
-        
-        # Create embedding service
-        service = EmbeddingsService(
-            persist_directory=persist_dir
-        )
-        # Cache service is created internally by EmbeddingsService
-        service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
-        
-        # First call - should create embeddings
-        start_time = time.time()
-        embeddings1 = service.create_embeddings(sample_texts)
-        first_call_time = time.time() - start_time
-        
-        assert embeddings1 is not None
-        
-        # Second call - should use cache
-        start_time = time.time()
-        embeddings2 = service.create_embeddings(sample_texts)
-        second_call_time = time.time() - start_time
-        
-        assert embeddings2 is not None
-        
-        # Cache should make second call faster
-        assert second_call_time < first_call_time * 0.5
-        
-        # Embeddings should be identical
-        for e1, e2 in zip(embeddings1, embeddings2):
-            assert e1 == e2
-        
-        # Check cache stats
-        stats = cache_service.get_stats()
-        assert stats["hits"] > 0
-        assert stats["misses"] > 0
-        assert stats["hit_rate"] > 0
+# TestRealCacheIntegration class removed - cache service not exposed in simplified API
+# The simplified API handles caching internally
 
 
-class TestRealMemoryManagement:
-    """Test real memory management integration"""
-    
-    @requires_sentence_transformers
-    def test_memory_cleanup_with_real_embeddings(self, persist_dir, real_embedding_service):
-        """Test memory cleanup with real embedding operations"""
-        # Create memory service with low threshold for testing
-        from tldw_chatbook.RAG_Search.Services.memory_management_service import MemoryManagementConfig
-        config = MemoryManagementConfig(
-            max_total_size_mb=50.0,  # Low threshold for testing
-            max_collection_size_mb=25.0
-        )
-        memory_service = MemoryManagementService(
-            embeddings_service=real_embedding_service,
-            config=config
-        )
-        
-        # Create embedding service
-        service = EmbeddingsService(
-            persist_directory=persist_dir
-        )
-        # Set memory manager after creation
-        service.set_memory_manager(memory_service)
-        service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
-        
-        # Generate many embeddings to trigger cleanup
-        large_texts = []
-        for i in range(100):
-            large_texts.append(f"This is document number {i} with some content to embed.")
-        
-        # Process in batches
-        batch_size = 10
-        for i in range(0, len(large_texts), batch_size):
-            batch = large_texts[i:i+batch_size]
-            embeddings = service.create_embeddings(batch)
-            
-            # Add to collection to use memory
-            service.add_documents_to_collection(
-                f"collection_{i//batch_size}",
-                batch,
-                embeddings,
-                [{"batch": i//batch_size} for _ in batch],
-                [f"doc_{j}" for j in range(i, i+len(batch))]
-            )
-        
-        # Memory cleanup should have been triggered
-        # Check that service is still functional
-        test_embedding = service.create_embeddings(["Test after cleanup"])
-        assert test_embedding is not None
+# TestRealMemoryManagement class removed - memory management service not exposed in simplified API
+# The simplified API handles memory management internally
 
 
 class TestRealErrorHandling:

@@ -16,7 +16,7 @@ from .citations import (
 
 from .embeddings_wrapper import (
     EmbeddingsServiceWrapper,
-    EmbeddingsService,  # Alias for backward compatibility
+    EmbeddingsServiceWrapper as EmbeddingsService,  # Alias for backward compatibility
     create_embeddings_service
 )
 

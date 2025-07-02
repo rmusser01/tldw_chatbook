@@ -8,14 +8,11 @@ from unittest.mock import Mock, patch, MagicMock
 import numpy as np
 from typing import List, Dict, Any
 
-from tldw_chatbook.RAG_Search.Services.embeddings_service import (
+from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsService,
-    InMemoryStore
+    InMemoryVectorStore
 )
-from tldw_chatbook.RAG_Search.Services.embeddings_compat import (
-    EmbeddingFactoryCompat,
-    create_legacy_factory
-)
+# Note: Compatibility layer may need adjustment for simplified API
 from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
 
 # Import test utilities from conftest

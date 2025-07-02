@@ -16,6 +16,7 @@ import yaml
 #
 # Third-Party Libraries
 from PIL import Image  # For image processing
+from PIL.PngImagePlugin import PngInfo  # For PNG metadata
 from loguru import logger
 # from PIL.Image import Image as PILImage # More specific for type hints if needed
 
@@ -2611,6 +2612,302 @@ def find_messages_in_conversation(
         return []
 
 # End of Conversation and Message Management Functions
+#################################################################################
+
+
+#################################################################################
+# Character Card Export Functions
+#################################################################################
+
+def export_character_card_to_json(
+    db: CharactersRAGDB,
+    character_id: int,
+    include_image: bool = True
+) -> Optional[str]:
+    """Exports a character card to JSON format (V2 spec).
+    
+    Args:
+        db: Database instance
+        character_id: ID of the character to export
+        include_image: Whether to include the character's image as base64
+        
+    Returns:
+        JSON string of the character card, or None if export fails
+    """
+    try:
+        char_data = db.get_character_card_by_id(character_id)
+        if not char_data:
+            logger.error(f"Character ID {character_id} not found for export")
+            return None
+            
+        # Build V2 character card structure
+        v2_card = {
+            "spec": "chara_card_v2",
+            "spec_version": "2.0",
+            "data": {
+                "name": char_data.get('name', ''),
+                "description": char_data.get('description', ''),
+                "personality": char_data.get('personality', ''),
+                "scenario": char_data.get('scenario', ''),
+                "first_mes": char_data.get('first_message', ''),
+                "mes_example": char_data.get('example_messages', ''),
+                "creator_notes": char_data.get('creator_notes', ''),
+                "system_prompt": char_data.get('system_prompt', ''),
+                "post_history_instructions": char_data.get('post_history_instructions', ''),
+                "tags": char_data.get('tags', []),
+                "creator": char_data.get('creator', ''),
+                "character_version": char_data.get('character_version', '1.0'),
+                "alternate_greetings": char_data.get('alternate_greetings', [])
+            }
+        }
+        
+        # Handle extensions if present
+        extensions = char_data.get('extensions')
+        if extensions:
+            v2_card['data']['extensions'] = extensions
+            
+        # Handle image if requested and available
+        if include_image and char_data.get('image'):
+            try:
+                # The image is stored as bytes in the database
+                image_bytes = char_data['image']
+                if isinstance(image_bytes, bytes):
+                    # Convert to base64 for JSON serialization
+                    import base64
+                    image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+                    # Determine image format by checking magic bytes
+                    if image_bytes.startswith(b'\x89PNG'):
+                        v2_card['data']['image'] = f"data:image/png;base64,{image_b64}"
+                    elif image_bytes.startswith(b'\xff\xd8\xff'):
+                        v2_card['data']['image'] = f"data:image/jpeg;base64,{image_b64}"
+                    elif image_bytes.startswith(b'RIFF') and b'WEBP' in image_bytes[:12]:
+                        v2_card['data']['image'] = f"data:image/webp;base64,{image_b64}"
+                    else:
+                        # Default to PNG if format unknown
+                        v2_card['data']['image'] = f"data:image/png;base64,{image_b64}"
+            except Exception as e:
+                logger.warning(f"Failed to include image in export: {e}")
+                # Continue without image
+                
+        return json.dumps(v2_card, indent=2, ensure_ascii=False)
+        
+    except Exception as e:
+        logger.error(f"Failed to export character card {character_id}: {e}", exc_info=True)
+        return None
+
+
+def export_character_card_to_png(
+    db: CharactersRAGDB,
+    character_id: int,
+    output_path: str,
+    base_directory: Optional[str] = None
+) -> bool:
+    """Exports a character card as a PNG file with embedded JSON metadata.
+    
+    Args:
+        db: Database instance
+        character_id: ID of the character to export
+        output_path: Path where the PNG file should be saved
+        base_directory: Optional base directory for path validation
+        
+    Returns:
+        True if export successful, False otherwise
+    """
+    try:
+        # Get the character data as JSON (without image in JSON)
+        json_data = export_character_card_to_json(db, character_id, include_image=False)
+        if not json_data:
+            return False
+            
+        char_data = db.get_character_card_by_id(character_id)
+        if not char_data:
+            return False
+            
+        # Validate output path
+        if base_directory is None:
+            base_directory = os.path.expanduser("~/.local/share/tldw_cli/exports/")
+            os.makedirs(base_directory, exist_ok=True)
+            
+        try:
+            validated_path = validate_path(output_path, base_directory)
+        except ValueError as e:
+            logger.error(f"Invalid export path '{output_path}': {e}")
+            return False
+            
+        # Get or create character image
+        if char_data.get('image'):
+            # Use existing image
+            image_bytes = char_data['image']
+            img = Image.open(io.BytesIO(image_bytes))
+        else:
+            # Create a default image if none exists
+            img = Image.new('RGB', (256, 256), color='gray')
+            
+        # Prepare metadata
+        pnginfo = PngInfo()
+        # The 'chara' field should contain base64 encoded JSON
+        chara_b64 = base64.b64encode(json_data.encode('utf-8')).decode('utf-8')
+        pnginfo.add_text("chara", chara_b64)
+        
+        # Save as PNG with metadata
+        img.save(validated_path, format='PNG', pnginfo=pnginfo)
+        logger.info(f"Successfully exported character card to PNG: {validated_path}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to export character card {character_id} to PNG: {e}", exc_info=True)
+        return False
+
+
+def export_conversation_to_json(
+    db: CharactersRAGDB,
+    conversation_id: str,
+    include_character_card: bool = True
+) -> Optional[str]:
+    """Exports a conversation and its messages to JSON format.
+    
+    Args:
+        db: Database instance
+        conversation_id: ID of the conversation to export
+        include_character_card: Whether to include the full character card data
+        
+    Returns:
+        JSON string of the conversation, or None if export fails
+    """
+    try:
+        # Get conversation details
+        conv_details = get_conversation_details_and_messages(db, conversation_id)
+        if not conv_details:
+            logger.error(f"Conversation {conversation_id} not found for export")
+            return None
+            
+        # Convert datetime objects to strings
+        created_at = conv_details['metadata'].get('created_at', '')
+        updated_at = conv_details['metadata'].get('updated_at', '')
+        if hasattr(created_at, 'isoformat'):
+            created_at = created_at.isoformat()
+        if hasattr(updated_at, 'isoformat'):
+            updated_at = updated_at.isoformat()
+            
+        # Get keywords from keywords_display or parse them
+        keywords = []
+        keywords_display = conv_details['metadata'].get('keywords_display', '')
+        if keywords_display:
+            keywords = [k.strip() for k in keywords_display.split(',') if k.strip()]
+            
+        export_data = {
+            "conversation": {
+                "id": conversation_id,
+                "title": conv_details['metadata'].get('title', ''),
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "keywords": keywords
+            },
+            "character_name": conv_details.get('character_name', ''),
+            "messages": []
+        }
+        
+        # Include character card if requested
+        if include_character_card:
+            char_id = conv_details['metadata'].get('character_id')
+            if char_id:
+                char_data = db.get_character_card_by_id(char_id)
+                if char_data:
+                    # Remove the image bytes for JSON export
+                    char_export = char_data.copy()
+                    char_export.pop('image', None)
+                    # Convert any datetime fields to strings
+                    for key, value in char_export.items():
+                        if hasattr(value, 'isoformat'):
+                            char_export[key] = value.isoformat()
+                    export_data['character_card'] = char_export
+                    
+        # Add messages
+        for msg in conv_details.get('messages', []):
+            timestamp = msg.get('timestamp', '')
+            if hasattr(timestamp, 'isoformat'):
+                timestamp = timestamp.isoformat()
+            export_data['messages'].append({
+                'sender': msg.get('sender', ''),
+                'content': msg.get('content', ''),
+                'timestamp': timestamp
+            })
+            
+        return json.dumps(export_data, indent=2, ensure_ascii=False)
+        
+    except Exception as e:
+        logger.error(f"Failed to export conversation {conversation_id}: {e}", exc_info=True)
+        return None
+
+
+def export_conversation_to_text(
+    db: CharactersRAGDB,
+    conversation_id: str,
+    user_name: str = "User"
+) -> Optional[str]:
+    """Exports a conversation to a human-readable text format.
+    
+    Args:
+        db: Database instance
+        conversation_id: ID of the conversation to export
+        user_name: Name to use for the user in the export
+        
+    Returns:
+        Text string of the conversation, or None if export fails
+    """
+    try:
+        # Get conversation details
+        conv_details = get_conversation_details_and_messages(db, conversation_id)
+        if not conv_details:
+            logger.error(f"Conversation {conversation_id} not found for export")
+            return None
+            
+        # Build text output
+        lines = []
+        lines.append(f"Conversation: {conv_details['metadata'].get('title', 'Untitled')}")
+        lines.append(f"Character: {conv_details.get('character_name', 'Unknown')}")
+        
+        # Handle datetime objects
+        created_at = conv_details['metadata'].get('created_at', 'Unknown')
+        if hasattr(created_at, 'isoformat'):
+            created_at = created_at.isoformat()
+        updated_at = conv_details['metadata'].get('updated_at', 'Unknown')
+        if hasattr(updated_at, 'isoformat'):
+            updated_at = updated_at.isoformat()
+            
+        lines.append(f"Created: {created_at}")
+        lines.append(f"Updated: {updated_at}")
+        
+        keywords = conv_details['metadata'].get('keywords', [])
+        if keywords:
+            lines.append(f"Keywords: {', '.join(keywords)}")
+            
+        lines.append("\n" + "="*60 + "\n")
+        
+        # Add messages
+        for msg in conv_details.get('messages', []):
+            sender = msg.get('sender', 'Unknown')
+            # Replace "User" with the actual user name
+            if sender == "User":
+                sender = user_name
+                
+            content = msg.get('content', '')
+            timestamp = msg.get('timestamp', '')
+            if hasattr(timestamp, 'isoformat'):
+                timestamp = timestamp.isoformat()
+            
+            lines.append(f"[{timestamp}] {sender}:")
+            lines.append(content)
+            lines.append("")  # Empty line between messages
+            
+        return "\n".join(lines)
+        
+    except Exception as e:
+        logger.error(f"Failed to export conversation {conversation_id} to text: {e}", exc_info=True)
+        return None
+
+
+# End of Character Card Export Functions
 #################################################################################
 
 

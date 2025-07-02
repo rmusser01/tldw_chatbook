@@ -43,18 +43,29 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 # Mock external dependencies used in chat_events.py
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.os')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage', new_callable=AsyncMock)
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
 async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mock_os, mock_ccl, mock_app):
     """Test a basic message send operation."""
     mock_os.environ.get.return_value = "fake-key"
+    
+    # Mock ChatMessage instances to track mount calls
+    mock_user_msg = MagicMock()
+    mock_ai_msg = MagicMock()
+    mock_chat_message_class.side_effect = [mock_user_msg, mock_ai_msg]
 
     await handle_chat_send_button_pressed(mock_app, MagicMock())
 
     # Assert UI updates
     # TextArea.clear is sync, not async
     mock_app.query_one("#chat-input").clear.assert_called_once()
-    # Check that mount was called (it's async, so just check call count)
-    assert mock_app.query_one("#chat-log").mount.call_count == 2  # User message and AI placeholder
+    # Check that mount was called for user message and AI placeholder
+    # Get all mount calls
+    mount_calls = mock_app.query_one("#chat-log").mount.call_args_list
+    # Should have exactly 2 mounts: user message and AI placeholder
+    assert len(mount_calls) == 2
+    # Verify the mounted objects are the mocked ChatMessage instances
+    assert mount_calls[0][0][0] == mock_user_msg  # First mount is user message
+    assert mount_calls[1][0][0] == mock_ai_msg    # Second mount is AI placeholder
 
     # Assert worker is called
     mock_app.run_worker.assert_called_once()
@@ -63,6 +74,7 @@ async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mo
     worker_lambda = mock_app.run_worker.call_args[0][0]
     worker_lambda()  # Execute the lambda to trigger the call to chat_wrapper
 
+    # chat_wrapper is AsyncMock, so we need to check it was called (not await it in test)
     mock_app.chat_wrapper.assert_called_once()
     wrapper_kwargs = mock_app.chat_wrapper.call_args.kwargs
     assert wrapper_kwargs['message'] == "User message"
@@ -74,10 +86,15 @@ async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mo
 
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.os')
-@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage', new_callable=AsyncMock)
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
 async def test_handle_chat_send_with_active_character(mock_chat_message_class, mock_os, mock_ccl, mock_app):
     """Test that an active character's system prompt overrides the UI."""
     mock_os.environ.get.return_value = "fake-key"
+    
+    # Mock ChatMessage instances
+    mock_user_msg = MagicMock()
+    mock_ai_msg = MagicMock()
+    mock_chat_message_class.side_effect = [mock_user_msg, mock_ai_msg]
     mock_app.current_chat_active_character_data = {
         'name': 'TestChar',
         'system_prompt': 'You are TestChar.'

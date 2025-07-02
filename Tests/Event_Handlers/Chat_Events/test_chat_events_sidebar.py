@@ -21,7 +21,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
 # Import our comprehensive mock fixture
 from Tests.fixtures.event_handler_mocks import create_comprehensive_app_mock, create_widget_mock
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
+pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
@@ -48,6 +48,7 @@ def test_clear_and_disable_media_display(mock_app):
     assert mock_app.query_one("#chat-media-copy-url-button", Button).disabled is True
 
 
+@pytest.mark.asyncio
 async def test_perform_media_sidebar_search_with_results(mock_app):
     """Test searching with a term that returns results."""
     mock_media_items = [
@@ -75,6 +76,7 @@ async def test_perform_media_sidebar_search_with_results(mock_app):
         assert "Test Title 1" in first_call_args[0].renderable
 
 
+@pytest.mark.asyncio
 async def test_perform_media_sidebar_search_no_results(mock_app):
     """Test searching with a term that returns no results."""
     mock_app.media_db.search_media_db.return_value = ([], 0)
@@ -103,6 +105,7 @@ async def test_perform_media_sidebar_search_no_results(mock_app):
     assert isinstance(call_arg, ListItem)
 
 
+@pytest.mark.asyncio
 async def test_perform_media_sidebar_search_empty_term(mock_app):
     """Test that an empty search term clears results and does not search."""
     await perform_media_sidebar_search(mock_app, "")
@@ -110,6 +113,7 @@ async def test_perform_media_sidebar_search_empty_term(mock_app):
     mock_app.query_one("#chat-media-search-results-listview", ListView).clear.assert_called_once()
 
 
+@pytest.mark.asyncio
 async def test_handle_chat_media_search_input_changed_debouncing(mock_app):
     """Test that input changes are debounced via set_timer."""
     # handle_chat_media_sidebar_input_changed doesn't take input widget as parameter
@@ -124,6 +128,7 @@ async def test_handle_chat_media_search_input_changed_debouncing(mock_app):
     assert callable(callback)
 
 
+@pytest.mark.asyncio
 async def test_handle_chat_media_load_selected_button_pressed(mock_app):
     """Test loading a selected media item into the display."""
     # Mock the light data on the list item
@@ -173,6 +178,7 @@ async def test_handle_chat_media_load_selected_button_pressed(mock_app):
     assert mock_app.query_one("#chat-media-copy-url-button", Button).disabled is False
 
 
+@pytest.mark.asyncio
 async def test_handle_chat_media_load_selected_no_selection(mock_app):
     """Test load button when nothing is selected."""
     # Create a list item without media_data attribute
@@ -202,6 +208,7 @@ async def test_handle_chat_media_load_selected_no_selection(mock_app):
     assert mock_app.query_one("#chat-media-copy-url-button", Button).disabled is True
 
 
+@pytest.mark.asyncio
 async def test_handle_copy_buttons_with_data(mock_app):
     """Test all copy buttons when data is available."""
     media_data = {'title': 'Copy Title', 'content': 'Copy Content', 'author': 'Copy Author', 'url': 'http://copy.url'}
@@ -228,6 +235,7 @@ async def test_handle_copy_buttons_with_data(mock_app):
     mock_app.notify.assert_called_with("URL copied to clipboard.")
 
 
+@pytest.mark.asyncio
 async def test_handle_copy_buttons_no_data(mock_app):
     """Test copy buttons when data is not available."""
     mock_app.current_sidebar_media_item = None

@@ -1,0 +1,133 @@
+{
+  "test_directory": "/Users/appledev/Working/tldw_chatbook_dev/Tests/Evals/",
+  "execution_date": "2025-07-02",
+  "summary": {
+    "total_tests": 145,
+    "total_run": 145,
+    "passed": 65,
+    "failed": 73,
+    "errors": 7,
+    "skipped": 0,
+    "deselected": 0,
+    "execution_time_seconds": 15.43,
+    "warnings": 293
+  },
+  "test_breakdown": {
+    "sync_tests": {
+      "total": 112,
+      "passed": 65,
+      "failed": 40,
+      "errors": 7,
+      "execution_time": 6.26
+    },
+    "async_tests": {
+      "total": 33,
+      "passed": 0,
+      "failed": 33,
+      "errors": 0,
+      "execution_time": 9.17
+    }
+  },
+  "key_issues": {
+    "async_fixture_conflict": {
+      "description": "The 'cleanup_async_tasks' fixture in conftest.py is causing compatibility issues with pytest-asyncio in strict mode",
+      "affected_tests": "All tests are showing warnings about this fixture",
+      "recommendation": "Update the fixture to use @pytest_asyncio.fixture or adjust pytest-asyncio mode settings"
+    },
+    "hypothesis_fixture_errors": {
+      "description": "Property-based tests using Hypothesis are having fixture resolution issues",
+      "affected_tests": [
+        "test_task_roundtrip_property",
+        "test_multiple_tasks_uniqueness",
+        "test_search_consistency",
+        "test_pagination_properties",
+        "test_concurrent_task_creation_uniqueness",
+        "test_resource_cleanup_invariant",
+        "test_database_consistency_invariant"
+      ],
+      "error": "Hypothesis-generated parameters are not being recognized as fixtures"
+    },
+    "import_errors": {
+      "description": "Many tests are failing due to missing imports or modules",
+      "affected_areas": [
+        "EvalRunner class and related functionality",
+        "TaskLoader utility functions",
+        "Evaluation metrics calculations"
+      ]
+    }
+  },
+  "failure_patterns": {
+    "database_operations": {
+      "description": "Database operations related to runs, results, and metrics are failing",
+      "failed_tests": [
+        "test_create_run",
+        "test_get_run",
+        "test_update_run_status",
+        "test_store_result",
+        "test_get_results_for_run",
+        "test_store_run_metrics",
+        "test_get_run_metrics"
+      ],
+      "likely_cause": "Schema changes or missing initialization"
+    },
+    "task_loader_utilities": {
+      "description": "Most TaskLoader utility functions are failing",
+      "failed_tests": [
+        "test_detect_file_format",
+        "test_normalize_task_type",
+        "test_validate_dataset_path",
+        "test_merge_generation_kwargs",
+        "test_generate_basic_template",
+        "test_generate_code_template",
+        "test_generate_eleuther_template"
+      ],
+      "likely_cause": "Missing TaskLoader implementation or incorrect imports"
+    },
+    "async_integration_tests": {
+      "description": "All async integration tests are failing",
+      "count": 33,
+      "likely_cause": "Event loop issues and missing async infrastructure"
+    }
+  },
+  "successful_areas": {
+    "basic_functionality": {
+      "description": "Basic non-database functionality tests are passing",
+      "passing_tests": 11,
+      "test_file": "test_basic_functionality.py"
+    },
+    "database_initialization": {
+      "description": "Database initialization and basic CRUD operations are working",
+      "passing_tests": [
+        "test_memory_db_initialization",
+        "test_file_db_initialization",
+        "test_schema_creation",
+        "test_create_task_basic",
+        "test_get_task",
+        "test_list_tasks"
+      ]
+    },
+    "property_tests": {
+      "description": "Some property-based tests for evaluation metrics are passing",
+      "passing_tests": [
+        "test_exact_match_symmetry",
+        "test_exact_match_reflexivity",
+        "test_contains_answer_monotonicity"
+      ]
+    }
+  },
+  "recommendations": [
+    "Fix the async fixture issue by updating 'cleanup_async_tasks' to use @pytest_asyncio.fixture",
+    "Verify all evaluation-related modules are properly implemented (EvalRunner, TaskLoader utilities)",
+    "Check database schema for runs, results, and metrics tables",
+    "Consider running tests with pytest-asyncio in auto mode temporarily",
+    "Review import paths and ensure all modules exist",
+    "Add integration test markers to separate unit and integration tests"
+  ],
+  "notable_warnings": {
+    "count": 293,
+    "types": [
+      "PytestDeprecationWarning about async fixtures",
+      "PytestRemovedIn9Warning about sync tests depending on async fixtures"
+    ]
+  }
+}

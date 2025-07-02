@@ -22,11 +22,11 @@ class TestChatButtonTooltips:
         
         # Expected tooltips
         expected_tooltips = [
-            ('tooltip="Toggle left sidebar"', "Left sidebar toggle tooltip"),
-            ('tooltip="Send message"', "Send button tooltip"),
+            ('tooltip="Toggle left sidebar (Ctrl+[)"', "Left sidebar toggle tooltip"),
+            ('tooltip="Send message (Enter)"', "Send button tooltip"),
             ('tooltip="Suggest a response"', "Suggest button tooltip"),
             ('tooltip="Stop generation"', "Stop button tooltip"),
-            ('tooltip="Toggle right sidebar"', "Right sidebar toggle tooltip"),
+            ('tooltip="Toggle right sidebar (Ctrl+])"', "Right sidebar toggle tooltip"),
         ]
         
         # Verify each tooltip exists in source

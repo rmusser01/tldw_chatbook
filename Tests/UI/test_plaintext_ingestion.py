@@ -38,22 +38,24 @@ class TestPlaintextWindow:
         assert window.app_instance == mock_app
         assert window.selected_local_files == []
     
-    def test_plaintext_window_compose(self, mock_app):
+    @pytest.mark.asyncio
+    async def test_plaintext_window_compose(self, mock_app):
         """Test plaintext window compose method creates expected widgets."""
-        window = IngestTldwApiPlaintextWindow(mock_app)
+        from textual.app import App
         
-        # Collect all widgets from compose
-        widgets = list(window.compose())
+        # Create a minimal app to provide context
+        class TestApp(App):
+            def compose(self):
+                window = IngestTldwApiPlaintextWindow(mock_app)
+                yield from window.compose()
         
-        # Check for expected widget types
-        widget_types = [type(w).__name__ for w in widgets]
-        
-        # Check for plaintext-specific options
-        assert "Select" in widget_types  # For encoding and line ending
-        assert "Checkbox" in widget_types  # For remove whitespace, convert paragraphs
-        assert "Input" in widget_types  # For split pattern
-        assert "Button" in widget_types  # For submit button
-        assert "TextArea" in widget_types  # For status area
+        async with TestApp().run_test() as pilot:
+            # Check for expected widget types
+            assert pilot.app.query_one(Select) is not None  # For encoding and line ending
+            assert pilot.app.query_one(Checkbox) is not None  # For remove whitespace, convert paragraphs
+            assert pilot.app.query_one(Input) is not None  # For split pattern
+            assert pilot.app.query_one(Button) is not None  # For submit button
+            assert pilot.app.query_one(TextArea) is not None  # For status area
 
 
 class TestPlaintextProcessing:

@@ -15,38 +15,40 @@ from tldw_chatbook.tldw_api import ProcessPlaintextRequest
 from textual.widgets import Button, Select, Input, Checkbox
 
 
+@pytest.fixture
+def mock_app():
+    """Create a mock app instance for testing."""
+    app = Mock()
+    app.notify = Mock()
+    app.media_db = Mock()
+    app.app_config = {
+        "tldw_api": {"auth_token": "test_token"},
+        "api_settings": {"test_provider": {}}
+    }
+    
+    # Create persistent mocks for widgets
+    app._widget_mocks = {
+        "#tldw-api-encoding-plaintext": Mock(spec=Select, value="utf-8"),
+        "#tldw-api-line-ending-plaintext": Mock(spec=Select, value="auto"),
+        "#tldw-api-remove-whitespace-plaintext": Mock(spec=Checkbox, value=True),
+        "#tldw-api-convert-paragraphs-plaintext": Mock(spec=Checkbox, value=False),
+        "#tldw-api-split-pattern-plaintext": Mock(spec=Input, value=""),
+        "#tldw-api-loading-indicator-plaintext": Mock(display=False),
+        "#tldw-api-status-area-plaintext": Mock(clear=Mock(), load_text=Mock()),
+        "#tldw-api-endpoint-url-plaintext": Mock(value="http://test.api"),
+        "#tldw-api-auth-method-plaintext": Mock(value="config_token"),
+    }
+    
+    # Mock query_one to return appropriate widgets
+    def query_one_side_effect(selector, widget_type=None):
+        return app._widget_mocks.get(selector, Mock())
+    
+    app.query_one = Mock(side_effect=query_one_side_effect)
+    return app
+
+
 class TestPlaintextEventHandlers:
     """Test plaintext-specific event handlers."""
-    
-    @pytest.fixture
-    def mock_app(self):
-        """Create a mock app instance for testing."""
-        app = Mock()
-        app.notify = Mock()
-        app.media_db = Mock()
-        app.app_config = {
-            "tldw_api": {"auth_token": "test_token"},
-            "api_settings": {"test_provider": {}}
-        }
-        
-        # Mock query_one to return appropriate widgets
-        def query_one_side_effect(selector, widget_type=None):
-            widget_mocks = {
-                "#tldw-api-encoding-plaintext": Mock(spec=Select, value="utf-8"),
-                "#tldw-api-line-ending-plaintext": Mock(spec=Select, value="auto"),
-                "#tldw-api-remove-whitespace-plaintext": Mock(spec=Checkbox, value=True),
-                "#tldw-api-convert-paragraphs-plaintext": Mock(spec=Checkbox, value=False),
-                "#tldw-api-split-pattern-plaintext": Mock(spec=Input, value=""),
-                "#tldw-api-loading-indicator-plaintext": Mock(display=False),
-                "#tldw-api-status-area-plaintext": Mock(clear=Mock(), load_text=Mock()),
-                "#tldw-api-endpoint-url-plaintext": Mock(value="http://test.api"),
-                "#tldw-api-auth-method-plaintext": Mock(value="config_token"),
-            }
-            return widget_mocks.get(selector, Mock())
-        
-        app.query_one = Mock(side_effect=query_one_side_effect)
-        return app
-    
     def test_collect_plaintext_specific_data(self, mock_app):
         """Test collecting plaintext-specific form data."""
         common_data = {
@@ -68,8 +70,8 @@ class TestPlaintextEventHandlers:
     
     def test_collect_plaintext_with_split_pattern(self, mock_app):
         """Test collecting plaintext data with a split pattern."""
-        # Update the split pattern mock
-        mock_app.query_one("#tldw-api-split-pattern-plaintext", Input).value = r"\n\n+"
+        # Update the split pattern mock using the persistent widget mocks
+        mock_app._widget_mocks["#tldw-api-split-pattern-plaintext"].value = r"\n\n+"
         
         common_data = {
             "keywords_str": "",

@@ -1869,7 +1869,16 @@ CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT = settings.get("prompts_strings", {}).get("s
 # --- Load CLI Config and Initialize Databases on module import ---
 # The `settings` global variable is now the result of the unified load_settings()
 logger.debug("CRITICAL DEBUG: CALLING initialize_all_databases() from config.py module level.") # Add this
-initialize_all_databases()
+
+# Check if we're in test mode before initializing databases
+if os.getenv("TLDW_TEST_MODE") != "1":
+    initialize_all_databases()
+else:
+    logger.info("TLDW_TEST_MODE is set - skipping database initialization during import")
+    # Initialize database variables to None for tests to handle
+    chachanotes_db = None
+    prompts_db = None
+    media_db = None
 
 # Make APP_CONFIG available globally if needed by other modules that import from config.py
 # This will be the same as `settings` if `load_settings` is the sole config loader.

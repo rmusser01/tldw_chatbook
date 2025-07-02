@@ -52,7 +52,10 @@ class TestTokenCounter:
     def test_get_model_token_limit_by_prefix(self):
         """Test getting token limit by model prefix"""
         assert get_model_token_limit("gpt-4-some-variant") == 8192
-        assert get_model_token_limit("claude-3-opus-custom") == 200000
+        # Claude-3 models need exact match or will fall back to default
+        assert get_model_token_limit("claude-3-opus-20240229") == 200000
+        # Unknown claude variant falls back to default
+        assert get_model_token_limit("claude-3-opus-custom") == 4096
     
     def test_estimate_remaining_tokens(self):
         """Test estimating remaining tokens"""

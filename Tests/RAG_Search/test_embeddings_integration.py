@@ -12,15 +12,13 @@ from typing import List, Dict, Any
 import os
 from unittest.mock import patch, Mock
 
-from tldw_chatbook.RAG_Search.Services.embeddings_service import (
+from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsService,
-    SentenceTransformerProvider,
-    HuggingFaceProvider,
-    OpenAIProvider,
-    ChromaDBStore,
-    InMemoryStore
+    ChromaVectorStore,
+    InMemoryVectorStore,
+    create_embeddings_service
 )
-from tldw_chatbook.RAG_Search.Services.embeddings_compat import EmbeddingFactoryCompat
+# Note: Provider classes are handled internally in simplified API
 from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 

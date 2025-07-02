@@ -161,7 +161,7 @@ def clear_ccp_prompt_fields(app: 'TldwCli') -> None:
 
 ########################################################################################################################
 #
-# Event Handlers for Character Card Import
+# Event Handlers for Character Card Import/Export
 #
 ########################################################################################################################
 async def _character_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
@@ -2464,6 +2464,170 @@ Format your response with clear headers for each section."""
 
 
 # --- Button Handler Map ---
+########################################################################################################################
+#
+# Event Handlers for Conversation Export
+#
+########################################################################################################################
+
+async def handle_conv_char_export_text_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current conversation as a text file."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export conversation as text button pressed.")
+    
+    if not app.current_ccp_conversation_id:
+        app.notify("No conversation loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Get user name for export
+        user_name = app.notes_user_id or "User"
+        
+        # Export conversation to text
+        text_content = ccl.export_conversation_to_text(
+            db, 
+            app.current_ccp_conversation_id,
+            user_name
+        )
+        
+        if not text_content:
+            app.notify("Failed to export conversation.", severity="error")
+            return
+            
+        # Generate filename
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        if conv_details:
+            title = conv_details.get('title', 'conversation').replace('/', '_').replace('\\', '_')
+            filename = f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        else:
+            filename = f"conversation_{app.current_ccp_conversation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            
+        # Save to default export directory
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_path = export_dir / filename
+        
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write(text_content)
+            
+        app.notify(f"Conversation exported to: {export_path}", severity="information", timeout=10)
+        logger.info(f"Exported conversation to text: {export_path}")
+        
+    except Exception as e:
+        logger.error(f"Error exporting conversation as text: {e}", exc_info=True)
+        app.notify(f"Error exporting conversation: {type(e).__name__}", severity="error")
+
+
+async def handle_conv_char_export_json_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current conversation as a JSON file."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export conversation as JSON button pressed.")
+    
+    if not app.current_ccp_conversation_id:
+        app.notify("No conversation loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Export conversation to JSON (including character card)
+        json_content = ccl.export_conversation_to_json(
+            db, 
+            app.current_ccp_conversation_id,
+            include_character_card=True
+        )
+        
+        if not json_content:
+            app.notify("Failed to export conversation.", severity="error")
+            return
+            
+        # Generate filename
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        if conv_details:
+            title = conv_details.get('title', 'conversation').replace('/', '_').replace('\\', '_')
+            filename = f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        else:
+            filename = f"conversation_{app.current_ccp_conversation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            
+        # Save to default export directory
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_path = export_dir / filename
+        
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write(json_content)
+            
+        app.notify(f"Conversation exported to: {export_path}", severity="information", timeout=10)
+        logger.info(f"Exported conversation to JSON: {export_path}")
+        
+    except Exception as e:
+        logger.error(f"Error exporting conversation as JSON: {e}", exc_info=True)
+        app.notify(f"Error exporting conversation: {type(e).__name__}", severity="error")
+
+
+async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current character card."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export character card button pressed.")
+    
+    if not app.current_character_id:
+        app.notify("No character loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Get character data
+        char_data = db.get_character_card_by_id(app.current_character_id)
+        if not char_data:
+            app.notify("Character not found in database.", severity="error")
+            return
+            
+        char_name = char_data.get('name', 'character').replace('/', '_').replace('\\', '_')
+        
+        # Export as both JSON and PNG
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Export as JSON
+        json_content = ccl.export_character_card_to_json(db, app.current_character_id, include_image=True)
+        if json_content:
+            json_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            json_path = export_dir / json_filename
+            with open(json_path, 'w', encoding='utf-8') as f:
+                f.write(json_content)
+            logger.info(f"Exported character to JSON: {json_path}")
+            
+        # Export as PNG with embedded metadata
+        png_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        png_path = export_dir / png_filename
+        success = ccl.export_character_card_to_png(db, app.current_character_id, str(png_path))
+        
+        if success:
+            app.notify(f"Character exported to:\n{json_path}\n{png_path}", severity="information", timeout=10)
+            logger.info(f"Exported character to PNG: {png_path}")
+        else:
+            app.notify(f"Character JSON exported to: {json_path}\nPNG export failed.", severity="warning", timeout=10)
+            
+    except Exception as e:
+        logger.error(f"Error exporting character card: {e}", exc_info=True)
+        app.notify(f"Error exporting character: {type(e).__name__}", severity="error")
+
+
 CCP_BUTTON_HANDLERS = {
     # Left Pane
     "ccp-import-character-button": handle_ccp_import_character_button_pressed,
@@ -2503,6 +2667,11 @@ CCP_BUTTON_HANDLERS = {
     "conv-char-save-details-button": handle_ccp_save_conversation_details_button_pressed,
     "ccp-editor-prompt-delete-button": handle_ccp_editor_prompt_delete_button_pressed,
     "ccp-character-delete-button": handle_ccp_right_delete_character_button_pressed,
+    
+    # Export buttons
+    "conv-char-export-text-button": handle_conv_char_export_text_button_pressed,
+    "conv-char-export-json-button": handle_conv_char_export_json_button_pressed,
+    "ccp-export-character-button": handle_ccp_export_character_button_pressed,
 
     # Sidebar Toggles
     "toggle-conv-char-left-sidebar": handle_ccp_tab_sidebar_toggle,

@@ -12,11 +12,11 @@ from pathlib import Path
 import tempfile
 import shutil
 
-from tldw_chatbook.RAG_Search.Services.embeddings_service import (
+from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsService,
-    SentenceTransformerProvider,
-    InMemoryStore,
-    ChromaDBStore
+    InMemoryVectorStore,
+    ChromaVectorStore,
+    create_embeddings_service
 )
 
 # Import test utilities from conftest
@@ -39,7 +39,7 @@ class TestEmbeddingPerformance:
     def test_single_vs_batch_performance(self, performance_monitor):
         """Compare performance of single vs batch embedding generation"""
         provider = MockEmbeddingProvider(delay=0.001)  # Small delay to simulate work
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         texts = [f"Test document {i}" for i in range(100)]
@@ -69,7 +69,7 @@ class TestEmbeddingPerformance:
     def test_parallel_processing_performance(self, performance_monitor):
         """Test performance improvement with parallel processing"""
         provider = MockEmbeddingProvider(delay=0.001)
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         # Large batch to trigger parallel processing
@@ -103,7 +103,7 @@ class TestEmbeddingPerformance:
     def test_cache_performance_impact(self, performance_monitor):
         """Measure performance impact of caching"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         # Prepare texts with some duplicates
@@ -130,7 +130,7 @@ class TestEmbeddingPerformance:
     @requires_embeddings
     def test_real_model_performance(self, performance_monitor, sample_texts):
         """Benchmark performance with real embedding model"""
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
         
         # Warmup
@@ -172,7 +172,7 @@ class TestVectorStorePerformance:
     def test_document_insertion_performance(self, performance_monitor):
         """Test performance of document insertion at scale"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         # Prepare documents
@@ -205,7 +205,7 @@ class TestVectorStorePerformance:
     def test_search_performance_scaling(self, performance_monitor):
         """Test how search performance scales with collection size"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         collection_sizes = [100, 500, 1000, 5000]
@@ -260,7 +260,7 @@ class TestVectorStorePerformance:
         texts = [f"Document {i}" for i in range(500)]
         
         # Test in-memory store
-        memory_service = EmbeddingsService(vector_store=InMemoryStore())
+        memory_service = EmbeddingsService(vector_store=InMemoryVectorStore())
         memory_service.add_provider("test", provider)
         embeddings = memory_service.create_embeddings(texts)
         
@@ -275,7 +275,7 @@ class TestVectorStorePerformance:
         memory_time = performance_monitor.stop()
         
         # Test ChromaDB store
-        chroma_service = EmbeddingsService(persist_directory=temp_dir)
+        chroma_service = EmbeddingsService(vector_store=ChromaVectorStore())
         chroma_service.add_provider("test", provider)
         
         performance_monitor.start()
@@ -304,7 +304,7 @@ class TestConcurrencyPerformance:
     def test_concurrent_embedding_throughput(self, performance_monitor):
         """Test throughput under concurrent load"""
         provider = MockEmbeddingProvider(delay=0.001)
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         service.configure_performance(max_workers=8)
         
@@ -348,7 +348,7 @@ class TestConcurrencyPerformance:
     
     def test_provider_switching_overhead(self, performance_monitor):
         """Test overhead of switching between providers"""
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         
         # Add multiple providers
         for i in range(5):
@@ -384,7 +384,7 @@ class TestMemoryPerformance:
     def test_memory_usage_scaling(self):
         """Test memory usage scales appropriately with data size"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         # Get baseline memory
@@ -424,7 +424,7 @@ class TestMemoryPerformance:
     def test_memory_cleanup(self):
         """Test memory is properly released after cleanup"""
         provider = MockEmbeddingProvider()
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         # Get baseline
@@ -472,7 +472,7 @@ class TestPerformanceOptimizations:
     def test_batch_size_optimization(self, performance_monitor):
         """Find optimal batch size for performance"""
         provider = MockEmbeddingProvider(delay=0.001)
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         texts = [f"Document {i}" for i in range(1000)]
@@ -503,7 +503,7 @@ class TestPerformanceOptimizations:
     def test_worker_count_optimization(self, performance_monitor):
         """Find optimal worker count for parallel processing"""
         provider = MockEmbeddingProvider(delay=0.001)
-        service = EmbeddingsService(vector_store=InMemoryStore())
+        service = EmbeddingsService(vector_store=InMemoryVectorStore())
         service.add_provider("test", provider)
         
         texts = [f"Document {i}" for i in range(500)]

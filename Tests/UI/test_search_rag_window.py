@@ -24,7 +24,7 @@ from Tests.textual_test_utils import WidgetTestApp, widget_pilot, app_pilot
 
 from tldw_chatbook.UI.SearchRAGWindow import (
     SearchRAGWindow, SearchHistoryDropdown, SavedSearchesPanel,
-    SearchResultItem, SOURCE_ICONS, SOURCE_COLORS
+    SearchResult, SOURCE_ICONS, SOURCE_COLORS
 )
 
 
@@ -53,7 +53,8 @@ def temp_user_data_dir():
 class TestSearchRAGWindow:
     """Test SearchRAGWindow UI component"""
     
-    async def test_window_initialization(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_window_initialization(self, mock_app_instance, widget_pilot):
         """Test SearchRAGWindow initializes correctly"""
         window = SearchRAGWindow(mock_app_instance, id="test-search-window")
         
@@ -67,37 +68,38 @@ class TestSearchRAGWindow:
         assert window.results_per_page == 20
         assert window.total_results == 0
     
-    async def test_compose_creates_ui_elements(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_compose_creates_ui_elements(self, mock_app_instance, widget_pilot):
         """Test that compose creates all required UI elements"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Check main containers exist
-            assert window.query_one("#search-controls-container")
+            # The actual implementation uses different container structure
+            assert window.query_one(".search-section")
             assert window.query_one("#results-container")
             assert window.query_one("#saved-searches-panel")
             
             # Check search input elements
-            assert window.query_one("#search-input", Input)
-            assert window.query_one("#search-button", Button)
+            assert window.query_one("#rag-search-input", Input)
+            assert window.query_one("#rag-search-btn", Button)
             assert window.query_one("#search-mode-select", Select)
             
             # Check filter checkboxes
-            assert window.query_one("#search-media-checkbox", Checkbox)
-            assert window.query_one("#search-conversations-checkbox", Checkbox)
-            assert window.query_one("#search-notes-checkbox", Checkbox)
+            assert window.query_one("#source-media", Checkbox)
+            assert window.query_one("#source-conversations", Checkbox)
+            assert window.query_one("#source-notes", Checkbox)
             
             # Check advanced options
             assert window.query_one("#top-k-input", Input)
             assert window.query_one("#max-context-input", Input)
-            assert window.query_one("#enable-rerank-checkbox", Checkbox)
+            assert window.query_one("#enable-rerank", Checkbox)
     
-    async def test_search_mode_options(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_search_mode_options(self, mock_app_instance, widget_pilot):
         """Test search mode select has correct options"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             search_mode = window.query_one("#search-mode-select", Select)
             
@@ -112,17 +114,17 @@ class TestSearchRAGWindow:
                 assert search_mode._options[i].value == value
                 assert label in search_mode._options[i].prompt
     
-    async def test_search_input_triggers_search(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_search_input_triggers_search(self, mock_app_instance, widget_pilot):
         """Test that submitting search input triggers search"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Mock the search method
             window._perform_search = AsyncMock()
             
             # Enter search query
-            search_input = window.query_one("#search-input", Input)
+            search_input = window.query_one("#rag-search-input", Input)
             search_input.value = "test query"
             
             # Trigger search by submitting input
@@ -132,16 +134,16 @@ class TestSearchRAGWindow:
             # Verify search was called
             window._perform_search.assert_called_once_with("test query")
     
-    async def test_source_filter_checkboxes(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_source_filter_checkboxes(self, mock_app_instance, widget_pilot):
         """Test source filter checkboxes work correctly"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Get checkboxes
-            media_cb = window.query_one("#search-media-checkbox", Checkbox)
-            conv_cb = window.query_one("#search-conversations-checkbox", Checkbox)
-            notes_cb = window.query_one("#search-notes-checkbox", Checkbox)
+            media_cb = window.query_one("#source-media", Checkbox)
+            conv_cb = window.query_one("#source-conversations", Checkbox)
+            notes_cb = window.query_one("#source-notes", Checkbox)
             
             # All should be checked by default
             assert media_cb.value == True
@@ -149,30 +151,30 @@ class TestSearchRAGWindow:
             assert notes_cb.value == True
             
             # Test toggling
-            await pilot.click("#search-media-checkbox")
+            await pilot.click("#source-media")
             assert media_cb.value == False
             
-            await pilot.click("#search-conversations-checkbox")
+            await pilot.click("#source-conversations")
             assert conv_cb.value == False
     
     @patch('tldw_chatbook.UI.SearchRAGWindow.perform_plain_rag_search')
-    async def test_plain_search_execution(self, mock_search, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_plain_search_execution(self, mock_search, mock_app_instance, widget_pilot):
         """Test plain search execution"""
         mock_search.return_value = (
             [{"title": "Test Result", "content": "Test content", "source": "media"}],
             "Test context"
         )
         
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Set search mode to plain
             search_mode = window.query_one("#search-mode-select", Select)
             search_mode.value = "plain"
             
             # Enter query and search
-            search_input = window.query_one("#search-input", Input)
+            search_input = window.query_one("#rag-search-input", Input)
             search_input.value = "test"
             
             await window._perform_search("test")
@@ -188,11 +190,11 @@ class TestSearchRAGWindow:
             assert len(window.all_results) == 1
             assert window.total_results == 1
     
-    async def test_search_history_dropdown(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_search_history_dropdown(self, mock_app_instance, widget_pilot):
         """Test search history dropdown functionality"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Get history dropdown
             history_dropdown = window.query_one(SearchHistoryDropdown)
@@ -201,19 +203,19 @@ class TestSearchRAGWindow:
             assert "hidden" in history_dropdown.classes
             
             # Focus search input should show history
-            search_input = window.query_one("#search-input", Input)
+            search_input = window.query_one("#rag-search-input", Input)
             search_input.focus()
             await pilot.pause()
             
             # Should show history (though it may be empty)
             assert history_dropdown is not None
     
-    async def test_saved_searches_panel(self, mock_app_instance, temp_user_data_dir):
+    @pytest.mark.asyncio
+    async def test_saved_searches_panel(self, mock_app_instance, temp_user_data_dir, widget_pilot):
         """Test saved searches panel functionality"""
         with patch('tldw_chatbook.UI.SearchRAGWindow.get_user_data_dir', return_value=temp_user_data_dir):
-            async with AppTest.create_app(App()) as pilot:
-                window = SearchRAGWindow(mock_app_instance)
-                await pilot.mount(window)
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
                 
                 # Get saved searches panel
                 saved_panel = window.query_one(SavedSearchesPanel)
@@ -240,11 +242,11 @@ class TestSearchRAGWindow:
                     saved_data = json.load(f)
                     assert "Test Search" in saved_data
     
-    async def test_search_result_display(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_search_result_display(self, mock_app_instance, widget_pilot):
         """Test search result display"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Mock some results
             test_results = [
@@ -273,16 +275,16 @@ class TestSearchRAGWindow:
             
             # Check results container has items
             results_container = window.query_one("#results-container")
-            result_items = results_container.query(SearchResultItem)
+            result_items = results_container.query(SearchResult)
             
             # Should have 2 result items
             assert len(result_items) == 2
     
-    async def test_pagination_controls(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_pagination_controls(self, mock_app_instance, widget_pilot):
         """Test pagination controls"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Mock many results to trigger pagination
             window.all_results = [{"title": f"Result {i}", "source": "media"} for i in range(50)]
@@ -310,11 +312,11 @@ class TestSearchRAGWindow:
             assert window.current_page == 2
             assert prev_btn.disabled == False
     
-    async def test_advanced_options_toggle(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_advanced_options_toggle(self, mock_app_instance, widget_pilot):
         """Test advanced options collapsible"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Find advanced options
             advanced_collapsible = window.query_one("#advanced-options-collapsible")
@@ -331,12 +333,12 @@ class TestSearchRAGWindow:
             assert chunk_size.value == "400"
             assert chunk_overlap.value == "100"
     
+    @pytest.mark.asyncio
     async def test_export_results_functionality(self, mock_app_instance, temp_user_data_dir):
         """Test export results button"""
         with patch('tldw_chatbook.UI.SearchRAGWindow.get_user_data_dir', return_value=temp_user_data_dir):
-            async with AppTest.create_app(App()) as pilot:
-                window = SearchRAGWindow(mock_app_instance)
-                await pilot.mount(window)
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
                 
                 # Export button should be disabled initially
                 export_btn = window.query_one("#export-results-btn", Button)
@@ -361,11 +363,11 @@ class TestSearchRAGWindow:
                 # Verify export was called
                 window._export_results.assert_called_once()
     
-    async def test_error_handling_display(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_error_handling_display(self, mock_app_instance, widget_pilot):
         """Test error handling and display"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Mock search to raise an error
             with patch('tldw_chatbook.UI.SearchRAGWindow.perform_plain_rag_search') as mock_search:
@@ -382,11 +384,11 @@ class TestSearchRAGWindow:
                 # Check notification was sent
                 mock_app_instance.notify.assert_called()
     
-    async def test_search_status_updates(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_search_status_updates(self, mock_app_instance, widget_pilot):
         """Test search status updates during search"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             status_elem = window.query_one("#search-status", Static)
             
@@ -406,17 +408,17 @@ class TestSearchRAGWindow:
                 # After search with no results
                 assert "No results found" in status_elem.renderable.plain
     
-    async def test_keyboard_shortcuts(self, mock_app_instance):
+    @pytest.mark.asyncio
+    async def test_keyboard_shortcuts(self, mock_app_instance, widget_pilot):
         """Test keyboard shortcuts work"""
-        async with AppTest.create_app(App()) as pilot:
-            window = SearchRAGWindow(mock_app_instance)
-            await pilot.mount(window)
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
             
             # Test Ctrl+K focuses search
             await pilot.press("ctrl+k")
             await pilot.pause()
             
-            search_input = window.query_one("#search-input", Input)
+            search_input = window.query_one("#rag-search-input", Input)
             assert search_input.has_focus
             
             # Test Escape clears search
@@ -428,11 +430,12 @@ class TestSearchRAGWindow:
 
 
 @pytest.mark.ui
-class TestSearchResultItem:
-    """Test SearchResultItem widget"""
+class TestSearchResult:
+    """Test SearchResult widget"""
     
-    async def test_result_item_display(self):
-        """Test SearchResultItem displays correctly"""
+    @pytest.mark.asyncio
+    async def test_result_item_display(self, widget_pilot):
+        """Test SearchResult displays correctly"""
         result_data = {
             "title": "Test Title",
             "content": "This is test content that should be displayed",
@@ -441,9 +444,8 @@ class TestSearchResultItem:
             "metadata": {"id": 123, "created_at": "2024-01-01"}
         }
         
-        async with AppTest.create_app(App()) as pilot:
-            item = SearchResultItem(result_data)
-            await pilot.mount(item)
+        async with await widget_pilot(SearchResult, result=result_data, index=0) as pilot:
+            item = pilot.app.test_widget
             
             # Check title is displayed
             title_elem = item.query_one(".result-title", Static)
@@ -461,7 +463,8 @@ class TestSearchResultItem:
             if score_elems:
                 assert "95%" in score_elems[0].renderable.plain
     
-    async def test_result_item_click_action(self):
+    @pytest.mark.asyncio
+    async def test_result_item_click_action(self, widget_pilot):
         """Test clicking result item triggers action"""
         result_data = {
             "title": "Test",
@@ -470,11 +473,9 @@ class TestSearchResultItem:
             "metadata": {"id": 1}
         }
         
-        async with AppTest.create_app(App()) as pilot:
-            item = SearchResultItem(result_data)
+        async with await widget_pilot(SearchResult, result=result_data, index=0) as pilot:
+            item = pilot.app.test_widget
             item.action_view_details = MagicMock()
-            
-            await pilot.mount(item)
             
             # Click the item
             await pilot.click(item)
@@ -488,6 +489,7 @@ class TestSearchResultItem:
 class TestSearchHistoryDropdown:
     """Test SearchHistoryDropdown component"""
     
+    @pytest.mark.asyncio
     async def test_history_dropdown_initialization(self):
         """Test history dropdown initializes correctly"""
         mock_db = MagicMock()
@@ -499,7 +501,8 @@ class TestSearchHistoryDropdown:
         assert dropdown.history_items == []
         assert "hidden" in dropdown.classes
     
-    async def test_show_history_with_results(self):
+    @pytest.mark.asyncio
+    async def test_show_history_with_results(self, widget_pilot):
         """Test showing search history"""
         mock_db = MagicMock()
         mock_db.get_search_history.return_value = [
@@ -507,9 +510,8 @@ class TestSearchHistoryDropdown:
             {"query": "test query 2", "created_at": "2024-01-01 11:00:00"}
         ]
         
-        async with AppTest.create_app(App()) as pilot:
-            dropdown = SearchHistoryDropdown(mock_db)
-            await pilot.mount(dropdown)
+        async with await widget_pilot(SearchHistoryDropdown, search_history_db=mock_db) as pilot:
+            dropdown = pilot.app.test_widget
             
             # Show history
             await dropdown.show_history()
@@ -522,7 +524,8 @@ class TestSearchHistoryDropdown:
             # Dropdown should be visible
             assert "hidden" not in dropdown.classes
     
-    async def test_filter_history_by_query(self):
+    @pytest.mark.asyncio
+    async def test_filter_history_by_query(self, widget_pilot):
         """Test filtering history by current query"""
         mock_db = MagicMock()
         mock_db.get_search_history.return_value = [
@@ -531,9 +534,8 @@ class TestSearchHistoryDropdown:
             {"query": "python tutorial", "created_at": "2024-01-01"}
         ]
         
-        async with AppTest.create_app(App()) as pilot:
-            dropdown = SearchHistoryDropdown(mock_db)
-            await pilot.mount(dropdown)
+        async with await widget_pilot(SearchHistoryDropdown, search_history_db=mock_db) as pilot:
+            dropdown = pilot.app.test_widget
             
             # Show history filtered by "python"
             await dropdown.show_history("python")

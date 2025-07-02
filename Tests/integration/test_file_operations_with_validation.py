@@ -238,6 +238,16 @@ class TestAPIUtilsFileOperations:
 class TestFileOperationErrorHandling:
     """Test error handling in file operations."""
     
+    @pytest.fixture
+    def temp_upload_dir(self):
+        """Create a temporary upload directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create some test files
+            for i in range(3):
+                file_path = Path(tmpdir) / f"test_file_{i}.txt"
+                file_path.write_text(f"Test content {i}")
+            yield tmpdir
+    
     def test_prepare_files_with_missing_files(self, temp_upload_dir):
         """Test handling of missing files."""
         file_paths = [

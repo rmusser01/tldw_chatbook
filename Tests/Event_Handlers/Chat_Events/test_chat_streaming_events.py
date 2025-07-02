@@ -55,7 +55,7 @@ def mock_app():
     
     # Create persistent mocks
     mock_chat_log = MagicMock(spec=VerticalScroll)
-    mock_chat_log.scroll_end = AsyncMock()  # scroll_end is async
+    mock_chat_log.scroll_end = MagicMock()  # scroll_end is synchronous in Textual
     
     mock_chat_input = MagicMock(spec=TextArea, disabled=False)
     mock_chat_input.focus = MagicMock()  # focus is sync
