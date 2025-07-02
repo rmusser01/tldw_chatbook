@@ -2826,6 +2826,8 @@ CCP_BUTTON_HANDLERS = {
     "ccp-editor-char-delete-button": handle_ccp_editor_char_delete_button_pressed,
     "ccp-editor-char-clone-button": handle_ccp_editor_char_clone_button_pressed,
     "ccp-editor-char-cancel-button": handle_ccp_editor_char_cancel_button_pressed,
+    "ccp-editor-char-image-button": handle_ccp_editor_char_image_button_pressed,
+    "ccp-editor-char-clear-image-button": handle_ccp_editor_char_clear_image_button_pressed,
     
     # AI Generation Buttons
     "ccp-generate-all-button": handle_ccp_generate_all_button_pressed,
