@@ -65,6 +65,17 @@ except ImportError as e:
     class IndexingResult:
         pass
 
+try:
+    from tldw_chatbook.RAG_Search.Services.embeddings_service import EmbeddingsService
+    EMBEDDINGS_SERVICE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"EmbeddingsService not available: {e}")
+    EMBEDDINGS_SERVICE_AVAILABLE = False
+    # Create placeholder class
+    class EmbeddingsService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("EmbeddingsService not available - missing dependencies")
+
 if TYPE_CHECKING:
     from ..app import TldwCli
 
@@ -511,17 +522,23 @@ class SearchRAGWindow(Container):
     
     def watch_is_searching(self, is_searching: bool) -> None:
         """React to search state changes"""
-        loading = self.query_one("#search-loading")
-        search_btn = self.query_one("#rag-search-btn")
-        
-        if is_searching:
-            loading.remove_class("hidden")
-            search_btn.disabled = True
-            search_btn.label = "Searching..."
-        else:
-            loading.add_class("hidden")
-            search_btn.disabled = False
-            search_btn.label = "Search"
+        # Check if the widgets exist before trying to query them
+        # This can be called before compose() completes
+        try:
+            loading = self.query_one("#search-loading")
+            search_btn = self.query_one("#rag-search-btn")
+            
+            if is_searching:
+                loading.remove_class("hidden")
+                search_btn.disabled = True
+                search_btn.label = "Searching..."
+            else:
+                loading.add_class("hidden")
+                search_btn.disabled = False
+                search_btn.label = "Search"
+        except:
+            # Widgets not yet created, ignore
+            pass
     
     @on(Input.Changed, "#rag-search-input")
     async def handle_search_input_change(self, event: Input.Changed) -> None:
@@ -1234,7 +1251,7 @@ class SearchRAGWindow(Container):
     
     async def _check_index_status(self) -> None:
         """Check the status of vector indices"""
-        if not self.embeddings_available:
+        if not self.embeddings_available or not EMBEDDINGS_SERVICE_AVAILABLE:
             return
             
         try:

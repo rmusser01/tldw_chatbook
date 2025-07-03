@@ -73,6 +73,8 @@ def create_comprehensive_app_mock():
     app.get_current_ai_message_widget = MagicMock(return_value=None)
     app.set_current_ai_message_widget = MagicMock()
     app.set_current_chat_worker = MagicMock()
+    app.set_current_chat_is_streaming = MagicMock()
+    app.get_current_chat_is_streaming = MagicMock(return_value=False)
     
     # Timers
     app._conversation_search_timer = None
