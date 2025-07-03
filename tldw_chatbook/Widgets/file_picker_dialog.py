@@ -71,13 +71,13 @@ class EvalFilePickerDialog(ModalScreen):
                 # Use enhanced file picker with new features
                 if self.save_mode:
                     yield EnhancedFileSave(
-                        path=".",
+                        location=".",
                         filters=self.filters,
                         id="file-picker"
                     )
                 else:
                     yield EnhancedFileOpen(
-                        path=".",
+                        location=".",
                         filters=self.filters,
                         id="file-picker"
                     )
@@ -85,13 +85,13 @@ class EvalFilePickerDialog(ModalScreen):
                 # Fallback to original file picker
                 if self.save_mode:
                     yield FileSave(
-                        path=".",
+                        location=".",
                         filters=self.filters,
                         id="file-picker"
                     )
                 else:
                     yield FileOpen(
-                        path=".",
+                        location=".",
                         filters=self.filters,
                         id="file-picker"
                     )

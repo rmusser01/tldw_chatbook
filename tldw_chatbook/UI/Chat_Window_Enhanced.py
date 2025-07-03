@@ -157,7 +157,7 @@ class ChatWindowEnhanced(Container):
         # Push the FileOpen dialog directly
         self.app_instance.push_screen(
             FileOpen(
-                path=".",
+                location=".",
                 title="Select Image to Attach",
                 filters=image_filters
             ),
