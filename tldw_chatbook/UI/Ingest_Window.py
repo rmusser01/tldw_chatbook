@@ -13,7 +13,7 @@ from textual.css.query import QueryError
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.widgets import Static, Button, Input, Select, Checkbox, TextArea, Label, RadioSet, RadioButton, Collapsible, ListView, ListItem, Markdown, LoadingIndicator, TabbedContent, TabPane # Button, ListView, ListItem, Label are already here
 from textual.worker import Worker
-from textual.work import work
+from textual import work
 from textual.reactive import reactive
 
 # Configure logger with context
@@ -410,6 +410,11 @@ class IngestWindow(Container):
         elif button_id == "ingest-local-web-process":
             event.stop()
             await self.handle_local_web_article_process()
+        
+        # Handle web article stop button
+        elif button_id == "ingest-local-web-stop":
+            event.stop()
+            await self._handle_stop_web_scraping()
         
         # If IngestWindow has a superclass that also defines on_button_pressed, consider calling it:
         # else:
@@ -905,6 +910,12 @@ class IngestWindow(Container):
             with Container(classes="ingest-action-section"):
                 yield Button("Scrape Articles", id="ingest-local-web-process", variant="primary")
                 yield LoadingIndicator(id="ingest-local-web-loading", classes="hidden")
+                
+                # Progress section
+                with Container(id="ingest-local-web-progress", classes="hidden"):
+                    yield Static("Progress: 0/0", id="ingest-local-web-progress-text")
+                    yield Static("✅ 0  ❌ 0  ⏳ 0", id="ingest-local-web-counters")
+                
                 yield TextArea("", id="ingest-local-web-status", read_only=True, classes="ingest-status-area")
 
     def compose_local_xml_tab(self) -> ComposeResult:
@@ -1178,6 +1189,28 @@ class IngestWindow(Container):
         status_area.load_text("Starting web article scraping...")
         status_area.display = True
         process_button.disabled = True
+        
+        # Show progress container
+        try:
+            progress_container = self.query_one("#ingest-local-web-progress", Container)
+            progress_container.classes = progress_container.classes - {"hidden"}
+            
+            # Initialize progress tracking
+            self._current_progress = {
+                'total': len(urls),
+                'done': 0,
+                'success': 0,
+                'failed': 0,
+                'pending': len(urls)
+            }
+            
+            # Update initial progress display
+            progress_text = self.query_one("#ingest-local-web-progress-text", Static)
+            counters = self.query_one("#ingest-local-web-counters", Static)
+            progress_text.update(f"Progress: 0/{len(urls)}")
+            counters.update(f"✅ 0  ❌ 0  ⏳ {len(urls)}")
+        except Exception as e:
+            logger.error(f"Error showing progress container: {e}")
         
         try:
             # Get URLs from the textarea
@@ -1556,8 +1589,61 @@ class IngestWindow(Container):
         try:
             status_area = self.query_one("#ingest-local-web-status", TextArea)
             status_area.append(f"\n{message}")
+            
+            # Also update counters if we have results info
+            if hasattr(self, '_current_progress'):
+                progress_text = self.query_one("#ingest-local-web-progress-text", Static)
+                counters = self.query_one("#ingest-local-web-counters", Static)
+                
+                progress_text.update(f"Progress: {self._current_progress['done']}/{self._current_progress['total']}")
+                counters.update(f"✅ {self._current_progress['success']}  ❌ {self._current_progress['failed']}  ⏳ {self._current_progress['pending']}")
         except Exception as e:
             logger.error(f"Error updating progress: {e}")
+    
+    async def _handle_stop_web_scraping(self) -> None:
+        """Handle stopping the web scraping process."""
+        if hasattr(self, '_web_scraping_worker') and self._web_scraping_worker:
+            try:
+                self._web_scraping_worker.cancel()
+                self.app.notify("Stopping web scraping...", severity="warning")
+                
+                # Update status
+                status_area = self.query_one("#ingest-local-web-status", TextArea)
+                status_area.append("\n\n⚠️ Processing stopped by user")
+                
+                # Clean up UI
+                self._cleanup_after_processing()
+            except Exception as e:
+                logger.error(f"Error stopping web scraping: {e}")
+    
+    def _cleanup_after_processing(self) -> None:
+        """Clean up UI after processing completes or is stopped."""
+        try:
+            # Re-enable process button
+            process_button = self.query_one("#ingest-local-web-process", Button)
+            process_button.disabled = False
+            
+            # Hide loading indicator
+            loading_indicator = self.query_one("#ingest-local-web-loading", LoadingIndicator)
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            
+            # Hide progress container
+            try:
+                progress_container = self.query_one("#ingest-local-web-progress", Container)
+                progress_container.classes = progress_container.classes | {"hidden"}
+            except QueryError:
+                pass
+            
+            # Remove stop button
+            try:
+                stop_button = self.query_one("#ingest-local-web-stop", Button)
+                stop_button.remove()
+            except QueryError:
+                pass  # Button might not exist
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
     
     async def _read_text_file(self, file_path: Path, encoding: str) -> str | None:
         """Read a text file with specified encoding."""

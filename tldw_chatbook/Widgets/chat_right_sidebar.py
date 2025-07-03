@@ -30,9 +30,9 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
     with VerticalScroll(id="chat-right-sidebar", classes="sidebar"): # Main ID for the whole sidebar
         # Sidebar header with resize controls
         with Horizontal(classes="sidebar-header-with-resize"):
-            yield Button("<<<", id=f"{id_prefix}-sidebar-expand", classes="sidebar-resize-button", tooltip="Expand sidebar")
+            yield Button("<<<", id=f"{id_prefix}-sidebar-expand", classes="sidebar-resize-button")
             yield Static("Session & Character", classes="sidebar-title flex-grow")
-            yield Button(">>>", id=f"{id_prefix}-sidebar-shrink", classes="sidebar-resize-button", tooltip="Collapse sidebar")
+            yield Button(">>>", id=f"{id_prefix}-sidebar-shrink", classes="sidebar-resize-button")
 
         # Section for current chat session details (title, keywords, etc.)
         with Collapsible(title="Current Chat Details", collapsed=False, id=f"{id_prefix}-chat-details-collapsible"):
@@ -92,8 +92,7 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                 "📋 Convert to Note",
                 id=f"{id_prefix}-convert-to-note-button",
                 classes="sidebar-button convert-to-note-button",
-                variant="default",
-                tooltip="Convert entire conversation to a note"
+                variant="default"
             )
 
             # Retrieve initial value for strip_thinking_tags checkbox

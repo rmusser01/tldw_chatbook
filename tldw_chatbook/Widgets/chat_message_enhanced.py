@@ -214,7 +214,7 @@ class ChatMessageEnhanced(Widget):
                 # Common buttons
                 yield Button("Edit", classes="action-button edit-button")
                 yield Button("📋", classes="action-button copy-button", id="copy")
-                yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
+                yield Button("📝", classes="action-button note-button", id="create-note")
                 
                 # Add file extraction button if files detected
                 if self._extracted_files is None:
@@ -222,8 +222,7 @@ class ChatMessageEnhanced(Widget):
                 if self._extracted_files:
                     file_count = len(self._extracted_files)
                     yield Button(f"📎 {file_count}", classes="action-button file-extract-button", 
-                               id="extract-files", 
-                               tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
+                               id="extract-files")
                 
                 yield Button("🔊", classes="action-button speak-button", id="speak")
                 
