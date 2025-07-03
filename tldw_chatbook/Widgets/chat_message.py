@@ -105,6 +105,8 @@ class ChatMessage(Widget):
     # Store image data if message has an image
     image_data: reactive[Optional[bytes]] = reactive(None)
     image_mime_type: reactive[Optional[str]] = reactive(None)
+    # Store feedback (thumbs up/down)
+    feedback: reactive[Optional[str]] = reactive(None)
 
     def __init__(self,
                  message: str,
@@ -115,6 +117,7 @@ class ChatMessage(Widget):
                  timestamp: Optional[str] = None,
                  image_data: Optional[bytes] = None,
                  image_mime_type: Optional[str] = None,
+                 feedback: Optional[str] = None,
                  **kwargs):
         super().__init__(**kwargs)
         self.message_text = message
@@ -126,6 +129,7 @@ class ChatMessage(Widget):
         self.timestamp = timestamp
         self.image_data = image_data
         self.image_mime_type = image_mime_type
+        self.feedback = feedback
 
         #self.add_class(f"-{role.lower()}") # Add role-specific class
         # For CSS styling, we use a generic class based on whether it's the user or not.
@@ -159,8 +163,11 @@ class ChatMessage(Widget):
 
                 # AI-specific buttons
                 if self.has_class("-ai"):
-                    yield Button("👍", classes="action-button thumb-up-button", id="thumb-up")
-                    yield Button("👎", classes="action-button thumb-down-button", id="thumb-down")
+                    # Display feedback state on thumb buttons
+                    thumb_up_label = "👍✓" if self.feedback == "1;" else "👍"
+                    thumb_down_label = "👎✓" if self.feedback == "2;" else "👎"
+                    yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up")
+                    yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down")
                     yield Button("🔄", classes="action-button regenerate-button", id="regenerate") # Emoji for regenerate
                     yield Button("↪️", id="continue-response-button", classes="action-button continue-button")
 

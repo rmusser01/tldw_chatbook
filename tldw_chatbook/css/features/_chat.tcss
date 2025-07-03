@@ -43,6 +43,18 @@
     /* align-self: stretch; REMOVED */
     margin-top: 0;
     padding: 0; /* No padding for button */
+    transition: background 0.2s, color 0.2s;
+}
+
+/* Stop button state - when button is in stop mode */
+.send-button:disabled {
+    opacity: 0.7;
+}
+
+/* Visual feedback for stop state */
+.send-button.stop-state {
+    background: $error;
+    color: white;
 }
 
 .stop-button {

@@ -1391,6 +1391,23 @@ top_p = 0.95
 min_p = 0.05
 top_k = 50
 strip_thinking_tags = true
+use_enhanced_window = false  # Enable enhanced chat window with image support
+
+# Image support settings (when use_enhanced_window = true)
+[chat.images]
+enabled = true
+default_render_mode = "auto"  # auto, pixels, regular
+max_size_mb = 10.0
+auto_resize = true
+resize_max_dimension = 2048
+save_location = "~/Downloads"
+supported_formats = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
+
+[chat.images.terminal_overrides]
+kitty = "regular"
+wezterm = "regular"
+iterm2 = "regular"
+default = "pixels"
 
 [character_defaults]
 # Default settings specifically for the 'Character' tab

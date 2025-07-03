@@ -224,6 +224,16 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         loguru_logger.debug(f"Streaming for {selected_provider} set to {should_stream} based on config.")
     else:
         loguru_logger.debug("No provider selected, streaming defaults to False for this request.")
+    
+    # Check streaming checkbox to override provider setting
+    try:
+        streaming_checkbox = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+        streaming_override = streaming_checkbox.value
+        if streaming_override != should_stream:
+            loguru_logger.info(f"Streaming override: checkbox={streaming_override}, provider default={should_stream}")
+            should_stream = streaming_override
+    except QueryError:
+        loguru_logger.debug("Streaming checkbox not found, using provider default")
 
     # --- Integration of Active Character Data ---
     system_prompt_from_ui = system_prompt_widget.text # This is the system prompt from the LEFT sidebar
@@ -660,13 +670,197 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
 
     elif "thumb-up-button" in button_classes:
         logging.info(f"Action: Thumb Up clicked for {message_role} message.")
-        button.label = "👍(OK)"
-        # Add DB interaction for feedback if needed
+        
+        # Import the dialog
+        from ...Widgets.feedback_dialog import FeedbackDialog
+        
+        # Get current feedback
+        current_feedback = getattr(action_widget, 'feedback', None)
+        existing_comment = ""
+        
+        # Extract existing comment if present
+        if current_feedback and current_feedback.startswith("1;"):
+            parts = current_feedback.split(";", 1)
+            if len(parts) > 1:
+                existing_comment = parts[1]
+        
+        # Define callback to handle dialog result
+        def on_feedback_ready(result):
+            if result is None:
+                # User cancelled
+                return
+            
+            feedback_type, comment = result
+            
+            # Build feedback string
+            if comment:
+                new_feedback = f"{feedback_type};{comment}"
+            else:
+                new_feedback = f"{feedback_type};"
+            
+            # Check if this is a toggle (same feedback without comment)
+            if current_feedback == "1;" and new_feedback == "1;":
+                new_feedback = None  # Clear feedback
+            
+            # Save feedback to DB if we have the necessary info
+            if db and action_widget.message_id_internal and action_widget.message_version_internal is not None:
+                try:
+                    success = db.update_message_feedback(
+                        action_widget.message_id_internal,
+                        new_feedback,
+                        action_widget.message_version_internal
+                    )
+                    
+                    if success:
+                        action_widget.message_version_internal += 1
+                        action_widget.feedback = new_feedback
+                        
+                        # Update button appearance
+                        if new_feedback and new_feedback.startswith("1;"):
+                            button.label = "👍✓"
+                            app.notify("Feedback saved: Thumbs up", severity="information", timeout=2)
+                        else:
+                            button.label = "👍"
+                            app.notify("Feedback cleared", severity="information", timeout=2)
+                        
+                        # Clear the other thumb button if it was selected
+                        try:
+                            other_button = action_widget.query_one("#thumb-down", Button)
+                            other_button.label = "👎"
+                        except:
+                            pass
+                            
+                        loguru_logger.info(f"Message {action_widget.message_id_internal} feedback updated")
+                    else:
+                        loguru_logger.error(f"update_message_feedback returned False")
+                        app.notify("Failed to save feedback", severity="error")
+                        
+                except ConflictError as e:
+                    loguru_logger.error(f"Conflict updating feedback: {e}")
+                    app.notify("Feedback conflict - please reload chat", severity="error")
+                except Exception as e:
+                    loguru_logger.error(f"Error updating feedback: {e}")
+                    app.notify(f"Failed to save feedback: {e}", severity="error")
+            else:
+                # No DB - just update UI
+                if new_feedback:
+                    button.label = "👍✓"
+                    action_widget.feedback = new_feedback
+                else:
+                    button.label = "👍"
+                    action_widget.feedback = None
+                    
+                # Clear the other thumb
+                try:
+                    other_button = action_widget.query_one("#thumb-down", Button)
+                    other_button.label = "👎"
+                except:
+                    pass
+        
+        # Show the dialog
+        dialog = FeedbackDialog(
+            feedback_type="1",
+            existing_comment=existing_comment,
+            callback=on_feedback_ready
+        )
+        app.push_screen(dialog)
 
     elif "thumb-down-button" in button_classes:
         logging.info(f"Action: Thumb Down clicked for {message_role} message.")
-        button.label = "👎(OK)"
-        # Add DB interaction for feedback if needed
+        
+        # Import the dialog
+        from ...Widgets.feedback_dialog import FeedbackDialog
+        
+        # Get current feedback
+        current_feedback = getattr(action_widget, 'feedback', None)
+        existing_comment = ""
+        
+        # Extract existing comment if present
+        if current_feedback and current_feedback.startswith("2;"):
+            parts = current_feedback.split(";", 1)
+            if len(parts) > 1:
+                existing_comment = parts[1]
+        
+        # Define callback to handle dialog result
+        def on_feedback_ready(result):
+            if result is None:
+                # User cancelled
+                return
+            
+            feedback_type, comment = result
+            
+            # Build feedback string
+            if comment:
+                new_feedback = f"{feedback_type};{comment}"
+            else:
+                new_feedback = f"{feedback_type};"
+            
+            # Check if this is a toggle (same feedback without comment)
+            if current_feedback == "2;" and new_feedback == "2;":
+                new_feedback = None  # Clear feedback
+            
+            # Save feedback to DB if we have the necessary info
+            if db and action_widget.message_id_internal and action_widget.message_version_internal is not None:
+                try:
+                    success = db.update_message_feedback(
+                        action_widget.message_id_internal,
+                        new_feedback,
+                        action_widget.message_version_internal
+                    )
+                    
+                    if success:
+                        action_widget.message_version_internal += 1
+                        action_widget.feedback = new_feedback
+                        
+                        # Update button appearance
+                        if new_feedback and new_feedback.startswith("2;"):
+                            button.label = "👎✓"
+                            app.notify("Feedback saved: Thumbs down", severity="information", timeout=2)
+                        else:
+                            button.label = "👎"
+                            app.notify("Feedback cleared", severity="information", timeout=2)
+                        
+                        # Clear the other thumb button if it was selected
+                        try:
+                            other_button = action_widget.query_one("#thumb-up", Button)
+                            other_button.label = "👍"
+                        except:
+                            pass
+                            
+                        loguru_logger.info(f"Message {action_widget.message_id_internal} feedback updated")
+                    else:
+                        loguru_logger.error(f"update_message_feedback returned False")
+                        app.notify("Failed to save feedback", severity="error")
+                        
+                except ConflictError as e:
+                    loguru_logger.error(f"Conflict updating feedback: {e}")
+                    app.notify("Feedback conflict - please reload chat", severity="error")
+                except Exception as e:
+                    loguru_logger.error(f"Error updating feedback: {e}")
+                    app.notify(f"Failed to save feedback: {e}", severity="error")
+            else:
+                # No DB - just update UI
+                if new_feedback:
+                    button.label = "👎✓"
+                    action_widget.feedback = new_feedback
+                else:
+                    button.label = "👎"
+                    action_widget.feedback = None
+                    
+                # Clear the other thumb
+                try:
+                    other_button = action_widget.query_one("#thumb-up", Button)
+                    other_button.label = "👍"
+                except:
+                    pass
+        
+        # Show the dialog
+        dialog = FeedbackDialog(
+            feedback_type="2",
+            existing_comment=existing_comment,
+            callback=on_feedback_ready
+        )
+        app.push_screen(dialog)
 
     elif "delete-button" in button_classes:
         logging.info("Action: Delete clicked for %s message: '%s...'", message_role, message_text[:50])
@@ -807,6 +1001,16 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 f"Streaming for REGENERATION with {selected_provider_regen} set to {should_stream_regen} based on config.")
         else:
             loguru_logger.debug("No provider selected for REGENERATION, streaming defaults to False.")
+            
+        # Check streaming checkbox to override provider setting for regeneration
+        try:
+            streaming_checkbox_regen = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+            streaming_override_regen = streaming_checkbox_regen.value
+            if streaming_override_regen != should_stream_regen:
+                loguru_logger.info(f"Streaming override for REGENERATION: checkbox={streaming_override_regen}, provider default={should_stream_regen}")
+                should_stream_regen = streaming_override_regen
+        except QueryError:
+            loguru_logger.debug("Streaming checkbox not found for REGENERATION, using provider default")
         # --- End of Integration & Streaming Config for REGENERATION ---
 
         llm_max_tokens_value_regen = safe_int(llm_max_tokens_widget_regen.value, 1024, "llm_max_tokens")
@@ -1451,7 +1655,8 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
                 message_version=msg_data.get('version'),
                 timestamp=msg_data.get('timestamp'),
                 image_data=msg_data.get('image_data'),
-                image_mime_type=msg_data.get('image_mime_type')
+                image_mime_type=msg_data.get('image_mime_type'),
+                feedback=msg_data.get('feedback')
             )
             # Styling class already handled by ChatMessage constructor based on role "User" or other
             await chat_log_widget_disp.mount(chat_msg_widget_for_display)
@@ -1552,7 +1757,9 @@ async def load_branched_conversation_history_ui(app: 'TldwCli', target_conversat
             timestamp=msg_data.get('timestamp'),
             image_data=image_data_for_widget,
             image_mime_type=msg_data.get('image_mime_type'),
-            message_id=msg_data['id']
+            message_id=msg_data['id'],
+            message_version=msg_data.get('version'),
+            feedback=msg_data.get('feedback')
         )
         await chat_log_widget.mount(chat_message_widget)
 
@@ -2434,7 +2641,17 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     if selected_provider: # Log provider's normal streaming setting for info
         provider_settings_key = selected_provider.lower().replace(" ", "_")
         provider_specific_settings = app.app_config.get("api_settings", {}).get(provider_settings_key, {})
-        loguru_logger.debug(f"Provider {selected_provider} normally streams: {provider_specific_settings.get('streaming', False)}. Forcing stream for continuation.")
+        loguru_logger.debug(f"Provider {selected_provider} normally streams: {provider_specific_settings.get('streaming', False)}. Default stream for continuation.")
+    
+    # Check streaming checkbox to override even for continuation
+    try:
+        streaming_checkbox_cont = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+        streaming_override_cont = streaming_checkbox_cont.value
+        if not streaming_override_cont:
+            loguru_logger.info(f"Streaming override for CONTINUATION: checkbox=False, overriding default continuation streaming")
+            should_stream = False
+    except QueryError:
+        loguru_logger.debug("Streaming checkbox not found for CONTINUATION, using default streaming=True")
 
     # API Key Fetching
     api_key_for_call = None

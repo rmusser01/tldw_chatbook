@@ -1,7 +1,15 @@
+# OS-specific files
+.DS_Store
 .DS_STORE
+
+# IDE files
 .idea
 .claude
+
+# Testing
 .hypothesis/
+
+# PyPI credentials (never commit!)
 .pypirc
 # Byte-compiled / optimized / DLL files
 __pycache__/

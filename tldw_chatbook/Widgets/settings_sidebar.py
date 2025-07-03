@@ -116,6 +116,15 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 text=default_system_prompt,
                 classes=system_prompt_classes,
             )
+            
+            # Streaming toggle
+            yield Checkbox(
+                "Enable Streaming",
+                id=f"{id_prefix}-streaming-enabled-checkbox",
+                value=True,  # Default to enabled for better UX
+                classes="streaming-toggle",
+                tooltip="Enable/disable streaming responses. When disabled, responses appear all at once."
+            )
 
         # -------------------------------------------------------------------
         # RAG Settings (Prominent Panel - Always visible)

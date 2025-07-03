@@ -96,6 +96,7 @@ from .LLM_Calls.LLM_API_Calls_Local import (
 )
 from tldw_chatbook.config import get_chachanotes_db_path, settings, chachanotes_db as global_db_instance
 from .UI.Chat_Window import ChatWindow
+from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
 from .UI.Conv_Char_Window import CCPWindow
 from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
@@ -1358,9 +1359,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def compose_content_area(self) -> ComposeResult:
         """Yields the main window component for each tab."""
         content_area_start = time.perf_counter()
+        
+        # Check config for which chat window to use
+        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+        chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
+        logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
+        
         with Container(id="content"):
             windows = [
-                ("chat", ChatWindow, "chat-window"),
+                ("chat", chat_window_class, "chat-window"),
                 ("ccp", CCPWindow, "conversations_characters_prompts-window"),
                 ("notes", NotesWindow, "notes-window"),
                 ("media", MediaWindow, "media-window"),

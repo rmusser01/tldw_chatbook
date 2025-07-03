@@ -28,6 +28,8 @@ def check_distribution():
     expected_patterns = [
         "LICENSE",
         "README.md",
+        "CLAUDE.md",
+        "CHANGELOG.md",
         "MANIFEST.in",
         "pyproject.toml",
         "requirements.txt",
@@ -35,7 +37,14 @@ def check_distribution():
         "tldw_chatbook/app.py",
         "tldw_chatbook/css/*.tcss",
         "tldw_chatbook/css/Themes/*.tcss",
+        "tldw_chatbook/css/core/*.tcss",
+        "tldw_chatbook/css/features/*.tcss",
+        "tldw_chatbook/css/layout/*.tcss",
         "tldw_chatbook/Config_Files/*.json",
+        "tldw_chatbook/Config_Files/*.md",
+        "tldw_chatbook/Third_Party/*.py",
+        "tldw_chatbook/Third_Party/*.txt",
+        "tldw_chatbook/Third_Party/*.md",
     ]
     
     found_files = set()
@@ -76,6 +85,17 @@ def check_distribution():
             # Check for data files in wheel
             data_files = [f for f in wheel_files if '.dist-info' not in f and not f.endswith('.py')]
             print(f"Found {len(data_files)} non-Python files in wheel")
+    
+    # Summary of file types found
+    print("\n--- File Type Summary ---")
+    py_files = [f for f in found_files if f.endswith('.py')]
+    tcss_files = [f for f in found_files if f.endswith('.tcss')]
+    json_files = [f for f in found_files if f.endswith('.json')]
+    md_files = [f for f in found_files if f.endswith('.md')]
+    print(f"Python files: {len(py_files)}")
+    print(f"CSS (tcss) files: {len(tcss_files)}")
+    print(f"JSON files: {len(json_files)}")
+    print(f"Markdown files: {len(md_files)}")
     
     if missing_patterns:
         print(f"\nWarning: {len(missing_patterns)} expected patterns not found!")

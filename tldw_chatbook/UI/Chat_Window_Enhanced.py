@@ -38,6 +38,7 @@ class ChatWindowEnhanced(Container):
     BINDINGS = [
         ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
         ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),
+        ("ctrl+e", "edit_focused_message", "Edit focused message"),
     ]
     
     # CSS for hidden elements
@@ -63,6 +64,13 @@ class ChatWindowEnhanced(Container):
     # Track pending image attachment
     pending_image = reactive(None)
     
+    # Track button state for Send/Stop functionality
+    is_send_button = reactive(True)
+    
+    # Debouncing for button clicks
+    _last_send_stop_click = 0
+    DEBOUNCE_MS = 300
+    
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
@@ -71,7 +79,10 @@ class ChatWindowEnhanced(Container):
     async def on_mount(self) -> None:
         """Called when the widget is mounted."""
         # Token counter will be initialized when tab is switched to chat
-        pass
+        # Watch for streaming state changes
+        self._update_button_state()
+        # Set up periodic state checking (every 500ms)
+        self.set_interval(0.5, self._check_streaming_state)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
@@ -91,7 +102,7 @@ class ChatWindowEnhanced(Container):
 
         # Map of button IDs to their handler functions
         button_handlers = {
-            "send-chat": self.handle_enhanced_send_button,  # Use enhanced handler
+            "send-stop-chat": self.handle_send_stop_button,  # New unified handler
             "respond-for-me-button": chat_events.handle_respond_for_me_button_pressed,
             "toggle-chat-left-sidebar": chat_events.handle_chat_tab_sidebar_toggle,
             "toggle-chat-right-sidebar": chat_events.handle_chat_tab_sidebar_toggle,
@@ -236,7 +247,13 @@ class ChatWindowEnhanced(Container):
                              classes="sidebar-toggle")
                 yield TextArea(id="chat-input", classes="chat-input")
                 yield Button("📎", id="attach-image", classes="action-button attach-button")
-                yield Button(get_char(EMOJI_SEND, FALLBACK_SEND), id="send-chat", classes="send-button")
+                yield Button(
+                    get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
+                            FALLBACK_SEND if self.is_send_button else FALLBACK_STOP),
+                    id="send-stop-chat",
+                    classes="send-button",
+                    tooltip="Send message" if self.is_send_button else "Stop generation"
+                )
                 yield Button("💡", id="respond-for-me-button", classes="action-button suggest-button")
                 logger.debug("'respond-for-me-button' composed.")
                 yield Button(get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), id="toggle-chat-right-sidebar",
@@ -287,6 +304,144 @@ class ChatWindowEnhanced(Container):
         """Action for keyboard shortcut to expand sidebar."""
         from ..Event_Handlers.Chat_Events import chat_events_sidebar_resize
         await chat_events_sidebar_resize.handle_sidebar_expand(self.app_instance, None)
+    
+    async def action_edit_focused_message(self) -> None:
+        """Action for keyboard shortcut to edit the focused message."""
+        from ..Event_Handlers.Chat_Events import chat_events
+        
+        try:
+            # Get the chat log container
+            chat_log = self.app_instance.query_one("#chat-log", VerticalScroll)
+            
+            # Find the focused widget
+            focused_widget = self.app_instance.focused
+            
+            # Check if the focused widget is a ChatMessage or if we need to find one
+            from ..Widgets.chat_message import ChatMessage
+            from ..Widgets.chat_message_enhanced import ChatMessageEnhanced
+            
+            if isinstance(focused_widget, (ChatMessage, ChatMessageEnhanced)):
+                message_widget = focused_widget
+            else:
+                # Try to find the last message in the chat log as a fallback
+                messages = chat_log.query(ChatMessage)
+                enhanced_messages = chat_log.query(ChatMessageEnhanced)
+                all_messages = list(messages) + list(enhanced_messages)
+                if all_messages:
+                    message_widget = all_messages[-1]
+                    message_widget.focus()
+                else:
+                    logger.debug("No messages found to edit")
+                    return
+            
+            # Find the edit button in the message widget
+            try:
+                edit_button = message_widget.query_one(".edit-button", Button)
+                # Trigger the edit action by simulating button press
+                await chat_events.handle_chat_action_button_pressed(
+                    self.app_instance, 
+                    edit_button, 
+                    message_widget
+                )
+            except Exception as e:
+                logger.debug(f"Could not find or click edit button: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error in edit_focused_message action: {e}")
+            self.app_instance.notify("Could not enter edit mode", severity="warning")
+    
+    def _update_button_state(self) -> None:
+        """Update the send/stop button based on streaming state."""
+        is_streaming = self.app_instance.get_current_chat_is_streaming()
+        has_worker = (hasattr(self.app_instance, 'current_chat_worker') and 
+                     self.app_instance.current_chat_worker and 
+                     self.app_instance.current_chat_worker.is_running)
+        
+        # Update button state
+        self.is_send_button = not (is_streaming or has_worker)
+        
+        # Update button appearance
+        try:
+            button = self.query_one("#send-stop-chat", Button)
+            button.label = get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP,
+                                  FALLBACK_SEND if self.is_send_button else FALLBACK_STOP)
+            button.tooltip = "Send message" if self.is_send_button else "Stop generation"
+            
+            # Update button styling
+            if self.is_send_button:
+                button.remove_class("stop-state")
+            else:
+                button.add_class("stop-state")
+        except Exception as e:
+            logger.debug(f"Could not update button: {e}")
+    
+    def watch_is_send_button(self, is_send: bool) -> None:
+        """Watch for changes to button state to update appearance."""
+        self._update_button_state()
+    
+    def _check_streaming_state(self) -> None:
+        """Periodically check streaming state and update button."""
+        self._update_button_state()
+    
+    async def handle_send_stop_button(self, app_instance, event):
+        """Unified handler for Send/Stop button with debouncing."""
+        from ..Event_Handlers.Chat_Events import chat_events
+        import time
+        
+        current_time = time.time() * 1000
+        
+        # Debounce rapid clicks
+        if current_time - self._last_send_stop_click < self.DEBOUNCE_MS:
+            logger.debug("Button click debounced")
+            return
+        self._last_send_stop_click = current_time
+        
+        # Disable button during operation
+        try:
+            button = self.query_one("#send-stop-chat", Button)
+            button.disabled = True
+        except Exception:
+            pass
+        
+        try:
+            # Check current state and route to appropriate handler
+            if self.app_instance.get_current_chat_is_streaming() or (
+                hasattr(self.app_instance, 'current_chat_worker') and 
+                self.app_instance.current_chat_worker and 
+                self.app_instance.current_chat_worker.is_running
+            ):
+                # Stop operation
+                logger.info("Send/Stop button pressed - stopping generation")
+                await chat_events.handle_stop_chat_generation_pressed(app_instance, event)
+            else:
+                # Send operation - use enhanced handler that includes image
+                logger.info("Send/Stop button pressed - sending message")
+                await self.handle_enhanced_send_button(app_instance, event)
+        finally:
+            # Re-enable button and update state after operation
+            try:
+                button = self.query_one("#send-stop-chat", Button)
+                button.disabled = False
+            except Exception:
+                pass
+            self._update_button_state()
+    
+    async def handle_enhanced_send_button(self, app_instance, event):
+        """Enhanced send handler that includes image data."""
+        from ..Event_Handlers.Chat_Events import chat_events
+        
+        # First call the original handler
+        await chat_events.handle_chat_send_button_pressed(app_instance, event)
+        
+        # Clear any pending image after sending
+        if self.pending_image:
+            self.pending_image = None
+            attach_button = self.query_one("#attach-image")
+            attach_button.label = "📎"
+            
+            # Hide indicator
+            indicator = self.query_one("#image-attachment-indicator")
+            indicator.add_class("hidden")
 
 #
 # End of Chat_Window_Enhanced.py
