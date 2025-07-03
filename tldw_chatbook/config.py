@@ -1419,6 +1419,14 @@ top_p = 0.9
 min_p = 0.0 # Check if API supports this
 top_k = 100 # Check if API supports this
 
+[notes]
+# Default settings for the Notes tab
+sync_directory = "~/Documents/Notes"  # Default directory for notes synchronization
+auto_sync_enabled = false            # Enable automatic sync on startup
+sync_on_close = false               # Sync when closing the app
+conflict_resolution = "newer_wins"   # Default conflict resolution: newer_wins, ask, disk_wins, db_wins
+sync_direction = "bidirectional"     # Default sync direction: bidirectional, disk_to_db, db_to_disk
+
 
 # ==========================================================
 # Default/Template Prompts

@@ -386,6 +386,12 @@ class NotesSyncWidgetImproved(ModalScreen):
         # Update status
         self.update_status()
         
+        # Load saved sync directory
+        from tldw_chatbook.config import get_cli_setting
+        saved_dir = get_cli_setting("notes", "sync_directory", "~/Documents/Notes")
+        folder_input = self.query_one("#sync-folder-input", Input)
+        folder_input.value = str(Path(saved_dir).expanduser())
+        
         # Add some example activities
         activity = self.query_one("#activity-section", RecentActivitySection)
         activity.add_activity("Sync widget opened", "info")
@@ -426,13 +432,36 @@ class NotesSyncWidgetImproved(ModalScreen):
                 folder_input = self.query_one("#sync-folder-input", Input)
                 folder_input.value = str(path)
                 
+                # Save the selected directory to config
+                from tldw_chatbook.config import set_cli_setting
+                if set_cli_setting("notes", "sync_directory", str(path)):
+                    logger.info(f"Saved notes sync directory to config: {path}")
+                
                 # Update status card with folder name
                 status_card = self.query_one("#status-card", SyncStatusCard)
                 folder_name = path.name if path.name else "Notes"
                 status_header = status_card.query_one(".status-header", Static)
                 status_header.update(f"📁 {folder_name}")
         
-        current_path = Path.home() / "Documents" / "Notes"
+        # Get the configured notes sync directory with intelligent fallback
+        from tldw_chatbook.config import get_cli_setting
+        default_notes_dir = get_cli_setting("notes", "sync_directory", "~/Documents/Notes")
+        
+        # Expand user path and resolve
+        current_path = Path(default_notes_dir).expanduser().resolve()
+        
+        # Intelligent fallback if directory doesn't exist
+        if not current_path.exists():
+            # Try to create it
+            try:
+                current_path.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Created notes directory: {current_path}")
+            except (OSError, PermissionError) as e:
+                logger.warning(f"Could not create notes directory {current_path}: {e}")
+                # Fallback to user's home directory
+                current_path = Path.home()
+                self.notify(f"Notes directory not accessible, using: {current_path}", severity="warning")
+        
         await self.app.push_screen(
             SelectDirectory(str(current_path), title="Select Notes Folder"),
             callback=folder_selected
