@@ -2,14 +2,19 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Dict, Any
 from pathlib import Path
+import asyncio
 #
 # 3rd-Party Imports
 from loguru import logger
 from textual.app import ComposeResult
+from textual.css.query import QueryError
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.widgets import Static, Button, Input, Select, Checkbox, TextArea, Label, RadioSet, RadioButton, Collapsible, ListView, ListItem, Markdown, LoadingIndicator, TabbedContent, TabPane # Button, ListView, ListItem, Label are already here
+from textual.worker import Worker
+from textual.work import work
+from textual.reactive import reactive
 
 # Configure logger with context
 logger = logger.bind(module="Ingest_Window")
@@ -84,6 +89,12 @@ class IngestWindow(Container):
             logger.debug("All ingest views hidden, waiting for reactive watcher to set default")
         except QueryError as e:
             logger.error(f"Error during IngestWindow mount: {e}")
+    
+    async def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Handle TextArea changes."""
+        if event.text_area.id == "ingest-local-web-urls":
+            # Update URL count when user types/pastes
+            self._update_url_count()
     
     def _get_file_filters_for_media_type(self, media_type: str):
         """Returns appropriate file filters for the given media type."""
@@ -375,9 +386,20 @@ class IngestWindow(Container):
             try:
                 urls_textarea = self.query_one("#ingest-local-web-urls", TextArea)
                 urls_textarea.clear()
+                self._update_url_count()
                 logger.info("Cleared web article URLs")
             except Exception as e:
                 logger.error(f"Error clearing web URLs: {e}")
+        
+        # Handle web article import URLs button
+        elif button_id == "ingest-local-web-import-urls":
+            event.stop()
+            await self._handle_import_urls_from_file()
+        
+        # Handle web article remove duplicates button
+        elif button_id == "ingest-local-web-remove-duplicates":
+            event.stop()
+            await self._handle_remove_duplicate_urls()
         
         # Handle local plaintext process button
         elif button_id == "ingest-local-plaintext-process":
@@ -840,7 +862,11 @@ class IngestWindow(Container):
                 yield Static("Web Article URLs", classes="sidebar-title")
                 yield Label("Enter URLs (one per line):")
                 yield TextArea(id="ingest-local-web-urls", classes="ingest-textarea-medium")
-                yield Button("Clear URLs", id="ingest-local-web-clear-urls")
+                with Horizontal(classes="ingest-controls-row"):
+                    yield Button("Clear URLs", id="ingest-local-web-clear-urls")
+                    yield Button("Import from File", id="ingest-local-web-import-urls")
+                    yield Button("Remove Duplicates", id="ingest-local-web-remove-duplicates")
+                yield Label("URL Count: 0 valid, 0 invalid", id="ingest-local-web-url-count", classes="ingest-label")
             
             # Processing Options Section
             with Container(classes="ingest-options-section"):
@@ -1140,6 +1166,11 @@ class IngestWindow(Container):
             self.app.notify("Error: UI elements not found", severity="error")
             return
         
+        # Check if already processing
+        if hasattr(self, '_web_scraping_worker') and self._web_scraping_worker and not self._web_scraping_worker.is_finished:
+            self.app.notify("Already processing URLs. Please wait or stop the current process.", severity="warning")
+            return
+        
         # Show loading state
         loading_indicator.display = True
         loading_indicator.classes = loading_indicator.classes - {"hidden"}
@@ -1291,7 +1322,6 @@ class IngestWindow(Container):
     
     def _parse_cookie_string(self, cookie_str: str) -> List[Dict[str, Any]]:
         """Parse cookie string into format expected by playwright."""
-        from typing import List, Dict, Any
         cookies = []
         # Simple cookie parsing - format: "name=value; name2=value2"
         for cookie_part in cookie_str.split(';'):
@@ -1305,6 +1335,229 @@ class IngestWindow(Container):
                     'path': '/'
                 })
         return cookies
+    
+    def _validate_url(self, url: str) -> bool:
+        """Basic URL validation."""
+        import re
+        # Basic URL pattern
+        url_pattern = re.compile(
+            r'^https?://'  # http:// or https://
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+            r'localhost|'  # localhost...
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+            r'(?::\d+)?'  # optional port
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        return bool(url_pattern.match(url))
+    
+    def _update_url_count(self) -> None:
+        """Update the URL count label based on current TextArea content."""
+        try:
+            urls_textarea = self.query_one("#ingest-local-web-urls", TextArea)
+            url_count_label = self.query_one("#ingest-local-web-url-count", Label)
+            
+            urls_text = urls_textarea.text.strip()
+            if not urls_text:
+                url_count_label.update("URL Count: 0 valid, 0 invalid")
+                return
+            
+            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            valid_count = sum(1 for url in urls if self._validate_url(url))
+            invalid_count = len(urls) - valid_count
+            
+            url_count_label.update(f"URL Count: {valid_count} valid, {invalid_count} invalid")
+        except Exception as e:
+            logger.error(f"Error updating URL count: {e}")
+    
+    async def _handle_import_urls_from_file(self) -> None:
+        """Handle importing URLs from a file."""
+        from ..Third_Party.textual_fspicker import FileOpen, Filters
+        
+        def handle_file_selected(file_path: Path | None) -> None:
+            if file_path and file_path.exists():
+                try:
+                    content = file_path.read_text(encoding='utf-8')
+                    urls_textarea = self.query_one("#ingest-local-web-urls", TextArea)
+                    
+                    # Append to existing URLs
+                    existing_text = urls_textarea.text.strip()
+                    if existing_text:
+                        urls_textarea.text = existing_text + '\n' + content
+                    else:
+                        urls_textarea.text = content
+                    
+                    self._update_url_count()
+                    self.app.notify(f"Imported URLs from {file_path.name}", severity="information")
+                except Exception as e:
+                    logger.error(f"Error importing URLs from file: {e}")
+                    self.app.notify(f"Error importing URLs: {str(e)}", severity="error")
+        
+        await self.app.push_screen(
+            FileOpen(
+                title="Select URL List File",
+                filters=Filters(
+                    ("Text Files", lambda p: p.suffix.lower() in (".txt", ".csv")),
+                    ("All Files", lambda _: True)
+                )
+            ),
+            handle_file_selected
+        )
+    
+    async def _handle_remove_duplicate_urls(self) -> None:
+        """Remove duplicate URLs from the TextArea."""
+        try:
+            urls_textarea = self.query_one("#ingest-local-web-urls", TextArea)
+            urls_text = urls_textarea.text.strip()
+            
+            if not urls_text:
+                self.app.notify("No URLs to process", severity="warning")
+                return
+            
+            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_urls = []
+            for url in urls:
+                if url not in seen:
+                    seen.add(url)
+                    unique_urls.append(url)
+            
+            removed_count = len(urls) - len(unique_urls)
+            
+            if removed_count > 0:
+                urls_textarea.text = '\n'.join(unique_urls)
+                self._update_url_count()
+                self.app.notify(f"Removed {removed_count} duplicate URLs", severity="information")
+            else:
+                self.app.notify("No duplicate URLs found", severity="information")
+                
+        except Exception as e:
+            logger.error(f"Error removing duplicate URLs: {e}")
+            self.app.notify(f"Error: {str(e)}", severity="error")
+    
+    @work(thread=True)
+    async def _process_urls_worker(self, data: dict) -> dict:
+        """Worker to process URLs concurrently."""
+        urls = data['urls']
+        custom_cookies = data['custom_cookies']
+        title_override = data['title_override']
+        author_override = data['author_override']
+        keywords = data['keywords']
+        js_render = data['js_render']
+        css_selector = data['css_selector']
+        
+        # Import scraping function
+        from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
+        
+        processed_count = 0
+        error_count = 0
+        failed_urls = []
+        results = []
+        
+        # Process URLs with limited concurrency
+        max_concurrent = 3
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def process_single_url(idx: int, url: str) -> dict:
+            async with semaphore:
+                try:
+                    # Update progress
+                    self.call_from_thread(
+                        self._update_scraping_progress,
+                        f"[{idx}/{len(urls)}] Scraping: {url}"
+                    )
+                    
+                    # Scrape the article
+                    article_data = await scrape_article(url, custom_cookies=custom_cookies)
+                    
+                    if not article_data.get('extraction_successful', False):
+                        return {
+                            'url': url,
+                            'status': 'failed',
+                            'error': 'Extraction failed'
+                        }
+                    
+                    # Override metadata if provided
+                    title = title_override or article_data.get('title', url)
+                    author = author_override or article_data.get('author', '')
+                    content = article_data.get('content', '')
+                    
+                    if not content:
+                        return {
+                            'url': url,
+                            'status': 'failed',
+                            'error': 'No content found'
+                        }
+                    
+                    # Add to media database
+                    media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
+                        url=url,
+                        title=title,
+                        media_type="web_article",
+                        content=content,
+                        keywords=keywords,
+                        author=author,
+                        metadata={
+                            'publication_date': article_data.get('date'),
+                            'extraction_method': 'trafilatura',
+                            'js_rendered': js_render,
+                            'custom_selector': css_selector
+                        }
+                    )
+                    
+                    if media_id:
+                        return {
+                            'url': url,
+                            'status': 'success',
+                            'title': title,
+                            'media_id': media_id
+                        }
+                    else:
+                        return {
+                            'url': url,
+                            'status': 'failed',
+                            'error': f'Database error: {msg}'
+                        }
+                    
+                except Exception as e:
+                    logger.error(f"Error processing URL {url}: {e}", exc_info=True)
+                    return {
+                        'url': url,
+                        'status': 'failed',
+                        'error': str(e)
+                    }
+        
+        # Create tasks for all URLs
+        tasks = [process_single_url(idx + 1, url) for idx, url in enumerate(urls)]
+        
+        # Process all URLs concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Count results
+        for result in results:
+            if isinstance(result, Exception):
+                error_count += 1
+            elif isinstance(result, dict):
+                if result['status'] == 'success':
+                    processed_count += 1
+                else:
+                    error_count += 1
+                    failed_urls.append(result)
+        
+        return {
+            'processed_count': processed_count,
+            'error_count': error_count,
+            'failed_urls': failed_urls,
+            'results': results
+        }
+    
+    def _update_scraping_progress(self, message: str) -> None:
+        """Update the status area with progress message."""
+        try:
+            status_area = self.query_one("#ingest-local-web-status", TextArea)
+            status_area.append(f"\n{message}")
+        except Exception as e:
+            logger.error(f"Error updating progress: {e}")
     
     async def _read_text_file(self, file_path: Path, encoding: str) -> str | None:
         """Read a text file with specified encoding."""
@@ -1367,7 +1620,7 @@ class IngestWindow(Container):
             with Container(classes="ingest-intro-section"):
                 yield Static("📰 Website Subscriptions & URL Monitoring", classes="sidebar-title")
                 yield Markdown(
-                    "Monitor RSS/Atom feeds and track changes to specific web pages. "
+                    "Monitor RSS/Atom feeds, podcasts, and track changes to specific web pages. "
                     "Get notified when new content is available and automatically ingest it into your media library.",
                     classes="subscription-intro"
                 )
@@ -1378,7 +1631,10 @@ class IngestWindow(Container):
                 with Horizontal(classes="subscription-type-row"):
                     yield Label("Subscription Type:")
                     yield Select(
-                        [("RSS/Atom Feed", "rss"), ("Single URL", "url"), ("URL List", "url_list")],
+                        [("RSS/Atom Feed", "rss"), ("JSON Feed", "json_feed"), 
+                         ("Podcast RSS", "podcast"), ("Single URL", "url"), 
+                         ("URL List", "url_list"), ("Sitemap", "sitemap"), 
+                         ("API Endpoint", "api")],
                         id="subscription-type-select",
                         value="rss"
                     )
@@ -1389,47 +1645,163 @@ class IngestWindow(Container):
                 yield Label("Name:")
                 yield Input(id="subscription-name-input", placeholder="Tech News Feed")
                 
-                yield Label("Check Frequency:")
-                yield Select(
-                    [("Every 15 minutes", "900"), ("Every 30 minutes", "1800"), 
-                     ("Every hour", "3600"), ("Every 6 hours", "21600"), 
-                     ("Daily", "86400")],
-                    id="subscription-frequency-select",
-                    value="3600"
-                )
+                yield Label("Description (optional):")
+                yield Input(id="subscription-description-input", placeholder="Latest technology news and updates")
+                
+                # Organization fields
+                with Horizontal(classes="subscription-org-row"):
+                    with Vertical(classes="ingest-form-col"):
+                        yield Label("Tags (comma-separated):")
+                        yield Input(id="subscription-tags-input", placeholder="tech, news, ai")
+                    with Vertical(classes="ingest-form-col"):
+                        yield Label("Folder:")
+                        yield Input(id="subscription-folder-input", placeholder="Technology")
+                
+                # Priority and Frequency
+                with Horizontal(classes="subscription-priority-row"):
+                    with Vertical(classes="ingest-form-col"):
+                        yield Label("Priority:")
+                        yield Select(
+                            [("1 - Lowest", "1"), ("2 - Low", "2"), ("3 - Normal", "3"), 
+                             ("4 - High", "4"), ("5 - Highest", "5")],
+                            id="subscription-priority-select",
+                            value="3"
+                        )
+                    with Vertical(classes="ingest-form-col"):
+                        yield Label("Check Frequency:")
+                        yield Select(
+                            [("Every 15 minutes", "900"), ("Every 30 minutes", "1800"), 
+                             ("Every hour", "3600"), ("Every 6 hours", "21600"), 
+                             ("Daily", "86400"), ("Weekly", "604800")],
+                            id="subscription-frequency-select",
+                            value="3600"
+                        )
+                
+                with Collapsible(title="Authentication Options", collapsed=True):
+                    yield Label("Authentication Type:")
+                    yield Select(
+                        [("None", "none"), ("Basic Auth", "basic"), 
+                         ("Bearer Token", "bearer"), ("API Key", "api_key")],
+                        id="subscription-auth-type",
+                        value="none"
+                    )
+                    yield Label("Username/API Key:")
+                    yield Input(id="subscription-auth-username", placeholder="username or API key")
+                    yield Label("Password/Token (will be encrypted):")
+                    yield Input(id="subscription-auth-password", placeholder="password or token", password=True)
+                    yield Label("Custom Headers (JSON):")
+                    yield TextArea('{"User-Agent": "CustomBot/1.0"}', 
+                                 id="subscription-custom-headers", classes="ingest-textarea-small")
                 
                 with Collapsible(title="Advanced Options", collapsed=True):
                     yield Checkbox("Auto-ingest new items", False, id="subscription-auto-ingest")
+                    yield Checkbox("Extract full content (for RSS)", True, id="subscription-extract-full")
                     yield Label("Change Threshold (% for URLs):")
                     yield Input("10", id="subscription-change-threshold", type="integer")
                     yield Label("CSS Selectors to Ignore (for URLs):")
-                    yield TextArea(id="subscription-ignore-selectors", classes="ingest-textarea-small")
+                    yield TextArea(".ads, .timestamp, .cookie-banner",
+                                 id="subscription-ignore-selectors", classes="ingest-textarea-small")
+                    yield Label("Rate Limit (requests per minute):")
+                    yield Input("60", id="subscription-rate-limit", type="integer")
+                    yield Label("Auto-pause after failures:")
+                    yield Input("10", id="subscription-auto-pause-threshold", type="integer")
                 
                 yield Button("Add Subscription", id="subscription-add-button", variant="primary")
             
             # Active Subscriptions Section
             with Container(classes="ingest-subscriptions-list-section"):
                 yield Static("Active Subscriptions", classes="sidebar-title")
+                
+                # Filter controls
+                with Horizontal(classes="subscription-filter-controls"):
+                    yield Label("Filter by:")
+                    yield Select(
+                        [("All Types", "all"), ("RSS/Atom", "rss"), ("URLs", "url"), 
+                         ("Podcasts", "podcast"), ("APIs", "api")],
+                        id="subscription-type-filter",
+                        value="all"
+                    )
+                    yield Input(id="subscription-tag-filter", placeholder="Filter by tag...")
+                    yield Select(
+                        [("All", "all"), ("Active", "active"), ("Paused", "paused"), 
+                         ("Error", "error")],
+                        id="subscription-status-filter",
+                        value="all"
+                    )
+                
                 yield ListView(id="subscription-active-list", classes="subscription-list")
                 with Horizontal(classes="subscription-actions-row"):
                     yield Button("Check All Now", id="subscription-check-all-button")
                     yield Button("Import OPML", id="subscription-import-opml-button")
                     yield Button("Export", id="subscription-export-button")
+                    yield Button("Manage Templates", id="subscription-templates-button")
+            
+            # Health Dashboard Section
+            with Container(classes="ingest-health-dashboard-section"):
+                yield Static("📊 Subscription Health Dashboard", classes="sidebar-title")
+                
+                # Summary stats
+                with Horizontal(classes="health-stats-row"):
+                    with Vertical(classes="health-stat-card"):
+                        yield Static("Active", classes="stat-label")
+                        yield Static("0", id="stat-active-count", classes="stat-value")
+                    with Vertical(classes="health-stat-card"):
+                        yield Static("Paused", classes="stat-label")
+                        yield Static("0", id="stat-paused-count", classes="stat-value")
+                    with Vertical(classes="health-stat-card"):
+                        yield Static("Errors", classes="stat-label")
+                        yield Static("0", id="stat-error-count", classes="stat-value")
+                    with Vertical(classes="health-stat-card"):
+                        yield Static("Today's Items", classes="stat-label")
+                        yield Static("0", id="stat-today-items", classes="stat-value")
+                
+                # Failing subscriptions alert
+                with Container(id="failing-subscriptions-alert", classes="alert-container hidden"):
+                    yield Markdown(
+                        "⚠️ **Attention Required**: Some subscriptions are experiencing repeated failures.",
+                        classes="alert-message"
+                    )
+                    yield ListView(id="failing-subscriptions-list", classes="failing-list")
+                
+                # Recent activity log
+                yield Static("Recent Activity", classes="subsection-title")
+                yield TextArea("", id="subscription-activity-log", read_only=True, 
+                             classes="activity-log", max_height=10)
             
             # New Items Section
             with Container(classes="ingest-new-items-section"):
                 yield Static("New Items to Review", classes="sidebar-title")
-                yield Label("Filter by Source:")
-                yield Select(
-                    [("All Sources", "all")],
-                    id="subscription-filter-source",
-                    value="all"
-                )
+                
+                with Horizontal(classes="items-filter-row"):
+                    yield Label("Filter by Source:")
+                    yield Select(
+                        [("All Sources", "all")],
+                        id="subscription-filter-source",
+                        value="all"
+                    )
+                    yield Label("Status:")
+                    yield Select(
+                        [("New", "new"), ("Reviewed", "reviewed"), ("All", "all")],
+                        id="subscription-item-status-filter",
+                        value="new"
+                    )
+                
                 yield ListView(id="subscription-new-items-list", classes="subscription-items-list")
                 with Horizontal(classes="subscription-review-actions"):
                     yield Button("Accept Selected", id="subscription-accept-button", variant="success")
                     yield Button("Ignore Selected", id="subscription-ignore-button", variant="warning")
                     yield Button("Mark as Reviewed", id="subscription-mark-reviewed-button")
+                    yield Button("Apply Filters", id="subscription-apply-filters-button")
+            
+            # Smart Filters Section
+            with Container(classes="ingest-filters-section"):
+                yield Static("🔧 Smart Filters", classes="sidebar-title")
+                yield Markdown(
+                    "Create rules to automatically process items based on conditions.",
+                    classes="filters-intro"
+                )
+                yield ListView(id="subscription-filters-list", classes="filters-list")
+                yield Button("Add Filter Rule", id="subscription-add-filter-button")
             
             # Status Section
             with Container(classes="ingest-status-section"):
@@ -1439,8 +1811,9 @@ class IngestWindow(Container):
             # Placeholder Notice
             with Container(classes="placeholder-notice"):
                 yield Markdown(
-                    "**Note:** This is a placeholder interface. The subscription monitoring functionality "
-                    "is not yet implemented. See `SUBSCRIPTION_IMPLEMENTATION_PLAN.md` for details.",
+                    "**Note:** This is a placeholder interface showing enhanced features. The subscription "
+                    "monitoring functionality is not yet fully implemented. See `SUBSCRIPTION_IMPLEMENTATION_PLAN.md` "
+                    "for implementation details.",
                     classes="warning-notice"
                 )
 

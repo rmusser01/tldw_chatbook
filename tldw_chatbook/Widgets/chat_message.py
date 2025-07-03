@@ -16,6 +16,7 @@ from textual.widgets import Static, Button, Label # Added Label
 from textual.reactive import reactive
 #
 # Local Imports
+from tldw_chatbook.Utils.file_extraction import FileExtractor
 #
 #######################################################################################################################
 #
@@ -107,6 +108,9 @@ class ChatMessage(Widget):
     image_mime_type: reactive[Optional[str]] = reactive(None)
     # Store feedback (thumbs up/down)
     feedback: reactive[Optional[str]] = reactive(None)
+    # Store extracted files
+    _extracted_files = None
+    _file_extractor = None
 
     def __init__(self,
                  message: str,
@@ -160,6 +164,16 @@ class ChatMessage(Widget):
                 yield Button("Edit", classes="action-button edit-button")
                 yield Button("📋", classes="action-button copy-button", id="copy") # Emoji for copy
                 yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
+                
+                # Add file extraction button if files detected
+                if self._extracted_files is None:
+                    self._check_for_files()
+                if self._extracted_files:
+                    file_count = len(self._extracted_files)
+                    yield Button(f"📎 {file_count}", classes="action-button file-extract-button", 
+                               id="extract-files", 
+                               tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
+                
                 yield Button("🔊", classes="action-button speak-button", id="speak") # Emoji for speak
 
                 # AI-specific buttons
@@ -253,6 +267,17 @@ class ChatMessage(Widget):
             self.message_text += chunk
         # If called at other times, ensure it doesn't break if static_text_widget not found.
         # For streaming, handle_streaming_chunk updates the Static widget directly.
+    
+    def _check_for_files(self):
+        """Check if the message contains extractable files."""
+        if not self._file_extractor:
+            self._file_extractor = FileExtractor()
+        
+        try:
+            self._extracted_files = self._file_extractor.extract_files(self.message_text)
+        except Exception as e:
+            logging.error(f"Error extracting files from message: {e}")
+            self._extracted_files = []
 
 #
 #

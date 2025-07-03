@@ -87,6 +87,15 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                 disabled=not initial_ephemeral_state # Enabled if ephemeral, disabled if already saved
             )
 
+            # Button to convert entire conversation to note
+            yield Button(
+                "📋 Convert to Note",
+                id=f"{id_prefix}-convert-to-note-button",
+                classes="sidebar-button convert-to-note-button",
+                variant="default",
+                tooltip="Convert entire conversation to a note"
+            )
+
             # Retrieve initial value for strip_thinking_tags checkbox
             initial_strip_value = settings.get("chat_defaults", {}).get("strip_thinking_tags", True)
             yield Checkbox(

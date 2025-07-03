@@ -33,6 +33,7 @@ except ImportError:
 
 #
 # Local Imports
+from tldw_chatbook.Utils.file_extraction import FileExtractor
 #
 #######################################################################################################################
 #
@@ -140,6 +141,9 @@ class ChatMessageEnhanced(Widget):
     image_mime_type: reactive[Optional[str]] = reactive(None)
     # Store feedback (thumbs up/down)
     feedback: reactive[Optional[str]] = reactive(None)
+    # Store extracted files
+    _extracted_files = None
+    _file_extractor = None
     
     def __init__(
         self,
@@ -210,6 +214,17 @@ class ChatMessageEnhanced(Widget):
                 # Common buttons
                 yield Button("Edit", classes="action-button edit-button")
                 yield Button("📋", classes="action-button copy-button", id="copy")
+                yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
+                
+                # Add file extraction button if files detected
+                if self._extracted_files is None:
+                    self._check_for_files()
+                if self._extracted_files:
+                    file_count = len(self._extracted_files)
+                    yield Button(f"📎 {file_count}", classes="action-button file-extract-button", 
+                               id="extract-files", 
+                               tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
+                
                 yield Button("🔊", classes="action-button speak-button", id="speak")
                 
                 # AI-specific buttons
@@ -387,6 +402,17 @@ Preview: {preview}...
         """Appends a chunk of text to an AI message during streaming."""
         if self.has_class("-ai") and not self._generation_complete_internal:
             self.message_text += chunk
+    
+    def _check_for_files(self):
+        """Check if the message contains extractable files."""
+        if not self._file_extractor:
+            self._file_extractor = FileExtractor()
+        
+        try:
+            self._extracted_files = self._file_extractor.extract_files(self.message_text)
+        except Exception as e:
+            logging.error(f"Error extracting files from message: {e}")
+            self._extracted_files = []
 
 #
 #

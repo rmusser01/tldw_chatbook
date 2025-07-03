@@ -36,6 +36,8 @@ from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError,
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.model_capabilities import is_vision_capable
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+from tldw_chatbook.Widgets.file_extraction_dialog import FileExtractionDialog
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -762,6 +764,75 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         button.label = get_char(EMOJI_COPIED, FALLBACK_COPIED) + "Copied"
         app.set_timer(1.5, lambda: setattr(button, "label", get_char(EMOJI_COPY, FALLBACK_COPY)))
 
+    elif "note-button" in button_classes:
+        logging.info("Action: Create Note clicked for %s message: '%s...'", message_role, message_text[:50])
+        
+        # Format note title with timestamp
+        timestamp_str = action_widget.timestamp or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        note_title = f"Chat Note - {message_role} - {timestamp_str}"
+        
+        # Format note content with metadata
+        note_content = f"""From: {message_role}
+Date: {timestamp_str}
+Message ID: {action_widget.message_id_internal or 'N/A'}
+
+---
+
+{message_text}"""
+        
+        # Create note via NotesInteropService
+        try:
+            notes_service = NotesInteropService(app.db)
+            note_id = notes_service.add_note(
+                user_id=app.client_id,
+                title=note_title,
+                content=note_content
+            )
+            
+            if note_id:
+                # Update UI
+                app.notify("Note created from message", severity="success", timeout=3)
+                
+                # Expand notes section if collapsed
+                try:
+                    # Find the notes collapsible in the chat sidebar
+                    notes_collapsible = app.query_one("#chat-notes-collapsible")
+                    if hasattr(notes_collapsible, 'collapsed'):
+                        notes_collapsible.collapsed = False
+                except QueryError:
+                    # Notes section might not be present or have different ID
+                    pass
+                
+                loguru_logger.info(f"Created note '{note_title}' with ID: {note_id}")
+            else:
+                app.notify("Failed to create note", severity="error")
+                loguru_logger.error("Notes service returned None for note ID")
+                
+        except Exception as e:
+            loguru_logger.error(f"Error creating note from message: {e}", exc_info=True)
+            app.notify(f"Failed to create note: {str(e)}", severity="error")
+
+    elif "file-extract-button" in button_classes:
+        logging.info("Action: Extract Files clicked for %s message: '%s...'", message_role, message_text[:50])
+        
+        # Get extracted files from the widget
+        extracted_files = getattr(action_widget, '_extracted_files', None)
+        if not extracted_files:
+            app.notify("No extractable files found in this message", severity="warning")
+            return
+        
+        # Show extraction dialog
+        dialog = FileExtractionDialog(extracted_files)
+        result = await app.push_screen_wait(dialog)
+        
+        if result and result.get('files'):
+            # Files were saved successfully
+            saved_count = len(result['files'])
+            loguru_logger.info(f"Saved {saved_count} files from message")
+        else:
+            # User cancelled or no files saved
+            loguru_logger.debug("File extraction cancelled or no files saved")
+    
     elif "speak-button" in button_classes:
         logging.info(f"Action: Speak clicked for {message_role} message: '{message_text[:50]}...'")
         # Actual TTS would go here. For UI feedback:
@@ -1369,6 +1440,87 @@ async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Bu
     except Exception as e_save_chat:
         loguru_logger.error(f"Exception while saving chat: {e_save_chat}", exc_info=True)
         app.notify(f"Error saving chat: {str(e_save_chat)[:100]}", severity="error")
+
+
+async def handle_chat_convert_to_note_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Convert the entire current conversation to a note."""
+    loguru_logger.info("Convert to note button pressed.")
+    
+    if not app.current_chat_conversation_id and not app.current_chat_messages:
+        app.notify("No conversation to convert to note.", severity="warning")
+        return
+    
+    if not app.notes_service:
+        loguru_logger.error("Notes service not available for creating note.")
+        app.notify("Database service not available.", severity="error")
+        return
+    
+    try:
+        # Get conversation title
+        conversation_title = "Untitled Chat"
+        if app.current_chat_conversation_id and not app.current_chat_is_ephemeral:
+            db = app.notes_service._get_db(app.notes_user_id)
+            conv_details = db.get_conversation_by_id(app.current_chat_conversation_id)
+            if conv_details:
+                conversation_title = conv_details.get('title', 'Untitled Chat')
+        
+        # Format note title
+        timestamp_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        note_title = f"Chat Conversation - {conversation_title} - {timestamp_str}"
+        
+        # Build note content from messages
+        note_content_parts = [
+            f"Conversation: {conversation_title}",
+            f"Date: {timestamp_str}",
+            f"Conversation ID: {app.current_chat_conversation_id or 'Ephemeral'}",
+            "",
+            "=" * 50,
+            ""
+        ]
+        
+        # Add each message to the note
+        for msg in app.current_chat_messages:
+            msg_timestamp = msg.get('timestamp', 'Unknown time')
+            msg_sender = msg.get('sender', 'Unknown')
+            msg_content = msg.get('message', '')
+            
+            note_content_parts.extend([
+                f"[{msg_timestamp}] {msg_sender}:",
+                msg_content,
+                "",
+                "-" * 30,
+                ""
+            ])
+        
+        note_content = "\n".join(note_content_parts)
+        
+        # Create the note
+        notes_service = NotesInteropService(app.db)
+        note_id = notes_service.add_note(
+            user_id=app.client_id,
+            title=note_title,
+            content=note_content
+        )
+        
+        if note_id:
+            app.notify(f"Conversation converted to note: {note_title[:50]}...", severity="success", timeout=3)
+            
+            # Expand notes section if collapsed
+            try:
+                notes_collapsible = app.query_one("#chat-notes-collapsible")
+                if hasattr(notes_collapsible, 'collapsed'):
+                    notes_collapsible.collapsed = False
+            except QueryError:
+                pass
+            
+            loguru_logger.info(f"Created note '{note_title}' with ID: {note_id}")
+        else:
+            app.notify("Failed to create note from conversation", severity="error")
+            loguru_logger.error("Notes service returned None for note ID")
+            
+    except Exception as e:
+        loguru_logger.error(f"Error converting conversation to note: {e}", exc_info=True)
+        app.notify(f"Failed to convert conversation: {str(e)}", severity="error")
 
 
 async def handle_chat_save_details_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -3274,6 +3426,7 @@ CHAT_BUTTON_HANDLERS = {
     "chat-new-conversation-button": handle_chat_new_conversation_button_pressed,
     "chat-save-current-chat-button": handle_chat_save_current_chat_button_pressed,
     "chat-save-conversation-details-button": handle_chat_save_details_button_pressed,
+    "chat-convert-to-note-button": handle_chat_convert_to_note_button_pressed,
     "chat-conversation-load-selected-button": handle_chat_load_selected_button_pressed,
     "chat-prompt-load-selected-button": handle_chat_view_selected_prompt_button_pressed,
     "chat-prompt-copy-system-button": handle_chat_copy_system_prompt_button_pressed,

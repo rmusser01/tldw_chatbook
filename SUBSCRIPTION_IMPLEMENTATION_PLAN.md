@@ -5,53 +5,83 @@ A comprehensive system for monitoring both RSS/Atom feeds and raw URLs for chang
 
 ## Core Architecture
 
-### 1. Unified Subscription Model
+### 1. Unified Subscription Model (Enhanced)
 Both RSS feeds and raw URLs are treated as "subscriptions" with different monitoring strategies:
 
 ```
 Subscription Types:
-├── RSS/Atom Feeds
-│   ├── Standard RSS 2.0
-│   ├── Atom 1.0
-│   └── Custom feed formats
-└── URL Watchlist
-    ├── Single pages
-    ├── URL patterns (with wildcards)
-    └── URL lists (bulk import)
+├── Feed-based
+│   ├── RSS 2.0 (Standard blog/news feeds)
+│   ├── Atom 1.0 (Technical documentation)
+│   ├── JSON Feed 1.1 (Modern feeds)
+│   └── Podcast RSS (Audio/video with enclosures)
+├── URL Monitoring
+│   ├── Single pages (Track specific pages)
+│   ├── URL patterns (Wildcards: /blog/*/comments)
+│   ├── URL lists (Bulk import from CSV/TXT)
+│   └── Sitemap.xml (Monitor entire sites)
+└── API Endpoints
+    ├── REST APIs (JSON responses)
+    ├── GraphQL endpoints
+    └── Webhook receivers
 ```
 
-### 2. Database Schema
+### 2. Database Schema (Enhanced)
 
 ```sql
--- Unified subscription table
+-- Unified subscription table with enhanced features
 CREATE TABLE subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK(type IN ('rss', 'atom', 'url', 'url_list')),
-    source TEXT NOT NULL, -- RSS URL or watched URL
+    type TEXT NOT NULL CHECK(type IN ('rss', 'atom', 'json_feed', 'url', 'url_list', 'podcast', 'sitemap', 'api')),
+    source TEXT NOT NULL, -- RSS URL, watched URL, or API endpoint
     description TEXT,
+    
+    -- Organization
+    tags TEXT, -- Comma-separated tags for categorization
+    priority INTEGER DEFAULT 3 CHECK(priority BETWEEN 1 AND 5), -- 1=lowest, 5=highest
+    folder TEXT, -- Folder/group organization
     
     -- Monitoring configuration
     check_frequency INTEGER DEFAULT 3600, -- seconds
     last_checked DATETIME,
+    last_successful_check DATETIME, -- Track successful checks separately
     last_error TEXT,
     error_count INTEGER DEFAULT 0,
+    consecutive_failures INTEGER DEFAULT 0,
     is_active BOOLEAN DEFAULT 1,
+    is_paused BOOLEAN DEFAULT 0, -- User-initiated pause
+    auto_pause_threshold INTEGER DEFAULT 10, -- Auto-pause after N failures
+    
+    -- Authentication & Headers
+    auth_config TEXT, -- JSON: {type: 'basic'|'bearer'|'oauth', credentials: {...}}
+    custom_headers TEXT, -- JSON: additional headers for requests
+    rate_limit_config TEXT, -- JSON: {requests_per_minute: 60, cooldown: 5}
     
     -- Processing options
-    extraction_method TEXT DEFAULT 'auto', -- 'full', 'diff', 'metadata'
+    extraction_method TEXT DEFAULT 'auto', -- 'full', 'diff', 'metadata', 'template'
+    extraction_rules TEXT, -- JSON: custom extraction patterns/selectors
     processing_options TEXT, -- JSON: chunking, summarization, etc.
     auto_ingest BOOLEAN DEFAULT 0, -- Auto-accept new content
+    notification_config TEXT, -- JSON: webhook URLs, email settings
     
     -- Change detection for URLs
     change_threshold FLOAT DEFAULT 0.1, -- 10% change threshold
     ignore_selectors TEXT, -- CSS selectors to ignore (ads, timestamps)
     
+    -- Performance optimization
+    etag TEXT, -- For conditional requests
+    last_modified TEXT, -- For If-Modified-Since
+    
     created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL
+    updated_at DATETIME NOT NULL,
+    
+    INDEX idx_priority_active (priority DESC, is_active, is_paused),
+    INDEX idx_tags (tags),
+    INDEX idx_folder (folder)
 );
 
--- Items from subscriptions (RSS entries or URL changes)
+-- Items from subscriptions (RSS entries or URL changes) with enhanced metadata
 CREATE TABLE subscription_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subscription_id INTEGER NOT NULL,
@@ -62,21 +92,36 @@ CREATE TABLE subscription_items (
     content_hash TEXT, -- For change detection
     published_date DATETIME,
     
+    -- Enhanced metadata
+    author TEXT,
+    categories TEXT, -- JSON array of categories/tags from feed
+    enclosures TEXT, -- JSON: podcast/media attachments
+    extracted_data TEXT, -- JSON: custom extracted fields
+    
     -- Status tracking
-    status TEXT DEFAULT 'new' CHECK(status IN ('new', 'reviewed', 'ingested', 'ignored')),
+    status TEXT DEFAULT 'new' CHECK(status IN ('new', 'reviewed', 'ingested', 'ignored', 'error')),
     media_id INTEGER, -- Links to Media table when ingested
+    processing_error TEXT, -- Error details if processing failed
     
     -- Change tracking for URLs
     previous_hash TEXT,
     change_percentage FLOAT,
     diff_summary TEXT,
+    change_type TEXT CHECK(change_type IN ('content', 'metadata', 'structural', 'new', 'removed')),
+    
+    -- Deduplication
+    canonical_url TEXT, -- Cleaned URL for dedup
+    duplicate_of INTEGER, -- Reference to original item if duplicate
     
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     
     FOREIGN KEY (subscription_id) REFERENCES subscriptions(id),
     FOREIGN KEY (media_id) REFERENCES Media(id),
-    UNIQUE(subscription_id, url, content_hash)
+    FOREIGN KEY (duplicate_of) REFERENCES subscription_items(id),
+    UNIQUE(subscription_id, url, content_hash),
+    INDEX idx_status_created (subscription_id, status, created_at),
+    INDEX idx_canonical_url (canonical_url)
 );
 
 -- URL monitoring snapshots
@@ -93,35 +138,143 @@ CREATE TABLE url_snapshots (
     FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
 );
 
--- Create indexes
-CREATE INDEX idx_subscriptions_active ON subscriptions(is_active, last_checked);
-CREATE INDEX idx_subscription_items_status ON subscription_items(subscription_id, status);
-CREATE INDEX idx_url_snapshots_lookup ON url_snapshots(subscription_id, url, created_at);
+-- Create indexes (already included inline above)
+
+-- Subscription statistics for health monitoring
+CREATE TABLE subscription_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscription_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    
+    -- Daily statistics
+    checks_performed INTEGER DEFAULT 0,
+    successful_checks INTEGER DEFAULT 0,
+    new_items_found INTEGER DEFAULT 0,
+    items_ingested INTEGER DEFAULT 0,
+    errors_encountered INTEGER DEFAULT 0,
+    
+    -- Performance metrics
+    avg_response_time_ms INTEGER,
+    total_bytes_transferred INTEGER,
+    
+    created_at DATETIME NOT NULL,
+    
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id),
+    UNIQUE(subscription_id, date),
+    INDEX idx_date (date)
+);
+
+-- Smart filters for automatic processing
+CREATE TABLE subscription_filters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscription_id INTEGER, -- NULL for global filters
+    name TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT 1,
+    
+    -- Filter conditions (JSON)
+    conditions TEXT NOT NULL, -- {field: 'title', operator: 'contains', value: 'Breaking'}
+    
+    -- Actions
+    action TEXT NOT NULL CHECK(action IN ('auto_ingest', 'auto_ignore', 'tag', 'priority', 'notify')),
+    action_params TEXT, -- JSON: {tag: 'urgent', priority: 5}
+    
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
+);
+
+-- Subscription templates for quick setup
+CREATE TABLE subscription_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    category TEXT, -- 'news', 'tech', 'documentation', etc.
+    
+    -- Template configuration
+    type TEXT NOT NULL,
+    check_frequency INTEGER,
+    extraction_method TEXT,
+    extraction_rules TEXT, -- JSON
+    processing_options TEXT, -- JSON
+    auth_config_template TEXT, -- JSON with placeholders
+    
+    -- Popularity tracking
+    usage_count INTEGER DEFAULT 0,
+    
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
+);
 ```
 
 ## Implementation Phases
 
 ### Phase 1: Core Infrastructure (Week 1-2)
 
-#### 1.1 Database Layer (`DB/Subscriptions_DB.py`)
+#### 1.1 Database Layer (`DB/Subscriptions_DB.py`) - Enhanced
 ```python
 class SubscriptionsDB:
-    """Database operations for subscription management"""
+    """Enhanced database operations for subscription management"""
     
-    def add_subscription(self, name, type, source, options=None):
-        """Add RSS feed or URL to monitor"""
+    # Core subscription management
+    def add_subscription(self, name, type, source, tags=None, priority=3, 
+                        folder=None, auth_config=None, **kwargs):
+        """Add subscription with enhanced metadata"""
         
-    def get_pending_checks(self, limit=10):
-        """Get subscriptions due for checking"""
+    def get_pending_checks(self, limit=10, priority_order=True):
+        """Get subscriptions due for checking, ordered by priority"""
         
-    def record_check_result(self, sub_id, items, error=None):
-        """Update check status and add new items"""
+    def get_subscriptions_by_tag(self, tag):
+        """Filter subscriptions by tag"""
         
-    def get_new_items(self, subscription_id=None):
-        """Get items pending review"""
+    def get_subscriptions_by_folder(self, folder):
+        """Get all subscriptions in a folder"""
         
-    def mark_item_status(self, item_id, status, media_id=None):
-        """Update item processing status"""
+    # Check results and error handling
+    def record_check_result(self, sub_id, items, error=None, stats=None):
+        """Update check status with performance metrics"""
+        
+    def record_check_error(self, sub_id, error, should_pause=False):
+        """Record error with auto-pause logic"""
+        
+    def reset_subscription_errors(self, sub_id):
+        """Reset error count after successful check"""
+        
+    # Item management
+    def get_new_items(self, subscription_id=None, status='new', limit=100):
+        """Get items with filtering and pagination"""
+        
+    def mark_item_status(self, item_id, status, media_id=None, error=None):
+        """Update item status with error tracking"""
+        
+    def find_duplicate_items(self, item_url, item_hash):
+        """Check for existing duplicates"""
+        
+    def bulk_update_items(self, item_ids, status):
+        """Efficient bulk status updates"""
+        
+    # Statistics and health monitoring
+    def update_subscription_stats(self, sub_id, date, stats):
+        """Record daily statistics"""
+        
+    def get_subscription_health(self, sub_id, days=30):
+        """Get health metrics for dashboard"""
+        
+    def get_failing_subscriptions(self, threshold=5):
+        """Find subscriptions needing attention"""
+        
+    # Filters and templates
+    def add_filter(self, name, conditions, action, subscription_id=None):
+        """Add smart filter rule"""
+        
+    def get_active_filters(self, subscription_id=None):
+        """Get filters for processing"""
+        
+    def save_template(self, name, config, category=None):
+        """Save subscription template"""
+        
+    def get_templates(self, category=None):
+        """Retrieve available templates"""
 ```
 
 #### 1.2 Monitoring Engine (`Web_Scraping/Subscription_Monitor/`)
@@ -355,28 +508,146 @@ class ChangeAnalyzer:
         # "Removed deprecated API docs"
 ```
 
+## Enhanced Features & Improvements
+
+### Smart Scheduling System
+```python
+class AdaptiveScheduler:
+    """Intelligent scheduling based on update patterns"""
+    
+    def calculate_next_check(self, subscription, history):
+        """Adaptive frequency based on:
+        - Historical update patterns
+        - Time of day/week patterns
+        - Content type (news vs documentation)
+        - Recent change frequency
+        """
+        
+    def prioritize_checks(self, pending_subscriptions):
+        """Priority-based checking order:
+        - User-defined priority (1-5)
+        - Time since last update
+        - Historical reliability
+        - Resource availability
+        """
+```
+
+### Content Deduplication
+```python
+class DeduplicationEngine:
+    """Cross-feed content deduplication"""
+    
+    def find_duplicates(self, new_item, existing_items):
+        """Detect duplicates using:
+        - URL canonicalization
+        - Title similarity (fuzzy matching)
+        - Content hash comparison
+        - Publishing time proximity
+        """
+        
+    def merge_duplicate_metadata(self, items):
+        """Combine metadata from multiple sources"""
+```
+
+### Enhanced Error Recovery
+```python
+class ErrorRecovery:
+    """Intelligent error handling and recovery"""
+    
+    def handle_error(self, subscription, error):
+        """Error-specific strategies:
+        - Network timeout: Exponential backoff
+        - 404: Check redirects, mark dead
+        - 401/403: Prompt for auth update
+        - 429: Respect rate limits
+        - Parse errors: Try alternate parsers
+        """
+        
+    def should_auto_pause(self, subscription):
+        """Auto-pause logic based on:
+        - Consecutive failure count
+        - Error types encountered
+        - Time since last success
+        """
+```
+
+### Performance Optimizations
+```python
+class PerformanceOptimizer:
+    """Resource-efficient checking"""
+    
+    async def conditional_request(self, subscription):
+        """Use HTTP caching headers:
+        - ETag for content changes
+        - If-Modified-Since for timestamps
+        - Accept-Encoding for compression
+        """
+        
+    def batch_similar_requests(self, subscriptions):
+        """Group requests by:
+        - Domain (connection reuse)
+        - Authentication type
+        - Rate limit buckets
+        """
+```
+
 ## Configuration Options
 
-### In `config.toml`:
+### In `config.toml` (Enhanced):
 ```toml
 [subscriptions]
 enabled = true
 default_check_interval = 3600  # 1 hour
 max_concurrent_checks = 5
 timeout_seconds = 30
+default_priority = 3
+auto_pause_after_failures = 10
 
+# Performance settings
+[subscriptions.performance]
+use_conditional_requests = true
+connection_pool_size = 10
+max_retries = 3
+retry_backoff_factor = 2
+respect_rate_limits = true
+default_rate_limit_rpm = 60
+
+# Feed processing
 [subscriptions.rss]
 auto_ingest = false
 extract_full_content = true
+autodiscover_feeds = true
+parse_podcast_enclosures = true
+max_items_per_check = 50
 
+# URL monitoring
 [subscriptions.url_monitor]
 default_change_threshold = 0.1  # 10%
 store_snapshots = true
 max_snapshots_per_url = 10
+use_visual_diff = true
+ignore_common_dynamic_selectors = true
 
+# Content processing
+[subscriptions.processing]
+enable_deduplication = true
+similarity_threshold = 0.85
+extract_structured_data = true
+auto_categorize = true
+summarize_changes = true
+
+# Notifications
 [subscriptions.notifications]
 enabled = true
 new_items_threshold = 5
+digest_frequency = "daily"
+webhook_timeout = 5000
+
+# Templates
+[subscriptions.templates]
+enable_community_templates = true
+template_repository = "https://templates.tldw.example.com"
+cache_templates_days = 7
 ```
 
 ## Error Handling & Edge Cases
