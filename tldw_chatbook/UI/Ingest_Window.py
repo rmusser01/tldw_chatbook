@@ -42,7 +42,7 @@ INGEST_VIEW_IDS = [
     # Local media types
     "ingest-view-local-video", "ingest-view-local-audio", "ingest-view-local-document",
     "ingest-view-local-pdf", "ingest-view-local-ebook", "ingest-view-local-web",
-    "ingest-view-local-xml", "ingest-view-local-plaintext",
+    "ingest-view-local-xml", "ingest-view-local-plaintext", "ingest-view-subscriptions",
     # tldw API media types
     "ingest-view-api-video", "ingest-view-api-audio", "ingest-view-api-document",
     "ingest-view-api-pdf", "ingest-view-api-ebook", "ingest-view-api-xml",
@@ -53,7 +53,7 @@ INGEST_NAV_BUTTON_IDS = [
     # Local media types
     "ingest-nav-local-video", "ingest-nav-local-audio", "ingest-nav-local-document",
     "ingest-nav-local-pdf", "ingest-nav-local-ebook", "ingest-nav-local-web",
-    "ingest-nav-local-xml", "ingest-nav-local-plaintext",
+    "ingest-nav-local-xml", "ingest-nav-local-plaintext", "ingest-nav-subscriptions",
     # tldw API media types
     "ingest-nav-api-video", "ingest-nav-api-audio", "ingest-nav-api-document",
     "ingest-nav-api-pdf", "ingest-nav-api-ebook", "ingest-nav-api-xml",
@@ -148,6 +148,7 @@ class IngestWindow(Container):
             yield Button("Web Article (Local)", id="ingest-nav-local-web", classes="ingest-nav-button")
             yield Button("XML (Local)", id="ingest-nav-local-xml", classes="ingest-nav-button")
             yield Button("Plaintext (Local)", id="ingest-nav-local-plaintext", classes="ingest-nav-button")
+            yield Button("Subscriptions", id="ingest-nav-subscriptions", classes="ingest-nav-button")
             
             yield Static("TLDW API Ingestion", classes="sidebar-title")
             yield Button("Video (API)", id="ingest-nav-api-video", classes="ingest-nav-button")
@@ -235,6 +236,9 @@ class IngestWindow(Container):
                 
             with Vertical(id="ingest-view-local-plaintext", classes="ingest-view-area"):
                 yield from self.compose_local_plaintext_tab()
+            
+            with Vertical(id="ingest-view-subscriptions", classes="ingest-view-area"):
+                yield from self.compose_subscriptions_tab()
             
             # --- TLDW API Views ---
             with Vertical(id="ingest-view-api-video", classes="ingest-view-area"):
@@ -379,6 +383,11 @@ class IngestWindow(Container):
         elif button_id == "ingest-local-plaintext-process":
             event.stop()
             await self.handle_local_plaintext_process()
+        
+        # Handle web article process button
+        elif button_id == "ingest-local-web-process":
+            event.stop()
+            await self.handle_local_web_article_process()
         
         # If IngestWindow has a superclass that also defines on_button_pressed, consider calling it:
         # else:
@@ -1117,6 +1126,186 @@ class IngestWindow(Container):
             loading_indicator.display = False
             process_button.disabled = False
     
+    async def handle_local_web_article_process(self) -> None:
+        """Handle processing of web articles from URLs."""
+        logger.info("Processing web articles")
+        
+        # Get UI elements
+        try:
+            loading_indicator = self.query_one("#ingest-local-web-loading", LoadingIndicator)
+            status_area = self.query_one("#ingest-local-web-status", TextArea)
+            process_button = self.query_one("#ingest-local-web-process", Button)
+        except Exception as e:
+            logger.error(f"Error finding UI elements: {e}")
+            self.app.notify("Error: UI elements not found", severity="error")
+            return
+        
+        # Show loading state
+        loading_indicator.display = True
+        loading_indicator.classes = loading_indicator.classes - {"hidden"}
+        status_area.clear()
+        status_area.load_text("Starting web article scraping...")
+        status_area.display = True
+        process_button.disabled = True
+        
+        try:
+            # Get URLs from the textarea
+            urls_textarea = self.query_one("#ingest-local-web-urls", TextArea)
+            urls_text = urls_textarea.text.strip()
+            
+            if not urls_text:
+                self.app.notify("Please enter at least one URL", severity="warning")
+                return
+            
+            # Split URLs by newline and filter empty lines
+            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            
+            # Get scraping options
+            main_content_only = self.query_one("#ingest-local-web-main-content", Checkbox).value
+            include_images = self.query_one("#ingest-local-web-include-images", Checkbox).value
+            follow_redirects = self.query_one("#ingest-local-web-follow-redirects", Checkbox).value
+            
+            # Get authentication options
+            cookies_str = self.query_one("#ingest-local-web-cookies", Input).value.strip()
+            user_agent = self.query_one("#ingest-local-web-user-agent", Input).value.strip()
+            
+            # Get advanced options
+            css_selector = self.query_one("#ingest-local-web-css-selector", Input).value.strip()
+            js_render = self.query_one("#ingest-local-web-js-render", Checkbox).value
+            wait_time_str = self.query_one("#ingest-local-web-wait-time", Input).value.strip()
+            wait_time = int(wait_time_str) if wait_time_str else 3
+            
+            # Get metadata
+            title_override = self.query_one("#ingest-local-web-title", Input).value.strip()
+            author_override = self.query_one("#ingest-local-web-author", Input).value.strip()
+            keywords_text = self.query_one("#ingest-local-web-keywords", TextArea).text.strip()
+            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
+            
+            # Parse cookies if provided
+            custom_cookies = None
+            if cookies_str:
+                try:
+                    custom_cookies = self._parse_cookie_string(cookies_str)
+                except Exception as e:
+                    logger.warning(f"Failed to parse cookies: {e}")
+                    self.app.notify("Warning: Failed to parse cookies, continuing without them", severity="warning")
+            
+            # Check if media DB is available
+            if not self.app_instance.media_db:
+                logger.error("Media database not initialized")
+                self.app.notify("Error: Media database not available", severity="error")
+                status_area.load_text("Error: Media database not available")
+                return
+            
+            # Import the scraping function
+            from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
+            
+            # Process each URL
+            processed_count = 0
+            error_count = 0
+            status_messages = []
+            
+            status_area.load_text(f"Processing {len(urls)} URLs...\n")
+            
+            for idx, url in enumerate(urls, 1):
+                try:
+                    status_area.append(f"\n[{idx}/{len(urls)}] Scraping: {url}\n")
+                    
+                    # Scrape the article
+                    article_data = await scrape_article(url, custom_cookies=custom_cookies)
+                    
+                    if not article_data.get('extraction_successful', False):
+                        error_count += 1
+                        status_messages.append(f"❌ Failed to extract: {url}")
+                        status_area.append(f"   ❌ Extraction failed\n")
+                        continue
+                    
+                    # Override metadata if provided
+                    title = title_override or article_data.get('title', url)
+                    author = author_override or article_data.get('author', '')
+                    content = article_data.get('content', '')
+                    
+                    if not content:
+                        error_count += 1
+                        status_messages.append(f"❌ No content found: {url}")
+                        status_area.append(f"   ❌ No content found\n")
+                        continue
+                    
+                    # Add to media database
+                    media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
+                        url=url,
+                        title=title,
+                        media_type="web_article",
+                        content=content,
+                        keywords=keywords,
+                        author=author,
+                        metadata={
+                            'publication_date': article_data.get('date'),
+                            'extraction_method': 'trafilatura',
+                            'js_rendered': js_render,
+                            'custom_selector': css_selector
+                        }
+                    )
+                    
+                    if media_id:
+                        processed_count += 1
+                        status_messages.append(f"✅ Successfully ingested: {title} ({url})")
+                        status_area.append(f"   ✅ Successfully ingested (ID: {media_id})\n")
+                    else:
+                        error_count += 1
+                        status_messages.append(f"❌ Database error: {url} - {msg}")
+                        status_area.append(f"   ❌ Database error: {msg}\n")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing URL {url}: {e}", exc_info=True)
+                    error_count += 1
+                    status_messages.append(f"❌ Error processing {url}: {str(e)}")
+                    status_area.append(f"   ❌ Error: {str(e)}\n")
+            
+            # Update final status
+            summary = f"\n## Processing Complete\n\n"
+            summary += f"✅ Successfully processed: {processed_count} articles\n"
+            if error_count > 0:
+                summary += f"❌ Errors: {error_count} articles\n"
+            summary += "\n### Details:\n"
+            summary += "\n".join(status_messages[-10:])  # Show last 10 messages
+            if len(status_messages) > 10:
+                summary += f"\n... and {len(status_messages) - 10} more"
+            
+            status_area.append(summary)
+            
+            if processed_count > 0:
+                self.app.notify(f"Successfully processed {processed_count} web articles", severity="information")
+            if error_count > 0:
+                self.app.notify(f"Failed to process {error_count} web articles", severity="warning")
+                
+        except Exception as e:
+            logger.error(f"Error in web article processing: {e}", exc_info=True)
+            self.app.notify(f"Error: {str(e)}", severity="error")
+            status_area.load_text(f"Error: {str(e)}")
+        finally:
+            # Reset UI state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+    
+    def _parse_cookie_string(self, cookie_str: str) -> List[Dict[str, Any]]:
+        """Parse cookie string into format expected by playwright."""
+        from typing import List, Dict, Any
+        cookies = []
+        # Simple cookie parsing - format: "name=value; name2=value2"
+        for cookie_part in cookie_str.split(';'):
+            cookie_part = cookie_part.strip()
+            if '=' in cookie_part:
+                name, value = cookie_part.split('=', 1)
+                cookies.append({
+                    'name': name.strip(),
+                    'value': value.strip(),
+                    'domain': '',  # Will be set by playwright based on URL
+                    'path': '/'
+                })
+        return cookies
+    
     async def _read_text_file(self, file_path: Path, encoding: str) -> str | None:
         """Read a text file with specified encoding."""
         try:
@@ -1170,6 +1359,90 @@ class IngestWindow(Container):
             if para:
                 cleaned_paragraphs.append(para)
         return '\n\n'.join(cleaned_paragraphs)
+    
+    def compose_subscriptions_tab(self) -> ComposeResult:
+        """Composes the Subscriptions tab content for RSS/Atom feed and URL monitoring."""
+        with VerticalScroll(classes="ingest-media-tab-content"):
+            # Introduction Section
+            with Container(classes="ingest-intro-section"):
+                yield Static("📰 Website Subscriptions & URL Monitoring", classes="sidebar-title")
+                yield Markdown(
+                    "Monitor RSS/Atom feeds and track changes to specific web pages. "
+                    "Get notified when new content is available and automatically ingest it into your media library.",
+                    classes="subscription-intro"
+                )
+            
+            # Add Subscription Section
+            with Container(classes="ingest-subscription-section"):
+                yield Static("Add New Subscription", classes="sidebar-title")
+                with Horizontal(classes="subscription-type-row"):
+                    yield Label("Subscription Type:")
+                    yield Select(
+                        [("RSS/Atom Feed", "rss"), ("Single URL", "url"), ("URL List", "url_list")],
+                        id="subscription-type-select",
+                        value="rss"
+                    )
+                
+                yield Label("URL/Feed Address:")
+                yield Input(id="subscription-url-input", placeholder="https://example.com/feed.xml")
+                
+                yield Label("Name:")
+                yield Input(id="subscription-name-input", placeholder="Tech News Feed")
+                
+                yield Label("Check Frequency:")
+                yield Select(
+                    [("Every 15 minutes", "900"), ("Every 30 minutes", "1800"), 
+                     ("Every hour", "3600"), ("Every 6 hours", "21600"), 
+                     ("Daily", "86400")],
+                    id="subscription-frequency-select",
+                    value="3600"
+                )
+                
+                with Collapsible(title="Advanced Options", collapsed=True):
+                    yield Checkbox("Auto-ingest new items", False, id="subscription-auto-ingest")
+                    yield Label("Change Threshold (% for URLs):")
+                    yield Input("10", id="subscription-change-threshold", type="integer")
+                    yield Label("CSS Selectors to Ignore (for URLs):")
+                    yield TextArea(id="subscription-ignore-selectors", classes="ingest-textarea-small")
+                
+                yield Button("Add Subscription", id="subscription-add-button", variant="primary")
+            
+            # Active Subscriptions Section
+            with Container(classes="ingest-subscriptions-list-section"):
+                yield Static("Active Subscriptions", classes="sidebar-title")
+                yield ListView(id="subscription-active-list", classes="subscription-list")
+                with Horizontal(classes="subscription-actions-row"):
+                    yield Button("Check All Now", id="subscription-check-all-button")
+                    yield Button("Import OPML", id="subscription-import-opml-button")
+                    yield Button("Export", id="subscription-export-button")
+            
+            # New Items Section
+            with Container(classes="ingest-new-items-section"):
+                yield Static("New Items to Review", classes="sidebar-title")
+                yield Label("Filter by Source:")
+                yield Select(
+                    [("All Sources", "all")],
+                    id="subscription-filter-source",
+                    value="all"
+                )
+                yield ListView(id="subscription-new-items-list", classes="subscription-items-list")
+                with Horizontal(classes="subscription-review-actions"):
+                    yield Button("Accept Selected", id="subscription-accept-button", variant="success")
+                    yield Button("Ignore Selected", id="subscription-ignore-button", variant="warning")
+                    yield Button("Mark as Reviewed", id="subscription-mark-reviewed-button")
+            
+            # Status Section
+            with Container(classes="ingest-status-section"):
+                yield Static("Monitoring Status", classes="sidebar-title")
+                yield TextArea("", id="subscription-status-area", read_only=True, classes="ingest-status-area")
+            
+            # Placeholder Notice
+            with Container(classes="placeholder-notice"):
+                yield Markdown(
+                    "**Note:** This is a placeholder interface. The subscription monitoring functionality "
+                    "is not yet implemented. See `SUBSCRIPTION_IMPLEMENTATION_PLAN.md` for details.",
+                    classes="warning-notice"
+                )
 
 #
 # End of Ingest_Window.py

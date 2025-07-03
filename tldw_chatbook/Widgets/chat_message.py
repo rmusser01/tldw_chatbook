@@ -159,6 +159,7 @@ class ChatMessage(Widget):
                 # Common buttons
                 yield Button("Edit", classes="action-button edit-button")
                 yield Button("📋", classes="action-button copy-button", id="copy") # Emoji for copy
+                yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
                 yield Button("🔊", classes="action-button speak-button", id="speak") # Emoji for speak
 
                 # AI-specific buttons

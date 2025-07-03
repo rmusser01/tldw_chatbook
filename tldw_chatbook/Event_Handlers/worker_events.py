@@ -125,29 +125,19 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
 
         ai_message_widget = app.current_ai_message_widget
 
-        if ai_message_widget is None or not ai_message_widget.is_mounted:
-            logger.warning(
-                f"Worker '{worker_name}' finished, but its AI placeholder widget is missing or not mounted. "
-                f"Current placeholder ref ID: {getattr(app.current_ai_message_widget, 'id', 'N/A') if app.current_ai_message_widget else 'N/A'}"
-            )
-            # ... (rest of your existing fallback error reporting) ...
-            try:
-                chat_container_fallback: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
-                error_msg_text = Text.from_markup(
-                    f"[bold red]Error:[/]\nAI response for worker '{worker_name}' received, but its display widget was missing.")
-                # Ensure ChatMessage is imported and use it:
-                # from ..Widgets.chat_message import ChatMessage
-                # await chat_container_fallback.mount(ChatMessage(str(error_msg_text), role="System", classes="-error"))
-                app.notify(
-                    f"Error: AI response for worker '{worker_name}' received, but its display widget was missing.",
-                    severity="error", timeout=3)
-            except QueryError:
-                logger.error(f"Fallback: Could not find chat container #{prefix}-log.")
-            app.current_ai_message_widget = None
-            return
-
         try:
             chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
+            
+            # Check if widget exists before using it
+            if ai_message_widget is None or not ai_message_widget.is_mounted:
+                # This can happen if the widget was already processed or removed
+                # Log as debug instead of warning since this is expected in some cases
+                logger.debug(
+                    f"Worker '{worker_name}' state changed to {worker_state}, but AI placeholder widget is not available. "
+                    f"This is expected if the message was already processed."
+                )
+                return
+                
             static_text_widget_in_ai_msg = ai_message_widget.query_one(".message-text", Static)
 
             if worker_state is WorkerState.SUCCESS:
