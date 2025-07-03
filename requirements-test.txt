@@ -3,6 +3,7 @@ pytest
 pytest-asyncio
 pytest-mock
 hypothesis
+aiohttp
 
 # Optional dependencies needed for tests
 numpy
