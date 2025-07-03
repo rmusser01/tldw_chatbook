@@ -94,7 +94,7 @@ embeddings_rag = [
 ]
 websearch = [
     "lxml",
-    "beautifulsoup4",  # BeautifulSoup HTML parser
+    "beautifulsoup4",
     "pandas",
     "playwright",
     #"playwright_stealth",
@@ -102,6 +102,7 @@ websearch = [
     "langdetect",
     "nltk",
     "scikit-learn",
+    "aiohttp",
 ]
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
