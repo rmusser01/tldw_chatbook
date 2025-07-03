@@ -81,6 +81,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from .Notes.Notes_Library import NotesInteropService
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from .Widgets.chat_message import ChatMessage
+from .Widgets.chat_message_enhanced import ChatMessageEnhanced
 from .Widgets.notes_sidebar_left import NotesSidebarLeft
 from .Widgets.notes_sidebar_right import NotesSidebarRight
 from .Widgets.titlebar import TitleBar
@@ -748,7 +749,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # Add state to hold the currently streaming AI message widget
     # Use a lock to prevent race conditions when modifying shared state
     _chat_state_lock = threading.Lock()
-    current_ai_message_widget: Optional[ChatMessage] = None
+    current_ai_message_widget: Optional[Union[ChatMessage, ChatMessageEnhanced]] = None
     current_chat_worker: Optional[Worker] = None
     current_chat_is_streaming: bool = False
 
@@ -1655,12 +1656,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     # --- Thread-safe chat state helpers ---
     
-    def set_current_ai_message_widget(self, widget: Optional[ChatMessage]) -> None:
+    def set_current_ai_message_widget(self, widget: Optional[Union[ChatMessage, ChatMessageEnhanced]]) -> None:
         """Thread-safely set the current AI message widget."""
         with self._chat_state_lock:
             self.current_ai_message_widget = widget
     
-    def get_current_ai_message_widget(self) -> Optional[ChatMessage]:
+    def get_current_ai_message_widget(self) -> Optional[Union[ChatMessage, ChatMessageEnhanced]]:
         """Thread-safely get the current AI message widget."""
         with self._chat_state_lock:
             return self.current_ai_message_widget
@@ -3525,7 +3526,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                  worker_name_attr == "respond_for_me_worker"):
 
             self.loguru_logger.debug(f"Chat-related worker '{worker_name_attr}' detected. State: {worker_state}.")
-            send_button_id_selector = "#send-chat"  # Send button selector
+            
+            # Determine which button selector to use based on which chat window is active
+            use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+            send_button_id_selector = "#send-stop-chat" if use_enhanced_chat else "#send-chat"
 
             if worker_state == WorkerState.RUNNING:
                 self.loguru_logger.info(f"Chat-related worker '{worker_name_attr}' is RUNNING.")

@@ -464,10 +464,22 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         return
 
     # --- 10. Mount Placeholder AI Message ---
-    ai_placeholder_widget = ChatMessage(
-        message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
-        role="AI", generation_complete=False
-    )
+    # Use the correct widget type based on which chat window is active
+    from tldw_chatbook.config import get_cli_setting
+    use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+    
+    if use_enhanced_chat:
+        from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+        ai_placeholder_widget = ChatMessageEnhanced(
+            message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
+            role="AI", generation_complete=False
+        )
+    else:
+        ai_placeholder_widget = ChatMessage(
+            message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
+            role="AI", generation_complete=False
+        )
+    
     await chat_container.mount(ai_placeholder_widget)
     chat_container.scroll_end(animate=False) # Scroll after mounting placeholder
     app.current_ai_message_widget = ai_placeholder_widget
@@ -1068,10 +1080,22 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 role="System", classes="-error"))
             return
 
-        ai_placeholder_widget_regen = ChatMessage(
-            message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
-            role="AI", generation_complete=False
-        )
+        # Use the correct widget type based on which chat window is active
+        from tldw_chatbook.config import get_cli_setting
+        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+        
+        if use_enhanced_chat:
+            from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+            ai_placeholder_widget_regen = ChatMessageEnhanced(
+                message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
+                role="AI", generation_complete=False
+            )
+        else:
+            ai_placeholder_widget_regen = ChatMessage(
+                message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
+                role="AI", generation_complete=False
+            )
+        
         await chat_container.mount(ai_placeholder_widget_regen)
         chat_container.scroll_end(animate=False)
         app.current_ai_message_widget = ai_placeholder_widget_regen
