@@ -23,6 +23,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
 from tldw_chatbook.Widgets.titlebar import TitleBar
 from tldw_chatbook.Utils.Emoji_Handling import (
     get_char, EMOJI_THINKING, FALLBACK_THINKING, EMOJI_EDIT, FALLBACK_EDIT,
@@ -33,6 +34,8 @@ from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import load_character_and_image
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
+from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.model_capabilities import is_vision_capable
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -309,8 +312,12 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # The current user's input (`message_text_from_input`) will be passed as the `message` param to `app.chat_wrapper`.
     chat_history_for_api: List[Dict[str, Any]] = []
     try:
-        # Iterate through all messages currently in the UI
-        all_ui_messages = list(chat_container.query(ChatMessage))
+        # Iterate through all messages currently in the UI (both basic and enhanced)
+        # Sort by their position in the container to maintain order
+        all_chat_messages = list(chat_container.query(ChatMessage))
+        all_enhanced_messages = list(chat_container.query(ChatMessageEnhanced))
+        all_ui_messages = sorted(all_chat_messages + all_enhanced_messages, 
+                                key=lambda w: chat_container.children.index(w) if w in chat_container.children else float('inf'))
 
         # Determine how many messages to actually include in history sent to API
         # (e.g., based on token limits or a fixed number)
@@ -352,14 +359,25 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                     if msg_widget.role != "User": # Anything not "User" is treated as assistant for API history
                         api_role = "assistant"
 
-                    # Prepare content part(s) - for now, assuming text only
+                    # Prepare content part(s) - support multimodal if model supports it
                     content_for_api = msg_widget.message_text
-                    # if msg_widget.image_data and msg_widget.image_mime_type: # Future multimodal
-                    #     image_url = f"data:{msg_widget.image_mime_type};base64,{base64.b64encode(msg_widget.image_data).decode()}"
-                    #     content_for_api = [
-                    #         {"type": "text", "text": msg_widget.message_text},
-                    #         {"type": "image_url", "image_url": {"url": image_url}}
-                    #     ]
+                    
+                    # Check if this is a vision-capable model and message has image
+                    if (hasattr(msg_widget, 'image_data') and msg_widget.image_data and 
+                        msg_widget.image_mime_type and is_vision_capable(selected_provider, selected_model)):
+                        try:
+                            import base64
+                            image_url = f"data:{msg_widget.image_mime_type};base64,{base64.b64encode(msg_widget.image_data).decode()}"
+                            content_for_api = [
+                                {"type": "text", "text": msg_widget.message_text},
+                                {"type": "image_url", "image_url": {"url": image_url}}
+                            ]
+                            loguru_logger.debug(f"Including image in API history for {api_role} message")
+                        except Exception as e:
+                            loguru_logger.warning(f"Failed to encode image for API: {e}")
+                            # Fall back to text only
+                            content_for_api = msg_widget.message_text
+                    
                     chat_history_for_api.append({"role": api_role, "content": content_for_api})
         loguru_logger.debug(f"Built chat history for API with {len(chat_history_for_api)} messages.")
 
@@ -371,11 +389,43 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # --- 5. DB and Conversation ID Setup ---
     active_conversation_id = app.current_chat_conversation_id
     db = app.chachanotes_db # Use the correct instance from app
-    user_msg_widget_instance: Optional[ChatMessage] = None
+    user_msg_widget_instance: Optional[Union[ChatMessage, ChatMessageEnhanced]] = None
 
     # --- 6. Mount User Message to UI ---
     if not reuse_last_user_bubble:
-        user_msg_widget_instance = ChatMessage(message_text_from_input, role="User")
+        # Check if we're using enhanced chat window and if there's a pending image
+        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+        pending_image = None
+        
+        if use_enhanced_chat:
+            try:
+                from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
+                chat_window = app.query_one(ChatWindowEnhanced)
+                pending_image = chat_window.get_pending_image()
+                loguru_logger.debug(f"Enhanced chat window - pending image: {'Yes' if pending_image else 'No'}")
+            except QueryError:
+                loguru_logger.debug("Enhanced chat window not found in DOM")
+            except AttributeError:
+                loguru_logger.debug("Enhanced chat window doesn't have get_pending_image method")
+            except Exception as e:
+                loguru_logger.warning(f"Unexpected error getting pending image: {e}", exc_info=True)
+        
+        # Create appropriate widget based on image presence
+        if pending_image:
+            user_msg_widget_instance = ChatMessageEnhanced(
+                message=message_text_from_input,
+                role="User",
+                image_data=pending_image['data'],
+                image_mime_type=pending_image['mime_type']
+            )
+            loguru_logger.info(f"Created ChatMessageEnhanced with image (type: {pending_image['mime_type']})")
+        else:
+            # Use enhanced widget if available and we're in enhanced mode, otherwise basic
+            if use_enhanced_chat:
+                user_msg_widget_instance = ChatMessageEnhanced(message_text_from_input, role="User")
+            else:
+                user_msg_widget_instance = ChatMessage(message_text_from_input, role="User")
+        
         await chat_container.mount(user_msg_widget_instance)
         loguru_logger.debug(f"Mounted new user message to UI: '{message_text_from_input[:50]}...'")
         
@@ -391,9 +441,26 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         if not reuse_last_user_bubble and user_msg_widget_instance:
             try:
                 loguru_logger.debug(f"Chat is persistent (ID: {active_conversation_id}). Saving user message to DB.")
+                # Include image data if present
+                image_data = None
+                image_mime_type = None
+                if pending_image:
+                    try:
+                        # Validate image data before saving
+                        from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
+                        if ChatImageHandler.validate_image_data(pending_image['data']):
+                            image_data = pending_image['data']
+                            image_mime_type = pending_image['mime_type']
+                            loguru_logger.debug(f"Including validated image in DB save (type: {image_mime_type}, size: {len(image_data)} bytes)")
+                        else:
+                            loguru_logger.warning("Image data validation failed, not saving to DB")
+                    except Exception as e:
+                        loguru_logger.error(f"Error validating image data: {e}")
+                        # Continue without image rather than failing the entire message
+                
                 user_message_db_id_version_tuple = ccl.add_message_to_conversation(
                     db, conversation_id=active_conversation_id, sender="User", content=message_text_from_input,
-                    image_data=None, image_mime_type=None
+                    image_data=image_data, image_mime_type=image_mime_type
                 )
                 # add_message_to_conversation in ccl returns message_id (str). Version is handled by DB.
                 # We need to fetch the message to get its version.
@@ -465,11 +532,9 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
 
     # --- 10. Mount Placeholder AI Message ---
     # Use the correct widget type based on which chat window is active
-    from tldw_chatbook.config import get_cli_setting
-    use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+    # Note: use_enhanced_chat was already defined above when handling user message
     
     if use_enhanced_chat:
-        from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
         ai_placeholder_widget = ChatMessageEnhanced(
             message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
             role="AI", generation_complete=False
@@ -507,6 +572,22 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # --- 11. Prepare and Dispatch API Call via Worker ---
     loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_with_rag[:50]}...', History items: {len(chat_history_for_api)}")
 
+    # Prepare media content if image is attached and model supports vision
+    media_content_for_api = {}
+    
+    if pending_image and is_vision_capable(selected_provider, selected_model):
+        try:
+            import base64
+            media_content_for_api = {
+                "type": "image",
+                "data": base64.b64encode(pending_image['data']).decode(),
+                "mime_type": pending_image['mime_type']
+            }
+            loguru_logger.info(f"Including image in API call (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
+        except Exception as e:
+            loguru_logger.error(f"Failed to prepare image for API: {e}")
+            # Continue without image
+
     # Log API parameters for debugging
     api_params = {
         "provider": selected_provider,
@@ -517,7 +598,8 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         "top_k": top_k,
         "max_tokens": llm_max_tokens_value,
         "streaming": should_stream,
-        "system_prompt_length": len(final_system_prompt_for_api) if final_system_prompt_for_api else 0
+        "system_prompt_length": len(final_system_prompt_for_api) if final_system_prompt_for_api else 0,
+        "has_media": bool(media_content_for_api)
     }
     loguru_logger.debug(f"API parameters: {api_params}")
 
@@ -552,7 +634,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         llm_tools=llm_tools_value,
         llm_tool_choice=llm_tool_choice_value,
         llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value, # Added new parameter
-        media_content={}, # Placeholder for now
+        media_content=media_content_for_api, # Include image data if present
         selected_parts=[], # Placeholder for now
         chatdict_entries=None, # Placeholder for now
         max_tokens=500, # This is the existing chatdict max_tokens, distinct from llm_max_tokens
@@ -564,9 +646,22 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                    thread=True,
                    description=f"Calling {selected_provider}")
     app.set_current_chat_worker(worker)
+    
+    # Clear pending image after sending
+    if use_enhanced_chat and pending_image:
+        try:
+            chat_window.pending_image = None
+            # Update UI to reflect cleared image
+            attach_button = chat_window.query_one("#attach-image", Button)
+            attach_button.label = "📎"
+            indicator = chat_window.query_one("#image-attachment-indicator", Static)
+            indicator.add_class("hidden")
+            loguru_logger.debug("Cleared pending image after sending")
+        except Exception as e:
+            loguru_logger.debug(f"Could not clear pending image UI: {e}")
 
 
-async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, action_widget: ChatMessage) -> None:
+async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, action_widget: Union[ChatMessage, ChatMessageEnhanced]) -> None:
     button_classes = button.classes
     message_text = action_widget.message_text  # This is the raw, unescaped text
     message_role = action_widget.role
@@ -1664,6 +1759,9 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
         await chat_log_widget_disp.remove_children()
         app.current_ai_message_widget = None
 
+        # Check if we should use enhanced widgets
+        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+        
         for msg_data in db_messages:
             content_to_display = ccl.replace_placeholders(
                 msg_data.get('content', ''),
@@ -1671,17 +1769,32 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
                 current_user_name
             )
 
-            chat_msg_widget_for_display = ChatMessage(
-                message=content_to_display,
-                role=msg_data.get('sender', 'Unknown'),
-                generation_complete=True,
-                message_id=msg_data.get('id'),
-                message_version=msg_data.get('version'),
-                timestamp=msg_data.get('timestamp'),
-                image_data=msg_data.get('image_data'),
-                image_mime_type=msg_data.get('image_mime_type'),
-                feedback=msg_data.get('feedback')
-            )
+            # Use ChatMessageEnhanced if there's image data OR if we're in enhanced mode
+            if msg_data.get('image_data') or use_enhanced_chat:
+                chat_msg_widget_for_display = ChatMessageEnhanced(
+                    message=content_to_display,
+                    role=msg_data.get('sender', 'Unknown'),
+                    generation_complete=True,
+                    message_id=msg_data.get('id'),
+                    message_version=msg_data.get('version'),
+                    timestamp=msg_data.get('timestamp'),
+                    image_data=msg_data.get('image_data'),
+                    image_mime_type=msg_data.get('image_mime_type'),
+                    feedback=msg_data.get('feedback')
+                )
+            else:
+                chat_msg_widget_for_display = ChatMessage(
+                    message=content_to_display,
+                    role=msg_data.get('sender', 'Unknown'),
+                    generation_complete=True,
+                    message_id=msg_data.get('id'),
+                    message_version=msg_data.get('version'),
+                    timestamp=msg_data.get('timestamp'),
+                    image_data=msg_data.get('image_data'),
+                    image_mime_type=msg_data.get('image_mime_type'),
+                    feedback=msg_data.get('feedback')
+                )
+            
             # Styling class already handled by ChatMessage constructor based on role "User" or other
             await chat_log_widget_disp.mount(chat_msg_widget_for_display)
 

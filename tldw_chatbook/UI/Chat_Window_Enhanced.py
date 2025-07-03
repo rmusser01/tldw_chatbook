@@ -215,9 +215,32 @@ class ChatWindowEnhanced(Container):
             event.input.add_class("hidden")
             event.input.value = ""
             
+        except FileNotFoundError:
+            logger.error(f"Image file not found: {file_path}")
+            self.app_instance.notify(f"Image file not found: {file_path}", severity="error")
+            event.input.value = ""
+            event.input.focus()
+        except ValueError as e:
+            # This is thrown by ChatImageHandler for format/size issues
+            logger.error(f"Invalid image: {e}")
+            self.app_instance.notify(str(e), severity="error")
+            event.input.value = ""
+            event.input.focus()
+        except PermissionError:
+            logger.error(f"Permission denied accessing image: {file_path}")
+            self.app_instance.notify(f"Permission denied: Cannot access {file_path}", severity="error")
+            event.input.value = ""
+            event.input.focus()
+        except MemoryError:
+            logger.error(f"Image too large to load into memory: {file_path}")
+            self.app_instance.notify("Image is too large to process. Please use a smaller image.", severity="error")
+            event.input.value = ""
+            event.input.focus()
         except Exception as e:
-            logger.error(f"Error attaching image: {e}")
-            self.app_instance.notify(f"Error attaching image: {e}", severity="error")
+            logger.error(f"Unexpected error attaching image: {e}", exc_info=True)
+            self.app_instance.notify(f"Unexpected error: {e}", severity="error")
+            event.input.value = ""
+            event.input.focus()
 
     def compose(self) -> ComposeResult:
         logger.debug("Composing ChatWindowEnhanced UI")

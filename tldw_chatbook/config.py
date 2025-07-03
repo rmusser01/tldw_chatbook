@@ -1582,6 +1582,70 @@ llm_context_document_limit = 10
 chat_context_limit = 10
 
 
+# --- Model Capabilities Configuration ---
+[model_capabilities]
+# This section defines which models have specific capabilities like vision support.
+# Users can override or extend these patterns in their config file.
+
+# Direct model-to-capability mappings (highest priority)
+[model_capabilities.models]
+# OpenAI models
+"gpt-4-vision-preview" = { vision = true, max_images = 1 }
+"gpt-4-turbo" = { vision = true, max_images = 10 }
+"gpt-4-turbo-2024-04-09" = { vision = true, max_images = 10 }
+"gpt-4o" = { vision = true, max_images = 10 }
+"gpt-4o-mini" = { vision = true, max_images = 10 }
+
+# Anthropic models
+"claude-3-opus-20240229" = { vision = true, max_images = 5 }
+"claude-3-sonnet-20240229" = { vision = true, max_images = 5 }
+"claude-3-haiku-20240307" = { vision = true, max_images = 5 }
+"claude-3-5-sonnet-20240620" = { vision = true, max_images = 5 }
+"claude-3-5-sonnet-20241022" = { vision = true, max_images = 5 }
+
+# Google models
+"gemini-pro-vision" = { vision = true, max_images = 1 }
+"gemini-1.5-pro" = { vision = true, max_images = 10 }
+"gemini-1.5-flash" = { vision = true, max_images = 10 }
+"gemini-2.0-flash" = { vision = true, max_images = 10 }
+
+# Pattern-based matching for model families (fallback if not in direct mappings)
+[model_capabilities.patterns]
+# OpenAI patterns
+OpenAI = [
+    { pattern = "^gpt-4.*vision", vision = true },
+    { pattern = "^gpt-4[o0](?:-mini)?", vision = true },  # gpt-4o, gpt-40, gpt-4o-mini
+    { pattern = "^gpt-4.*turbo", vision = true }
+]
+
+# Anthropic patterns
+Anthropic = [
+    { pattern = "^claude-3", vision = true },             # All Claude 3 models have vision
+    { pattern = "^claude.*opus-4", vision = true },      # Claude Opus 4 series
+    { pattern = "^claude.*sonnet-4", vision = true }     # Claude Sonnet 4 series
+]
+
+# Google patterns
+Google = [
+    { pattern = "gemini.*vision", vision = true },
+    { pattern = "gemini-[0-9.]+-(pro|flash)", vision = true },  # Modern Gemini models
+    { pattern = "gemini-2\\\\.", vision = true }                 # Gemini 2.x series
+]
+
+# OpenRouter patterns (uses provider/model format)
+OpenRouter = [
+    { pattern = "openai/gpt-4.*vision", vision = true },
+    { pattern = "openai/gpt-4[o0]", vision = true },
+    { pattern = "anthropic/claude-3", vision = true },
+    { pattern = "google/gemini.*vision", vision = true },
+    { pattern = "google/gemini-[0-9.]+-(pro|flash)", vision = true }
+]
+
+# Default behavior for unknown models
+[model_capabilities.defaults]
+unknown_models_vision = false  # Whether to assume unknown models have vision capabilities
+log_unknown_models = true      # Whether to log when an unknown model is queried
+
 # --- Sections below are placeholders based on config.txt, integrate as needed ---
 # [tts_settings]
 # default_provider = "kokoro"
