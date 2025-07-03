@@ -98,6 +98,31 @@ class IngestWindow(Container):
             # Update URL count when user types/pastes
             self._update_url_count()
     
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        button_id = event.button.id
+        logger.debug(f"IngestWindow handling button press: {button_id}")
+        
+        # Local web article buttons
+        if button_id == "ingest-local-web-clear-urls":
+            await self._handle_clear_urls()
+            event.stop()  # Prevent further propagation
+        elif button_id == "ingest-local-web-import-urls":
+            await self._handle_import_urls_from_file()
+            event.stop()
+        elif button_id == "ingest-local-web-remove-duplicates":
+            await self._handle_remove_duplicate_urls()
+            event.stop()
+        elif button_id == "ingest-local-web-process":
+            await self.handle_local_web_article_process()
+            event.stop()
+        elif button_id == "ingest-local-web-stop":
+            await self._handle_stop_web_scraping()
+            event.stop()
+        elif button_id == "ingest-local-web-retry":
+            await self._handle_retry_failed_urls()
+            event.stop()
+    
     def _get_file_filters_for_media_type(self, media_type: str):
         """Returns appropriate file filters for the given media type."""
         from ..Third_Party.textual_fspicker import Filters
@@ -328,7 +353,7 @@ class IngestWindow(Container):
 
             logger.debug(f"Opening file dialog for media type '{media_type}' with initial path '{dialog_initial_path}'.")
 
-            await self.app.push_screen(
+            await self.app_instance.push_screen(
                 FileOpen(
                     title=f"Select Local File for {media_type.title()}"
                 ),
@@ -352,7 +377,7 @@ class IngestWindow(Container):
                 
                 logger.debug(f"Opening file dialog for local {media_type} with initial path '{dialog_initial_path}'.")
                 
-                await self.app.push_screen(
+                await self.app_instance.push_screen(
                     FileOpen(
                         title=f"Select {media_type.title()} Files",
                         filters=filters
@@ -1039,7 +1064,7 @@ class IngestWindow(Container):
             process_button = self.query_one("#ingest-local-plaintext-process", Button)
         except Exception as e:
             logger.error(f"Error finding UI elements: {e}")
-            self.app.notify("Error: UI elements not found", severity="error")
+            self.app_instance.notify("Error: UI elements not found", severity="error")
             return
         
         # Show loading state
@@ -1055,7 +1080,7 @@ class IngestWindow(Container):
             selected_files = self.selected_local_files.get(local_key, [])
             
             if not selected_files:
-                self.app.notify("Please select at least one text file", severity="warning")
+                self.app_instance.notify("Please select at least one text file", severity="warning")
                 return
             
             # Get processing options
@@ -1078,7 +1103,7 @@ class IngestWindow(Container):
             # Check if media DB is available
             if not self.app_instance.media_db:
                 logger.error("Media database not initialized")
-                self.app.notify("Error: Media database not available", severity="error")
+                self.app_instance.notify("Error: Media database not available", severity="error")
                 status_area.load_text("Error: Media database not available")
                 return
             
@@ -1152,13 +1177,13 @@ class IngestWindow(Container):
             status_area.load_text(summary)
             
             if processed_count > 0:
-                self.app.notify(f"Successfully processed {processed_count} text files", severity="information")
+                self.app_instance.notify(f"Successfully processed {processed_count} text files", severity="information")
             if error_count > 0:
-                self.app.notify(f"Failed to process {error_count} text files", severity="warning")
+                self.app_instance.notify(f"Failed to process {error_count} text files", severity="warning")
                 
         except Exception as e:
             logger.error(f"Error in plaintext processing: {e}", exc_info=True)
-            self.app.notify(f"Error: {str(e)}", severity="error")
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
             status_area.load_text(f"Error: {str(e)}")
         finally:
             # Reset UI state
@@ -1176,12 +1201,12 @@ class IngestWindow(Container):
             process_button = self.query_one("#ingest-local-web-process", Button)
         except Exception as e:
             logger.error(f"Error finding UI elements: {e}")
-            self.app.notify("Error: UI elements not found", severity="error")
+            self.app_instance.notify("Error: UI elements not found", severity="error")
             return
         
         # Check if already processing
         if hasattr(self, '_web_scraping_worker') and self._web_scraping_worker and not self._web_scraping_worker.is_finished:
-            self.app.notify("Already processing URLs. Please wait or stop the current process.", severity="warning")
+            self.app_instance.notify("Already processing URLs. Please wait or stop the current process.", severity="warning")
             return
         
         # Show loading state
@@ -1220,7 +1245,7 @@ class IngestWindow(Container):
             urls_text = urls_textarea.text.strip()
             
             if not urls_text:
-                self.app.notify("Please enter at least one URL", severity="warning")
+                self.app_instance.notify("Please enter at least one URL", severity="warning")
                 return
             
             # Split URLs by newline and filter empty lines
@@ -1254,12 +1279,12 @@ class IngestWindow(Container):
                     custom_cookies = self._parse_cookie_string(cookies_str)
                 except Exception as e:
                     logger.warning(f"Failed to parse cookies: {e}")
-                    self.app.notify("Warning: Failed to parse cookies, continuing without them", severity="warning")
+                    self.app_instance.notify("Warning: Failed to parse cookies, continuing without them", severity="warning")
             
             # Check if media DB is available
             if not self.app_instance.media_db:
                 logger.error("Media database not initialized")
-                self.app.notify("Error: Media database not available", severity="error")
+                self.app_instance.notify("Error: Media database not available", severity="error")
                 status_area.load_text("Error: Media database not available")
                 return
             
@@ -1287,12 +1312,12 @@ class IngestWindow(Container):
             def on_worker_done(worker: Worker) -> None:
                 """Handle worker completion."""
                 if worker.cancelled:
-                    self.app.notify("Processing cancelled", severity="warning")
+                    self.app_instance.notify("Processing cancelled", severity="warning")
                     return
                     
                 result = worker.result
                 if not result:
-                    self.app.notify("No results from processing", severity="error")
+                    self.app_instance.notify("No results from processing", severity="error")
                     self._cleanup_after_processing()
                     return
                 
@@ -1337,9 +1362,9 @@ class IngestWindow(Container):
                 
                 # Notifications
                 if processed_count > 0:
-                    self.app.notify(f"Successfully processed {processed_count} web articles", severity="information")
+                    self.app_instance.notify(f"Successfully processed {processed_count} web articles", severity="information")
                 if error_count > 0:
-                    self.app.notify(f"Failed to process {error_count} web articles", severity="warning")
+                    self.app_instance.notify(f"Failed to process {error_count} web articles", severity="warning")
                 
                 # Clean up UI
                 self._cleanup_after_processing()
@@ -1349,7 +1374,7 @@ class IngestWindow(Container):
                 
         except Exception as e:
             logger.error(f"Error in web article processing: {e}", exc_info=True)
-            self.app.notify(f"Error: {str(e)}", severity="error")
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
             status_area.load_text(f"Error: {str(e)}")
         finally:
             # Reset UI state
@@ -1405,6 +1430,49 @@ class IngestWindow(Container):
         except Exception as e:
             logger.error(f"Error updating URL count: {e}")
     
+    async def _handle_clear_urls(self) -> None:
+        """Handle clearing URLs."""
+        try:
+            urls_textarea = self.query_one("#ingest-local-web-urls", TextArea)
+            urls_textarea.clear()
+            self._update_url_count()
+            self.app_instance.notify("URLs cleared", severity="information")
+        except Exception as e:
+            logger.error(f"Error clearing URLs: {e}")
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+    
+    async def _handle_remove_duplicate_urls(self) -> None:
+        """Handle removing duplicate URLs."""
+        try:
+            urls_textarea = self.query_one("#ingest-local-web-urls", TextArea)
+            urls_text = urls_textarea.text.strip()
+            
+            if not urls_text:
+                self.app_instance.notify("No URLs to process", severity="warning")
+                return
+            
+            # Split URLs and remove duplicates while preserving order
+            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            seen = set()
+            unique_urls = []
+            for url in urls:
+                if url not in seen:
+                    seen.add(url)
+                    unique_urls.append(url)
+            
+            removed_count = len(urls) - len(unique_urls)
+            
+            if removed_count > 0:
+                urls_textarea.text = '\n'.join(unique_urls)
+                self._update_url_count()
+                self.app_instance.notify(f"Removed {removed_count} duplicate URLs", severity="information")
+            else:
+                self.app_instance.notify("No duplicate URLs found", severity="information")
+                
+        except Exception as e:
+            logger.error(f"Error removing duplicate URLs: {e}")
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+    
     async def _handle_import_urls_from_file(self) -> None:
         """Handle importing URLs from a file."""
         from ..Third_Party.textual_fspicker import FileOpen, Filters
@@ -1423,12 +1491,12 @@ class IngestWindow(Container):
                         urls_textarea.text = content
                     
                     self._update_url_count()
-                    self.app.notify(f"Imported URLs from {file_path.name}", severity="information")
+                    self.app_instance.notify(f"Imported URLs from {file_path.name}", severity="information")
                 except Exception as e:
                     logger.error(f"Error importing URLs from file: {e}")
-                    self.app.notify(f"Error importing URLs: {str(e)}", severity="error")
+                    self.app_instance.notify(f"Error importing URLs: {str(e)}", severity="error")
         
-        await self.app.push_screen(
+        await self.app_instance.push_screen(
             FileOpen(
                 title="Select URL List File",
                 filters=Filters(
@@ -1446,7 +1514,7 @@ class IngestWindow(Container):
             urls_text = urls_textarea.text.strip()
             
             if not urls_text:
-                self.app.notify("No URLs to process", severity="warning")
+                self.app_instance.notify("No URLs to process", severity="warning")
                 return
             
             urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
@@ -1464,13 +1532,13 @@ class IngestWindow(Container):
             if removed_count > 0:
                 urls_textarea.text = '\n'.join(unique_urls)
                 self._update_url_count()
-                self.app.notify(f"Removed {removed_count} duplicate URLs", severity="information")
+                self.app_instance.notify(f"Removed {removed_count} duplicate URLs", severity="information")
             else:
-                self.app.notify("No duplicate URLs found", severity="information")
+                self.app_instance.notify("No duplicate URLs found", severity="information")
                 
         except Exception as e:
             logger.error(f"Error removing duplicate URLs: {e}")
-            self.app.notify(f"Error: {str(e)}", severity="error")
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
     
     @work(thread=True)
     async def _process_urls_worker(self, data: dict) -> dict:
@@ -1644,7 +1712,7 @@ class IngestWindow(Container):
         if hasattr(self, '_web_scraping_worker') and self._web_scraping_worker:
             try:
                 self._web_scraping_worker.cancel()
-                self.app.notify("Stopping web scraping...", severity="warning")
+                self.app_instance.notify("Stopping web scraping...", severity="warning")
                 
                 # Update status
                 status_area = self.query_one("#ingest-local-web-status", TextArea)
@@ -1687,7 +1755,7 @@ class IngestWindow(Container):
     async def _handle_retry_failed_urls(self) -> None:
         """Handle retrying failed URLs."""
         if not hasattr(self, '_failed_urls_for_retry') or not self._failed_urls_for_retry:
-            self.app.notify("No failed URLs to retry", severity="warning")
+            self.app_instance.notify("No failed URLs to retry", severity="warning")
             return
         
         logger.info(f"Retrying {len(self._failed_urls_for_retry)} failed URLs")
@@ -1700,7 +1768,7 @@ class IngestWindow(Container):
             retry_button = self.query_one("#ingest-local-web-retry", Button)
         except Exception as e:
             logger.error(f"Error finding UI elements: {e}")
-            self.app.notify("Error: UI elements not found", severity="error")
+            self.app_instance.notify("Error: UI elements not found", severity="error")
             return
         
         # Show loading state
@@ -1778,12 +1846,12 @@ class IngestWindow(Container):
             def on_worker_done(worker: Worker) -> None:
                 """Handle worker completion."""
                 if worker.cancelled:
-                    self.app.notify("Retry processing cancelled", severity="warning")
+                    self.app_instance.notify("Retry processing cancelled", severity="warning")
                     return
                     
                 result = worker.result
                 if not result:
-                    self.app.notify("No results from retry processing", severity="error")
+                    self.app_instance.notify("No results from retry processing", severity="error")
                     self._cleanup_after_processing()
                     return
                 
@@ -1827,9 +1895,9 @@ class IngestWindow(Container):
                 
                 # Notifications
                 if processed_count > 0:
-                    self.app.notify(f"Successfully processed {processed_count} articles on retry", severity="information")
+                    self.app_instance.notify(f"Successfully processed {processed_count} articles on retry", severity="information")
                 if error_count > 0:
-                    self.app.notify(f"Still failed to process {error_count} articles", severity="warning")
+                    self.app_instance.notify(f"Still failed to process {error_count} articles", severity="warning")
                 
                 # Clean up UI
                 self._cleanup_after_processing()
@@ -1843,7 +1911,7 @@ class IngestWindow(Container):
             
         except Exception as e:
             logger.error(f"Error in retry processing: {e}", exc_info=True)
-            self.app.notify(f"Error: {str(e)}", severity="error")
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
             status_area.append(f"\nError during retry: {str(e)}")
             # Reset UI state
             loading_indicator.display = False
