@@ -100,19 +100,20 @@ class EvalFilePickerDialog(ModalScreen):
                 yield Button("Cancel", id="cancel-button", variant="error")
                 yield Button("Select", id="select-button", variant="primary")
     
-    @on(FileOpen.FileSelected)
-    @on(FileSave.FileSelected)
-    @on(EnhancedFileOpen.FileSelected)
-    @on(EnhancedFileSave.FileSelected)
-    def handle_file_selected(self, event):
-        """Handle file selection."""
-        self.selected_file = str(event.path)
-        logger.info(f"File selected: {self.selected_file}")
-        
-        # Add to recent locations if using enhanced picker
-        if self.use_enhanced and self.recent_locations:
-            from pathlib import Path
-            self.recent_locations.add(Path(event.path))
+    def on_dismiss(self, result):
+        """Handle dialog dismissal with selected file."""
+        if result:
+            self.selected_file = str(result)
+            logger.info(f"File selected: {self.selected_file}")
+            
+            # Add to recent locations if using enhanced picker
+            if self.use_enhanced and self.recent_locations:
+                from pathlib import Path
+                self.recent_locations.add(Path(result))
+            
+            # Call callback if provided
+            if self.callback:
+                self.callback(self.selected_file)
     
     @on(Button.Pressed, "#select-button")
     def handle_select(self):
@@ -160,8 +161,6 @@ class EvalFilePickerDialog(ModalScreen):
     @on(Button.Pressed, "#cancel-button")
     def handle_cancel(self):
         """Handle cancel button press."""
-        if self.callback:
-            self.callback(None)
         self.dismiss(None)
 
 class TaskFilePickerDialog(EvalFilePickerDialog):

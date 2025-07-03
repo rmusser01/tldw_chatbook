@@ -46,6 +46,7 @@ class EvaluationOrchestrator:
         
         self.db = EvalsDB(db_path=str(db_path), client_id=client_id)
         self.task_loader = TaskLoader()
+        self._active_tasks = {}  # Track active evaluation tasks
         
         logger.info(f"EvaluationOrchestrator initialized with DB: {db_path}")
     
@@ -269,6 +270,10 @@ class EvaluationOrchestrator:
         """List evaluation runs."""
         return self.db.list_runs(**kwargs)
     
+    def list_datasets(self, **kwargs) -> List[Dict[str, Any]]:
+        """List available datasets."""
+        return self.db.list_datasets(**kwargs)
+    
     def search_tasks(self, query: str, **kwargs) -> List[Dict[str, Any]]:
         """Search tasks using full-text search."""
         return self.db.search_tasks(query, **kwargs)
@@ -430,6 +435,40 @@ class EvaluationOrchestrator:
             categories[category].append(template)
         
         return categories
+    
+    def cancel_evaluation(self, run_id: str) -> bool:
+        """
+        Cancel an active evaluation run.
+        
+        Args:
+            run_id: ID of the evaluation run to cancel
+            
+        Returns:
+            True if successfully cancelled, False otherwise
+        """
+        try:
+            # Check if this run is active
+            if run_id in self._active_tasks:
+                # Cancel the task
+                task = self._active_tasks[run_id]
+                if task and not task.done():
+                    task.cancel()
+                    logger.info(f"Cancelled evaluation run: {run_id}")
+                
+                # Remove from active tasks
+                del self._active_tasks[run_id]
+                
+                # Update run status in database
+                self.db.update_run(run_id, {'status': 'cancelled'})
+                
+                return True
+            else:
+                logger.warning(f"Evaluation run not found or not active: {run_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error cancelling evaluation {run_id}: {e}")
+            return False
     
     def close(self):
         """Close database connections and cancel active runs."""

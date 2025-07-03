@@ -653,9 +653,7 @@ def get_available_datasets(app: 'TldwCli', limit: int = 50) -> List[Dict[str, An
     """Get available datasets."""
     try:
         orchestrator = get_orchestrator()
-        # This would need to be implemented in the orchestrator
-        # For now, return empty list
-        return []
+        return orchestrator.list_datasets(limit=limit)
     except Exception as e:
         logger.error(f"Error getting available datasets: {e}")
         return []

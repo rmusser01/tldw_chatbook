@@ -782,9 +782,9 @@ Message ID: {action_widget.message_id_internal or 'N/A'}
         
         # Create note via NotesInteropService
         try:
-            notes_service = NotesInteropService(app.chachanotes_db)
-            note_id = notes_service.add_note(
-                user_id=app.client_id,
+            # Use the app's existing notes service
+            note_id = app.notes_service.add_note(
+                user_id=app.notes_user_id,
                 title=note_title,
                 content=note_content
             )
