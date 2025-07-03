@@ -125,6 +125,18 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 classes="streaming-toggle",
                 tooltip="Enable/disable streaming responses. When disabled, responses appear all at once."
             )
+            
+            # Show attach button toggle (only for chat)
+            if id_prefix == "chat":
+                from ..config import get_cli_setting
+                show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
+                yield Checkbox(
+                    "Show Attach File Button",
+                    id="chat-show-attach-button-checkbox",
+                    value=show_attach_button,
+                    classes="attach-button-toggle",
+                    tooltip="Show/hide the file attachment button in chat"
+                )
 
         # -------------------------------------------------------------------
         # RAG Settings (Prominent Panel - Always visible)

@@ -99,7 +99,10 @@ class ModelCapabilities:
         """
         if config is None:
             # Load from config file
-            config = get_cli_setting("model_capabilities", None) or {}
+            # Get model_capabilities from config - it's a top-level section
+            from tldw_chatbook.config import load_cli_config_and_ensure_existence
+            full_config = load_cli_config_and_ensure_existence()
+            config = full_config.get("model_capabilities", {})
         
         # Direct model mappings (highest priority)
         self.direct_mappings = config.get("models", DEFAULT_MODEL_CAPABILITIES.copy())

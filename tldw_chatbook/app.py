@@ -1413,6 +1413,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self, event.button, event.message_widget
         )
 
+    @on(ChatMessageEnhanced.Action)
+    async def handle_chat_message_enhanced_action(self, event: ChatMessageEnhanced.Action) -> None:
+        """Handles actions (edit, copy, etc.) from within a ChatMessageEnhanced widget."""
+        button_classes = " ".join(event.button.classes) # Get class string for logging
+        self.loguru_logger.debug(
+            f"ChatMessageEnhanced.Action received for button "
+            f"(Classes: {button_classes}, Label: '{event.button.label}') "
+            f"on message role: {event.message_widget.role}"
+        )
+        # The event directly gives us the context we need.
+        # Now we call the existing handler function with the correct arguments.
+        await chat_events.handle_chat_action_button_pressed(
+            self, event.button, event.message_widget
+        )
+
     # --- Watcher for CCP Active View ---
     def watch_ccp_active_view(self, old_view: Optional[str], new_view: str) -> None:
         loguru_logger.debug(f"CCP active view changing from '{old_view}' to: '{new_view}'")
@@ -3308,6 +3323,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         if checkbox_id.startswith("chat-conversation-search-") and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_search_checkbox_changed(self, checkbox_id, event.value)
+        elif checkbox_id == "chat-show-attach-button-checkbox" and current_active_tab == TAB_CHAT:
+            # Handle attach button visibility toggle
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("chat.images", "show_attach_button", event.value)
+            
+            # Update the UI if enhanced chat window is active
+            use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+            if use_enhanced_chat:
+                try:
+                    from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
+                    chat_window = self.query_one("#chat-window", ChatWindowEnhanced)
+                    await chat_window.toggle_attach_button_visibility(event.value)
+                except Exception as e:
+                    loguru_logger.error(f"Error toggling attach button visibility: {e}")
         # Add handlers for checkboxes in other tabs if any
 
     async def on_switch_changed(self, event: Switch.Changed) -> None:

@@ -1396,6 +1396,7 @@ use_enhanced_window = false  # Enable enhanced chat window with image support
 # Image support settings (when use_enhanced_window = true)
 [chat.images]
 enabled = true
+show_attach_button = true  # Show/hide the attach file button in chat
 default_render_mode = "auto"  # auto, pixels, regular
 max_size_mb = 10.0
 auto_resize = true

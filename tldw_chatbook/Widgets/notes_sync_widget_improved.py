@@ -433,8 +433,8 @@ class NotesSyncWidgetImproved(ModalScreen):
                 folder_input.value = str(path)
                 
                 # Save the selected directory to config
-                from tldw_chatbook.config import set_cli_setting
-                if set_cli_setting("notes", "sync_directory", str(path)):
+                from tldw_chatbook.config import save_setting_to_cli_config
+                if save_setting_to_cli_config("notes", "sync_directory", str(path)):
                     logger.info(f"Saved notes sync directory to config: {path}")
                 
                 # Update status card with folder name

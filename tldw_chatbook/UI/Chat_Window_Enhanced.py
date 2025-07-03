@@ -3,6 +3,7 @@
 #
 # Imports
 from typing import TYPE_CHECKING, Optional
+from pathlib import Path
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -45,11 +46,6 @@ class ChatWindowEnhanced(Container):
     DEFAULT_CSS = """
     .hidden {
         display: none;
-    }
-    
-    #image-file-path {
-        margin: 0 1;
-        height: 3;
     }
     
     #image-attachment-indicator {
@@ -140,16 +136,44 @@ class ChatWindowEnhanced(Container):
             logger.warning(f"No handler found for button: {button_id}")
 
     async def handle_attach_image_button(self, app_instance, event):
-        """Show image file path input."""
-        file_input = self.query_one("#image-file-path")
-        file_input.remove_class("hidden")
-        file_input.focus()
+        """Show image file picker dialog."""
+        from ..Third_Party.textual_fspicker import FileOpen, Filters
+        
+        def on_image_selected(file_path: Optional[Path]):
+            if file_path:
+                # Process the selected image
+                self.app_instance.call_from_thread(self.process_image_attachment, str(file_path))
+        
+        # Create image file filters
+        image_filters = Filters(
+            ("Image Files", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg"),
+            ("PNG Images", "*.png"),
+            ("JPEG Images", "*.jpg;*.jpeg"),
+            ("GIF Images", "*.gif"),
+            ("WebP Images", "*.webp"),
+            ("All Files", "*.*")
+        )
+        
+        # Push the FileOpen dialog directly
+        self.app_instance.push_screen(
+            FileOpen(
+                path=".",
+                title="Select Image to Attach",
+                filters=image_filters
+            ),
+            callback=on_image_selected
+        )
 
     async def handle_clear_image_button(self, app_instance, event):
         """Clear attached image."""
         self.pending_image = None
-        attach_button = self.query_one("#attach-image")
-        attach_button.label = "📎"
+        
+        # Update attach button if it exists
+        try:
+            attach_button = self.query_one("#attach-image")
+            attach_button.label = "📎"
+        except Exception:
+            pass
         
         # Hide indicator
         indicator = self.query_one("#image-attachment-indicator")
@@ -167,27 +191,24 @@ class ChatWindowEnhanced(Container):
         # Clear any pending image after sending
         if self.pending_image:
             self.pending_image = None
-            attach_button = self.query_one("#attach-image")
-            attach_button.label = "📎"
+            
+            # Update attach button if it exists
+            try:
+                attach_button = self.query_one("#attach-image")
+                attach_button.label = "📎"
+            except Exception:
+                pass
             
             # Hide indicator
             indicator = self.query_one("#image-attachment-indicator")
             indicator.add_class("hidden")
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle image path submission."""
-        if event.input.id == "image-file-path":
-            await self.handle_image_path_submitted(event)
 
-    async def handle_image_path_submitted(self, event: Input.Submitted) -> None:
-        """Process submitted image path."""
+    async def process_image_attachment(self, file_path: str) -> None:
+        """Process selected image file."""
         from ..Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
         
         try:
-            file_path = event.value.strip()
-            if not file_path:
-                return
-            
             # Process image
             image_data, mime_type = await ChatImageHandler.process_image_file(file_path)
             
@@ -199,8 +220,11 @@ class ChatWindowEnhanced(Container):
             }
             
             # Update UI to show image is attached
-            attach_button = self.query_one("#attach-image")
-            attach_button.label = "📎✓"
+            try:
+                attach_button = self.query_one("#attach-image")
+                attach_button.label = "📎✓"
+            except Exception:
+                pass
             
             # Show indicator with filename
             from pathlib import Path
@@ -211,36 +235,22 @@ class ChatWindowEnhanced(Container):
             
             self.app_instance.notify(f"Image attached: {filename}")
             
-            # Hide file input
-            event.input.add_class("hidden")
-            event.input.value = ""
-            
         except FileNotFoundError:
             logger.error(f"Image file not found: {file_path}")
             self.app_instance.notify(f"Image file not found: {file_path}", severity="error")
-            event.input.value = ""
-            event.input.focus()
         except ValueError as e:
             # This is thrown by ChatImageHandler for format/size issues
             logger.error(f"Invalid image: {e}")
             self.app_instance.notify(str(e), severity="error")
-            event.input.value = ""
-            event.input.focus()
         except PermissionError:
             logger.error(f"Permission denied accessing image: {file_path}")
             self.app_instance.notify(f"Permission denied: Cannot access {file_path}", severity="error")
-            event.input.value = ""
-            event.input.focus()
         except MemoryError:
             logger.error(f"Image too large to load into memory: {file_path}")
             self.app_instance.notify("Image is too large to process. Please use a smaller image.", severity="error")
-            event.input.value = ""
-            event.input.focus()
         except Exception as e:
             logger.error(f"Unexpected error attaching image: {e}", exc_info=True)
             self.app_instance.notify(f"Unexpected error: {e}", severity="error")
-            event.input.value = ""
-            event.input.focus()
 
     def compose(self) -> ComposeResult:
         logger.debug("Composing ChatWindowEnhanced UI")
@@ -250,13 +260,6 @@ class ChatWindowEnhanced(Container):
         # Main Chat Content Area
         with Container(id="chat-main-content"):
             yield VerticalScroll(id="chat-log")
-            
-            # Hidden file path input for image selection
-            yield Input(
-                id="image-file-path",
-                placeholder="Enter image file path or drag & drop...",
-                classes="hidden"
-            )
             
             # Image attachment indicator
             yield Static(
@@ -269,7 +272,13 @@ class ChatWindowEnhanced(Container):
                 yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), id="toggle-chat-left-sidebar",
                              classes="sidebar-toggle")
                 yield TextArea(id="chat-input", classes="chat-input")
-                yield Button("📎", id="attach-image", classes="action-button attach-button")
+                
+                # Check config to see if attach button should be shown
+                from ..config import get_cli_setting
+                show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
+                if show_attach_button:
+                    yield Button("📎", id="attach-image", classes="action-button attach-button")
+                
                 yield Button(
                     get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
                             FALLBACK_SEND if self.is_send_button else FALLBACK_STOP),
@@ -291,6 +300,65 @@ class ChatWindowEnhanced(Container):
     def get_pending_image(self) -> Optional[dict]:
         """Get the pending image attachment data."""
         return self.pending_image
+    
+    async def toggle_attach_button_visibility(self, show: bool) -> None:
+        """Toggle the visibility of the attach file button."""
+        try:
+            if show:
+                # Check if button already exists
+                try:
+                    self.query_one("#attach-image")
+                    # Button already exists, no need to add
+                    return
+                except Exception:
+                    # Button doesn't exist, need to add it
+                    pass
+                
+                # Find the input area and add the button
+                input_area = self.query_one("#chat-input-area", Horizontal)
+                chat_input = self.query_one("#chat-input", TextArea)
+                
+                # Create and mount the button after the chat input
+                attach_button = Button("📎", id="attach-image", classes="action-button attach-button")
+                await input_area.mount(attach_button, after=chat_input)
+                
+                # Re-arrange the buttons to maintain order
+                await self._rearrange_chat_buttons()
+                
+            else:
+                # Remove the button if it exists
+                try:
+                    attach_button = self.query_one("#attach-image")
+                    await attach_button.remove()
+                    # Clear any pending image when hiding the button
+                    self.pending_image = None
+                    # Hide the indicator as well
+                    indicator = self.query_one("#image-attachment-indicator")
+                    indicator.add_class("hidden")
+                except Exception:
+                    # Button doesn't exist, nothing to remove
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"Error toggling attach button visibility: {e}")
+    
+    async def _rearrange_chat_buttons(self) -> None:
+        """Rearrange chat buttons to maintain proper order after dynamic addition."""
+        try:
+            input_area = self.query_one("#chat-input-area", Horizontal)
+            
+            # Get all the buttons that should be after the attach button
+            send_stop_button = self.query_one("#send-stop-chat", Button)
+            respond_button = self.query_one("#respond-for-me-button", Button)
+            right_sidebar_button = self.query_one("#toggle-chat-right-sidebar", Button)
+            
+            # Move them to the end in the correct order
+            await send_stop_button.move(parent=input_area, after=-1)
+            await respond_button.move(parent=input_area, after=-1)
+            await right_sidebar_button.move(parent=input_area, after=-1)
+            
+        except Exception as e:
+            logger.debug(f"Could not rearrange buttons: {e}")
     
     async def handle_notes_expand_button(self, app, event) -> None:
         """Handle the notes expand/collapse button."""
@@ -459,8 +527,13 @@ class ChatWindowEnhanced(Container):
         # Clear any pending image after sending
         if self.pending_image:
             self.pending_image = None
-            attach_button = self.query_one("#attach-image")
-            attach_button.label = "📎"
+            
+            # Update attach button if it exists
+            try:
+                attach_button = self.query_one("#attach-image")
+                attach_button.label = "📎"
+            except Exception:
+                pass
             
             # Hide indicator
             indicator = self.query_one("#image-attachment-indicator")
