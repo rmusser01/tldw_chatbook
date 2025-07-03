@@ -2183,6 +2183,30 @@ async def handle_tldw_api_worker_success(app: 'TldwCli', event: 'Worker.StateCha
     notify_msg = f"{media_type.title()} Ingestion: {processed_count} done, {error_count} errors."
     app.notify(notify_msg, severity="information" if error_count == 0 else "warning", timeout=7)
 
+async def handle_ingest_local_web_button_pressed(app: 'TldwCli', event: 'Button.Pressed') -> None:
+    """Handle local web article button presses by delegating to IngestWindow methods."""
+    button_id = event.button.id
+    try:
+        ingest_window = app.query_one("#ingest-window", IngestWindow)
+        
+        if button_id == "ingest-local-web-clear-urls":
+            await ingest_window._handle_clear_urls()
+        elif button_id == "ingest-local-web-import-urls":
+            await ingest_window._handle_import_urls_from_file()
+        elif button_id == "ingest-local-web-remove-duplicates":
+            await ingest_window._handle_remove_duplicate_urls()
+        elif button_id == "ingest-local-web-process":
+            await ingest_window.handle_local_web_article_process()
+        elif button_id == "ingest-local-web-stop":
+            await ingest_window._handle_stop_web_scraping()
+        elif button_id == "ingest-local-web-retry":
+            await ingest_window._handle_retry_failed_urls()
+    except QueryError:
+        logger.error(f"Could not find IngestWindow to handle button {button_id}")
+    except Exception as e:
+        logger.error(f"Error handling local web button {button_id}: {e}")
+        app.notify(f"Error: {str(e)}", severity="error")
+
 # --- Button Handler Map ---
 INGEST_BUTTON_HANDLERS = {
     # Prompts
@@ -2205,6 +2229,13 @@ INGEST_BUTTON_HANDLERS = {
     "tldw-api-submit-document": handle_tldw_api_submit_button_pressed,
     "tldw-api-submit-xml": handle_tldw_api_submit_button_pressed,
     "tldw-api-submit-mediawiki_dump": handle_tldw_api_submit_button_pressed,
+    # Local Web Article buttons
+    "ingest-local-web-clear-urls": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-import-urls": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-remove-duplicates": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-process": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-stop": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-retry": handle_ingest_local_web_button_pressed,
 }
 
 

@@ -71,6 +71,8 @@ class IngestWindow(Container):
         self.app_instance = app_instance
         self.selected_local_files = {}  # Stores {media_type: [Path, ...]}
         self._current_media_type_for_file_dialog = None # Stores the media_type for the active file dialog
+        self._failed_urls_for_retry = []  # Store failed URLs for retry
+        self._retry_attempts = {}  # Track retry attempts per URL
         logger.debug("IngestWindow initialized.")
     
     def on_mount(self) -> None:
@@ -1261,87 +1263,89 @@ class IngestWindow(Container):
                 status_area.load_text("Error: Media database not available")
                 return
             
-            # Import the scraping function
-            from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
+            # Prepare worker data
+            worker_data = {
+                'urls': urls,
+                'custom_cookies': custom_cookies,
+                'title_override': title_override,
+                'author_override': author_override,
+                'keywords': keywords,
+                'js_render': js_render,
+                'css_selector': css_selector
+            }
             
-            # Process each URL
-            processed_count = 0
-            error_count = 0
-            status_messages = []
+            # Add stop button
+            stop_button = Button("Stop Processing", id="ingest-local-web-stop", variant="error")
+            action_section = process_button.parent
+            if action_section and not self.query("#ingest-local-web-stop"):
+                action_section.mount(stop_button, after=process_button)
             
-            status_area.load_text(f"Processing {len(urls)} URLs...\n")
+            # Start worker
+            self._web_scraping_worker = self._process_urls_worker(worker_data)
             
-            for idx, url in enumerate(urls, 1):
-                try:
-                    status_area.append(f"\n[{idx}/{len(urls)}] Scraping: {url}\n")
+            # Handle worker completion
+            def on_worker_done(worker: Worker) -> None:
+                """Handle worker completion."""
+                if worker.cancelled:
+                    self.app.notify("Processing cancelled", severity="warning")
+                    return
                     
-                    # Scrape the article
-                    article_data = await scrape_article(url, custom_cookies=custom_cookies)
+                result = worker.result
+                if not result:
+                    self.app.notify("No results from processing", severity="error")
+                    self._cleanup_after_processing()
+                    return
+                
+                processed_count = result['processed_count']
+                error_count = result['error_count']
+                failed_urls = result['failed_urls']
+                
+                # Update final status
+                summary = f"\n## Processing Complete\n\n"
+                summary += f"✅ Successfully processed: {processed_count} articles\n"
+                if error_count > 0:
+                    summary += f"❌ Errors: {error_count} articles\n"
+                summary += "\n### Details:\n"
+                
+                # Show results
+                for res in result['results'][-10:]:  # Last 10 results
+                    if isinstance(res, dict):
+                        if res['status'] == 'success':
+                            summary += f"✅ {res['title']} - ID: {res['media_id']}\n"
+                        else:
+                            summary += f"❌ {res['url']} - {res['error']}\n"
+                
+                if len(result['results']) > 10:
+                    summary += f"\n... and {len(result['results']) - 10} more"
+                
+                status_area.append(summary)
+                
+                # Show failed URLs section if any
+                if failed_urls:
+                    status_area.append("\n\n### Failed URLs for retry:\n")
+                    for fail in failed_urls:
+                        status_area.append(f"- {fail['url']} ({fail.get('error', 'Unknown error')})\n")
                     
-                    if not article_data.get('extraction_successful', False):
-                        error_count += 1
-                        status_messages.append(f"❌ Failed to extract: {url}")
-                        status_area.append(f"   ❌ Extraction failed\n")
-                        continue
+                    # Store failed URLs for retry
+                    self._failed_urls_for_retry = failed_urls
                     
-                    # Override metadata if provided
-                    title = title_override or article_data.get('title', url)
-                    author = author_override or article_data.get('author', '')
-                    content = article_data.get('content', '')
-                    
-                    if not content:
-                        error_count += 1
-                        status_messages.append(f"❌ No content found: {url}")
-                        status_area.append(f"   ❌ No content found\n")
-                        continue
-                    
-                    # Add to media database
-                    media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
-                        url=url,
-                        title=title,
-                        media_type="web_article",
-                        content=content,
-                        keywords=keywords,
-                        author=author,
-                        metadata={
-                            'publication_date': article_data.get('date'),
-                            'extraction_method': 'trafilatura',
-                            'js_rendered': js_render,
-                            'custom_selector': css_selector
-                        }
-                    )
-                    
-                    if media_id:
-                        processed_count += 1
-                        status_messages.append(f"✅ Successfully ingested: {title} ({url})")
-                        status_area.append(f"   ✅ Successfully ingested (ID: {media_id})\n")
-                    else:
-                        error_count += 1
-                        status_messages.append(f"❌ Database error: {url} - {msg}")
-                        status_area.append(f"   ❌ Database error: {msg}\n")
-                    
-                except Exception as e:
-                    logger.error(f"Error processing URL {url}: {e}", exc_info=True)
-                    error_count += 1
-                    status_messages.append(f"❌ Error processing {url}: {str(e)}")
-                    status_area.append(f"   ❌ Error: {str(e)}\n")
+                    # Add retry button
+                    retry_button = Button(f"Retry {len(failed_urls)} Failed URLs", id="ingest-local-web-retry", variant="warning")
+                    action_section = process_button.parent
+                    if action_section and not self.query("#ingest-local-web-retry"):
+                        action_section.mount(retry_button, after=process_button)
+                
+                # Notifications
+                if processed_count > 0:
+                    self.app.notify(f"Successfully processed {processed_count} web articles", severity="information")
+                if error_count > 0:
+                    self.app.notify(f"Failed to process {error_count} web articles", severity="warning")
+                
+                # Clean up UI
+                self._cleanup_after_processing()
             
-            # Update final status
-            summary = f"\n## Processing Complete\n\n"
-            summary += f"✅ Successfully processed: {processed_count} articles\n"
-            if error_count > 0:
-                summary += f"❌ Errors: {error_count} articles\n"
-            summary += "\n### Details:\n"
-            summary += "\n".join(status_messages[-10:])  # Show last 10 messages
-            if len(status_messages) > 10:
-                summary += f"\n... and {len(status_messages) - 10} more"
-            
-            status_area.append(summary)
-            
-            if processed_count > 0:
-                self.app.notify(f"Successfully processed {processed_count} web articles", severity="information")
-            if error_count > 0:
-                self.app.notify(f"Failed to process {error_count} web articles", severity="warning")
+            # Add callback
+            self._web_scraping_worker.add_done_callback(on_worker_done)
                 
         except Exception as e:
             logger.error(f"Error in web article processing: {e}", exc_info=True)
@@ -1478,6 +1482,8 @@ class IngestWindow(Container):
         keywords = data['keywords']
         js_render = data['js_render']
         css_selector = data['css_selector']
+        is_retry = data.get('is_retry', False)
+        max_retries = data.get('max_retries', 2)
         
         # Import scraping function
         from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
@@ -1491,14 +1497,25 @@ class IngestWindow(Container):
         max_concurrent = 3
         semaphore = asyncio.Semaphore(max_concurrent)
         
-        async def process_single_url(idx: int, url: str) -> dict:
+        async def process_single_url(idx: int, url: str, retry_count: int = 0) -> dict:
             async with semaphore:
                 try:
+                    # Track retry attempts
+                    if url not in self._retry_attempts:
+                        self._retry_attempts[url] = 0
+                    
+                    attempt_str = f" (Retry {retry_count}/{max_retries})" if retry_count > 0 else ""
+                    
                     # Update progress
                     self.call_from_thread(
                         self._update_scraping_progress,
-                        f"[{idx}/{len(urls)}] Scraping: {url}"
+                        f"[{idx}/{len(urls)}] Scraping{attempt_str}: {url}"
                     )
+                    
+                    # Add exponential backoff for retries
+                    if retry_count > 0:
+                        wait_time = min(2 ** (retry_count - 1), 10)  # Max 10 seconds
+                        await asyncio.sleep(wait_time)
                     
                     # Scrape the article
                     article_data = await scrape_article(url, custom_cookies=custom_cookies)
@@ -1554,14 +1571,36 @@ class IngestWindow(Container):
                     
                 except Exception as e:
                     logger.error(f"Error processing URL {url}: {e}", exc_info=True)
+                    error_msg = str(e)
+                    
+                    # Check if we should retry
+                    self._retry_attempts[url] = retry_count + 1
+                    if retry_count < max_retries and not is_retry:
+                        # Automatic retry with backoff
+                        self.call_from_thread(
+                            self._update_scraping_progress,
+                            f"[{idx}/{len(urls)}] Retrying {url} after error: {error_msg}"
+                        )
+                        return await process_single_url(idx, url, retry_count + 1)
+                    
                     return {
                         'url': url,
                         'status': 'failed',
-                        'error': str(e)
+                        'error': error_msg,
+                        'retry_count': self._retry_attempts.get(url, 0)
                     }
         
         # Create tasks for all URLs
-        tasks = [process_single_url(idx + 1, url) for idx, url in enumerate(urls)]
+        # If this is a retry, preserve retry counts
+        tasks = []
+        for idx, url in enumerate(urls):
+            if is_retry and isinstance(url, dict):
+                # URL from failed_urls list with retry info
+                retry_count = url.get('retry_count', 0)
+                tasks.append(process_single_url(idx + 1, url['url'], retry_count))
+            else:
+                # Normal URL string
+                tasks.append(process_single_url(idx + 1, url))
         
         # Process all URLs concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1644,6 +1683,174 @@ class IngestWindow(Container):
                 
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+    
+    async def _handle_retry_failed_urls(self) -> None:
+        """Handle retrying failed URLs."""
+        if not hasattr(self, '_failed_urls_for_retry') or not self._failed_urls_for_retry:
+            self.app.notify("No failed URLs to retry", severity="warning")
+            return
+        
+        logger.info(f"Retrying {len(self._failed_urls_for_retry)} failed URLs")
+        
+        # Get UI elements
+        try:
+            loading_indicator = self.query_one("#ingest-local-web-loading", LoadingIndicator)
+            status_area = self.query_one("#ingest-local-web-status", TextArea)
+            process_button = self.query_one("#ingest-local-web-process", Button)
+            retry_button = self.query_one("#ingest-local-web-retry", Button)
+        except Exception as e:
+            logger.error(f"Error finding UI elements: {e}")
+            self.app.notify("Error: UI elements not found", severity="error")
+            return
+        
+        # Show loading state
+        loading_indicator.display = True
+        loading_indicator.classes = loading_indicator.classes - {"hidden"}
+        status_area.append("\n\n## Retrying Failed URLs...\n")
+        process_button.disabled = True
+        retry_button.disabled = True
+        
+        # Show progress container
+        try:
+            progress_container = self.query_one("#ingest-local-web-progress", Container)
+            progress_container.classes = progress_container.classes - {"hidden"}
+            
+            # Initialize progress tracking
+            self._current_progress = {
+                'total': len(self._failed_urls_for_retry),
+                'done': 0,
+                'success': 0,
+                'failed': 0,
+                'pending': len(self._failed_urls_for_retry)
+            }
+            
+            # Update initial progress display
+            progress_text = self.query_one("#ingest-local-web-progress-text", Static)
+            counters = self.query_one("#ingest-local-web-counters", Static)
+            progress_text.update(f"Progress: 0/{len(self._failed_urls_for_retry)}")
+            counters.update(f"✅ 0  ❌ 0  ⏳ {len(self._failed_urls_for_retry)}")
+        except Exception as e:
+            logger.error(f"Error showing progress container: {e}")
+        
+        # Get scraping options from UI (reuse existing settings)
+        try:
+            custom_cookies = None
+            cookies_str = self.query_one("#ingest-local-web-cookies", Input).value.strip()
+            if cookies_str:
+                try:
+                    custom_cookies = self._parse_cookie_string(cookies_str)
+                except Exception as e:
+                    logger.warning(f"Failed to parse cookies: {e}")
+            
+            title_override = self.query_one("#ingest-local-web-title", Input).value.strip()
+            author_override = self.query_one("#ingest-local-web-author", Input).value.strip()
+            keywords_text = self.query_one("#ingest-local-web-keywords", TextArea).text.strip()
+            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
+            js_render = self.query_one("#ingest-local-web-js-render", Checkbox).value
+            css_selector = self.query_one("#ingest-local-web-css-selector", Input).value.strip()
+            
+            # Prepare worker data
+            worker_data = {
+                'urls': self._failed_urls_for_retry,  # Pass the failed URL objects
+                'custom_cookies': custom_cookies,
+                'title_override': title_override,
+                'author_override': author_override,
+                'keywords': keywords,
+                'js_render': js_render,
+                'css_selector': css_selector,
+                'is_retry': True,  # Flag this as a retry
+                'max_retries': 1   # Allow 1 more retry attempt
+            }
+            
+            # Clear the failed URLs list
+            self._failed_urls_for_retry = []
+            
+            # Add stop button
+            stop_button = Button("Stop Processing", id="ingest-local-web-stop", variant="error")
+            action_section = process_button.parent
+            if action_section and not self.query("#ingest-local-web-stop"):
+                await action_section.mount(stop_button, after=retry_button)
+            
+            # Start worker
+            self._web_scraping_worker = self._process_urls_worker(worker_data)
+            
+            # Handle worker completion
+            def on_worker_done(worker: Worker) -> None:
+                """Handle worker completion."""
+                if worker.cancelled:
+                    self.app.notify("Retry processing cancelled", severity="warning")
+                    return
+                    
+                result = worker.result
+                if not result:
+                    self.app.notify("No results from retry processing", severity="error")
+                    self._cleanup_after_processing()
+                    return
+                
+                processed_count = result['processed_count']
+                error_count = result['error_count']
+                failed_urls = result['failed_urls']
+                
+                # Update final status
+                summary = f"\n## Retry Complete\n\n"
+                summary += f"✅ Successfully processed: {processed_count} articles\n"
+                if error_count > 0:
+                    summary += f"❌ Still failed: {error_count} articles\n"
+                summary += "\n### Details:\n"
+                
+                # Show results
+                for res in result['results'][-10:]:  # Last 10 results
+                    if isinstance(res, dict):
+                        if res['status'] == 'success':
+                            summary += f"✅ {res['title']} - ID: {res['media_id']}\n"
+                        else:
+                            summary += f"❌ {res['url']} - {res['error']} (Retry attempts: {res.get('retry_count', 0)})\n"
+                
+                if len(result['results']) > 10:
+                    summary += f"\n... and {len(result['results']) - 10} more"
+                
+                status_area.append(summary)
+                
+                # Show failed URLs section if any still remain
+                if failed_urls:
+                    status_area.append("\n\n### Still Failed URLs:\n")
+                    for fail in failed_urls:
+                        status_area.append(f"- {fail['url']} ({fail.get('error', 'Unknown error')}) - Retry attempts: {fail.get('retry_count', 0)}\n")
+                    
+                    # Store failed URLs for potential future retry
+                    self._failed_urls_for_retry = failed_urls
+                    
+                    # Update retry button
+                    if retry_button:
+                        retry_button.label = f"Retry {len(failed_urls)} Failed URLs"
+                        retry_button.disabled = False
+                
+                # Notifications
+                if processed_count > 0:
+                    self.app.notify(f"Successfully processed {processed_count} articles on retry", severity="information")
+                if error_count > 0:
+                    self.app.notify(f"Still failed to process {error_count} articles", severity="warning")
+                
+                # Clean up UI
+                self._cleanup_after_processing()
+                
+                # Re-enable retry button if there are still failures
+                if failed_urls and retry_button:
+                    retry_button.disabled = False
+            
+            # Add callback
+            self._web_scraping_worker.add_done_callback(on_worker_done)
+            
+        except Exception as e:
+            logger.error(f"Error in retry processing: {e}", exc_info=True)
+            self.app.notify(f"Error: {str(e)}", severity="error")
+            status_area.append(f"\nError during retry: {str(e)}")
+            # Reset UI state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+            if retry_button:
+                retry_button.disabled = False
     
     async def _read_text_file(self, file_path: Path, encoding: str) -> str | None:
         """Read a text file with specified encoding."""
@@ -1851,8 +2058,10 @@ class IngestWindow(Container):
                 
                 # Recent activity log
                 yield Static("Recent Activity", classes="subsection-title")
-                yield TextArea("", id="subscription-activity-log", read_only=True, 
-                             classes="activity-log", max_height=10)
+                activity_log = TextArea("", id="subscription-activity-log", read_only=True, 
+                                      classes="activity-log")
+                activity_log.styles.max_height = 10
+                yield activity_log
             
             # New Items Section
             with Container(classes="ingest-new-items-section"):
