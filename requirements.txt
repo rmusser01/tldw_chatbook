@@ -26,7 +26,6 @@ loguru
 pydantic
 pyyaml
 httpx
-#pytest  # In dev group
 emoji
 jinja2
 pyperclip
@@ -36,6 +35,7 @@ keyring
 markdownify
 prometheus_client
 aiofiles
+#pytest  # In dev group
 
 # Optional Dependencies (install via pip install -e ".[group_name]")
 # Chunk Library (chunker group)
