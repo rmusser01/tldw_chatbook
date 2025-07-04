@@ -15,6 +15,10 @@ from textual.widgets import Static, Button, Input, Select, Checkbox, TextArea, L
 from textual.worker import Worker
 from textual import work
 from textual.reactive import reactive
+from ..Widgets.form_components import (
+    create_form_field, create_button_group, create_status_area
+)
+from ..Widgets.status_widget import EnhancedStatusWidget
 
 # Configure logger with context
 logger = logger.bind(module="Ingest_Window")
@@ -33,6 +37,8 @@ from ..Widgets.IngestTldwApiDocumentWindow import IngestTldwApiDocumentWindow
 from ..Widgets.IngestTldwApiXmlWindow import IngestTldwApiXmlWindow
 from ..Widgets.IngestTldwApiMediaWikiWindow import IngestTldwApiMediaWikiWindow
 from ..Widgets.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
+from ..Widgets.IngestLocalPlaintextWindow import IngestLocalPlaintextWindow
+from ..Widgets.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -66,6 +72,9 @@ INGEST_NAV_BUTTON_IDS = [
 ]
 
 class IngestWindow(Container):
+    # Reactive property for sidebar collapse state
+    sidebar_collapsed = reactive(False)
+    
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
@@ -103,6 +112,23 @@ class IngestWindow(Container):
         button_id = event.button.id
         logger.debug(f"IngestWindow handling button press: {button_id}")
         
+        # Handle collapse/expand button
+        if button_id == "ingest-nav-collapse":
+            self.sidebar_collapsed = not self.sidebar_collapsed
+            event.stop()
+            return
+        
+        # Handle navigation buttons
+        if button_id.startswith("ingest-nav-"):
+            view_id = button_id.replace("ingest-nav-", "ingest-view-")
+            logger.debug(f"Switching to view: {view_id}")
+            # Call the app's show_ingest_view method
+            self.app_instance.show_ingest_view(view_id)
+            # Update active button styling
+            await self._update_active_nav_button(button_id)
+            event.stop()
+            return
+        
         # Local web article buttons
         if button_id == "ingest-local-web-clear-urls":
             await self._handle_clear_urls()
@@ -122,6 +148,45 @@ class IngestWindow(Container):
         elif button_id == "ingest-local-web-retry":
             await self._handle_retry_failed_urls()
             event.stop()
+    
+    async def _update_active_nav_button(self, active_button_id: str) -> None:
+        """Update the active state of navigation buttons."""
+        try:
+            # Remove active class from all nav buttons
+            for button in self.query(".ingest-nav-button"):
+                button.remove_class("active")
+            
+            # Add active class to the clicked button
+            active_button = self.query_one(f"#{active_button_id}")
+            active_button.add_class("active")
+            logger.debug(f"Updated active nav button: {active_button_id}")
+        except QueryError as e:
+            logger.error(f"Error updating active nav button: {e}")
+    
+    def watch_sidebar_collapsed(self, collapsed: bool) -> None:
+        """React to sidebar collapse state changes."""
+        try:
+            nav_pane = self.query_one("#ingest-nav-pane")
+            toggle_button = self.query_one("#ingest-nav-collapse")
+            
+            if collapsed:
+                nav_pane.add_class("collapsed")
+                toggle_button.label = "▶"
+                toggle_button.tooltip = "Expand sidebar"
+                # Hide all text elements when collapsed
+                for element in nav_pane.query(".sidebar-title, .ingest-nav-button"):
+                    element.add_class("collapsed-hidden")
+            else:
+                nav_pane.remove_class("collapsed")
+                toggle_button.label = "◀"
+                toggle_button.tooltip = "Collapse sidebar"
+                # Show all text elements when expanded
+                for element in nav_pane.query(".sidebar-title, .ingest-nav-button"):
+                    element.remove_class("collapsed-hidden")
+                    
+            logger.debug(f"Sidebar collapsed state changed to: {collapsed}")
+        except QueryError as e:
+            logger.error(f"Error updating sidebar collapse state: {e}")
     
     def _get_file_filters_for_media_type(self, media_type: str):
         """Returns appropriate file filters for the given media type."""
@@ -172,6 +237,11 @@ class IngestWindow(Container):
     def compose(self) -> ComposeResult:
         logger.debug("Composing IngestWindow UI")
         with VerticalScroll(id="ingest-nav-pane", classes="ingest-nav-pane"):
+            # Add collapse/expand button at the top
+            with Horizontal(classes="nav-header"):
+                yield Static("Navigation", classes="sidebar-title flex-grow")
+                yield Button("◀", id="ingest-nav-collapse", classes="nav-toggle-button", tooltip="Collapse sidebar")
+            
             yield Static("Basic Ingestion", classes="sidebar-title")
             yield Button("Ingest Prompts", id="ingest-nav-prompts", classes="ingest-nav-button")
             yield Button("Ingest Characters", id="ingest-nav-characters", classes="ingest-nav-button")
@@ -201,106 +271,142 @@ class IngestWindow(Container):
 
         with Container(id="ingest-content-pane", classes="ingest-content-pane"):
             # --- Prompts Ingest View ---
-            with Vertical(id="ingest-view-prompts", classes="ingest-view-area"):
-                with Horizontal(classes="ingest-controls-row"):
-                    yield Button("Select Prompt File(s)", id="ingest-prompts-select-file-button")
-                    yield Button("Clear Selection", id="ingest-prompts-clear-files-button")
-                yield Label("Selected Files for Import:", classes="ingest-label")
+            with VerticalScroll(id="ingest-view-prompts", classes="ingest-view-area"):
+                # File selection buttons
+                yield from create_button_group([
+                    ("Select Prompt File(s)", "ingest-prompts-select-file-button", "default"),
+                    ("Clear Selection", "ingest-prompts-clear-files-button", "default")
+                ])
+                
+                yield Label("Selected Files for Import:", classes="form-label")
                 yield ListView(id="ingest-prompts-selected-files-list", classes="ingest-selected-files-list")
 
-                yield Label("Preview of Parsed Prompts (Max 10 shown):", classes="ingest-label")
-                with VerticalScroll(id="ingest-prompts-preview-area", classes="ingest-preview-area"):
+                yield Label("Preview of Parsed Prompts (Max 10 shown):", classes="form-label")
+                # Remove nested VerticalScroll - just use a container
+                with Container(id="ingest-prompts-preview-area", classes="ingest-preview-area"):
                     yield Static("Select files to see a preview.", id="ingest-prompts-preview-placeholder")
-                yield Button("Import Selected Prompts Now", id="ingest-prompts-import-now-button", variant="primary")
-                yield Label("Import Status:", classes="ingest-label")
-                yield TextArea(id="prompt-import-status-area", read_only=True, classes="ingest-status-area")
+                
+                # Import button centered
+                yield from create_button_group([
+                    ("Import Selected Prompts Now", "ingest-prompts-import-now-button", "primary")
+                ], alignment="center")
+                
+                # Enhanced status widget instead of TextArea
+                yield EnhancedStatusWidget(
+                    title="Import Status",
+                    id="prompt-import-status-widget",
+                    max_messages=50
+                )
 
             # --- Characters Ingest View ---
-            with Vertical(id="ingest-view-characters", classes="ingest-view-area"):
-                with Horizontal(classes="ingest-controls-row"):
-                    yield Button("Select Character File(s)", id="ingest-characters-select-file-button")
-                    yield Button("Clear Selection", id="ingest-characters-clear-files-button")
-                yield Label("Selected Files for Import:", classes="ingest-label")
+            with VerticalScroll(id="ingest-view-characters", classes="ingest-view-area"):
+                # File selection buttons
+                yield from create_button_group([
+                    ("Select Character File(s)", "ingest-characters-select-file-button", "default"),
+                    ("Clear Selection", "ingest-characters-clear-files-button", "default")
+                ])
+                
+                yield Label("Selected Files for Import:", classes="form-label")
                 yield ListView(id="ingest-characters-selected-files-list", classes="ingest-selected-files-list")
 
-                yield Label("Preview of Parsed Characters (Max 5 shown):", classes="ingest-label")
-                with VerticalScroll(id="ingest-characters-preview-area", classes="ingest-preview-area"):
+                yield Label("Preview of Parsed Characters (Max 5 shown):", classes="form-label")
+                # Remove nested VerticalScroll
+                with Container(id="ingest-characters-preview-area", classes="ingest-preview-area"):
                     yield Static("Select files to see a preview.", id="ingest-characters-preview-placeholder")
 
-                yield Button("Import Selected Characters Now", id="ingest-characters-import-now-button",
-                             variant="primary")
-                yield Label("Import Status:", classes="ingest-label")
-                yield TextArea(id="ingest-character-import-status-area", read_only=True, classes="ingest-status-area")
+                # Import button centered
+                yield from create_button_group([
+                    ("Import Selected Characters Now", "ingest-characters-import-now-button", "primary")
+                ], alignment="center")
+                
+                # Enhanced status widget
+                yield EnhancedStatusWidget(
+                    title="Import Status",
+                    id="ingest-character-import-status-widget",
+                    max_messages=50
+                )
 
             # --- Notes Ingest View ---
-            with Vertical(id="ingest-view-notes", classes="ingest-view-area"):
-                with Horizontal(classes="ingest-controls-row"):
-                    yield Button("Select Notes File(s)", id="ingest-notes-select-file-button")
-                    yield Button("Clear Selection", id="ingest-notes-clear-files-button")
-                yield Label("Selected Files for Import:", classes="ingest-label")
+            with VerticalScroll(id="ingest-view-notes", classes="ingest-view-area"):
+                # File selection buttons
+                yield from create_button_group([
+                    ("Select Notes File(s)", "ingest-notes-select-file-button", "default"),
+                    ("Clear Selection", "ingest-notes-clear-files-button", "default")
+                ])
+                
+                yield Label("Selected Files for Import:", classes="form-label")
                 yield ListView(id="ingest-notes-selected-files-list", classes="ingest-selected-files-list")
 
-                yield Label("Preview of Parsed Notes (Max 10 shown):", classes="ingest-label")
-                with VerticalScroll(id="ingest-notes-preview-area", classes="ingest-preview-area"):
+                yield Label("Preview of Parsed Notes (Max 10 shown):", classes="form-label")
+                # Remove nested VerticalScroll
+                with Container(id="ingest-notes-preview-area", classes="ingest-preview-area"):
                     yield Static("Select files to see a preview.", id="ingest-notes-preview-placeholder")
 
-                # ID used in ingest_events.py will be:
-                # ingest-notes-import-now-button
-                yield Button("Import Selected Notes Now", id="ingest-notes-import-now-button", variant="primary")
-                yield Label("Import Status:", classes="ingest-label")
-                yield TextArea(id="ingest-notes-import-status-area", read_only=True, classes="ingest-status-area")
+                # Import button centered
+                yield from create_button_group([
+                    ("Import Selected Notes Now", "ingest-notes-import-now-button", "primary")
+                ], alignment="center")
+                
+                # Enhanced status widget
+                yield EnhancedStatusWidget(
+                    title="Import Status",
+                    id="ingest-notes-import-status-widget",
+                    max_messages=50
+                )
 
             # --- Local Media Views ---
-            with Vertical(id="ingest-view-local-video", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-local-video", classes="ingest-view-area"):
                 yield from self.compose_local_video_tab()
                 
-            with Vertical(id="ingest-view-local-audio", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-local-audio", classes="ingest-view-area"):
                 yield from self.compose_local_audio_tab()
                 
-            with Vertical(id="ingest-view-local-document", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-local-document", classes="ingest-view-area"):
                 yield from self.compose_local_document_tab()
                 
-            with Vertical(id="ingest-view-local-pdf", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-local-pdf", classes="ingest-view-area"):
                 yield from self.compose_local_pdf_tab()
                 
-            with Vertical(id="ingest-view-local-ebook", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-local-ebook", classes="ingest-view-area"):
                 yield from self.compose_local_ebook_tab()
                 
-            with Vertical(id="ingest-view-local-web", classes="ingest-view-area"):
-                yield from self.compose_local_web_article_tab()
+            with VerticalScroll(id="ingest-view-local-web", classes="ingest-view-area"):
+                window = IngestLocalWebArticleWindow(self.app_instance)
+                yield from window.compose()
                 
-            with Vertical(id="ingest-view-local-xml", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-local-xml", classes="ingest-view-area"):
                 yield from self.compose_local_xml_tab()
                 
-            with Vertical(id="ingest-view-local-plaintext", classes="ingest-view-area"):
-                yield from self.compose_local_plaintext_tab()
+            with VerticalScroll(id="ingest-view-local-plaintext", classes="ingest-view-area"):
+                window = IngestLocalPlaintextWindow(self.app_instance)
+                yield from window.compose()
             
-            with Vertical(id="ingest-view-subscriptions", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-subscriptions", classes="ingest-view-area"):
                 yield from self.compose_subscriptions_tab()
             
             # --- TLDW API Views ---
-            with Vertical(id="ingest-view-api-video", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-api-video", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("video")
                 
-            with Vertical(id="ingest-view-api-audio", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-api-audio", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("audio")
                 
-            with Vertical(id="ingest-view-api-document", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-api-document", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("document")
                 
-            with Vertical(id="ingest-view-api-pdf", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-api-pdf", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("pdf")
                 
-            with Vertical(id="ingest-view-api-ebook", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-api-ebook", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("ebook")
                 
-            with Vertical(id="ingest-view-api-xml", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-api-xml", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("xml")
                 
-            with Vertical(id="ingest-view-api-mediawiki", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-api-mediawiki", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("mediawiki_dump")
                 
-            with Vertical(id="ingest-view-api-plaintext", classes="ingest-view-area"):
+            with VerticalScroll(id="ingest-view-api-plaintext", classes="ingest-view-area"):
                 yield from self.compose_tldw_api_view("plaintext")
 
     def compose_tldw_api_view(self, media_type: str) -> ComposeResult:
@@ -886,64 +992,6 @@ class IngestWindow(Container):
                 yield LoadingIndicator(id="ingest-local-ebook-loading", classes="hidden")
                 yield TextArea("", id="ingest-local-ebook-status", read_only=True, classes="ingest-status-area")
 
-    def compose_local_web_article_tab(self) -> ComposeResult:
-        """Composes the Web Article tab content for local media ingestion."""
-        with VerticalScroll(classes="ingest-media-tab-content"):
-            # URL Input Section (instead of file selection)
-            with Container(classes="ingest-file-section"):
-                yield Static("Web Article URLs", classes="sidebar-title")
-                yield Label("Enter URLs (one per line):")
-                yield TextArea(id="ingest-local-web-urls", classes="ingest-textarea-medium")
-                with Horizontal(classes="ingest-controls-row"):
-                    yield Button("Clear URLs", id="ingest-local-web-clear-urls")
-                    yield Button("Import from File", id="ingest-local-web-import-urls")
-                    yield Button("Remove Duplicates", id="ingest-local-web-remove-duplicates")
-                yield Label("URL Count: 0 valid, 0 invalid", id="ingest-local-web-url-count", classes="ingest-label")
-            
-            # Processing Options Section
-            with Container(classes="ingest-options-section"):
-                yield Static("Web Scraping Options", classes="sidebar-title")
-                yield Checkbox("Extract Main Content Only", True, id="ingest-local-web-main-content")
-                yield Checkbox("Include Images", False, id="ingest-local-web-include-images")
-                yield Checkbox("Follow Redirects", True, id="ingest-local-web-follow-redirects")
-                
-                with Collapsible(title="Authentication Options", collapsed=True):
-                    yield Label("Cookie String (optional):")
-                    yield Input(id="ingest-local-web-cookies", placeholder="name=value; name2=value2")
-                    yield Label("User Agent:")
-                    yield Input(id="ingest-local-web-user-agent", placeholder="Default browser agent")
-                
-                with Collapsible(title="Advanced Options", collapsed=True):
-                    yield Label("CSS Selector for Content:")
-                    yield Input(id="ingest-local-web-css-selector", placeholder="Auto-detect")
-                    yield Checkbox("JavaScript Rendering", False, id="ingest-local-web-js-render")
-                    yield Label("Wait Time (seconds):")
-                    yield Input("3", id="ingest-local-web-wait-time", type="integer")
-            
-            # Metadata Section
-            with Container(classes="ingest-metadata-section"):
-                yield Static("Metadata", classes="sidebar-title")
-                with Horizontal(classes="title-author-row"):
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Title Override:")
-                        yield Input(id="ingest-local-web-title", placeholder="Use page title")
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Author Override:")
-                        yield Input(id="ingest-local-web-author", placeholder="Extract from page")
-                yield Label("Keywords (comma-separated):")
-                yield TextArea(id="ingest-local-web-keywords", classes="ingest-textarea-small")
-            
-            # Action Section
-            with Container(classes="ingest-action-section"):
-                yield Button("Scrape Articles", id="ingest-local-web-process", variant="primary")
-                yield LoadingIndicator(id="ingest-local-web-loading", classes="hidden")
-                
-                # Progress section
-                with Container(id="ingest-local-web-progress", classes="hidden"):
-                    yield Static("Progress: 0/0", id="ingest-local-web-progress-text")
-                    yield Static("✅ 0  ❌ 0  ⏳ 0", id="ingest-local-web-counters")
-                
-                yield TextArea("", id="ingest-local-web-status", read_only=True, classes="ingest-status-area")
 
     def compose_local_xml_tab(self) -> ComposeResult:
         """Composes the XML tab content for local media ingestion."""
@@ -1000,58 +1048,6 @@ class IngestWindow(Container):
                 yield LoadingIndicator(id="ingest-local-xml-loading", classes="hidden")
                 yield TextArea("", id="ingest-local-xml-status", read_only=True, classes="ingest-status-area")
 
-    def compose_local_plaintext_tab(self) -> ComposeResult:
-        """Composes the Plaintext tab content for local media ingestion."""
-        with VerticalScroll(classes="ingest-media-tab-content"):
-            # File Selection Section
-            with Container(classes="ingest-file-section"):
-                yield Static("Text File Selection", classes="sidebar-title")
-                with Horizontal(classes="ingest-controls-row"):
-                    yield Button("Select Text Files", id="ingest-local-plaintext-select-files")
-                    yield Button("Clear Selection", id="ingest-local-plaintext-clear-files")
-                yield Label("Selected Files:", classes="ingest-label")
-                yield ListView(id="ingest-local-plaintext-files-list", classes="ingest-selected-files-list")
-            
-            # Processing Options Section
-            with Container(classes="ingest-options-section"):
-                yield Static("Text Processing Options", classes="sidebar-title")
-                yield Label("Encoding:")
-                yield Select(
-                    [("UTF-8", "utf-8"), ("ASCII", "ascii"), ("Latin-1", "latin-1"), ("Auto-detect", "auto")],
-                    id="ingest-local-plaintext-encoding",
-                    value="utf-8"
-                )
-                yield Label("Line Ending:")
-                yield Select(
-                    [("Auto", "auto"), ("Unix (LF)", "lf"), ("Windows (CRLF)", "crlf")],
-                    id="ingest-local-plaintext-line-ending",
-                    value="auto"
-                )
-                
-                with Collapsible(title="Text Processing", collapsed=True):
-                    yield Checkbox("Remove Extra Whitespace", True, id="ingest-local-plaintext-remove-whitespace")
-                    yield Checkbox("Convert to Paragraphs", False, id="ingest-local-plaintext-paragraphs")
-                    yield Label("Split Pattern (regex):")
-                    yield Input(id="ingest-local-plaintext-split-pattern", placeholder="Empty for no splitting")
-            
-            # Metadata Section
-            with Container(classes="ingest-metadata-section"):
-                yield Static("Metadata", classes="sidebar-title")
-                with Horizontal(classes="title-author-row"):
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Title Override:")
-                        yield Input(id="ingest-local-plaintext-title", placeholder="Use filename")
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Author:")
-                        yield Input(id="ingest-local-plaintext-author", placeholder="Optional")
-                yield Label("Keywords (comma-separated):")
-                yield TextArea(id="ingest-local-plaintext-keywords", classes="ingest-textarea-small")
-            
-            # Action Section
-            with Container(classes="ingest-action-section"):
-                yield Button("Process Text Files", id="ingest-local-plaintext-process", variant="primary")
-                yield LoadingIndicator(id="ingest-local-plaintext-loading", classes="hidden")
-                yield TextArea("", id="ingest-local-plaintext-status", read_only=True, classes="ingest-status-area")
 
     async def handle_local_plaintext_process(self) -> None:
         """Handle processing of local plaintext files."""
