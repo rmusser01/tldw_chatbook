@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Optional, List, Any, Dict, Callable, Union
 # 3rd-party Libraries
 from loguru import logger
 from textual.widgets import Select, Input, TextArea, Checkbox, Label, Static, Markdown, ListItem, \
-    ListView, Collapsible, LoadingIndicator, Button
+    ListView, Collapsible, LoadingIndicator, Button, RadioSet, RadioButton
 from textual.css.query import QueryError
 from textual.containers import Container, VerticalScroll
 from textual.worker import Worker
@@ -43,6 +43,8 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDBError
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError  # For character import conflict
 from ..Third_Party.textual_fspicker import Filters, FileOpen
+# Note importers for multi-format support
+from ..Utils.note_importers import note_importer_registry, ParsedNote
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -80,8 +82,12 @@ CHARACTER_FILE_FILTERS = Filters(
 # --- Notes Ingest Constants ---
 MAX_NOTE_PREVIEWS = 10
 NOTE_FILE_FILTERS = Filters(
-    ("JSON Notes (*.json)", lambda p: p.suffix.lower() == ".json"),
-    # ("Markdown Notes (*.md)", lambda p: p.suffix.lower() == ".md"), # Example for future
+    ("All Supported", lambda p: p.suffix.lower() in (".json", ".yaml", ".yml", ".txt", ".md", ".markdown", ".rst", ".csv")),
+    ("JSON (*.json)", lambda p: p.suffix.lower() == ".json"),
+    ("YAML (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
+    ("Markdown (*.md)", lambda p: p.suffix.lower() in (".md", ".markdown")),
+    ("Text (*.txt, *.rst)", lambda p: p.suffix.lower() in (".txt", ".text", ".rst")),
+    ("CSV (*.csv)", lambda p: p.suffix.lower() == ".csv"),
     ("All Files", lambda _: True),
 )
 
@@ -1676,51 +1682,64 @@ IGNORE_WHEN_COPYING_END
         app.notify("Unexpected error during note preview update.", severity="error")
 
 
-def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli') -> List[Dict[str, Any]]:
+def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli', import_as_template: bool = False) -> List[Dict[str, Any]]:
     """
-    Parses a single note file (JSON) for preview.
-    Returns a list of note data dicts.
+    Parses a single note file using the appropriate importer.
+    Returns a list of note data dicts for preview.
     """
     logger.debug(f"Parsing note file for preview: {file_path}")
     preview_notes = []
-    file_suffix = file_path.suffix.lower()
 
-    if file_suffix == ".json":
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            data = json.loads(content)
+    try:
+        # Use the note importer registry to parse the file
+        parsed_notes = note_importer_registry.parse_file(file_path, import_as_template=import_as_template)
+        
+        for note in parsed_notes:
+            note_data = {
+                "filename": file_path.name,
+                "title": note.title,
+                "content": note.content,
+                "is_template": note.is_template,
+                "template": note.template,
+                "keywords": note.keywords
+            }
+            
+            # Add type indicator to title for templates
+            if note.is_template:
+                note_data["title"] = f"[TEMPLATE] {note.title}"
+            elif note.template:
+                note_data["title"] = f"[{note.template}] {note.title}"
+                
+            preview_notes.append(note_data)
+            
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {file_path}")
+        preview_notes.append({
+            "filename": file_path.name, 
+            "title": f"Error: {file_path.name}",
+            "error": f"File not found: {e}"
+        })
+    except ValueError as e:
+        logger.error(f"Error parsing {file_path.name}: {e}")
+        preview_notes.append({
+            "filename": file_path.name,
+            "title": f"Error: {file_path.name}",
+            "error": str(e)
+        })
+    except Exception as e:
+        logger.error(f"Unexpected error parsing note file {file_path}: {e}", exc_info=True)
+        preview_notes.append({
+            "filename": file_path.name,
+            "title": f"Error: {file_path.name}",
+            "error": f"Unexpected error: {e}"
+        })
 
-            if isinstance(data, dict):  # Single note object
-                if "title" in data and "content" in data:
-                    preview_notes.append(
-                        {"filename": file_path.name, "title": data.get("title"), "content": data.get("content")})
-                else:
-                    preview_notes.append({"filename": file_path.name, "title": f"Error: {file_path.name}",
-                                          "error": "JSON object missing 'title' or 'content'."})
-            elif isinstance(data, list):  # Array of note objects
-                for item in data:
-                    if isinstance(item, dict) and "title" in item and "content" in item:
-                        preview_notes.append(
-                            {"filename": file_path.name, "title": item.get("title"), "content": item.get("content")})
-                    else:
-                        logger.warning(f"Skipping invalid note item in array from {file_path.name}: {item}")
-            else:
-                preview_notes.append({"filename": file_path.name, "title": f"Error: {file_path.name}",
-                                      "error": "JSON content is not a valid note object or array of note objects."})
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in {file_path.name}: {e}")
-            preview_notes.append(
-                {"filename": file_path.name, "title": f"Error: {file_path.name}", "error": f"Invalid JSON: {e}"})
-        except Exception as e:
-            logger.error(f"Error parsing note file {file_path} for preview: {e}", exc_info=True)
-            preview_notes.append({"filename": file_path.name, "title": f"Error: {file_path.name}", "error": str(e)})
-    else:
-        preview_notes.append({"filename": file_path.name, "title": f"Error: {file_path.name}",
-                              "error": f"Unsupported file type for note preview: {file_suffix}"})
-
-    if not preview_notes:  # If parsing yielded nothing (e.g. empty JSON array)
-        preview_notes.append({"filename": file_path.name, "title": file_path.name, "content": "No notes found in file."})
+    if not preview_notes:  # If parsing yielded nothing
+        preview_notes.append({
+            "filename": file_path.name,
+            "title": file_path.name,
+            "content": "No notes found in file."
+        })
 
     return preview_notes
 
@@ -1750,7 +1769,15 @@ async def _handle_note_file_selected_callback(app: 'TldwCli', selected_path: Opt
         except QueryError:
             logger.error("Could not find #ingest-notes-selected-files-list ListView to update.")
 
-        parsed_notes_from_file = _parse_single_note_file_for_preview(selected_path, app)
+        # Check if importing as templates
+        import_as_template = False
+        try:
+            radio_set = app.query_one("#ingest-notes-import-type", RadioSet)
+            import_as_template = radio_set.pressed_index == 1  # Second option is "Import as Templates"
+        except QueryError:
+            logger.debug("Could not find import type RadioSet, defaulting to notes")
+        
+        parsed_notes_from_file = _parse_single_note_file_for_preview(selected_path, app, import_as_template=import_as_template)
         app.parsed_notes_for_preview.extend(parsed_notes_from_file)
 
         await _update_note_preview_display(app)
@@ -1819,7 +1846,15 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
         app.notify("No note files selected to import.", severity="warning")
         return
 
-    if not app.notes_service:
+    # Check if importing as templates or notes
+    try:
+        import_type_radio = app.query_one("#import-as-templates-radio", RadioButton)
+        import_as_templates = import_type_radio.value
+    except QueryError:
+        # Default to importing as notes if radio button not found
+        import_as_templates = False
+
+    if not import_as_templates and not app.notes_service:
         msg = "Notes database service is not initialized. Cannot import notes."
         app.notify(msg, severity="error", timeout=7)
         logger.error(msg + " Aborting note import.")
@@ -1834,58 +1869,150 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
         return
 
     status_area.text = ""  # Clear the TextArea
-    status_area.text = "Starting note import process...\n"  # Set initial text
-    app.notify("Importing notes...")
+    status_area.text = f"Starting {'template' if import_as_templates else 'note'} import process...\n"  # Set initial text
+    app.notify(f"Importing {'templates' if import_as_templates else 'notes'}...")
 
     user_id = app.notes_user_id
 
     async def import_worker_notes():
         results = []
-        for file_path in app.selected_note_files_for_import:
-            notes_in_file = _parse_single_note_file_for_preview(file_path, app)
-            for note_data in notes_in_file:
-                if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
-                    results.append({
-                        "file_path": str(file_path),
-                        "note_title": note_data.get("title", file_path.stem),
-                        "status": "failure",
-                        "message": note_data.get("error", "Missing title or content.")
-                    })
-                    continue
+        
+        if import_as_templates:
+            # Import as templates
+            import json
+            from pathlib import Path
+            
+            # Load existing templates
+            user_config_dir = Path.home() / ".config" / "tldw_cli"
+            user_templates_path = user_config_dir / "note_templates.json"
+            
+            # Create directory if needed
+            user_config_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Load existing templates if any
+            templates = {}
+            if user_templates_path.exists():
                 try:
-                    note_id = app.notes_service.add_note(
-                        user_id=user_id,
-                        title=note_data["title"],
-                        content=note_data["content"]
-                    )
-                    results.append({
-                        "file_path": str(file_path),
-                        "note_title": note_data["title"],
-                        "status": "success",
-                        "message": f"Note imported successfully. ID: {note_id}",
-                        "note_id": note_id
-                    })
-                except (ChaChaConflictError, CharactersRAGDBError, ValueError) as e:
-                    logger.error(f"Error importing note '{note_data['title']}' from {file_path}: {e}", exc_info=True)
-                    results.append({
-                        "file_path": str(file_path),
-                        "note_title": note_data["title"],
-                        "status": "failure",
-                        "message": f"DB/Input error: {type(e).__name__} - {str(e)[:100]}"
-                    })
+                    with open(user_templates_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        templates = data.get('templates', {})
                 except Exception as e:
-                    logger.error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}",
-                                 exc_info=True)
-                    results.append({
-                        "file_path": str(file_path),
-                        "note_title": note_data["title"],
-                        "status": "failure",
-                        "message": f"Unexpected error: {type(e).__name__}"
-                    })
+                    logger.error(f"Error loading existing templates: {e}")
+            
+            # Process each file
+            for file_path in app.selected_note_files_for_import:
+                notes_in_file = _parse_single_note_file_for_preview(file_path, app, import_as_template=True)
+                for note_data in notes_in_file:
+                    if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data.get("title", file_path.stem),
+                            "status": "failure",
+                            "message": note_data.get("error", "Missing title or content.")
+                        })
+                        continue
+                    
+                    try:
+                        # Generate a unique template key from the title
+                        base_key = note_data["title"].lower().replace(" ", "_").replace("-", "_")
+                        # Remove non-alphanumeric characters except underscores
+                        base_key = ''.join(c for c in base_key if c.isalnum() or c == '_')
+                        
+                        # Ensure unique key
+                        key = base_key
+                        counter = 1
+                        while key in templates:
+                            key = f"{base_key}_{counter}"
+                            counter += 1
+                        
+                        # Create template entry
+                        templates[key] = {
+                            "title": note_data["title"],
+                            "content": note_data["content"],
+                            "keywords": note_data.get("keywords", ""),
+                            "description": f"Imported template: {note_data['title']}"
+                        }
+                        
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "success",
+                            "message": f"Template imported successfully. Key: {key}",
+                            "template_key": key
+                        })
+                    except Exception as e:
+                        logger.error(f"Error importing template '{note_data['title']}' from {file_path}: {e}",
+                                     exc_info=True)
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "failure",
+                            "message": f"Error: {type(e).__name__}"
+                        })
+            
+            # Save all templates
+            if any(r["status"] == "success" for r in results):
+                try:
+                    output = {"templates": templates}
+                    with open(user_templates_path, 'w', encoding='utf-8') as f:
+                        json.dump(output, f, indent=2, ensure_ascii=False)
+                    logger.info(f"Saved {len(templates)} templates to {user_templates_path}")
+                except Exception as e:
+                    logger.error(f"Error saving templates file: {e}")
+                    # Update all success results to failure
+                    for r in results:
+                        if r["status"] == "success":
+                            r["status"] = "failure"
+                            r["message"] = f"Template imported but failed to save: {e}"
+        
+        else:
+            # Import as notes (existing logic)
+            for file_path in app.selected_note_files_for_import:
+                notes_in_file = _parse_single_note_file_for_preview(file_path, app)
+                for note_data in notes_in_file:
+                    if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data.get("title", file_path.stem),
+                            "status": "failure",
+                            "message": note_data.get("error", "Missing title or content.")
+                        })
+                        continue
+                    try:
+                        note_id = app.notes_service.add_note(
+                            user_id=user_id,
+                            title=note_data["title"],
+                            content=note_data["content"]
+                        )
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "success",
+                            "message": f"Note imported successfully. ID: {note_id}",
+                            "note_id": note_id
+                        })
+                    except (ChaChaConflictError, CharactersRAGDBError, ValueError) as e:
+                        logger.error(f"Error importing note '{note_data['title']}' from {file_path}: {e}", exc_info=True)
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "failure",
+                            "message": f"DB/Input error: {type(e).__name__} - {str(e)[:100]}"
+                        })
+                    except Exception as e:
+                        logger.error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}",
+                                     exc_info=True)
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "failure",
+                            "message": f"Unexpected error: {type(e).__name__}"
+                        })
         return results
 
     def on_import_success_notes(results: List[Dict[str, Any]]):
-        log_text_parts = ["Note import process finished.\n\nResults:\n"]  # Renamed to avoid conflict
+        import_type = "template" if import_as_templates else "note"
+        log_text_parts = [f"{import_type.capitalize()} import process finished.\n\nResults:\n"]  # Renamed to avoid conflict
         successful_imports = 0
         failed_imports = 0
         for res in results:
@@ -1894,7 +2021,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             note_title = res.get("note_title", "N/A")
             message = res.get("message", "")
 
-            log_text_parts.append(f"File: {Path(file_path_str).name} (Note: '{note_title}')\n")
+            log_text_parts.append(f"File: {Path(file_path_str).name} ({import_type.capitalize()}: '{note_title}')\n")
             log_text_parts.append(f"  Status: {status.upper()}\n")
             if message:
                 log_text_parts.append(f"  Message: {message}\n")
@@ -1905,7 +2032,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             else:
                 failed_imports += 1
 
-        summary = f"\nSummary: {successful_imports} notes imported, {failed_imports} failed."
+        summary = f"\nSummary: {successful_imports} {import_type}s imported, {failed_imports} failed."
         log_text_parts.append(summary)
 
         try:
@@ -1914,28 +2041,33 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
         except QueryError:
             logger.error("Failed to find #ingest-notes-import-status-area in on_import_success_notes.")
 
-        app.notify(f"Note import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
+        app.notify(f"{import_type.capitalize()} import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
         logger.info(summary)
 
-        #app.call_later(load_and_display_notes_handler, app)
-        app.call_later(app.refresh_notes_tab_after_ingest)
-        try:
-            # Make sure to query the collapsible before creating the Toggled event instance
-            chat_notes_collapsible_widget = app.query_one("#chat-notes-collapsible", Collapsible)
-            app.call_later(app.on_chat_notes_collapsible_toggle, Collapsible.Toggled(chat_notes_collapsible_widget))
-        except QueryError:
-            logger.error("Failed to find #chat-notes-collapsible widget for refresh after note import.")
+        if import_as_templates:
+            # For templates, we need to reload the templates in the notes event handler
+            app.notify("Templates will be available after restarting the application.", severity="information", timeout=10)
+        else:
+            #app.call_later(load_and_display_notes_handler, app)
+            app.call_later(app.refresh_notes_tab_after_ingest)
+            try:
+                # Make sure to query the collapsible before creating the Toggled event instance
+                chat_notes_collapsible_widget = app.query_one("#chat-notes-collapsible", Collapsible)
+                app.call_later(app.on_chat_notes_collapsible_toggle, Collapsible.Toggled(chat_notes_collapsible_widget))
+            except QueryError:
+                logger.error("Failed to find #chat-notes-collapsible widget for refresh after note import.")
 
     def on_import_failure_notes(error: Exception):
-        logger.error(f"Note import worker failed critically: {error}", exc_info=True)
+        import_type = "template" if import_as_templates else "note"
+        logger.error(f"{import_type.capitalize()} import worker failed critically: {error}", exc_info=True)
         try:
             status_area_cb_fail = app.query_one("#ingest-notes-import-status-area", TextArea)
             current_text = status_area_cb_fail.text
             status_area_cb_fail.load_text(
-                current_text + f"\nNote import process failed critically: {error}\nCheck logs.\n")
+                current_text + f"\n{import_type.capitalize()} import process failed critically: {error}\nCheck logs.\n")
         except QueryError:
             logger.error("Failed to find #ingest-notes-import-status-area in on_import_failure_notes.")
-        app.notify(f"Note import CRITICALLY failed: {error}", severity="error", timeout=10)
+        app.notify(f"{import_type.capitalize()} import CRITICALLY failed: {error}", severity="error", timeout=10)
 
     app.run_worker(
         import_worker_notes,

@@ -227,3 +227,93 @@
 }
 
 /* --- End Core Settings Styles ---*/
+
+/* --- Config Form Styles --- */
+.config-form {
+    width: 100%;
+    height: auto;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+.form-label {
+    margin-top: 1;
+    margin-bottom: 0;
+    text-style: bold;
+    color: $text-muted;
+}
+
+.form-description {
+    color: $text-muted;
+    margin-bottom: 2;
+    text-style: italic;
+}
+
+.form-section-title {
+    text-style: bold;
+    color: $primary;
+    margin: 2 0 1 0;
+    border-bottom: solid $primary;
+    padding-bottom: 0;
+}
+
+.form-subsection-title {
+    text-style: bold;
+    color: $secondary;
+    margin: 1 0 1 0;
+}
+
+.form-actions {
+    layout: horizontal;
+    margin-top: 2;
+    height: 3;
+    width: 100%;
+    align: center middle;
+}
+
+.form-actions Button {
+    margin: 0 1 0 0;
+    min-width: 15;
+}
+
+/* TextArea styling for config forms */
+.config-form TextArea {
+    width: 100%;
+    height: 10;
+    margin-bottom: 1;
+    border: round $primary;
+    background: $panel;
+}
+
+.system-prompt-textarea {
+    height: 15;
+}
+
+.provider-models-textarea {
+    height: 5;
+}
+
+/* Collapsible styling in config forms */
+.config-form Collapsible {
+    margin-bottom: 1;
+    border: round $primary-background;
+    background: $surface;
+}
+
+.config-form Collapsible > CollapsibleTitle {
+    background: $boost;
+    padding: 0 1;
+}
+
+/* Help text */
+.help-text {
+    color: $text-muted;
+    margin-bottom: 1;
+    text-style: italic;
+}
+
+/* Database status */
+.db-status {
+    color: $text-muted;
+    margin-bottom: 1;
+}

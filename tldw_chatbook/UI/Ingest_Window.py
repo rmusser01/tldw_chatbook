@@ -12,6 +12,7 @@ from textual.app import ComposeResult
 from textual.css.query import QueryError
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.widgets import Static, Button, Input, Select, Checkbox, TextArea, Label, RadioSet, RadioButton, Collapsible, ListView, ListItem, Markdown, LoadingIndicator, TabbedContent, TabPane # Button, ListView, ListItem, Label are already here
+from textual import on
 from textual.worker import Worker
 from textual import work
 from textual.reactive import reactive
@@ -148,6 +149,42 @@ class IngestWindow(Container):
         elif button_id == "ingest-local-web-retry":
             await self._handle_retry_failed_urls()
             event.stop()
+    
+    @on(RadioSet.Changed, "#ingest-notes-import-type")
+    async def on_notes_import_type_changed(self, event: RadioSet.Changed) -> None:
+        """Handle import type change for notes."""
+        logger.debug(f"Notes import type changed to index: {event.radio_set.pressed_index}")
+        
+        # Update the preview if files are already selected
+        if hasattr(self.app_instance, 'parsed_notes_for_preview') and self.app_instance.parsed_notes_for_preview:
+            # Clear existing preview
+            self.app_instance.parsed_notes_for_preview.clear()
+            
+            # Re-parse selected files with new import type
+            try:
+                list_view = self.query_one("#ingest-notes-selected-files-list", ListView)
+                import_as_template = event.radio_set.pressed_index == 1
+                
+                for item in list_view.children:
+                    if isinstance(item, ListItem):
+                        label = item.children[0] if item.children else None
+                        if isinstance(label, Label):
+                            file_path = Path(str(label.renderable).strip())
+                            if file_path.exists():
+                                from ..Event_Handlers.ingest_events import _parse_single_note_file_for_preview
+                                parsed_notes = _parse_single_note_file_for_preview(
+                                    file_path, 
+                                    self.app_instance,
+                                    import_as_template=import_as_template
+                                )
+                                self.app_instance.parsed_notes_for_preview.extend(parsed_notes)
+                
+                # Update the preview display
+                from ..Event_Handlers.ingest_events import _update_note_preview_display
+                await _update_note_preview_display(self.app_instance)
+                
+            except Exception as e:
+                logger.error(f"Error updating notes preview after import type change: {e}")
     
     async def _update_active_nav_button(self, active_button_id: str) -> None:
         """Update the active state of navigation buttons."""
@@ -333,6 +370,12 @@ class IngestWindow(Container):
                     ("Select Notes File(s)", "ingest-notes-select-file-button", "default"),
                     ("Clear Selection", "ingest-notes-clear-files-button", "default")
                 ])
+                
+                # Import type selection
+                yield Label("Import Type:", classes="form-label")
+                with RadioSet(id="ingest-notes-import-type"):
+                    yield RadioButton("Import as Notes", value=True, id="import-as-notes-radio")
+                    yield RadioButton("Import as Templates", id="import-as-templates-radio")
                 
                 yield Label("Selected Files for Import:", classes="form-label")
                 yield ListView(id="ingest-notes-selected-files-list", classes="ingest-selected-files-list")
