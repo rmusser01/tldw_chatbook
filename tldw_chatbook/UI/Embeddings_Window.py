@@ -715,6 +715,52 @@ class EmbeddingsWindow(Container):
                     results = chachanotes_db.get_recent_notes(limit=1000)
                 elif db_type == "characters" and chachanotes_db:
                     results = chachanotes_db.get_all_characters()
+                
+                # Add rows to table for all mode
+                if db_type == "media":
+                    for item in results:
+                        item_id = str(item.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            item.get('title', 'Untitled')[:50],
+                            item.get('type', 'unknown'),
+                            item.get('created_at', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "conversations":
+                    for conv in results:
+                        item_id = str(conv.get('conversation_id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            conv.get('title', 'Untitled Conversation')[:50],
+                            "conversation",
+                            conv.get('created_at', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "notes":
+                    for note in results:
+                        item_id = str(note.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            note.get('title', 'Untitled Note')[:50],
+                            "note",
+                            note.get('created', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "characters":
+                    for char in results:
+                        item_id = str(char.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            char.get('name', 'Unnamed Character')[:50],
+                            "character",
+                            char.get('created_at', '')[:10],
+                            key=item_id
+                        )
                     
             elif self.selected_db_mode == "specific":
                 # Get specific items by IDs
@@ -750,6 +796,52 @@ class EmbeddingsWindow(Container):
                 except ValueError:
                     self.notify("Invalid ID format. Please enter numeric IDs separated by commas.", severity="error")
                     return
+                
+                # Add rows to table for specific mode
+                if db_type == "media":
+                    for item in results:
+                        item_id = str(item.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            item.get('title', 'Untitled')[:50],
+                            item.get('type', 'unknown'),
+                            item.get('created_at', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "conversations":
+                    for conv in results:
+                        item_id = str(conv.get('conversation_id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            conv.get('title', 'Untitled Conversation')[:50],
+                            "conversation",
+                            conv.get('created_at', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "notes":
+                    for note in results:
+                        item_id = str(note.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            note.get('title', 'Untitled Note')[:50],
+                            "note",
+                            note.get('created', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "characters":
+                    for char in results:
+                        item_id = str(char.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            char.get('name', 'Unnamed Character')[:50],
+                            "character",
+                            char.get('created_at', '')[:10],
+                            key=item_id
+                        )
                     
             elif self.selected_db_mode == "keywords":
                 # Get items by keywords
@@ -786,66 +878,112 @@ class EmbeddingsWindow(Container):
                             item_id = item.get('conversation_id' if db_type == "conversations" else 'id')
                             if not any(r.get('conversation_id' if db_type == "conversations" else 'id') == item_id for r in results):
                                 results.append(item)
+                
+                # Add rows to table for keywords mode
+                if db_type == "media":
+                    for item in results:
+                        item_id = str(item.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            item.get('title', 'Untitled')[:50],
+                            item.get('type', 'unknown'),
+                            item.get('created_at', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "conversations":
+                    for conv in results:
+                        item_id = str(conv.get('conversation_id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            conv.get('title', 'Untitled Conversation')[:50],
+                            "conversation",
+                            conv.get('created_at', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "notes":
+                    for note in results:
+                        item_id = str(note.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            note.get('title', 'Untitled Note')[:50],
+                            "note",
+                            note.get('created', '')[:10],
+                            key=item_id
+                        )
+                elif db_type == "characters":
+                    for char in results:
+                        item_id = str(char.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            char.get('name', 'Unnamed Character')[:50],
+                            "character",
+                            char.get('created_at', '')[:10],
+                            key=item_id
+                        )
                                 
             else:  # search mode
                 # Original search behavior
                 search_term = self.query_one("#embeddings-db-filter", Input).value
-            
-            if db_type == "media" and media_db:
-                # Search media database
-                results = media_db.search_media_db(search_term) if search_term else media_db.get_all_active_media_for_embedding(limit=100)
-                for item in results:
-                    item_id = str(item.get('id', ''))
-                    table.add_row(
-                        "" if item_id not in self.selected_db_items else "✓",
-                        item_id,
-                        item.get('title', 'Untitled')[:50],
-                        item.get('type', 'unknown'),
-                        item.get('created_at', '')[:10],
-                        key=item_id  # Add key for easier row identification
-                    )
-            
-            elif db_type == "conversations" and chachanotes_db:
-                # Search conversations
-                results = chachanotes_db.search_conversations_by_keywords(search_term) if search_term else chachanotes_db.get_all_conversations(limit=100)
-                for conv in results:
-                    item_id = str(conv.get('conversation_id', ''))
-                    table.add_row(
-                        "" if item_id not in self.selected_db_items else "✓",
-                        item_id,
-                        conv.get('title', 'Untitled Conversation')[:50],
-                        "conversation",
-                        conv.get('created_at', '')[:10],
-                        key=item_id
-                    )
-            
-            elif db_type == "notes" and chachanotes_db:
-                # Search notes
-                results = chachanotes_db.search_notes(search_term) if search_term else chachanotes_db.get_recent_notes(limit=100)
-                for note in results:
-                    item_id = str(note.get('id', ''))
-                    table.add_row(
-                        "" if item_id not in self.selected_db_items else "✓",
-                        item_id,
-                        note.get('title', 'Untitled Note')[:50],
-                        "note",
-                        note.get('created', '')[:10],
-                        key=item_id
-                    )
-            
-            elif db_type == "characters" and chachanotes_db:
-                # Search characters
-                results = chachanotes_db.search_characters(search_term) if search_term else chachanotes_db.get_all_characters()
-                for char in results:
-                    item_id = str(char.get('id', ''))
-                    table.add_row(
-                        "" if item_id not in self.selected_db_items else "✓",
-                        item_id,
-                        char.get('name', 'Unnamed Character')[:50],
-                        "character",
-                        char.get('created_at', '')[:10],
-                        key=item_id
-                    )
+                
+                if db_type == "media" and media_db:
+                    # Search media database
+                    results = media_db.search_media_db(search_term) if search_term else media_db.get_all_active_media_for_embedding(limit=100)
+                    for item in results:
+                        item_id = str(item.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            item.get('title', 'Untitled')[:50],
+                            item.get('type', 'unknown'),
+                            item.get('created_at', '')[:10],
+                            key=item_id  # Add key for easier row identification
+                        )
+                
+                elif db_type == "conversations" and chachanotes_db:
+                    # Search conversations
+                    results = chachanotes_db.search_conversations_by_keywords(search_term) if search_term else chachanotes_db.get_all_conversations(limit=100)
+                    for conv in results:
+                        item_id = str(conv.get('conversation_id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            conv.get('title', 'Untitled Conversation')[:50],
+                            "conversation",
+                            conv.get('created_at', '')[:10],
+                            key=item_id
+                        )
+                
+                elif db_type == "notes" and chachanotes_db:
+                    # Search notes
+                    results = chachanotes_db.search_notes(search_term) if search_term else chachanotes_db.get_recent_notes(limit=100)
+                    for note in results:
+                        item_id = str(note.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            note.get('title', 'Untitled Note')[:50],
+                            "note",
+                            note.get('created', '')[:10],
+                            key=item_id
+                        )
+                
+                elif db_type == "characters" and chachanotes_db:
+                    # Search characters
+                    results = chachanotes_db.search_characters(search_term) if search_term else chachanotes_db.get_all_characters()
+                    for char in results:
+                        item_id = str(char.get('id', ''))
+                        table.add_row(
+                            "" if item_id not in self.selected_db_items else "✓",
+                            item_id,
+                            char.get('name', 'Unnamed Character')[:50],
+                            "character",
+                            char.get('created_at', '')[:10],
+                            key=item_id
+                        )
             
             count = len(results)
             
@@ -854,23 +992,38 @@ class EmbeddingsWindow(Container):
                 self.query_one("#embeddings-db-selection-count", Label).update(f"Loaded all {count} items")
                 # Auto-select all items for "all" mode
                 for row_key in table.rows:
-                    item_id = str(table.get_cell(row_key, "ID"))
+                    row_data = table.get_row(row_key)
+                    # ID is in the second column (index 1)
+                    item_id = str(row_data[1])
                     self.selected_db_items.add(item_id)
-                    table.update_cell(row_key, "✓", "✓")
+                    # Update first column to show selection
+                    column_keys = list(table.columns.keys())
+                    if column_keys:
+                        table.update_cell(row_key, column_keys[0], "✓")
             elif self.selected_db_mode == "specific":
                 self.query_one("#embeddings-db-selection-count", Label).update(f"Loaded {count} specific items")
                 # Auto-select all loaded items
                 for row_key in table.rows:
-                    item_id = str(table.get_cell(row_key, "ID"))
+                    row_data = table.get_row(row_key)
+                    # ID is in the second column (index 1)
+                    item_id = str(row_data[1])
                     self.selected_db_items.add(item_id)
-                    table.update_cell(row_key, "✓", "✓")
+                    # Update first column to show selection
+                    column_keys = list(table.columns.keys())
+                    if column_keys:
+                        table.update_cell(row_key, column_keys[0], "✓")
             elif self.selected_db_mode == "keywords":
                 self.query_one("#embeddings-db-selection-count", Label).update(f"Found {count} items matching keywords")
                 # Auto-select all keyword matches
                 for row_key in table.rows:
-                    item_id = str(table.get_cell(row_key, "ID"))
+                    row_data = table.get_row(row_key)
+                    # ID is in the second column (index 1)
+                    item_id = str(row_data[1])
                     self.selected_db_items.add(item_id)
-                    table.update_cell(row_key, "✓", "✓")
+                    # Update first column to show selection
+                    column_keys = list(table.columns.keys())
+                    if column_keys:
+                        table.update_cell(row_key, column_keys[0], "✓")
             else:
                 self.query_one("#embeddings-db-selection-count", Label).update(f"Found {count} items")
             
@@ -893,21 +1046,35 @@ class EmbeddingsWindow(Container):
         row_key = event.row_key
         
         if row_key is not None:
-            # Get the ID from the row
-            item_id = str(table.get_cell(row_key, "ID"))
-            
-            # Toggle selection
-            if item_id in self.selected_db_items:
-                self.selected_db_items.discard(item_id)
-                table.update_cell(row_key, "✓", "")
-            else:
-                self.selected_db_items.add(item_id)
-                table.update_cell(row_key, "✓", "✓")
-            
-            # Update selection count
-            self.query_one("#embeddings-db-selection-count", Label).update(
-                f"Selected {len(self.selected_db_items)} items"
-            )
+            try:
+                # Get the row data
+                row_data = table.get_row(row_key)
+                # ID is in the second column (index 1)
+                item_id = str(row_data[1])
+                
+                # Get the first column key
+                column_keys = list(table.columns.keys())
+                if not column_keys:
+                    raise Exception("No columns found in table")
+                first_column_key = column_keys[0]
+                
+                # Toggle selection
+                if item_id in self.selected_db_items:
+                    self.selected_db_items.discard(item_id)
+                    # Update first column to clear selection
+                    table.update_cell(row_key, first_column_key, "")
+                else:
+                    self.selected_db_items.add(item_id)
+                    # Update first column to show selection
+                    table.update_cell(row_key, first_column_key, "✓")
+                
+                # Update selection count
+                self.query_one("#embeddings-db-selection-count", Label).update(
+                    f"Selected {len(self.selected_db_items)} items"
+                )
+            except Exception as e:
+                logger.error(f"Error selecting row: {e}")
+                self.notify(f"Error selecting item: {str(e)}", severity="error")
     
     @on(Button.Pressed, "#embeddings-select-all")
     def on_select_all(self) -> None:
@@ -915,10 +1082,19 @@ class EmbeddingsWindow(Container):
         table = self.query_one("#embeddings-db-results", DataTable)
         
         # Select all items
+        column_keys = list(table.columns.keys())
+        if not column_keys:
+            self.notify("No columns found in table", severity="error")
+            return
+        first_column_key = column_keys[0]
+        
         for row_key in table.rows:
-            item_id = str(table.get_cell(row_key, "ID"))
+            row_data = table.get_row(row_key)
+            # ID is in the second column (index 1)
+            item_id = str(row_data[1])
             self.selected_db_items.add(item_id)
-            table.update_cell(row_key, "✓", "✓")
+            # Update first column to show selection
+            table.update_cell(row_key, first_column_key, "✓")
         
         # Update selection count
         self.query_one("#embeddings-db-selection-count", Label).update(
@@ -932,8 +1108,12 @@ class EmbeddingsWindow(Container):
         
         # Clear all selections
         self.selected_db_items.clear()
-        for row_key in table.rows:
-            table.update_cell(row_key, "✓", "")
+        column_keys = list(table.columns.keys())
+        if column_keys:
+            first_column_key = column_keys[0]
+            for row_key in table.rows:
+                # Update first column to clear selection
+                table.update_cell(row_key, first_column_key, "")
         
         # Update selection count
         self.query_one("#embeddings-db-selection-count", Label).update("No items selected")
@@ -1393,16 +1573,26 @@ class EmbeddingsWindow(Container):
                 # Simulate a row selection event for the current cursor position
                 row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
                 if row_key is not None:
-                    # Get the ID from the current row
-                    item_id = str(table.get_cell(row_key, "ID"))
+                    # Get the row data
+                    row_data = table.get_row(row_key)
+                    # ID is in the second column (index 1)
+                    item_id = str(row_data[1])
+                    
+                    # Get the first column key
+                    column_keys = list(table.columns.keys())
+                    if not column_keys:
+                        raise Exception("No columns found in table")
+                    first_column_key = column_keys[0]
                     
                     # Toggle selection
                     if item_id in self.selected_db_items:
                         self.selected_db_items.discard(item_id)
-                        table.update_cell(row_key, "✓", "")
+                        # Update first column to clear selection
+                        table.update_cell(row_key, first_column_key, "")
                     else:
                         self.selected_db_items.add(item_id)
-                        table.update_cell(row_key, "✓", "✓")
+                        # Update first column to show selection
+                        table.update_cell(row_key, first_column_key, "✓")
                     
                     # Update selection count
                     self.query_one("#embeddings-db-selection-count", Label).update(
