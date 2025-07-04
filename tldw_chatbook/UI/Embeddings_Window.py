@@ -672,14 +672,14 @@ class EmbeddingsWindow(Container):
             
             if self.selected_db == "media":
                 db_type_select.set_options([
-                    ("media", "Media Content")
+                    ("Media Content", "media")
                 ])
                 # Don't set value - Select will auto-select first option when allow_blank=False
             else:  # chachanotes
                 db_type_select.set_options([
-                    ("conversations", "Conversations"),
-                    ("notes", "Notes"),
-                    ("characters", "Characters")
+                    ("Conversations", "conversations"),
+                    ("Notes", "notes"),
+                    ("Characters", "characters")
                 ])
                 # Don't set value - Select will auto-select first option when allow_blank=False
             
