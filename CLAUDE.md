@@ -66,6 +66,9 @@ pytest ./Tests/Chat/test_chat_functions.py
 
 # Run a specific test function
 pytest ./Tests/Chat/test_chat_functions.py::test_specific_function
+
+# Run with coverage
+pytest --cov=tldw_chatbook --cov-report=html
 ```
 
 ### Building
@@ -96,10 +99,15 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - Provider-specific settings and API key management
   - Path resolution and database initialization
 - **`tldw_chatbook/Constants.py`** - Application-wide constants and identifiers
-  - Tab identifiers including `TAB_CODING`, `TAB_EVALS`
-  - CSS styling constants for theming
-  - Help text for LLM server configurations
-  - UI dimension constants
+  - Tab identifiers including `TAB_CODING`, `TAB_EVALS`, `TAB_EMBEDDINGS`
+  - CSS styling constants for theming including responsive sidebar patterns
+  - Help text for LLM server configurations (including MLX-LM)
+  - UI dimension constants and TLDW API form container IDs
+- **`tldw_chatbook/model_capabilities.py`** - Configuration-based model capability detection
+  - Vision support detection for multimodal models
+  - Provider-specific capability mapping
+- **`tldw_chatbook/config_image_addition.py`** - Image configuration management
+  - Image handling settings and defaults
 
 #### UI Layer Architecture
 - **`UI/`** - Main window components implementing tab functionality
@@ -114,6 +122,17 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `Logs_Window.py` - Application logs viewer with copy functionality
   - `Stats_Window.py` - Statistics and metrics display
   - `SearchWindow.py` - Legacy search implementation (backup)
+  - `Evals_Window.py` - Evaluation system UI for LLM benchmarking
+  - `Tab_Bar.py` - Custom tab bar navigation component
+  - `MediaWindow.py` - Comprehensive media management with sub-tabs for:
+    - Video/Audio content
+    - Documents (Word, PowerPoint, etc.)
+    - PDFs and EPUBs
+    - Websites and article scraping
+    - MediaWiki integration
+    - Analysis review
+  - `Embeddings_Window.py` - Embeddings creation interface
+  - `Embeddings_Management_Window.py` - Embeddings management and configuration
 - **`Widgets/`** - Reusable UI components following Textual patterns
   - `chat_message.py` / `chat_message_enhanced.py` - Rich message display with markdown
   - `chat_right_sidebar.py` - Context-aware sidebar for chat
@@ -121,9 +140,25 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `enhanced_file_picker.py` - Advanced file selection with filtering
   - `emoji_picker.py` - Emoji selection widget
   - `eval_additional_dialogs.py` / `eval_config_dialogs.py` / `eval_results_widgets.py` - Evaluation UI components
+  - `Evals_Sidebar.py` - Sidebar for evaluation system navigation
   - `AppFooterStatus.py` - Footer status widget
   - `titlebar.py` - Custom title bar widget
   - `template_selector.py` - Template selection for notes
+  - `feedback_dialog.py` - User feedback collection dialog
+  - `file_extraction_dialog.py` - File extraction and import UI
+  - `notes_sync_widget_improved.py` - Enhanced notes synchronization widget
+  - `IngestTldwApi*Window.py` - Media type-specific ingestion windows:
+    - `IngestTldwApiVideoWindow.py` - Video ingestion
+    - `IngestTldwApiAudioWindow.py` - Audio ingestion
+    - `IngestTldwApiPdfWindow.py` - PDF processing
+    - `IngestTldwApiEbookWindow.py` - E-book handling
+    - `IngestTldwApiDocumentWindow.py` - Document ingestion
+    - `IngestTldwApiXmlWindow.py` - XML processing
+    - `IngestTldwApiMediawikiWindow.py` - MediaWiki import
+    - `IngestTldwApiPlaintextWindow.py` - Plain text ingestion
+    - `IngestTldwApiTabbedWindow.py` - Tabbed container for all ingestion types
+  - `settings_sidebar.py` - Settings sidebar widget
+  - `file_picker_dialog.py` - Advanced file picker dialog
   - Custom list items, dialogs, and specialized widgets
 
 #### Business Logic Layer
@@ -133,14 +168,24 @@ The codebase follows a sophisticated modular architecture with clear separation 
     - `llm_management_events_llamafile.py` - Llamafile server management
     - `llm_management_events_onnx.py` - ONNX runtime support
     - `llm_management_events_transformers.py` - Transformers library integration
+    - `llm_management_events_mlx_lm.py` - MLX-LM server support
+    - `llm_management_events_vllm.py` - vLLM server event handling
   - `notes_sync_events.py` - File synchronization event handling
   - `eval_events.py` - Evaluation system events
+  - `subscription_events.py` - Subscription monitoring system events
+  - `embeddings_events.py` - Embeddings creation and management events
+  - `app_lifecycle.py` - Application lifecycle management
+  - `tab_events.py` - Tab navigation and switching events
+  - `sidebar_events.py` - Sidebar interaction events
+  - `llm_nav_events.py` - LLM navigation and selection events
   - Tab-specific handlers for each major feature
   - Worker event coordination for async operations
 - **`Chat/`** - Core chat engine
   - `Chat_Functions.py` - Conversation management and persistence
   - `prompt_template_manager.py` - Dynamic prompt template system
   - Image handling and multimodal support
+- **`Coding/`** - Code assistance functionality
+  - `code_mapper.py` - Code mapping and analysis utilities
 - **`Character_Chat/`** - Character system implementation
   - `Character_Chat_Lib.py` - Character CRUD operations
   - `ccv3_parser.py` - Character card format parsing
@@ -149,6 +194,13 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `sync_engine.py` - Core synchronization engine with conflict resolution
   - `sync_service.py` - Background sync service implementation
   - Template system for structured note creation
+- **`Evals/`** - Comprehensive LLM evaluation system
+  - `eval_orchestrator.py` - Evaluation orchestration and management
+  - `eval_runner.py` - Core evaluation execution engine
+  - `specialized_runners.py` - Task-specific evaluation runners
+  - `llm_interface.py` - LLM interaction for evaluations
+  - `task_loader.py` - Evaluation task loading and management
+  - `eval_templates.py` - Evaluation prompt templates
 
 #### Data Layer
 - **`DB/`** - Database abstraction with specialized implementations
@@ -171,7 +223,11 @@ The codebase follows a sophisticated modular architecture with clear separation 
     - Prompt templates storage
     - Version history tracking
     - Category organization
+  - `Subscriptions_DB.py` - Subscription management database
+    - Subscription tracking and monitoring
+    - Update frequency management
   - `Sync_Client.py` - Client-side synchronization for distributed database sync
+  - `sqlite_datetime_fix.py` - SQLite datetime handling fixes
   - `sql_validation.py` - SQL injection prevention
 
 #### Service Layer
@@ -181,14 +237,17 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - Streaming response handling
   - Provider-specific parameter mapping
 - **`RAG_Search/`** - Advanced RAG implementation
-  - `Services/` - Modular service architecture
-    - `embeddings_service.py` - Vector embedding generation
-    - `chunking_service.py` - Intelligent text chunking
-    - `indexing_service.py` - Index management
-    - `memory_management_service.py` - RAM optimization
-    - `service_factory.py` - Service composition
+  - `simplified/` - Streamlined RAG architecture
+    - Simplified service implementations
+    - Optimized for performance
+  - `chunking_service.py` - Intelligent text chunking (direct in RAG_Search/)
   - Hybrid search (keyword + semantic)
   - Configurable retrieval strategies
+- **`tldw_api/`** - TLDW API client implementation
+  - `client.py` - API client for TLDW service integration
+  - `schemas.py` - Data models and validation schemas
+  - `exceptions.py` - Custom exception handling
+  - `utils.py` - Utility functions for API operations
 
 - **`Config_Files/`** - Configuration management
   - `create_custom_template.py` - Template creation utilities
@@ -197,6 +256,15 @@ The codebase follows a sophisticated modular architecture with clear separation 
 - **`Third_Party/`** - External integrations
   - `aider/` - Aider code assistant integration
   - `textual_fspicker/` - Enhanced file picker widget library
+- **`css/`** - Modular CSS architecture
+  - `core/` - Base styles and variables
+  - `components/` - Component-specific styles
+  - `features/` - Feature-specific styles
+  - `layout/` - Layout and grid systems
+  - `utilities/` - Utility classes
+  - `Themes/` - Theme definitions
+  - `build_css.py` - CSS build and compilation system
+  - `theme_tester.py` - Theme testing utilities
 
 - **`Screens/`** - Complex UI screen implementations
   - Dedicated screen components for multi-step workflows
@@ -212,6 +280,7 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `metrics.py` - Core metrics collection
   - `Otel_Metrics.py` - OpenTelemetry integration
   - `metrics_logger.py` - Metrics logging functionality
+  - `metrics_wrapper.py` - Metrics wrapper utilities
   - Performance monitoring
   - Usage analytics (local only)
 - **`Web_Scraping/`** - Content extraction
@@ -233,6 +302,7 @@ The codebase follows a sophisticated modular architecture with clear separation 
 - All databases track schema version
 - Migration support via SQL scripts
 - Backward compatibility maintained
+- SQLite datetime handling fixes via `sqlite_datetime_fix.py`
 
 #### Key Relationships
 1. **Conversations ↔ Messages**: One-to-many with ordering
@@ -258,6 +328,10 @@ The codebase follows a sophisticated modular architecture with clear separation 
 - `WorkerEvent` - Background task coordination
 - `EvalEvent` - Evaluation system events
 - `NoteSyncEvent` - Note-specific sync operations
+- `AppLifecycleEvent` - Application startup/shutdown events
+- `TabEvent` - Tab navigation and switching
+- `SidebarEvent` - Sidebar interactions
+- `LLMNavEvent` - LLM selection and navigation
 
 ### Security Architecture
 
@@ -308,6 +382,12 @@ def chat_with_provider(
     **kwargs
 ) -> Union[str, Generator[str, None, None]]
 ```
+
+#### Model Capabilities
+The system includes intelligent model capability detection via `model_capabilities.py`:
+- **Vision Support**: Automatic detection of multimodal models
+- **Provider Mapping**: Configuration-based capability definitions
+- **Dynamic Updates**: Easy addition of new model capabilities
 
 #### Commercial Providers
 Located in `LLM_Calls/LLM_API_Calls.py`:
@@ -670,7 +750,14 @@ The evaluation system provides comprehensive LLM benchmarking:
 
 #### Components
 - **Evals_DB.py**: Database for storing evaluation data
-- **Evaluation UI**: Tab for running and viewing evaluations
+- **Evals_Window.py**: Main evaluation UI tab
+- **Evals/**: Core evaluation engine
+  - `eval_orchestrator.py` - Manages evaluation workflows
+  - `eval_runner.py` - Executes evaluation tasks
+  - `specialized_runners.py` - Task-specific implementations
+  - `llm_interface.py` - Standardized LLM communication
+  - `task_loader.py` - Loads and manages test suites
+  - `eval_templates.py` - Evaluation prompt templates
 - **Result Widgets**: Specialized widgets for displaying results
 - **Configuration Dialogs**: Settings for evaluation parameters
 
@@ -695,6 +782,34 @@ The evaluation system provides comprehensive LLM benchmarking:
 - Sync status indicators
 - Conflict resolution UI
 
+### Subscription System
+
+#### Architecture
+- **Subscriptions_DB.py**: Database for subscription management
+- **subscription_events.py**: Event handling for subscriptions
+- Periodic update checking
+- Notification system for new content
+
+### TLDW API Integration
+
+#### Components
+- **tldw_api/**: Complete API client module
+  - Schemas for data validation
+  - Exception handling
+  - Utility functions
+- **IngestTldwApi* Windows**: Specialized UI for each media type
+  - Video, Audio, PDF, E-book, Document ingestion
+  - XML, MediaWiki, Plain text processing
+  - Tabbed interface for all media types
+
+### CSS Build System
+
+#### Architecture
+- **Modular Structure**: Organized by purpose (core, components, features)
+- **Build Process**: `build_css.py` compiles modular CSS
+- **Theme System**: Multiple themes with testing utilities
+- **Hot Reload**: Development mode with live updates
+
 ### Common Patterns
 
 #### Adding a New Tab
@@ -702,7 +817,8 @@ The evaluation system provides comprehensive LLM benchmarking:
 2. Add tab constant to `Constants.py`
 3. Register in `app.py` compose method
 4. Create event handlers in `Event_Handlers/`
-5. Update tab bar navigation
+5. Update tab bar navigation in `UI/Tab_Bar.py`
+6. Add tab-specific events in `Event_Handlers/tab_events.py`
 
 #### Adding a New Database Table
 1. Design schema with version tracking

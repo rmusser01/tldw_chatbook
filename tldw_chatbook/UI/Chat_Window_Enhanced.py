@@ -372,13 +372,13 @@ class ChatWindowEnhanced(Container):
                 textarea.remove_class("notes-textarea-expanded")
                 textarea.add_class("notes-textarea-normal")
                 textarea.styles.height = 10
-                button.label = "⬆ Expand"
+                button.label = "Expand Notes"
             else:
                 # Expand
                 textarea.remove_class("notes-textarea-normal")
                 textarea.add_class("notes-textarea-expanded")
                 textarea.styles.height = 25
-                button.label = "⬇ Collapse"
+                button.label = "Collapse Notes"
                 
             # Focus the textarea after expanding
             textarea.focus()

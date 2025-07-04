@@ -272,15 +272,15 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                     classes="sidebar-input"
                 )
 
-                # Note content with expand button
-                with Horizontal(classes="notes-content-header"):
-                    yield Label("Note Content:", classes="sidebar-label notes-content-label")
-                    yield Button(
-                        "⬆ Expand",
-                        id=f"{id_prefix}-notes-expand-button",
-                        classes="notes-expand-button",
-                        variant="default"
-                    )
+                # Expand button above note content
+                yield Button(
+                    "Expand Notes",
+                    id=f"{id_prefix}-notes-expand-button",
+                    classes="notes-expand-button sidebar-button"
+                )
+                
+                # Note content label
+                yield Label("Note Content:", classes="sidebar-label")
                 
                 note_content_area = TextArea(
                     id=f"{id_prefix}-notes-content-textarea",
