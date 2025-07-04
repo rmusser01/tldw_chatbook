@@ -223,6 +223,12 @@
     min-height: 3;
 }
 
+.ingest-url-button {
+    width: auto;
+    height: 3;
+    margin-bottom: 1;
+}
+
 .ingest-form-row {
     margin-top: 1;
 }

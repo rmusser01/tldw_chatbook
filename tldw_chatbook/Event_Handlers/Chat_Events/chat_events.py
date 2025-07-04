@@ -398,19 +398,35 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         # Check if we're using enhanced chat window and if there's a pending image
         use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
         pending_image = None
+        pending_attachment = None
         
         if use_enhanced_chat:
             try:
                 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
                 chat_window = app.query_one(ChatWindowEnhanced)
-                pending_image = chat_window.get_pending_image()
-                loguru_logger.debug(f"Enhanced chat window - pending image: {'Yes' if pending_image else 'No'}")
+                
+                # Try new attachment system first
+                if hasattr(chat_window, 'pending_attachment') and chat_window.pending_attachment:
+                    pending_attachment = chat_window.pending_attachment
+                    # For backward compatibility, if it's an image, also set pending_image
+                    if pending_attachment.get('file_type') == 'image':
+                        pending_image = {
+                            'data': pending_attachment['data'],
+                            'mime_type': pending_attachment['mime_type'],
+                            'path': pending_attachment.get('path')
+                        }
+                    loguru_logger.debug(f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})")
+                # Fall back to old pending_image system
+                elif hasattr(chat_window, 'get_pending_image'):
+                    pending_image = chat_window.get_pending_image()
+                    loguru_logger.debug(f"Enhanced chat window - pending image (legacy): {'Yes' if pending_image else 'No'}")
+                
             except QueryError:
                 loguru_logger.debug("Enhanced chat window not found in DOM")
-            except AttributeError:
-                loguru_logger.debug("Enhanced chat window doesn't have get_pending_image method")
+            except AttributeError as e:
+                loguru_logger.debug(f"Enhanced chat window attribute error: {e}")
             except Exception as e:
-                loguru_logger.warning(f"Unexpected error getting pending image: {e}", exc_info=True)
+                loguru_logger.warning(f"Unexpected error getting pending attachment/image: {e}", exc_info=True)
         
         # Create appropriate widget based on image presence
         if pending_image:
@@ -649,18 +665,22 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                    description=f"Calling {selected_provider}")
     app.set_current_chat_worker(worker)
     
-    # Clear pending image after sending
-    if use_enhanced_chat and pending_image:
+    # Clear pending attachment/image after sending
+    if use_enhanced_chat and (pending_image or pending_attachment):
         try:
-            chat_window.pending_image = None
-            # Update UI to reflect cleared image
+            # Clear both old and new attachment systems
+            if hasattr(chat_window, 'pending_attachment'):
+                chat_window.pending_attachment = None
+            if hasattr(chat_window, 'pending_image'):
+                chat_window.pending_image = None
+            # Update UI to reflect cleared attachment
             attach_button = chat_window.query_one("#attach-image", Button)
             attach_button.label = "📎"
             indicator = chat_window.query_one("#image-attachment-indicator", Static)
             indicator.add_class("hidden")
-            loguru_logger.debug("Cleared pending image after sending")
+            loguru_logger.debug("Cleared pending attachment/image after sending")
         except Exception as e:
-            loguru_logger.debug(f"Could not clear pending image UI: {e}")
+            loguru_logger.debug(f"Could not clear pending attachment UI: {e}")
 
 
 async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, action_widget: Union[ChatMessage, ChatMessageEnhanced]) -> None:

@@ -293,53 +293,6 @@ class ChatWindowEnhanced(Container):
             logger.error(f"Error processing file attachment: {e}", exc_info=True)
             self.app_instance.notify(f"Error processing file: {e}", severity="error")
 
-    async def process_image_attachment(self, file_path: str) -> None:
-        """Process selected image file."""
-        from ..Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
-        
-        try:
-            # Process image
-            image_data, mime_type = await ChatImageHandler.process_image_file(file_path)
-            
-            # Store in temporary state
-            self.pending_image = {
-                'data': image_data,
-                'mime_type': mime_type,
-                'path': file_path
-            }
-            
-            # Update UI to show image is attached
-            try:
-                attach_button = self.query_one("#attach-image")
-                attach_button.label = "📎✓"
-            except Exception:
-                pass
-            
-            # Show indicator with filename
-            from pathlib import Path
-            filename = Path(file_path).name
-            indicator = self.query_one("#image-attachment-indicator")
-            indicator.update(f"📷 {filename}")
-            indicator.remove_class("hidden")
-            
-            self.app_instance.notify(f"Image attached: {filename}")
-            
-        except FileNotFoundError:
-            logger.error(f"Image file not found: {file_path}")
-            self.app_instance.notify(f"Image file not found: {file_path}", severity="error")
-        except ValueError as e:
-            # This is thrown by ChatImageHandler for format/size issues
-            logger.error(f"Invalid image: {e}")
-            self.app_instance.notify(str(e), severity="error")
-        except PermissionError:
-            logger.error(f"Permission denied accessing image: {file_path}")
-            self.app_instance.notify(f"Permission denied: Cannot access {file_path}", severity="error")
-        except MemoryError:
-            logger.error(f"Image too large to load into memory: {file_path}")
-            self.app_instance.notify("Image is too large to process. Please use a smaller image.", severity="error")
-        except Exception as e:
-            logger.error(f"Unexpected error attaching image: {e}", exc_info=True)
-            self.app_instance.notify(f"Unexpected error: {e}", severity="error")
 
     def compose(self) -> ComposeResult:
         logger.debug("Composing ChatWindowEnhanced UI")

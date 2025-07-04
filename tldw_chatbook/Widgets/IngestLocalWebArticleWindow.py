@@ -30,10 +30,9 @@ class IngestLocalWebArticleWindow(Vertical):
             yield Label("Enter URLs (one per line):")
             yield TextArea(id="ingest-local-web-urls", classes="ingest-textarea-medium")
             
-            with Horizontal(classes="ingest-controls-row"):
-                yield Button("Clear URLs", id="ingest-local-web-clear-urls")
-                yield Button("Import from File", id="ingest-local-web-import-urls")
-                yield Button("Remove Duplicates", id="ingest-local-web-remove-duplicates")
+            yield Button("Clear URLs", id="ingest-local-web-clear-urls", classes="ingest-url-button")
+            yield Button("Import from File", id="ingest-local-web-import-urls", classes="ingest-url-button")
+            yield Button("Remove Duplicates", id="ingest-local-web-remove-duplicates", classes="ingest-url-button")
             
             yield Label("URL Count: 0 valid, 0 invalid", id="ingest-local-web-url-count", classes="ingest-label")
             
