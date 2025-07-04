@@ -70,6 +70,8 @@ class ChatWindowEnhanced(Container):
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.pending_attachment = None  # New unified attachment system
+        self.pending_image = None  # Deprecated - kept for backward compatibility
         logger.debug("ChatWindowEnhanced initialized.")
     
     async def on_mount(self) -> None:
@@ -136,32 +138,42 @@ class ChatWindowEnhanced(Container):
             logger.warning(f"No handler found for button: {button_id}")
 
     async def handle_attach_image_button(self, app_instance, event):
-        """Show image file picker dialog."""
+        """Show file picker dialog for attachments."""
         from ..Third_Party.textual_fspicker import FileOpen, Filters
+        from fnmatch import fnmatch
+        from pathlib import Path
         
-        def on_image_selected(file_path: Optional[Path]):
+        def on_file_selected(file_path: Optional[Path]):
             if file_path:
-                # Process the selected image
-                self.app_instance.call_from_thread(self.process_image_attachment, str(file_path))
+                # Process the selected file
+                self.app_instance.call_from_thread(self.process_file_attachment, str(file_path))
         
-        # Create image file filters
-        image_filters = Filters(
-            ("Image Files", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg"),
-            ("PNG Images", "*.png"),
-            ("JPEG Images", "*.jpg;*.jpeg"),
-            ("GIF Images", "*.gif"),
-            ("WebP Images", "*.webp"),
-            ("All Files", "*.*")
+        # Create filter functions
+        def create_filter(patterns: str):
+            """Create a filter function from semicolon-separated patterns."""
+            pattern_list = patterns.split(';')
+            def filter_func(path: Path) -> bool:
+                return any(fnmatch(path.name, pattern) for pattern in pattern_list)
+            return filter_func
+        
+        # Create comprehensive file filters
+        file_filters = Filters(
+            ("All Supported Files", create_filter("*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg;*.txt;*.md;*.log;*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.json;*.yaml;*.yml;*.csv;*.tsv")),
+            ("Image Files", create_filter("*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.tiff;*.tif;*.svg")),
+            ("Text Files", create_filter("*.txt;*.md;*.log;*.text;*.rst")),
+            ("Code Files", create_filter("*.py;*.js;*.ts;*.java;*.cpp;*.c;*.h;*.cs;*.rb;*.go;*.rs;*.swift;*.kt;*.php;*.r;*.m;*.lua;*.sh;*.bash;*.ps1;*.sql;*.html;*.css;*.xml")),
+            ("Data Files", create_filter("*.json;*.yaml;*.yml;*.csv;*.tsv")),
+            ("All Files", lambda path: True)
         )
         
         # Push the FileOpen dialog directly
         self.app_instance.push_screen(
             FileOpen(
                 location=".",
-                title="Select Image to Attach",
-                filters=image_filters
+                title="Select File to Attach",
+                filters=file_filters
             ),
-            callback=on_image_selected
+            callback=on_file_selected
         )
 
     async def handle_clear_image_button(self, app_instance, event):
@@ -203,6 +215,83 @@ class ChatWindowEnhanced(Container):
             indicator = self.query_one("#image-attachment-indicator")
             indicator.add_class("hidden")
 
+    async def process_file_attachment(self, file_path: str) -> None:
+        """Process selected file using appropriate handler."""
+        from ..Utils.file_handlers import file_handler_registry
+        from pathlib import Path
+        
+        try:
+            # Process the file
+            processed_file = await file_handler_registry.process_file(file_path)
+            
+            if processed_file.insert_mode == "inline":
+                # For text/code/data files, insert content directly into chat input
+                try:
+                    chat_input = self.query_one("#chat-input", TextArea)
+                    # Get current content
+                    current_text = chat_input.text
+                    # Add file content
+                    if current_text:
+                        # If there's existing text, add a newline before the file content
+                        new_text = current_text + "\n\n" + processed_file.content
+                    else:
+                        new_text = processed_file.content
+                    # Update the text area
+                    chat_input.text = new_text
+                    # Move cursor to end
+                    chat_input.cursor_location = len(new_text)
+                    
+                    # Show notification
+                    emoji_map = {
+                        "text": "📄",
+                        "code": "💻", 
+                        "data": "📊",
+                        "file": "📎"
+                    }
+                    emoji = emoji_map.get(processed_file.file_type, "📎")
+                    self.app_instance.notify(f"{emoji} {processed_file.display_name} content inserted")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to insert file content: {e}")
+                    self.app_instance.notify(f"Failed to insert content: {e}", severity="error")
+                    
+            elif processed_file.insert_mode == "attachment":
+                # For images and other attachments, store as pending
+                self.pending_attachment = {
+                    'data': processed_file.attachment_data,
+                    'mime_type': processed_file.attachment_mime_type,
+                    'path': file_path,
+                    'display_name': processed_file.display_name,
+                    'file_type': processed_file.file_type
+                }
+                
+                # For backward compatibility, also set pending_image if it's an image
+                if processed_file.file_type == "image":
+                    self.pending_image = {
+                        'data': processed_file.attachment_data,
+                        'mime_type': processed_file.attachment_mime_type,
+                        'path': file_path
+                    }
+                
+                # Update UI to show file is attached
+                try:
+                    attach_button = self.query_one("#attach-image")
+                    attach_button.label = "📎✓"
+                except Exception:
+                    pass
+                
+                # Show indicator with filename
+                indicator = self.query_one("#image-attachment-indicator")
+                emoji_map = {"image": "📷", "file": "📎"}
+                emoji = emoji_map.get(processed_file.file_type, "📎")
+                indicator.update(f"{emoji} {processed_file.display_name}")
+                indicator.remove_class("hidden")
+                
+                self.app_instance.notify(f"{processed_file.display_name} attached")
+                
+        except Exception as e:
+            logger.error(f"Error processing file attachment: {e}", exc_info=True)
+            self.app_instance.notify(f"Error processing file: {e}", severity="error")
 
     async def process_image_attachment(self, file_path: str) -> None:
         """Process selected image file."""

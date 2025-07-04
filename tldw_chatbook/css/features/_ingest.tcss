@@ -177,6 +177,13 @@
     width: 100%;
 }
 
+/* Scrollable form container needs padding to prevent content cutoff */
+.ingest-form-scrollable {
+    height: 100%;
+    overflow-y: auto;
+    padding: 1;
+}
+
 /* Removed .ingest-media-tab-content - no longer needed since parent is VerticalScroll */
 
 .ingest-file-section {
@@ -208,6 +215,12 @@
 
 .ingest-controls-row {
     margin-bottom: 1;
+    height: 3;
+}
+
+.ingest-controls-row Button {
+    height: 3;
+    min-height: 3;
 }
 
 .ingest-form-row {
