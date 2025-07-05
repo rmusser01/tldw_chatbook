@@ -4,10 +4,11 @@
 # Imports
 import json  # For export
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Any, List, Dict, cast
+from typing import TYPE_CHECKING, Optional, Any, List, Dict, cast, Tuple
 import yaml
 #
 # 3rd-Party Imports
@@ -24,7 +25,8 @@ from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters # For F
 from ..Widgets.chat_message import ChatMessage # If CCP tab displays ChatMessage widgets
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..Prompt_Management import Prompts_Interop as prompts_interop
-from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError # For specific error handling
+from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError # For specific error handling
+from .Chat_Events.chat_events import load_branched_conversation_history_ui
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -159,7 +161,7 @@ def clear_ccp_prompt_fields(app: 'TldwCli') -> None:
 
 ########################################################################################################################
 #
-# Event Handlers for Character Card Import
+# Event Handlers for Character Card Import/Export
 #
 ########################################################################################################################
 async def _character_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
@@ -275,6 +277,53 @@ async def handle_ccp_left_load_character_button_pressed(app: 'TldwCli', event: B
     except Exception as e_unexp:
         logger.error(f"Unexpected error during load character (left pane): {e_unexp}", exc_info=True)
         app.notify("An unexpected error occurred while trying to load character view.", severity="error")
+
+
+async def handle_ccp_create_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles creating a new character from scratch in the CCP tab."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Create Character button pressed.")
+    
+    # Clear the character editor fields
+    await _helper_ccp_clear_center_pane_character_editor_fields(app)
+    
+    # Clear the current editing state
+    app.current_editing_character_id = None
+    app.current_editing_character_data = None
+    
+    # Switch to the character editor view
+    app.ccp_active_view = "character_editor_view"
+    
+    # Make the Cancel Edit button visible
+    try:
+        cancel_button = app.query_one("#ccp-editor-char-cancel-button", Button)
+        cancel_button.remove_class("hidden")
+    except QueryError:
+        logger.error("Failed to find #ccp-editor-char-cancel-button to remove 'hidden' class.")
+    
+    # Focus the character name input field
+    try:
+        name_input = app.query_one("#ccp-editor-char-name-input", Input)
+        name_input.focus()
+    except QueryError:
+        logger.error("Failed to find #ccp-editor-char-name-input to focus.")
+    
+    app.notify("Create a new character by filling in the details.", severity="information")
+    logger.info("Character editor cleared and ready for new character creation.")
+
+
+async def handle_ccp_refresh_character_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Refresh List button press to reload the character select dropdown."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Refresh Character List button pressed.")
+    
+    try:
+        await populate_ccp_character_select(app)
+        app.notify("Character list refreshed.", severity="information")
+        logger.info("Character list refreshed successfully.")
+    except Exception as e:
+        logger.error(f"Error refreshing character list: {e}", exc_info=True)
+        app.notify("Failed to refresh character list.", severity="error")
 
 
 async def handle_ccp_card_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -448,13 +497,12 @@ async def handle_ccp_card_clone_button_pressed(app: 'TldwCli', event: Button.Pre
 
         db = app.chachanotes_db  # Already checked it's not None
 
-        new_character_details = db.add_character_card(cloned_character_data)
+        new_character_id = db.add_character_card(cloned_character_data)
 
-        if new_character_details and new_character_details.get("id"):
-            new_char_id = new_character_details.get("id")
-            app.notify(f"Character cloned as '{cloned_name}' successfully (ID: {new_char_id}).", severity="information")
+        if new_character_id:
+            app.notify(f"Character cloned as '{cloned_name}' successfully (ID: {new_character_id}).", severity="information")
             logger.info(
-                f"Character cloned from ID {current_details_value.get('id')} to new ID {new_char_id} with name '{cloned_name}'.")
+                f"Character cloned from ID {current_details_value.get('id')} to new ID {new_character_id} with name '{cloned_name}'.")
 
             await populate_ccp_character_select(app)  # Ensure this is imported/defined
         else:
@@ -697,7 +745,7 @@ async def handle_ccp_load_conversation_button_pressed(app: 'TldwCli', event: But
             return
 
         # FIXME/TODO - Conversation Branching
-        await app._load_branched_conversation_history(loaded_conversation_id, center_pane)
+        await load_branched_conversation_history_ui(app, loaded_conversation_id, center_pane)
 
         center_pane.scroll_end(animate=False)
         logger.info(f"Loaded messages into #conv-char-center-pane for conversation {loaded_conversation_id}.")
@@ -1469,6 +1517,17 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
         first_message = app.query_one("#ccp-editor-char-first-message-textarea", TextArea).text.strip()
         keywords_text = app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text.strip()
         keywords_list = [kw.strip() for kw in keywords_text.split(',') if kw.strip()]
+        
+        # V2 Character Card fields
+        creator_notes = app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text.strip()
+        system_prompt = app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text.strip()
+        post_history_instructions = app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text.strip()
+        alternate_greetings_text = app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text.strip()
+        alternate_greetings = [greeting.strip() for greeting in alternate_greetings_text.split('\n') if greeting.strip()]
+        tags_text = app.query_one("#ccp-editor-char-tags-input", Input).value.strip()
+        tags = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+        creator = app.query_one("#ccp-editor-char-creator-input", Input).value.strip()
+        character_version = app.query_one("#ccp-editor-char-version-input", Input).value.strip()
 
         if not char_name:
             app.notify("Character Name cannot be empty.", severity="error", timeout=4)
@@ -1482,11 +1541,63 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
             "scenario": scenario,
             "first_message": first_message,
             "keywords": keywords_list,
-            "image_path": avatar_path,  # Storing avatar path as image_path
-            # Ensure other relevant fields from your DB schema are included if needed
-            # e.g., "creator_notes", "system_prompt", "post_history_instructions",
-            # "alternate_greetings", "tags", "creator", "character_version", "extensions"
+            # V2 Character Card fields
+            "creator_notes": creator_notes,
+            "system_prompt": system_prompt,
+            "post_history_instructions": post_history_instructions,
+            "alternate_greetings": alternate_greetings,
+            "tags": tags,
+            "creator": creator,
+            "character_version": character_version,
+            "extensions": {}  # Empty dict for now, can be extended later
         }
+        
+        # Handle image data - prioritize uploaded image over URL
+        if hasattr(app, 'temp_character_image_bytes') and app.temp_character_image_bytes:
+            # Use the uploaded image bytes
+            character_data_for_db_op["image"] = app.temp_character_image_bytes
+            logger.info("Using uploaded image bytes for character")
+        elif avatar_path:
+            # Try to load image from URL or path
+            try:
+                import httpx
+                from PIL import Image
+                import io
+                
+                if avatar_path.startswith(('http://', 'https://')):
+                    # Download from URL
+                    logger.info(f"Downloading image from URL: {avatar_path}")
+                    response = httpx.get(avatar_path, timeout=10.0)
+                    response.raise_for_status()
+                    image_bytes = response.content
+                    
+                    # Validate it's a PNG
+                    img = Image.open(io.BytesIO(image_bytes))
+                    if img.format != 'PNG':
+                        app.notify("URL image must be PNG format.", severity="error")
+                        logger.error(f"Image from URL is not PNG: {img.format}")
+                        return
+                    
+                    character_data_for_db_op["image"] = image_bytes
+                else:
+                    # Load from local file path
+                    logger.info(f"Loading image from local path: {avatar_path}")
+                    with open(avatar_path, 'rb') as f:
+                        image_bytes = f.read()
+                    
+                    # Validate it's a PNG
+                    img = Image.open(io.BytesIO(image_bytes))
+                    if img.format != 'PNG':
+                        app.notify("Image file must be PNG format.", severity="error")
+                        logger.error(f"Image file is not PNG: {img.format}")
+                        return
+                    
+                    character_data_for_db_op["image"] = image_bytes
+                    
+            except Exception as e:
+                logger.error(f"Failed to load image from {avatar_path}: {e}")
+                app.notify(f"Failed to load image: {str(e)}", severity="warning")
+                # Continue without image rather than failing entirely
 
         saved_character_details: Optional[Dict[str, Any]] = None
         current_editing_id = app.current_editing_character_id
@@ -1494,12 +1605,19 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
 
         if current_editing_id is None:  # New character
             logger.info(f"Attempting to add new character: {char_name}")
-            saved_character_details = db.add_character_card(character_data=character_data_for_db_op)
-            if saved_character_details and saved_character_details.get("id"):
-                logger.info(f"New character '{char_name}' added. ID: {saved_character_details['id']}")
+            new_character_id = db.add_character_card(card_data=character_data_for_db_op)
+            if new_character_id:
+                logger.info(f"New character '{char_name}' added. ID: {new_character_id}")
                 app.notify(f"Character '{char_name}' saved successfully.", severity="information")
+                # Update the app state with the new character ID
+                app.current_editing_character_id = str(new_character_id)
+                app.current_editing_character_data = character_data_for_db_op
+                app.current_editing_character_data["id"] = str(new_character_id)
+                # Clear temporary image bytes after successful save
+                if hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
             else:
-                logger.error(f"Failed to save new character '{char_name}'. DB response: {saved_character_details}")
+                logger.error(f"Failed to save new character '{char_name}'. DB response: {new_character_id}")
                 app.notify(f"Failed to save new character '{char_name}'.", severity="error")
                 return
         else:  # Existing character
@@ -1523,6 +1641,9 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
             if saved_character_details:
                 logger.info(f"Character '{char_name}' (ID: {current_editing_id}) updated successfully.")
                 app.notify(f"Character '{char_name}' updated successfully.", severity="information")
+                # Clear temporary image bytes after successful save
+                if hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
             else:
                 logger.error(f"Failed to update character '{char_name}'. DB response: {saved_character_details}")
                 app.notify(f"Failed to update character '{char_name}'.", severity="error")
@@ -1575,8 +1696,25 @@ async def _helper_ccp_clear_center_pane_character_editor_fields(app: 'TldwCli') 
         app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = ""
         app.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = ""
         app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text = ""
-        # Add other fields if they exist in the center pane editor
-        # e.g., app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = ""
+        # V2 Character Card fields
+        app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-tags-input", Input).value = ""
+        app.query_one("#ccp-editor-char-creator-input", Input).value = ""
+        app.query_one("#ccp-editor-char-version-input", Input).value = ""
+        
+        # Clear image status display
+        try:
+            status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+            status_widget.update("No image selected")
+        except QueryError:
+            pass
+        
+        # Clear any temporary image bytes
+        if hasattr(app, 'temp_character_image_bytes'):
+            app.temp_character_image_bytes = None
 
         loguru_logger.debug("Cleared character editor fields in CCP center pane.")
     except QueryError as e:
@@ -1619,6 +1757,31 @@ async def _helper_ccp_load_character_into_center_pane_editor(app: 'TldwCli', cha
             keywords_list = char_data.get("keywords", [])
             app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text = ", ".join(keywords_list) if keywords_list else ""
 
+            # Populate V2 Character Card fields
+            app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text = char_data.get("creator_notes", "")
+            app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = char_data.get("system_prompt", "")
+            app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text = char_data.get("post_history_instructions", "")
+            alternate_greetings = char_data.get("alternate_greetings", [])
+            app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text = "\n".join(alternate_greetings) if alternate_greetings else ""
+            tags_list = char_data.get("tags", [])
+            app.query_one("#ccp-editor-char-tags-input", Input).value = ", ".join(tags_list) if tags_list else ""
+            app.query_one("#ccp-editor-char-creator-input", Input).value = char_data.get("creator", "")
+            app.query_one("#ccp-editor-char-version-input", Input).value = char_data.get("character_version", "")
+            
+            # Update image status display
+            try:
+                status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+                if char_data.get("image"):
+                    # Character has an image in the database
+                    status_widget.update("Image stored in database")
+                else:
+                    status_widget.update("No image selected")
+            except QueryError:
+                loguru_logger.warning("Could not find image status widget")
+            
+            # Clear any temporary image bytes when loading a character
+            if hasattr(app, 'temp_character_image_bytes'):
+                app.temp_character_image_bytes = None
 
             app.query_one("#ccp-editor-char-name-input", Input).focus()
             app.notify(f"Character '{char_data.get('name', 'Unknown')}' loaded into center editor.", severity="information")
@@ -1697,19 +1860,18 @@ async def handle_ccp_editor_char_clone_button_pressed(app: 'TldwCli', event: But
         logger.info(f"Attempting to clone character '{original_name}' as '{cloned_name}' from editor state.")
         db = app.chachanotes_db # Already checked
 
-        saved_clone_details = db.add_character_card(
-            character_data=cloned_character_data_for_db
+        new_cloned_char_id = db.add_character_card(
+            card_data=cloned_character_data_for_db
         )
 
-        if saved_clone_details and saved_clone_details.get("id"):
-            new_cloned_char_id = saved_clone_details["id"]
+        if new_cloned_char_id:
             logger.info(f"Character cloned successfully. New ID: {new_cloned_char_id}")
             app.notify(f"Character cloned as '{cloned_name}'.", severity="information")
 
-            await _helper_ccp_load_character_into_center_pane_editor(app, new_cloned_char_id)
+            await _helper_ccp_load_character_into_center_pane_editor(app, str(new_cloned_char_id))
             await populate_ccp_character_select(app)
         else:
-            logger.error(f"Failed to save cloned character '{cloned_name}'. DB returned: {saved_clone_details}")
+            logger.error(f"Failed to save cloned character '{cloned_name}'. DB returned: {new_cloned_char_id}")
             app.notify(f"Failed to clone character '{original_name}'.", severity="error")
 
     except CharactersRAGDBError as e_db:
@@ -1857,6 +2019,96 @@ async def handle_ccp_editor_char_delete_button_pressed(app: 'TldwCli', event: Bu
         app.notify(f"Unexpected error deleting: {type(e_unexp).__name__}", severity="error")
 
 
+async def handle_ccp_editor_char_image_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Choose Image button for character editor."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Editor: Choose Image button pressed.")
+    
+    from pathlib import Path
+    
+    # Define filters for PNG files only
+    defined_filters = Filters(
+        ("PNG files (*.png)", lambda p: p.suffix.lower() == ".png"),
+        ("All files (*.*)", lambda p: True)
+    )
+    
+    async def _image_upload_callback(app: 'TldwCli', selected_path: Optional[str]) -> None:
+        if selected_path:
+            logger.info(f"Image file selected: {selected_path}")
+            try:
+                # Read and validate the image
+                with open(selected_path, 'rb') as f:
+                    image_bytes = f.read()
+                
+                # Validate it's a valid PNG using PIL
+                from PIL import Image
+                import io
+                
+                img = Image.open(io.BytesIO(image_bytes))
+                if img.format != 'PNG':
+                    app.notify("Only PNG images are supported.", severity="error")
+                    return
+                
+                # Check image size (limit to 5MB)
+                if len(image_bytes) > 5 * 1024 * 1024:
+                    app.notify("Image size must be less than 5MB.", severity="error")
+                    return
+                
+                # Check dimensions (limit to 1024x1024)
+                if img.width > 1024 or img.height > 1024:
+                    app.notify("Image dimensions must not exceed 1024x1024 pixels.", severity="error")
+                    return
+                
+                # Store the image bytes in app state
+                if not hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
+                app.temp_character_image_bytes = image_bytes
+                
+                # Update the status display
+                try:
+                    status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+                    filename = Path(selected_path).name
+                    status_widget.update(f"Selected: {filename} ({len(image_bytes) // 1024}KB)")
+                except QueryError:
+                    logger.error("Could not find image status widget")
+                
+                app.notify(f"Image selected: {Path(selected_path).name}", severity="information")
+                
+            except Exception as e:
+                logger.error(f"Error loading image file: {e}", exc_info=True)
+                app.notify(f"Error loading image: {str(e)}", severity="error")
+        else:
+            logger.info("Image selection cancelled.")
+    
+    await app.push_screen(
+        FileOpen(
+            location=str(Path.home() / "Pictures"),
+            title="Select Character Image (PNG only)",
+            filters=defined_filters
+        ),
+        callback=lambda path: _image_upload_callback(app, path)
+    )
+
+
+async def handle_ccp_editor_char_clear_image_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Clear Image button for character editor."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Editor: Clear Image button pressed.")
+    
+    # Clear the temporary image bytes
+    if hasattr(app, 'temp_character_image_bytes'):
+        app.temp_character_image_bytes = None
+    
+    # Update the status display
+    try:
+        status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+        status_widget.update("No image selected")
+    except QueryError:
+        logger.error("Could not find image status widget")
+    
+    app.notify("Image cleared.", severity="information")
+
+
 async def _finish_new_prompt_setup(app: 'TldwCli') -> None:
     """
     This second-stage helper is called after the UI has had a chance to update.
@@ -1908,10 +2160,656 @@ async def handle_ccp_card_edit_button_pressed(app: 'TldwCli', event: Button.Pres
         logger.error("Failed to find #ccp-editor-char-cancel-button to remove 'hidden' class.")
 
 
+# ##############################################################
+# --- AI Generation Handlers ---
+# ##############################################################
+
+def _get_llm_settings_for_generation(app: 'TldwCli') -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Helper to get LLM provider, model, and API key settings for AI generation."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    
+    try:
+        # Try to get from chat tab first if it's available
+        provider = app.query_one("#chat-api-provider", Select).value
+        model = app.query_one("#chat-api-model", Select).value
+        if provider == Select.BLANK:
+            provider = None
+    except QueryError:
+        # Fall back to config defaults
+        chat_defaults = app.app_config.get("chat_defaults", {})
+        provider = chat_defaults.get("provider", None)
+        model = chat_defaults.get("model", None)
+        logger.info(f"Using config defaults - provider: {provider}, model: {model}")
+    
+    # Get API key
+    api_key = None
+    if provider:
+        provider_settings_key = provider.lower().replace(" ", "_")
+        provider_config_settings = app.app_config.get("api_settings", {}).get(provider_settings_key, {})
+        
+        # Try direct API key first
+        if "api_key" in provider_config_settings:
+            config_api_key = provider_config_settings.get("api_key", "").strip()
+            if config_api_key and config_api_key != "<API_KEY_HERE>":
+                api_key = config_api_key
+                logger.debug(f"Using API key for '{provider}' from config file.")
+        
+        # Try environment variable
+        if not api_key:
+            env_var_name = provider_config_settings.get("api_key_env_var", "").strip()
+            if env_var_name:
+                env_api_key = os.environ.get(env_var_name, "").strip()
+                if env_api_key:
+                    api_key = env_api_key
+                    logger.debug(f"Using API key for '{provider}' from ENV var '{env_var_name}'.")
+    
+    return provider, model, api_key
+
+
+async def handle_ccp_generate_description_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character description using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Description button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-description-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate description button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        # Get any existing description to build upon
+        existing_desc = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        
+        # Build prompt
+        if existing_desc:
+            prompt = f"Improve and expand this character description for '{char_name}': {existing_desc}\n\nMake it more vivid and detailed, keeping the core concept but enhancing it. 2-3 paragraphs."
+        else:
+            prompt = f"Generate a compelling character description for a character named '{char_name}'. Include their appearance, background, and key traits. Make it vivid and engaging. 2-3 paragraphs."
+        
+        # Get LLM settings
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        # Show thinking status
+        app.notify("Generating description... This may take a moment.", severity="information")
+        
+        # Make API call using app's chat wrapper
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,  # More creative
+            system_message="You are a creative writing assistant helping to create compelling character descriptions. Be vivid and engaging.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_description",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating description with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except QueryError as e:
+        logger.error(f"UI component not found: {e}")
+        app.notify("UI error generating description", severity="error")
+    except Exception as e:
+        logger.error(f"Error generating description: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_personality_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character personality using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Personality button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-personality-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate personality button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        # Build context-aware prompt
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        
+        prompt = f"{context}\n\nGenerate a detailed personality profile for this character. Include their traits, quirks, likes/dislikes, fears, motivations, and behavioral patterns. Make it nuanced and interesting. 2-3 paragraphs."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating personality... This may take a moment.", severity="information")
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative writing assistant specializing in character development. Create nuanced, believable personalities.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_personality",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating personality with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating personality: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_scenario_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character scenario using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Scenario button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-scenario-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate scenario button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        
+        prompt = f"{context}\n\nGenerate an engaging scenario/setting where the user would encounter and interact with this character. Set the scene and context. 1-2 paragraphs."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating scenario... This may take a moment.", severity="information")
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative writing assistant. Create engaging scenarios that set up interesting interactions.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_scenario",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating scenario with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating scenario: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_first_message_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character first message using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate First Message button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-first-message-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate first message button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        scenario = app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        if scenario:
+            context += f"\nScenario: {scenario}"
+        
+        prompt = f"{context}\n\nWrite the character's first message/greeting to the user. It should be in-character, engaging, and set the tone for the interaction. Include actions in *asterisks* or narrative description if appropriate."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating first message... This may take a moment.", severity="information")
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message=f"You are roleplaying as {char_name}. Write in first person as the character. Be true to their personality and scenario.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_first_message",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating first message with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating first message: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_system_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character system prompt using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate System Prompt button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-system-prompt-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate system prompt button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        scenario = app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        if scenario:
+            context += f"\nScenario: {scenario}"
+        
+        prompt = f"{context}\n\nGenerate a system prompt for an AI to roleplay as this character. Include instructions about personality, speech patterns, knowledge, and behavior. Make it clear and specific."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating system prompt... This may take a moment.", severity="information")
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.7,  # Slightly less creative for instructions
+            system_message="You are an expert at writing clear, effective system prompts for AI roleplay. Create prompts that result in consistent, engaging character portrayals.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_system_prompt",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating system prompt with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating system prompt: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_all_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating all character fields using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate All button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-all-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate all button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify(f"Generating complete character profile... This may take up to a minute.", severity="information")
+        
+        # Generate all fields in one comprehensive prompt
+        prompt = f"""Create a complete character profile for a character named '{char_name}'.
+
+Please provide:
+1. Description (2-3 paragraphs about appearance, background, and key traits)
+2. Personality (2-3 paragraphs about traits, quirks, motivations, fears)
+3. Scenario (1-2 paragraphs setting up where/how the user meets this character)
+4. First Message (the character's greeting/introduction to the user, in-character)
+5. System Prompt (instructions for an AI to roleplay as this character)
+
+Format your response with clear headers for each section."""
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative character designer. Create compelling, coherent characters with rich personalities and engaging scenarios.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_all",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating complete character profile with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating character profile: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+    finally:
+        # Re-enable the button
+        if generate_button:
+            generate_button.disabled = False
+
+
 # --- Button Handler Map ---
+########################################################################################################################
+#
+# Event Handlers for Conversation Export
+#
+########################################################################################################################
+
+async def handle_conv_char_export_text_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current conversation as a text file."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export conversation as text button pressed.")
+    
+    if not app.current_ccp_conversation_id:
+        app.notify("No conversation loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Get user name for export
+        user_name = app.notes_user_id or "User"
+        
+        # Export conversation to text
+        text_content = ccl.export_conversation_to_text(
+            db, 
+            app.current_ccp_conversation_id,
+            user_name
+        )
+        
+        if not text_content:
+            app.notify("Failed to export conversation.", severity="error")
+            return
+            
+        # Generate filename
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        if conv_details:
+            title = conv_details.get('title', 'conversation').replace('/', '_').replace('\\', '_')
+            filename = f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        else:
+            filename = f"conversation_{app.current_ccp_conversation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            
+        # Save to default export directory
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_path = export_dir / filename
+        
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write(text_content)
+            
+        app.notify(f"Conversation exported to: {export_path}", severity="information", timeout=10)
+        logger.info(f"Exported conversation to text: {export_path}")
+        
+    except Exception as e:
+        logger.error(f"Error exporting conversation as text: {e}", exc_info=True)
+        app.notify(f"Error exporting conversation: {type(e).__name__}", severity="error")
+
+
+async def handle_conv_char_export_json_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current conversation as a JSON file."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export conversation as JSON button pressed.")
+    
+    if not app.current_ccp_conversation_id:
+        app.notify("No conversation loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Export conversation to JSON (including character card)
+        json_content = ccl.export_conversation_to_json(
+            db, 
+            app.current_ccp_conversation_id,
+            include_character_card=True
+        )
+        
+        if not json_content:
+            app.notify("Failed to export conversation.", severity="error")
+            return
+            
+        # Generate filename
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        if conv_details:
+            title = conv_details.get('title', 'conversation').replace('/', '_').replace('\\', '_')
+            filename = f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        else:
+            filename = f"conversation_{app.current_ccp_conversation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            
+        # Save to default export directory
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_path = export_dir / filename
+        
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write(json_content)
+            
+        app.notify(f"Conversation exported to: {export_path}", severity="information", timeout=10)
+        logger.info(f"Exported conversation to JSON: {export_path}")
+        
+    except Exception as e:
+        logger.error(f"Error exporting conversation as JSON: {e}", exc_info=True)
+        app.notify(f"Error exporting conversation: {type(e).__name__}", severity="error")
+
+
+async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current character card."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export character card button pressed.")
+    
+    # Get the current character details from the reactive attribute
+    current_details = cast(Optional[Dict[str, Any]], app.current_ccp_character_details)
+    
+    if not current_details or not current_details.get('id'):
+        app.notify("No character loaded to export.", severity="warning")
+        return
+        
+    character_id = current_details['id']
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # The character data is already loaded in current_details
+        char_data = current_details
+            
+        char_name = char_data.get('name', 'character').replace('/', '_').replace('\\', '_')
+        
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Always export as JSON
+        json_content = ccl.export_character_card_to_json(db, character_id, include_image=True)
+        if json_content:
+            json_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            json_path = export_dir / json_filename
+            with open(json_path, 'w', encoding='utf-8') as f:
+                f.write(json_content)
+            logger.info(f"Exported character to JSON: {json_path}")
+            
+            # Check if character has an image for PNG export
+            if char_data.get('image'):
+                # Export as PNG with embedded metadata only if image exists
+                png_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                png_path = export_dir / png_filename
+                success = ccl.export_character_card_to_png(db, character_id, str(png_path))
+                
+                if success:
+                    app.notify(f"Character exported to:\n{json_path}\n{png_path}", severity="information", timeout=10)
+                    logger.info(f"Exported character to PNG: {png_path}")
+                else:
+                    app.notify(f"Character JSON exported to: {json_path}\nPNG export failed.", severity="warning", timeout=10)
+            else:
+                # No image available - JSON export only
+                app.notify(f"Character exported to:\n{json_path}\n(No image available - exported as JSON only)", severity="information", timeout=10)
+                logger.info(f"Character exported as JSON only (no image): {json_path}")
+        else:
+            app.notify("Failed to export character.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error exporting character card: {e}", exc_info=True)
+        app.notify(f"Error exporting character: {type(e).__name__}", severity="error")
+
+
 CCP_BUTTON_HANDLERS = {
     # Left Pane
     "ccp-import-character-button": handle_ccp_import_character_button_pressed,
+    "ccp-create-character-button": handle_ccp_create_character_button_pressed,
+    "ccp-refresh-character-list-button": handle_ccp_refresh_character_list_button_pressed,
     "ccp-import-conversation-button": handle_ccp_import_conversation_button_pressed,
     "ccp-import-prompt-button": handle_ccp_import_prompt_button_pressed,
     "conv-char-conversation-search-button": handle_ccp_conversation_search_button_pressed,
@@ -1928,6 +2826,16 @@ CCP_BUTTON_HANDLERS = {
     "ccp-editor-char-delete-button": handle_ccp_editor_char_delete_button_pressed,
     "ccp-editor-char-clone-button": handle_ccp_editor_char_clone_button_pressed,
     "ccp-editor-char-cancel-button": handle_ccp_editor_char_cancel_button_pressed,
+    "ccp-editor-char-image-button": handle_ccp_editor_char_image_button_pressed,
+    "ccp-editor-char-clear-image-button": handle_ccp_editor_char_clear_image_button_pressed,
+    
+    # AI Generation Buttons
+    "ccp-generate-all-button": handle_ccp_generate_all_button_pressed,
+    "ccp-generate-description-button": handle_ccp_generate_description_button_pressed,
+    "ccp-generate-personality-button": handle_ccp_generate_personality_button_pressed,
+    "ccp-generate-scenario-button": handle_ccp_generate_scenario_button_pressed,
+    "ccp-generate-first-message-button": handle_ccp_generate_first_message_button_pressed,
+    "ccp-generate-system-prompt-button": handle_ccp_generate_system_prompt_button_pressed,
     "ccp-editor-prompt-save-button": handle_ccp_editor_prompt_save_button_pressed,
     "ccp-prompt-clone-button": handle_ccp_prompt_clone_button_pressed,
     "ccp-prompt-delete-button": handle_ccp_prompt_delete_button_pressed,
@@ -1938,6 +2846,11 @@ CCP_BUTTON_HANDLERS = {
     "conv-char-save-details-button": handle_ccp_save_conversation_details_button_pressed,
     "ccp-editor-prompt-delete-button": handle_ccp_editor_prompt_delete_button_pressed,
     "ccp-character-delete-button": handle_ccp_right_delete_character_button_pressed,
+    
+    # Export buttons
+    "conv-char-export-text-button": handle_conv_char_export_text_button_pressed,
+    "conv-char-export-json-button": handle_conv_char_export_json_button_pressed,
+    "ccp-export-character-button": handle_ccp_export_character_button_pressed,
 
     # Sidebar Toggles
     "toggle-conv-char-left-sidebar": handle_ccp_tab_sidebar_toggle,

@@ -288,8 +288,8 @@ class TestMockedChatAPIs:
             assert len(param_map) > 0, f"Provider {provider} param map is empty"
 
 
-class TestMockedChatIntegration:
-    """Integration tests with mocked external services to verify the full flow"""
+class TestMockedChatUnit:
+    """Unit tests with mocked external services to verify error handling"""
     
     @patch('requests.post')
     def test_local_service_connection_handling(self, mock_post):

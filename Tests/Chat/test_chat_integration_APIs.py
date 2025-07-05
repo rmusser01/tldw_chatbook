@@ -15,6 +15,12 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError, ChatAPIError, ChatConfigurationError
 )
 
+# Import mock fixtures
+from Tests.fixtures.llm_provider_mocks import (
+    mock_koboldcpp_server, mock_koboldcpp_unavailable,
+    skip_if_koboldcpp_unavailable, mock_all_providers
+)
+
 # Documentation for test dependencies
 """
 Integration Test Dependencies:
@@ -114,24 +120,35 @@ def provider_config(request):
         pytest.skip(f"LLAMA_CPP_TEST_URL not set. Skipping for {provider_name}.")
     # Add more specific checks as needed
 
-    # Add a simple connectivity check for local servers if URL is present
-    if is_local_type and (env_vars.get("api_url") or env_vars.get("api_base")):
+    # Add a simple connectivity check for local servers
+    if is_local_type:
         import requests
         url_to_check = env_vars.get("api_url") or env_vars.get("api_base")
-        try:
-            # For OpenAI compatible, check the root or a common path. /v1/models is often available.
-            # Adjust if your local servers have a specific health endpoint.
-            health_url = url_to_check.rstrip('/') + "/v1/models" if "openai" in provider_name or provider_name in [
-                "vllm", "local-llm", "ollama", "llama_cpp"] else url_to_check
-            if provider_name == "kobold_cpp":  # Kobold native API doesn't have /v1/models
-                health_url = url_to_check.replace("/api/v1/generate", "/api/v1/model")  # Check model endpoint
+        
+        # If no URL is set but it's koboldcpp, check default localhost:5001
+        if not url_to_check and provider_name == "koboldcpp":
+            url_to_check = "http://localhost:5001/api/v1/generate"
+        
+        if url_to_check:
+            try:
+                # For OpenAI compatible, check the root or a common path. /v1/models is often available.
+                # Adjust if your local servers have a specific health endpoint.
+                health_url = url_to_check.rstrip('/') + "/v1/models" if "openai" in provider_name or provider_name in [
+                    "vllm", "local-llm", "ollama", "llama_cpp"] else url_to_check
+                if provider_name == "kobold_cpp":  # Kobold native API doesn't have /v1/models
+                    health_url = url_to_check.replace("/api/v1/generate", "/api/v1/model")  # Check model endpoint
+                elif provider_name == "koboldcpp":  # Fix for koboldcpp (different from kobold_cpp)
+                    health_url = url_to_check.rstrip('/') + "/api/v1/model" if "/api/v1" not in url_to_check else url_to_check.replace("/generate", "/model")
 
-            if health_url:
-                requests.get(health_url, timeout=5)
-        except requests.exceptions.ConnectionError:
-            pytest.skip(f"Could not connect to {provider_name} at {url_to_check}. Skipping integration test.")
-        except requests.exceptions.Timeout:
-            pytest.skip(f"Connection to {provider_name} at {url_to_check} timed out. Skipping integration test.")
+                if health_url:
+                    requests.get(health_url, timeout=5)
+            except requests.exceptions.ConnectionError:
+                pytest.skip(f"Could not connect to {provider_name} at {url_to_check}. Skipping integration test.")
+            except requests.exceptions.Timeout:
+                pytest.skip(f"Connection to {provider_name} at {url_to_check} timed out. Skipping integration test.")
+            except Exception as e:
+                # Catch any other connection errors
+                pytest.skip(f"Connection error for {provider_name} at {url_to_check}: {e}. Skipping integration test.")
 
     return {"provider_name": provider_name, **env_vars}
 

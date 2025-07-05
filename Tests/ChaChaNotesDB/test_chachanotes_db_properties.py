@@ -782,7 +782,7 @@ class NoteLifecycleMachine(RuleBasedStateMachine):
 # This class IS the test. pytest will discover it.
 # It inherits our rules and provides the `db_instance` fixture.
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow], max_examples=50)
-class TestNoteLifecycleAsTest(NoteLifecycleMachine):
+class NoteLifecycleStateMachine(NoteLifecycleMachine):
 
     @pytest.fixture(autouse=True)
     def inject_db(self, db_instance):
@@ -867,7 +867,7 @@ class CharacterCardLifecycleMachine(RuleBasedStateMachine):
 
 # The pytest test class that runs the machine
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow], max_examples=50)
-class TestCharacterCardLifecycle(CharacterCardLifecycleMachine):
+class CharacterCardLifecycleStateMachine(CharacterCardLifecycleMachine):
 
     @pytest.fixture(autouse=True)
     def inject_db(self, db_instance):
@@ -936,7 +936,7 @@ class ConversationMachine(RuleBasedStateMachine):
 # The pytest test class that runs the machine
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow], max_examples=20,
           stateful_step_count=50)
-class TestConversationInteractions(ConversationMachine):
+class ConversationInteractionsStateMachine(ConversationMachine):
 
     @pytest.fixture(autouse=True)
     def inject_db(self, db_instance):

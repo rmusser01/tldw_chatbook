@@ -645,7 +645,20 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}") from e
 
     # --- Public Mutating Methods ---
-    def add_keyword(self, keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
+    def add_keyword(self, keyword_text: str) -> Optional[int]:
+        """
+        Add a keyword to the database.
+        
+        Args:
+            keyword_text: The keyword text to add
+            
+        Returns:
+            The keyword ID if successful, None otherwise
+        """
+        keyword_id, _ = self._add_keyword_full(keyword_text)
+        return keyword_id
+    
+    def _add_keyword_full(self, keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
         if not keyword_text or not keyword_text.strip():
             raise InputError("Keyword cannot be empty.")
         normalized_keyword = self._normalize_keyword(keyword_text)
@@ -853,8 +866,8 @@ class PromptsDatabase:
             target_keyword_data: Dict[int, Dict[str,str]] = {} # {keyword_id: {'text': text, 'uuid': uuid}}
             if normalized_new_keywords:
                 for kw_text in normalized_new_keywords:
-                    # add_keyword is an instance method, it will use the existing transaction
-                    kw_id, kw_uuid = self.add_keyword(kw_text)
+                    # _add_keyword_full is an instance method, it will use the existing transaction
+                    kw_id, kw_uuid = self._add_keyword_full(kw_text)
                     if kw_id and kw_uuid:
                         target_keyword_data[kw_id] = {'text': kw_text, 'uuid': kw_uuid}
                     else:
@@ -1386,6 +1399,279 @@ class PromptsDatabase:
             logger.error(f"Error deleting sync log entries: {e}")
             raise DatabaseError("Failed to delete sync log entries") from e
 
+    # --- Additional Query Methods ---
+    def get_all_prompts(self, include_deleted: bool = False) -> List[Dict]:
+        """
+        Get all prompts from the database.
+        
+        Args:
+            include_deleted: Whether to include soft-deleted prompts
+            
+        Returns:
+            List of prompt dictionaries
+        """
+        query = "SELECT * FROM Prompts"
+        if not include_deleted:
+            query += " WHERE deleted = 0"
+        query += " ORDER BY name COLLATE NOCASE"
+        
+        try:
+            cursor = self.execute_query(query)
+            return [dict(row) for row in cursor.fetchall()]
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching all prompts: {e}")
+            raise DatabaseError(f"Failed to fetch all prompts: {e}") from e
+
+    def get_all_keywords(self, include_deleted: bool = False) -> List[Dict]:
+        """
+        Get all keywords from the database.
+        
+        Args:
+            include_deleted: Whether to include soft-deleted keywords
+            
+        Returns:
+            List of keyword dictionaries with 'name' key
+        """
+        query = """
+            SELECT id, keyword as name, uuid, last_modified, version, client_id 
+            FROM PromptKeywordsTable
+        """
+        if not include_deleted:
+            query += " WHERE deleted = 0"
+        query += " ORDER BY keyword COLLATE NOCASE"
+        
+        try:
+            cursor = self.execute_query(query)
+            return [dict(row) for row in cursor.fetchall()]
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error fetching all keywords: {e}")
+            raise DatabaseError(f"Failed to fetch all keywords: {e}") from e
+
+    def search_prompts_by_keyword(self, keyword: str, include_deleted: bool = False) -> List[Dict]:
+        """
+        Search for prompts that have a specific keyword.
+        
+        Args:
+            keyword: The keyword to search for
+            include_deleted: Whether to include soft-deleted prompts
+            
+        Returns:
+            List of prompt dictionaries that have the keyword
+        """
+        if not keyword or not keyword.strip():
+            return []
+            
+        normalized_keyword = self._normalize_keyword(keyword)
+        
+        query = """
+            SELECT DISTINCT p.* 
+            FROM Prompts p
+            JOIN PromptKeywordLinks pkl ON p.id = pkl.prompt_id
+            JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
+            WHERE pkw.keyword = ?
+        """
+        params = [normalized_keyword]
+        
+        if not include_deleted:
+            query += " AND p.deleted = 0 AND pkw.deleted = 0"
+            
+        query += " ORDER BY p.name COLLATE NOCASE"
+        
+        try:
+            cursor = self.execute_query(query, tuple(params))
+            results = [dict(row) for row in cursor.fetchall()]
+            
+            # Attach keywords to each result
+            for res_dict in results:
+                res_dict['keywords'] = self.fetch_keywords_for_prompt(res_dict['id'], include_deleted=False)
+                
+            return results
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error searching prompts by keyword '{keyword}': {e}")
+            raise DatabaseError(f"Failed to search prompts by keyword: {e}") from e
+
+    def search_prompts_by_text(self, search_text: str, include_deleted: bool = False) -> List[Dict]:
+        """
+        Full-text search across prompt content.
+        Searches in: name, author, details, system_prompt, user_prompt
+        
+        Args:
+            search_text: The text to search for
+            include_deleted: Whether to include soft-deleted prompts
+            
+        Returns:
+            List of prompt dictionaries matching the search
+        """
+        if not search_text or not search_text.strip():
+            return []
+            
+        try:
+            # Use FTS to find matching prompt IDs
+            cursor = self.execute_query(
+                "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?", 
+                (search_text,)
+            )
+            matching_ids = [row['rowid'] for row in cursor.fetchall()]
+            
+            if not matching_ids:
+                return []
+                
+            # Build query for full prompt data
+            placeholders = ','.join('?' * len(matching_ids))
+            query = f"SELECT * FROM Prompts WHERE id IN ({placeholders})"
+            params = list(matching_ids)
+            
+            if not include_deleted:
+                query += " AND deleted = 0"
+                
+            query += " ORDER BY name COLLATE NOCASE"
+            
+            cursor = self.execute_query(query, tuple(params))
+            results = [dict(row) for row in cursor.fetchall()]
+            
+            # Attach keywords to each result
+            for res_dict in results:
+                res_dict['keywords'] = self.fetch_keywords_for_prompt(res_dict['id'], include_deleted=False)
+                
+            return results
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(f"Error in full-text search for '{search_text}': {e}")
+            raise DatabaseError(f"Failed to search prompts by text: {e}") from e
+
+    def search_prompts_by_content(self, search_text: str, include_deleted: bool = False) -> List[Dict]:
+        """
+        Alias for search_prompts_by_text for backward compatibility.
+        Full-text search across prompt content.
+        
+        Args:
+            search_text: The text to search for
+            include_deleted: Whether to include soft-deleted prompts
+            
+        Returns:
+            List of prompt dictionaries matching the search
+        """
+        return self.search_prompts_by_text(search_text, include_deleted)
+
+    def get_prompt_details(self, prompt_id_or_name_or_uuid: Union[int, str], include_deleted: bool = False) -> Optional[Dict]:
+        """
+        Get detailed information about a prompt including its keywords.
+        This is an alias for fetch_prompt_details for backward compatibility.
+        
+        Args:
+            prompt_id_or_name_or_uuid: Prompt identifier (ID, name, or UUID)
+            include_deleted: Whether to include soft-deleted prompts
+            
+        Returns:
+            Dictionary with prompt data and keywords, or None if not found
+        """
+        return self.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
+
+    def _add_keyword_with_retry(self, keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
+        """
+        Internal method to add a keyword with retry logic for concurrent access.
+        
+        Args:
+            keyword_text: The keyword text to add
+            
+        Returns:
+            Tuple of (keyword_id, keyword_uuid)
+        """
+        max_retries = 5
+        retry_delay = 0.1  # Start with 100ms
+        
+        for attempt in range(max_retries):
+            try:
+                return self._add_keyword_full(keyword_text)
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    logger.warning(f"Database locked on add_keyword attempt {attempt + 1}, retrying in {retry_delay}s")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    raise
+            except Exception:
+                raise
+
+    def execute_query_with_retry(self, query: str, params: tuple = None, *, commit: bool = False) -> sqlite3.Cursor:
+        """
+        Execute a query with retry logic for database lock errors.
+        
+        Args:
+            query: SQL query to execute
+            params: Query parameters
+            commit: Whether to commit after execution
+            
+        Returns:
+            Cursor object
+        """
+        max_retries = 5
+        retry_delay = 0.1  # Start with 100ms
+        
+        for attempt in range(max_retries):
+            try:
+                return self.execute_query(query, params, commit=commit)
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    logger.warning(f"Database locked on query attempt {attempt + 1}, retrying in {retry_delay}s")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    raise
+            except Exception:
+                raise
+
+    def export_keywords_to_csv(self, file_path: Optional[str] = None) -> Tuple[str, str]:
+        """
+        Export keywords to CSV file.
+        This is a convenience method that calls the standalone function.
+        
+        Args:
+            file_path: Optional path for the CSV file. If not provided, generates one.
+            
+        Returns:
+            Tuple of (status_message, file_path)
+        """
+        # Call the standalone function directly
+        return export_prompt_keywords_to_csv(self, file_path)
+
+    def update_prompt(self, prompt_id: int, **kwargs) -> bool:
+        """
+        Update a prompt by ID.
+        This is a convenience method for update_prompt_by_id.
+        
+        Args:
+            prompt_id: The ID of the prompt to update
+            **kwargs: Fields to update (name, author, details, system_prompt, user_prompt)
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        try:
+            uuid, msg = self.update_prompt_by_id(prompt_id, kwargs)
+            return uuid is not None
+        except Exception as e:
+            logger.warning(f"Failed to update prompt {prompt_id}: {e}")
+            return False
+
+    def delete_prompt(self, prompt_id_or_name_or_uuid: Union[int, str]) -> bool:
+        """
+        Delete a prompt (soft delete).
+        This is an alias for soft_delete_prompt.
+        
+        Args:
+            prompt_id_or_name_or_uuid: Prompt identifier
+            
+        Returns:
+            True if deletion was successful, False otherwise
+        """
+        try:
+            return self.soft_delete_prompt(prompt_id_or_name_or_uuid)
+        except Exception as e:
+            logger.warning(f"Failed to delete prompt {prompt_id_or_name_or_uuid}: {e}")
+            return False
+
 
 # =========================================================================
 # Standalone Functions (REQUIRE db_instance passed explicitly)
@@ -1432,7 +1718,7 @@ def load_prompt_details_for_ui(db_instance: PromptsDatabase, prompt_name: str) -
     return "", "", "", "", "", ""
 
 
-def export_prompt_keywords_to_csv(db_instance: PromptsDatabase) -> Tuple[str, str]:
+def export_prompt_keywords_to_csv(db_instance: PromptsDatabase, file_path: Optional[str] = None) -> Tuple[str, str]:
     import csv
     import tempfile
     import os
@@ -1443,9 +1729,11 @@ def export_prompt_keywords_to_csv(db_instance: PromptsDatabase) -> Tuple[str, st
 
     logging.debug(f"export_prompt_keywords_to_csv from DB: {db_instance.db_path_str}")
     try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        temp_dir = tempfile.gettempdir()
-        file_path = os.path.join(temp_dir, f'prompt_keywords_export_{timestamp}.csv')
+        # If no file path provided, generate one
+        if file_path is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            temp_dir = tempfile.gettempdir()
+            file_path = os.path.join(temp_dir, f'prompt_keywords_export_{timestamp}.csv')
 
         # Query to get keywords with associated prompt info (names, authors, counts)
         # This requires joining Prompts, PromptKeywordsTable, PromptKeywordLinks

@@ -274,6 +274,7 @@ def load_settings() -> Dict:
     search_engines_section = get_toml_section('SearchEngines')
     search_settings_section = get_toml_section('SearchSettings')
     web_scraper_section = get_toml_section('WebScraper')
+    confluence_section = get_toml_section('Confluence')
     file_validation_section = get_toml_section('FileValidation')
     providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
 
@@ -802,6 +803,21 @@ def load_settings() -> Dict:
             'web_scraper_api_key': _get_typed_value(web_scraper_section, 'web_scraper_api_key', ''),
             'web_scraper_api_url': _get_typed_value(web_scraper_section, 'web_scraper_api_url', ''),
             # ... (all web scraper settings)
+        },
+        "confluence": {
+            'base_url': _get_typed_value(confluence_section, 'base_url', os.getenv('CONFLUENCE_BASE_URL', '')),
+            'auth_method': _get_typed_value(confluence_section, 'auth_method', os.getenv('CONFLUENCE_AUTH_METHOD', 'api_token')),
+            'username': _get_typed_value(confluence_section, 'username', os.getenv('CONFLUENCE_USERNAME', '')),
+            'api_token': _get_typed_value(confluence_section, 'api_token', os.getenv('CONFLUENCE_API_TOKEN', '')),
+            'oauth_token': _get_typed_value(confluence_section, 'oauth_token', os.getenv('CONFLUENCE_OAUTH_TOKEN', '')),
+            'password': _get_typed_value(confluence_section, 'password', os.getenv('CONFLUENCE_PASSWORD', '')),
+            'browser': _get_typed_value(confluence_section, 'browser', 'all'),
+            'space_keys': _get_typed_value(confluence_section, 'space_keys', [], list),
+            'max_pages_per_space': _get_typed_value(confluence_section, 'max_pages_per_space', 100, int),
+            'max_crawl_depth': _get_typed_value(confluence_section, 'max_crawl_depth', 5, int),
+            'include_attachments': _get_typed_value(confluence_section, 'include_attachments', False, bool),
+            'follow_links': _get_typed_value(confluence_section, 'follow_links', False, bool),
+            'rate_limit_delay': _get_typed_value(confluence_section, 'rate_limit_delay', 0.5, float),
         },
 
         # Configurations from hardcoded dicts (now from TOML or fallback to Python dicts)
@@ -1375,6 +1391,24 @@ top_p = 0.95
 min_p = 0.05
 top_k = 50
 strip_thinking_tags = true
+use_enhanced_window = false  # Enable enhanced chat window with image support
+
+# Image support settings (when use_enhanced_window = true)
+[chat.images]
+enabled = true
+show_attach_button = true  # Show/hide the attach file button in chat
+default_render_mode = "auto"  # auto, pixels, regular
+max_size_mb = 10.0
+auto_resize = true
+resize_max_dimension = 2048
+save_location = "~/Downloads"
+supported_formats = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
+
+[chat.images.terminal_overrides]
+kitty = "regular"
+wezterm = "regular"
+iterm2 = "regular"
+default = "pixels"
 
 [character_defaults]
 # Default settings specifically for the 'Character' tab
@@ -1385,6 +1419,14 @@ temperature = 0.8
 top_p = 0.9
 min_p = 0.0 # Check if API supports this
 top_k = 100 # Check if API supports this
+
+[notes]
+# Default settings for the Notes tab
+sync_directory = "~/Documents/Notes"  # Default directory for notes synchronization
+auto_sync_enabled = false            # Enable automatic sync on startup
+sync_on_close = false               # Sync when closing the app
+conflict_resolution = "newer_wins"   # Default conflict resolution: newer_wins, ask, disk_wins, db_wins
+sync_direction = "bidirectional"     # Default sync direction: bidirectional, disk_to_db, db_to_disk
 
 
 # ==========================================================
@@ -1404,6 +1446,9 @@ situate_chunk_context_prompt = "You are an AI assistant. Please follow the instr
 [embedding_config]
 default_model_id = "e5-small-v2"
 default_llm_for_contextualization = "gpt-3.5-turbo"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = true
+cache_size_limit_gb = 10.0
 
     # --- HuggingFace Models ---
     [embedding_config.models.e5-small-v2]
@@ -1417,6 +1462,55 @@ default_llm_for_contextualization = "gpt-3.5-turbo"
     provider = "huggingface"
     model_name_or_path = "intfloat/multilingual-e5-large-instruct"
     dimension = 1024
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.e5-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-base-v2"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.e5-large-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-large-v2"
+    dimension = 1024
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.all-MiniLM-L6-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-MiniLM-L6-v2"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 256
+
+    [embedding_config.models.all-mpnet-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-mpnet-base-v2"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 384
+
+    [embedding_config.models.bge-small-en-v1.5]
+    provider = "huggingface"
+    model_name_or_path = "BAAI/bge-small-en-v1.5"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.bge-base-en-v1.5]
+    provider = "huggingface"
+    model_name_or_path = "BAAI/bge-base-en-v1.5"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.gte-small]
+    provider = "huggingface"
+    model_name_or_path = "thenlper/gte-small"
+    dimension = 384
     trust_remote_code = false
     max_length = 512
 
@@ -1540,6 +1634,70 @@ web_vector_top_k = 10
 llm_context_document_limit = 10
 chat_context_limit = 10
 
+
+# --- Model Capabilities Configuration ---
+[model_capabilities]
+# This section defines which models have specific capabilities like vision support.
+# Users can override or extend these patterns in their config file.
+
+# Direct model-to-capability mappings (highest priority)
+[model_capabilities.models]
+# OpenAI models
+"gpt-4-vision-preview" = { vision = true, max_images = 1 }
+"gpt-4-turbo" = { vision = true, max_images = 10 }
+"gpt-4-turbo-2024-04-09" = { vision = true, max_images = 10 }
+"gpt-4o" = { vision = true, max_images = 10 }
+"gpt-4o-mini" = { vision = true, max_images = 10 }
+
+# Anthropic models
+"claude-3-opus-20240229" = { vision = true, max_images = 5 }
+"claude-3-sonnet-20240229" = { vision = true, max_images = 5 }
+"claude-3-haiku-20240307" = { vision = true, max_images = 5 }
+"claude-3-5-sonnet-20240620" = { vision = true, max_images = 5 }
+"claude-3-5-sonnet-20241022" = { vision = true, max_images = 5 }
+
+# Google models
+"gemini-pro-vision" = { vision = true, max_images = 1 }
+"gemini-1.5-pro" = { vision = true, max_images = 10 }
+"gemini-1.5-flash" = { vision = true, max_images = 10 }
+"gemini-2.0-flash" = { vision = true, max_images = 10 }
+
+# Pattern-based matching for model families (fallback if not in direct mappings)
+[model_capabilities.patterns]
+# OpenAI patterns
+OpenAI = [
+    { pattern = "^gpt-4.*vision", vision = true },
+    { pattern = "^gpt-4[o0](?:-mini)?", vision = true },  # gpt-4o, gpt-40, gpt-4o-mini
+    { pattern = "^gpt-4.*turbo", vision = true }
+]
+
+# Anthropic patterns
+Anthropic = [
+    { pattern = "^claude-3", vision = true },             # All Claude 3 models have vision
+    { pattern = "^claude.*opus-4", vision = true },      # Claude Opus 4 series
+    { pattern = "^claude.*sonnet-4", vision = true }     # Claude Sonnet 4 series
+]
+
+# Google patterns
+Google = [
+    { pattern = "gemini.*vision", vision = true },
+    { pattern = "gemini-[0-9.]+-(pro|flash)", vision = true },  # Modern Gemini models
+    { pattern = "gemini-2\\\\.", vision = true }                 # Gemini 2.x series
+]
+
+# OpenRouter patterns (uses provider/model format)
+OpenRouter = [
+    { pattern = "openai/gpt-4.*vision", vision = true },
+    { pattern = "openai/gpt-4[o0]", vision = true },
+    { pattern = "anthropic/claude-3", vision = true },
+    { pattern = "google/gemini.*vision", vision = true },
+    { pattern = "google/gemini-[0-9.]+-(pro|flash)", vision = true }
+]
+
+# Default behavior for unknown models
+[model_capabilities.defaults]
+unknown_models_vision = false  # Whether to assume unknown models have vision capabilities
+log_unknown_models = true      # Whether to log when an unknown model is queried
 
 # --- Sections below are placeholders based on config.txt, integrate as needed ---
 # [tts_settings]
@@ -1707,12 +1865,7 @@ def get_cli_setting(section: str, key: str, default: Any = None) -> Any:
     if isinstance(section_data, dict):
         return section_data.get(key, default)
     # If section is not a dict or not found, return default
-    if default is not None:
-        return default
-    # If no default and key/section not found, standard dict behavior would raise KeyError
-    # or return None if that's preferred for missing keys without defaults.
-    # For simplicity, returning None if not found and no default.
-    return None
+    return default
 
 
 # --- CLI Providers and Models Getter ---
@@ -1858,7 +2011,16 @@ CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT = settings.get("prompts_strings", {}).get("s
 # --- Load CLI Config and Initialize Databases on module import ---
 # The `settings` global variable is now the result of the unified load_settings()
 logger.debug("CRITICAL DEBUG: CALLING initialize_all_databases() from config.py module level.") # Add this
-initialize_all_databases()
+
+# Check if we're in test mode before initializing databases
+if os.getenv("TLDW_TEST_MODE") != "1":
+    initialize_all_databases()
+else:
+    logger.info("TLDW_TEST_MODE is set - skipping database initialization during import")
+    # Initialize database variables to None for tests to handle
+    chachanotes_db = None
+    prompts_db = None
+    media_db = None
 
 # Make APP_CONFIG available globally if needed by other modules that import from config.py
 # This will be the same as `settings` if `load_settings` is the sole config loader.

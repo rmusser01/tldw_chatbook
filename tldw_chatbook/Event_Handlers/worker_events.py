@@ -57,21 +57,8 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
     worker_state = event.state  # Get state from event
     logger.debug(f"Worker '{worker_name}' state changed to {worker_state}")
 
-    stop_button_id_selector = "#stop-chat-generation"
-    if worker_name.startswith("API_Call_chat"): # Only for main chat workers
-        if worker_state == WorkerState.RUNNING:
-            try:
-                app.query_one(stop_button_id_selector, Button).disabled = False
-                logger.info(f"Button '{stop_button_id_selector}' ENABLED.")
-            except QueryError:
-                logger.error(f"Could not find button '{stop_button_id_selector}' to enable it.")
-            return # Don't process RUNNING state further
-        elif worker_state in [WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED]:
-            try:
-                app.query_one(stop_button_id_selector, Button).disabled = True
-                logger.info(f"Button '{stop_button_id_selector}' DISABLED.")
-            except QueryError:
-                logger.error(f"Could not find button '{stop_button_id_selector}' to disable it.")
+    # Button state is now handled in app.py's on_worker_state_changed method
+    # The send button toggles between send/stop states based on worker state
 
     if worker_name == "respond_for_me_worker":
         logger.info(f"Handling state change for 'respond_for_me_worker'. State: {worker_state}")
@@ -138,29 +125,19 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
 
         ai_message_widget = app.current_ai_message_widget
 
-        if ai_message_widget is None or not ai_message_widget.is_mounted:
-            logger.warning(
-                f"Worker '{worker_name}' finished, but its AI placeholder widget is missing or not mounted. "
-                f"Current placeholder ref ID: {getattr(app.current_ai_message_widget, 'id', 'N/A') if app.current_ai_message_widget else 'N/A'}"
-            )
-            # ... (rest of your existing fallback error reporting) ...
-            try:
-                chat_container_fallback: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
-                error_msg_text = Text.from_markup(
-                    f"[bold red]Error:[/]\nAI response for worker '{worker_name}' received, but its display widget was missing.")
-                # Ensure ChatMessage is imported and use it:
-                # from ..Widgets.chat_message import ChatMessage
-                # await chat_container_fallback.mount(ChatMessage(str(error_msg_text), role="System", classes="-error"))
-                app.notify(
-                    f"Error: AI response for worker '{worker_name}' received, but its display widget was missing.",
-                    severity="error", timeout=3)
-            except QueryError:
-                logger.error(f"Fallback: Could not find chat container #{prefix}-log.")
-            app.current_ai_message_widget = None
-            return
-
         try:
             chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
+            
+            # Check if widget exists before using it
+            if ai_message_widget is None or not ai_message_widget.is_mounted:
+                # This can happen if the widget was already processed or removed
+                # Log as debug instead of warning since this is expected in some cases
+                logger.debug(
+                    f"Worker '{worker_name}' state changed to {worker_state}, but AI placeholder widget is not available. "
+                    f"This is expected if the message was already processed."
+                )
+                return
+                
             static_text_widget_in_ai_msg = ai_message_widget.query_one(".message-text", Static)
 
             if worker_state is WorkerState.SUCCESS:
@@ -321,16 +298,8 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     except Exception as e_final_focus:
                         logger.error(f"Error focusing input after API call processing: {e_final_focus}", exc_info=True)
 
-            # Re-enable Send button and disable Stop button after any API_Call_ worker is done (SUCCESS or ERROR)
-            # This is crucial for non-streaming where StreamDone doesn't naturally occur.
-            try:
-                if worker_name.startswith("API_Call_chat"):
-                    app.query_one("#send-chat", Button).disabled = False
-                    app.query_one("#stop-chat-generation", Button).disabled = True
-                # Add for CCP tab if applicable
-            except QueryError:
-                logger.debug(
-                    f"Could not find send/stop buttons for '{prefix}' to re-enable/disable after worker '{worker_name}'.")
+            # Button state is now handled in app.py's on_worker_state_changed method
+            # The send button toggles between send/stop states based on worker state
 
         except QueryError as qe_outer:
             logger.error(

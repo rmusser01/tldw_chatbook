@@ -1,0 +1,29 @@
+/* ========================================
+ * FEATURES: Notes
+ * ======================================== 
+ * Notes tab specific styles
+ * ======================================== */
+
+/* --- Notes Tab Window --- */
+/* (Assuming #notes-window has layout: horizontal; by default from .window or is set in Python) */
+
+#notes-main-content { /* Parent of the editor and controls */
+    layout: vertical; /* This is what I inferred based on your Python structure */
+    width: 1fr;       /* Takes space between sidebars */
+    height: 100%;
+}
+
+.notes-editor { /* Targets your #notes-editor-area by class */
+    width: 100%;
+    height: 1fr; /* This makes it take available vertical space */
+}
+
+#notes-controls-area { /* The container for buttons below the editor */
+    height: auto;
+    width: 100%;
+    padding: 1;
+    border-top: round $surface;
+    align: center middle; /* Aligns buttons horizontally if Horizontal container */
+                           /* If this itself is a Vertical container, this might not do much */
+}
+/* --- End of Notes Tab Window --- */

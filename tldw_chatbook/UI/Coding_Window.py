@@ -103,7 +103,8 @@ class CodingWindow(Container):
             yield Button(
                 get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
                 id="coding-sidebar-toggle-button",
-                classes="sidebar-toggle"
+                classes="sidebar-toggle",
+                tooltip="Toggle sidebar"
             )
 
             # Create a view for Code Map

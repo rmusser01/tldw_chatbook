@@ -1,4 +1,32 @@
-# article_scraper/crawler.py
+"""
+article_scraper/crawler.py
+==========================
+
+Website crawling and sitemap parsing functionality.
+
+This module provides tools for discovering URLs on websites through:
+- Crawling internal links with configurable depth
+- Parsing XML sitemaps
+- URL filtering to focus on content pages
+
+Functions:
+----------
+- crawl_site(): Discover URLs by crawling internal links
+- get_urls_from_sitemap(): Extract URLs from sitemap.xml
+- default_url_filter(): Filter out non-content URLs
+
+Example:
+--------
+    # Crawl a website
+    urls = await crawl_site(
+        base_url="https://example.com",
+        max_pages=100,
+        max_depth=3
+    )
+    
+    # Parse sitemap
+    urls = await get_urls_from_sitemap("https://example.com/sitemap.xml")
+"""
 #
 # Imports
 import asyncio

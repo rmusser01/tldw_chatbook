@@ -126,6 +126,7 @@ class HFModelCfg(BaseModel):
     batch_size: int = 32
     pooling: Optional[PoolingFn] = None  # default: masked mean
     dimension: Optional[int] = None
+    cache_dir: Optional[str] = None  # Custom cache directory for model downloads
 
 
 class OpenAICfg(BaseModel):
@@ -193,14 +194,25 @@ class _HuggingFaceEmbedder:
 
     def __init__(self, cfg: HFModelCfg):
         try:
+            # Use cache_dir if provided, otherwise HuggingFace will use default
+            cache_dir = cfg.cache_dir if cfg.cache_dir else None
+            if cache_dir:
+                # Expand user home directory if present
+                import os
+                cache_dir = os.path.expanduser(cache_dir)
+                logger.info(f"Using custom cache directory: {cache_dir}")
+            
             self._tok = AutoTokenizer.from_pretrained(
-                cfg.model_name_or_path, trust_remote_code=cfg.trust_remote_code
+                cfg.model_name_or_path, 
+                trust_remote_code=cfg.trust_remote_code,
+                cache_dir=cache_dir
             )
             dtype = torch.float16 if torch.cuda.is_available() else torch.float32
             self._model = AutoModel.from_pretrained(
                 cfg.model_name_or_path,
                 torch_dtype=dtype,
                 trust_remote_code=cfg.trust_remote_code,
+                cache_dir=cache_dir
             )
         # --- [FIX] Added robust error handling for model loading ---
         except (OSError, requests.exceptions.RequestException) as e:

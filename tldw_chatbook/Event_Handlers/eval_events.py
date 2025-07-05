@@ -26,8 +26,8 @@ if TYPE_CHECKING:
     from ..app import TldwCli
 
 # Import evaluation components
-from ..App_Functions.Evals.eval_orchestrator import EvaluationOrchestrator
-from ..App_Functions.Evals.task_loader import TaskLoader, TaskLoadError
+from tldw_chatbook.Evals import EvaluationOrchestrator
+from tldw_chatbook.Evals import TaskLoader, TaskLoadError
 from ..Widgets.file_picker_dialog import TaskFilePickerDialog, DatasetFilePickerDialog, ExportFilePickerDialog
 from ..Widgets.eval_config_dialogs import ModelConfigDialog, TaskConfigDialog, RunConfigDialog
 from ..Widgets.template_selector import TemplateSelectorDialog
@@ -653,9 +653,7 @@ def get_available_datasets(app: 'TldwCli', limit: int = 50) -> List[Dict[str, An
     """Get available datasets."""
     try:
         orchestrator = get_orchestrator()
-        # This would need to be implemented in the orchestrator
-        # For now, return empty list
-        return []
+        return orchestrator.list_datasets(limit=limit)
     except Exception as e:
         logger.error(f"Error getting available datasets: {e}")
         return []

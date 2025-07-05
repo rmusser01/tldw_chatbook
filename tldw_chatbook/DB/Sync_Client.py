@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sqlite3 # For specific error types
+from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
 from loguru import logger
@@ -13,7 +14,7 @@ from loguru import logger
 # Third-Party Imports
 #
 # Local Imports
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError, DatabaseError, InputError
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database, ConflictError, DatabaseError, InputError, DateTimeEncoder
 #
 #######################################################################################################################
 #
@@ -157,6 +158,11 @@ class ClientSyncEngine:
             full_url = f"{self.server_api_url}{SYNC_ENDPOINT_SEND}"
             logger.debug(f"Posting {len(local_changes)} changes to {full_url}")
 
+            # Convert payload to JSON string and back to ensure datetime serialization
+            # This converts datetime objects to ISO strings
+            json_str = json.dumps(payload, cls=DateTimeEncoder)
+            payload = json.loads(json_str)
+            
             response = requests.post(full_url, json=payload, headers=headers, timeout=45)
             response.raise_for_status() # Raises HTTPError for 4xx/5xx responses
 
@@ -363,6 +369,13 @@ class ClientSyncEngine:
             local_ts_row = cursor.fetchone()
             # Use a very old timestamp if record somehow doesn't exist (shouldn't happen in conflict)
             local_timestamp = local_ts_row[0] if local_ts_row else '1970-01-01 00:00:00'
+            
+            # Convert both timestamps to strings for consistent comparison
+            # SQLite might return datetime objects due to PARSE_DECLTYPES
+            if isinstance(local_timestamp, datetime):
+                local_timestamp = local_timestamp.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            if isinstance(authoritative_timestamp, datetime):
+                authoritative_timestamp = authoritative_timestamp.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
             # Compare server's authoritative timestamp with the local record's timestamp
             if authoritative_timestamp >= local_timestamp:

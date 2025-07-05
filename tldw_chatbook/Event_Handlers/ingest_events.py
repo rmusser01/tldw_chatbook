@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Optional, List, Any, Dict, Callable, Union
 # 3rd-party Libraries
 from loguru import logger
 from textual.widgets import Select, Input, TextArea, Checkbox, Label, Static, Markdown, ListItem, \
-    ListView, Collapsible, LoadingIndicator, Button
+    ListView, Collapsible, LoadingIndicator, Button, RadioSet, RadioButton
 from textual.css.query import QueryError
 from textual.containers import Container, VerticalScroll
 from textual.worker import Worker
@@ -28,7 +28,8 @@ from ..tldw_api import (
     APIConnectionError, APIRequestError, APIResponseError, AuthenticationError,
     MediaItemProcessResult, ProcessedMediaWikiPage, BatchMediaProcessResponse,
     ProcessPDFRequest, ProcessEbookRequest, ProcessDocumentRequest,
-    ProcessXMLRequest, ProcessMediaWikiRequest
+    ProcessXMLRequest, ProcessMediaWikiRequest, ProcessPlaintextRequest,
+    BatchProcessXMLResponse
 )
 # Prompts Interop (existing)
 from ..Prompt_Management.Prompts_Interop import (
@@ -42,6 +43,8 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDBError
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError  # For character import conflict
 from ..Third_Party.textual_fspicker import Filters, FileOpen
+# Note importers for multi-format support
+from ..Utils.note_importers import note_importer_registry, ParsedNote
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -79,8 +82,12 @@ CHARACTER_FILE_FILTERS = Filters(
 # --- Notes Ingest Constants ---
 MAX_NOTE_PREVIEWS = 10
 NOTE_FILE_FILTERS = Filters(
-    ("JSON Notes (*.json)", lambda p: p.suffix.lower() == ".json"),
-    # ("Markdown Notes (*.md)", lambda p: p.suffix.lower() == ".md"), # Example for future
+    ("All Supported", lambda p: p.suffix.lower() in (".json", ".yaml", ".yml", ".txt", ".md", ".markdown", ".rst", ".csv")),
+    ("JSON (*.json)", lambda p: p.suffix.lower() == ".json"),
+    ("YAML (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
+    ("Markdown (*.md)", lambda p: p.suffix.lower() in (".md", ".markdown")),
+    ("Text (*.txt, *.rst)", lambda p: p.suffix.lower() in (".txt", ".text", ".rst")),
+    ("CSV (*.csv)", lambda p: p.suffix.lower() == ".csv"),
     ("All Files", lambda _: True),
 )
 
@@ -826,18 +833,44 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
         current_field_template_for_error = f"#tldw-api-urls-{media_type}"
         data["urls"] = [url.strip() for url in app.query_one(f"#tldw-api-urls-{media_type}", TextArea).text.splitlines() if url.strip()]
 
-        # current_field_template_for_error = f"#tldw-api-local-files-{media_type}" # Old way
-        # data["local_files"] = [fp.strip() for fp in app.query_one(f"#tldw-api-local-files-{media_type}", TextArea).text.splitlines() if fp.strip()] # Old way
-
-        # New way to get local_files from IngestWindow instance
-        if ingest_window and media_type in ingest_window.selected_local_files:
+        # Try to get local files from the individual window's selected_local_files
+        data["local_files"] = []
+        # First try the old way with IngestWindow
+        if ingest_window and hasattr(ingest_window, 'selected_local_files') and media_type in ingest_window.selected_local_files:
             # Convert Path objects to strings as expected by the API client processing functions
             data["local_files"] = [str(p) for p in ingest_window.selected_local_files[media_type]]
         else:
-            data["local_files"] = []
-            if ingest_window: # Only log if ingest_window was found but no files for this media_type
-                logger.info(f"No local files selected in IngestWindow for media type '{media_type}'.")
-            # If ingest_window was None, error already logged above.
+            # Try to find the specific media type window
+            try:
+                # Map media type to window class
+                window_map = {
+                    "video": "IngestTldwApiVideoWindow",
+                    "audio": "IngestTldwApiAudioWindow", 
+                    "pdf": "IngestTldwApiPdfWindow",
+                    "ebook": "IngestTldwApiEbookWindow",
+                    "document": "IngestTldwApiDocumentWindow",
+                    "xml": "IngestTldwApiXmlWindow",
+                    "mediawiki_dump": "IngestTldwApiMediaWikiWindow"
+                }
+                if media_type in window_map:
+                    from ..Widgets import IngestTldwApiVideoWindow, IngestTldwApiAudioWindow, IngestTldwApiPdfWindow, IngestTldwApiEbookWindow, IngestTldwApiDocumentWindow, IngestTldwApiXmlWindow, IngestTldwApiMediaWikiWindow
+                    window_classes = {
+                        "video": IngestTldwApiVideoWindow,
+                        "audio": IngestTldwApiAudioWindow,
+                        "pdf": IngestTldwApiPdfWindow,
+                        "ebook": IngestTldwApiEbookWindow,
+                        "document": IngestTldwApiDocumentWindow,
+                        "xml": IngestTldwApiXmlWindow,
+                        "mediawiki_dump": IngestTldwApiMediaWikiWindow
+                    }
+                    window_class = window_classes.get(media_type)
+                    if window_class:
+                        media_window = app.query_one(window_class)
+                        if hasattr(media_window, 'selected_local_files'):
+                            data["local_files"] = [str(p) for p in media_window.selected_local_files]
+            except:
+                # If we can't find the window, just use empty list
+                pass
 
         current_field_template_for_error = f"#tldw-api-title-{media_type}"
         data["title"] = app.query_one(f"#tldw-api-title-{media_type}", Input).value or None
@@ -888,6 +921,15 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
         current_field_template_for_error = f"#tldw-api-analysis-api-name-{media_type}"
         analysis_api_select = app.query_one(f"#tldw-api-analysis-api-name-{media_type}", Select)
         data["api_name"] = analysis_api_select.value if analysis_api_select.value != Select.BLANK else None
+
+        current_field_template_for_error = f"#tldw-api-analysis-api-key-{media_type}"
+        data["api_key"] = app.query_one(f"#tldw-api-analysis-api-key-{media_type}", Input).value or None
+
+        current_field_template_for_error = f"#tldw-api-use-cookies-{media_type}"
+        data["use_cookies"] = app.query_one(f"#tldw-api-use-cookies-{media_type}", Checkbox).value
+
+        current_field_template_for_error = f"#tldw-api-cookies-{media_type}"
+        data["cookies"] = app.query_one(f"#tldw-api-cookies-{media_type}", TextArea).text or None
 
         current_field_template_for_error = f"#tldw-api-summarize-recursively-{media_type}"
         data["summarize_recursively"] = app.query_one(f"#tldw-api-summarize-recursively-{media_type}", Checkbox).value
@@ -1029,6 +1071,39 @@ def _collect_document_specific_data(app: 'TldwCli', common_data: Dict[str, Any],
         app.notify("Error: Could not prepare document request data.", severity="error")
         raise
 
+def _collect_plaintext_specific_data(app: 'TldwCli', common_data: Dict[str, Any], media_type: str) -> ProcessPlaintextRequest:
+    """Collect plaintext-specific form data and create request model."""
+    current_field_template_for_error = "Unknown Plaintext Field-{media_type}"
+    try:
+        common_data["keywords"] = [k.strip() for k in common_data.pop("keywords_str", "").split(',') if k.strip()]
+        
+        # Plaintext-specific fields
+        current_field_template_for_error = f"#tldw-api-encoding-{media_type}"
+        common_data["encoding"] = str(app.query_one(f"#tldw-api-encoding-{media_type}", Select).value)
+        
+        current_field_template_for_error = f"#tldw-api-line-ending-{media_type}"
+        common_data["line_ending"] = str(app.query_one(f"#tldw-api-line-ending-{media_type}", Select).value)
+        
+        current_field_template_for_error = f"#tldw-api-remove-whitespace-{media_type}"
+        common_data["remove_extra_whitespace"] = app.query_one(f"#tldw-api-remove-whitespace-{media_type}", Checkbox).value
+        
+        current_field_template_for_error = f"#tldw-api-convert-paragraphs-{media_type}"
+        common_data["convert_to_paragraphs"] = app.query_one(f"#tldw-api-convert-paragraphs-{media_type}", Checkbox).value
+        
+        current_field_template_for_error = f"#tldw-api-split-pattern-{media_type}"
+        split_pattern = app.query_one(f"#tldw-api-split-pattern-{media_type}", Input).value.strip()
+        common_data["split_pattern"] = split_pattern if split_pattern else None
+        
+        return ProcessPlaintextRequest(**common_data)
+    except QueryError as e:
+        logger.error(f"Error querying Plaintext-specific TLDW API form field (around {current_field_template_for_error.format(media_type=media_type)}): {e}")
+        app.notify(f"Error: Missing Plaintext form field. Details: {e}", severity="error")
+        raise
+    except Exception as e:
+        logger.error(f"Error creating ProcessPlaintextRequest for media_type {media_type}: {e}")
+        app.notify("Error: Could not prepare plaintext request data.", severity="error")
+        raise
+
 def _collect_xml_specific_data(app: 'TldwCli', common_api_data: Dict[str, Any], media_type: str) -> ProcessXMLRequest:
     data = {}
     current_field_template_for_error = "Unknown XML Field-{media_type}"
@@ -1063,7 +1138,16 @@ def _collect_mediawiki_specific_data(app: 'TldwCli', common_api_data: Dict[str, 
         data["namespaces_str"] = app.query_one(f"#tldw-api-mediawiki-namespaces-{media_type}", Input).value or None
         current_field_template_for_error = f"#tldw-api-mediawiki-skip-redirects-{media_type}"
         data["skip_redirects"] = app.query_one(f"#tldw-api-mediawiki-skip-redirects-{media_type}", Checkbox).value
-        data["chunk_max_size"] = common_api_data.get("chunk_size", 1000)
+        
+        current_field_template_for_error = f"#tldw-api-mediawiki-chunk-max-size-{media_type}"
+        data["chunk_max_size"] = int(app.query_one(f"#tldw-api-mediawiki-chunk-max-size-{media_type}", Input).value or "1000")
+        
+        current_field_template_for_error = f"#tldw-api-mediawiki-api-name-vector-db-{media_type}"
+        data["api_name_vector_db"] = app.query_one(f"#tldw-api-mediawiki-api-name-vector-db-{media_type}", Input).value or None
+        
+        current_field_template_for_error = f"#tldw-api-mediawiki-api-key-vector-db-{media_type}"
+        data["api_key_vector_db"] = app.query_one(f"#tldw-api-mediawiki-api-key-vector-db-{media_type}", Input).value or None
+        
         return ProcessMediaWikiRequest(**data)
     except QueryError as e:
         logger.error(f"Error querying MediaWiki-specific TLDW API form field (around {current_field_template_for_error.format(media_type=media_type)}): {e}")
@@ -1149,14 +1233,17 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
             # 1.  Look in the active config, then in the environment.
             auth_token = (
                     get_cli_setting("tldw_api", "auth_token")  # ~/.config/tldw_cli/config.toml
+                    or get_cli_setting("tldw_api", "api_key")  # Alternative config key
                     or getenv("TDLW_AUTH_TOKEN")  # optional override
+                    or getenv("TLDW_API_KEY")  # Alternative env var
             )
 
             # 2. Abort early if we still have nothing.
             if not auth_token:
                 msg = (
                     "Auth token not found — add it to the [tldw_api] section as "
-                    "`auth_token = \"<your token>\"` or export TDLW_AUTH_TOKEN."
+                    "`auth_token = \"<your token>\"` or `api_key = \"<your key>\"`, "
+                    "or export TDLW_AUTH_TOKEN or TLDW_API_KEY."
                 )
                 logger.error(msg)
                 app.notify(msg, severity="error")
@@ -1176,7 +1263,6 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
     try:
         common_data = _collect_common_form_data(app, selected_media_type) # Pass selected_media_type
         local_file_paths = common_data.pop("local_files", [])
-        common_data["api_key"] = auth_token
 
         if selected_media_type == "video":
             request_model = _collect_video_specific_data(app, common_data, selected_media_type)
@@ -1188,6 +1274,8 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
             request_model = _collect_ebook_specific_data(app, common_data, selected_media_type)
         elif selected_media_type == "document":
             request_model = _collect_document_specific_data(app, common_data, selected_media_type)
+        elif selected_media_type == "plaintext":
+            request_model = _collect_plaintext_specific_data(app, common_data, selected_media_type)
         elif selected_media_type == "xml":
             request_model = _collect_xml_specific_data(app, common_data, selected_media_type)
         elif selected_media_type == "mediawiki_dump":
@@ -1236,7 +1324,14 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
             return
 
     status_area.load_text("Connecting to TLDW API and sending request...")
-    api_client = TLDWAPIClient(base_url=endpoint_url, token=auth_token)
+    # Determine if auth_token is a Bearer token or API key based on auth_method
+    if auth_method == "custom_token":
+        # Custom token is treated as Bearer token
+        api_client = TLDWAPIClient(base_url=endpoint_url)
+        api_client.bearer_token = auth_token
+    else:
+        # Config token is treated as API key
+        api_client = TLDWAPIClient(base_url=endpoint_url, token=auth_token)
     overwrite_db = common_data.get("overwrite_existing_db", False) # From common_data
 
     # Worker and callbacks remain largely the same but need to use the correct UI element IDs for this tab
@@ -1256,6 +1351,8 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
                 return await api_client.process_ebook(request_model, local_file_paths)
             elif selected_media_type == "document":
                 return await api_client.process_document(request_model, local_file_paths)
+            elif selected_media_type == "plaintext":
+                return await api_client.process_plaintext(request_model, local_file_paths)
             elif selected_media_type == "xml":
                 if not local_file_paths: raise ValueError("XML processing requires a local file path.")
                 return await api_client.process_xml(request_model, local_file_paths[0])
@@ -1307,6 +1404,20 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
         results_to_ingest: List[MediaItemProcessResult] = []
         if isinstance(response_data, BatchMediaProcessResponse):
             results_to_ingest = response_data.results
+        elif isinstance(response_data, BatchProcessXMLResponse):
+            # Convert ProcessXMLResponseItem to MediaItemProcessResult
+            for xml_item in response_data.results:
+                results_to_ingest.append(MediaItemProcessResult(
+                    status=xml_item.status,
+                    input_ref=xml_item.input_ref,
+                    processing_source=xml_item.input_ref,
+                    media_type="xml",
+                    metadata={"title": xml_item.title, "author": xml_item.author, "keywords": xml_item.keywords},
+                    content=xml_item.content,
+                    summary=xml_item.summary,
+                    segments=xml_item.segments,
+                    error=xml_item.error
+                ))
         elif isinstance(response_data, dict) and "results" in response_data:
             if "processed_count" in response_data:
                 raw_results = response_data.get("results", [])
@@ -1330,7 +1441,7 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
                     media_type="mediawiki_article", # or "mediawiki_page"
                     metadata={"title": mw_page.title, "page_id": mw_page.page_id, "namespace": mw_page.namespace, "revision_id": mw_page.revision_id, "timestamp": mw_page.timestamp},
                     content=mw_page.content,
-                    chunks=[{"text": chunk.get("text", ""), "metadata": chunk.get("metadata", {})} for chunk in mw_page.chunks] if mw_page.chunks else None,
+                    chunks=[{"text": chunk.get("text", ""), "metadata": chunk.get("metadata", {})} for chunk in mw_page.chunks] if hasattr(mw_page, 'chunks') and mw_page.chunks else None,
                 ))
         else:
             logger.error(f"Unexpected TLDW API response data type for {selected_media_type}: {type(response_data)}.")
@@ -1571,51 +1682,64 @@ IGNORE_WHEN_COPYING_END
         app.notify("Unexpected error during note preview update.", severity="error")
 
 
-def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli') -> List[Dict[str, Any]]:
+def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli', import_as_template: bool = False) -> List[Dict[str, Any]]:
     """
-    Parses a single note file (JSON) for preview.
-    Returns a list of note data dicts.
+    Parses a single note file using the appropriate importer.
+    Returns a list of note data dicts for preview.
     """
     logger.debug(f"Parsing note file for preview: {file_path}")
     preview_notes = []
-    file_suffix = file_path.suffix.lower()
 
-    if file_suffix == ".json":
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            data = json.loads(content)
+    try:
+        # Use the note importer registry to parse the file
+        parsed_notes = note_importer_registry.parse_file(file_path, import_as_template=import_as_template)
+        
+        for note in parsed_notes:
+            note_data = {
+                "filename": file_path.name,
+                "title": note.title,
+                "content": note.content,
+                "is_template": note.is_template,
+                "template": note.template,
+                "keywords": note.keywords
+            }
+            
+            # Add type indicator to title for templates
+            if note.is_template:
+                note_data["title"] = f"[TEMPLATE] {note.title}"
+            elif note.template:
+                note_data["title"] = f"[{note.template}] {note.title}"
+                
+            preview_notes.append(note_data)
+            
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {file_path}")
+        preview_notes.append({
+            "filename": file_path.name, 
+            "title": f"Error: {file_path.name}",
+            "error": f"File not found: {e}"
+        })
+    except ValueError as e:
+        logger.error(f"Error parsing {file_path.name}: {e}")
+        preview_notes.append({
+            "filename": file_path.name,
+            "title": f"Error: {file_path.name}",
+            "error": str(e)
+        })
+    except Exception as e:
+        logger.error(f"Unexpected error parsing note file {file_path}: {e}", exc_info=True)
+        preview_notes.append({
+            "filename": file_path.name,
+            "title": f"Error: {file_path.name}",
+            "error": f"Unexpected error: {e}"
+        })
 
-            if isinstance(data, dict):  # Single note object
-                if "title" in data and "content" in data:
-                    preview_notes.append(
-                        {"filename": file_path.name, "title": data.get("title"), "content": data.get("content")})
-                else:
-                    preview_notes.append({"filename": file_path.name, "title": f"Error: {file_path.name}",
-                                          "error": "JSON object missing 'title' or 'content'."})
-            elif isinstance(data, list):  # Array of note objects
-                for item in data:
-                    if isinstance(item, dict) and "title" in item and "content" in item:
-                        preview_notes.append(
-                            {"filename": file_path.name, "title": item.get("title"), "content": item.get("content")})
-                    else:
-                        logger.warning(f"Skipping invalid note item in array from {file_path.name}: {item}")
-            else:
-                preview_notes.append({"filename": file_path.name, "title": f"Error: {file_path.name}",
-                                      "error": "JSON content is not a valid note object or array of note objects."})
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in {file_path.name}: {e}")
-            preview_notes.append(
-                {"filename": file_path.name, "title": f"Error: {file_path.name}", "error": f"Invalid JSON: {e}"})
-        except Exception as e:
-            logger.error(f"Error parsing note file {file_path} for preview: {e}", exc_info=True)
-            preview_notes.append({"filename": file_path.name, "title": f"Error: {file_path.name}", "error": str(e)})
-    else:
-        preview_notes.append({"filename": file_path.name, "title": f"Error: {file_path.name}",
-                              "error": f"Unsupported file type for note preview: {file_suffix}"})
-
-    if not preview_notes:  # If parsing yielded nothing (e.g. empty JSON array)
-        preview_notes.append({"filename": file_path.name, "title": file_path.name, "content": "No notes found in file."})
+    if not preview_notes:  # If parsing yielded nothing
+        preview_notes.append({
+            "filename": file_path.name,
+            "title": file_path.name,
+            "content": "No notes found in file."
+        })
 
     return preview_notes
 
@@ -1645,7 +1769,15 @@ async def _handle_note_file_selected_callback(app: 'TldwCli', selected_path: Opt
         except QueryError:
             logger.error("Could not find #ingest-notes-selected-files-list ListView to update.")
 
-        parsed_notes_from_file = _parse_single_note_file_for_preview(selected_path, app)
+        # Check if importing as templates
+        import_as_template = False
+        try:
+            radio_set = app.query_one("#ingest-notes-import-type", RadioSet)
+            import_as_template = radio_set.pressed_index == 1  # Second option is "Import as Templates"
+        except QueryError:
+            logger.debug("Could not find import type RadioSet, defaulting to notes")
+        
+        parsed_notes_from_file = _parse_single_note_file_for_preview(selected_path, app, import_as_template=import_as_template)
         app.parsed_notes_for_preview.extend(parsed_notes_from_file)
 
         await _update_note_preview_display(app)
@@ -1714,7 +1846,15 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
         app.notify("No note files selected to import.", severity="warning")
         return
 
-    if not app.notes_service:
+    # Check if importing as templates or notes
+    try:
+        import_type_radio = app.query_one("#import-as-templates-radio", RadioButton)
+        import_as_templates = import_type_radio.value
+    except QueryError:
+        # Default to importing as notes if radio button not found
+        import_as_templates = False
+
+    if not import_as_templates and not app.notes_service:
         msg = "Notes database service is not initialized. Cannot import notes."
         app.notify(msg, severity="error", timeout=7)
         logger.error(msg + " Aborting note import.")
@@ -1729,58 +1869,150 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
         return
 
     status_area.text = ""  # Clear the TextArea
-    status_area.text = "Starting note import process...\n"  # Set initial text
-    app.notify("Importing notes...")
+    status_area.text = f"Starting {'template' if import_as_templates else 'note'} import process...\n"  # Set initial text
+    app.notify(f"Importing {'templates' if import_as_templates else 'notes'}...")
 
     user_id = app.notes_user_id
 
     async def import_worker_notes():
         results = []
-        for file_path in app.selected_note_files_for_import:
-            notes_in_file = _parse_single_note_file_for_preview(file_path, app)
-            for note_data in notes_in_file:
-                if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
-                    results.append({
-                        "file_path": str(file_path),
-                        "note_title": note_data.get("title", file_path.stem),
-                        "status": "failure",
-                        "message": note_data.get("error", "Missing title or content.")
-                    })
-                    continue
+        
+        if import_as_templates:
+            # Import as templates
+            import json
+            from pathlib import Path
+            
+            # Load existing templates
+            user_config_dir = Path.home() / ".config" / "tldw_cli"
+            user_templates_path = user_config_dir / "note_templates.json"
+            
+            # Create directory if needed
+            user_config_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Load existing templates if any
+            templates = {}
+            if user_templates_path.exists():
                 try:
-                    note_id = app.notes_service.add_note(
-                        user_id=user_id,
-                        title=note_data["title"],
-                        content=note_data["content"]
-                    )
-                    results.append({
-                        "file_path": str(file_path),
-                        "note_title": note_data["title"],
-                        "status": "success",
-                        "message": f"Note imported successfully. ID: {note_id}",
-                        "note_id": note_id
-                    })
-                except (ChaChaConflictError, CharactersRAGDBError, ValueError) as e:
-                    logger.error(f"Error importing note '{note_data['title']}' from {file_path}: {e}", exc_info=True)
-                    results.append({
-                        "file_path": str(file_path),
-                        "note_title": note_data["title"],
-                        "status": "failure",
-                        "message": f"DB/Input error: {type(e).__name__} - {str(e)[:100]}"
-                    })
+                    with open(user_templates_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        templates = data.get('templates', {})
                 except Exception as e:
-                    logger.error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}",
-                                 exc_info=True)
-                    results.append({
-                        "file_path": str(file_path),
-                        "note_title": note_data["title"],
-                        "status": "failure",
-                        "message": f"Unexpected error: {type(e).__name__}"
-                    })
+                    logger.error(f"Error loading existing templates: {e}")
+            
+            # Process each file
+            for file_path in app.selected_note_files_for_import:
+                notes_in_file = _parse_single_note_file_for_preview(file_path, app, import_as_template=True)
+                for note_data in notes_in_file:
+                    if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data.get("title", file_path.stem),
+                            "status": "failure",
+                            "message": note_data.get("error", "Missing title or content.")
+                        })
+                        continue
+                    
+                    try:
+                        # Generate a unique template key from the title
+                        base_key = note_data["title"].lower().replace(" ", "_").replace("-", "_")
+                        # Remove non-alphanumeric characters except underscores
+                        base_key = ''.join(c for c in base_key if c.isalnum() or c == '_')
+                        
+                        # Ensure unique key
+                        key = base_key
+                        counter = 1
+                        while key in templates:
+                            key = f"{base_key}_{counter}"
+                            counter += 1
+                        
+                        # Create template entry
+                        templates[key] = {
+                            "title": note_data["title"],
+                            "content": note_data["content"],
+                            "keywords": note_data.get("keywords", ""),
+                            "description": f"Imported template: {note_data['title']}"
+                        }
+                        
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "success",
+                            "message": f"Template imported successfully. Key: {key}",
+                            "template_key": key
+                        })
+                    except Exception as e:
+                        logger.error(f"Error importing template '{note_data['title']}' from {file_path}: {e}",
+                                     exc_info=True)
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "failure",
+                            "message": f"Error: {type(e).__name__}"
+                        })
+            
+            # Save all templates
+            if any(r["status"] == "success" for r in results):
+                try:
+                    output = {"templates": templates}
+                    with open(user_templates_path, 'w', encoding='utf-8') as f:
+                        json.dump(output, f, indent=2, ensure_ascii=False)
+                    logger.info(f"Saved {len(templates)} templates to {user_templates_path}")
+                except Exception as e:
+                    logger.error(f"Error saving templates file: {e}")
+                    # Update all success results to failure
+                    for r in results:
+                        if r["status"] == "success":
+                            r["status"] = "failure"
+                            r["message"] = f"Template imported but failed to save: {e}"
+        
+        else:
+            # Import as notes (existing logic)
+            for file_path in app.selected_note_files_for_import:
+                notes_in_file = _parse_single_note_file_for_preview(file_path, app)
+                for note_data in notes_in_file:
+                    if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data.get("title", file_path.stem),
+                            "status": "failure",
+                            "message": note_data.get("error", "Missing title or content.")
+                        })
+                        continue
+                    try:
+                        note_id = app.notes_service.add_note(
+                            user_id=user_id,
+                            title=note_data["title"],
+                            content=note_data["content"]
+                        )
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "success",
+                            "message": f"Note imported successfully. ID: {note_id}",
+                            "note_id": note_id
+                        })
+                    except (ChaChaConflictError, CharactersRAGDBError, ValueError) as e:
+                        logger.error(f"Error importing note '{note_data['title']}' from {file_path}: {e}", exc_info=True)
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "failure",
+                            "message": f"DB/Input error: {type(e).__name__} - {str(e)[:100]}"
+                        })
+                    except Exception as e:
+                        logger.error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}",
+                                     exc_info=True)
+                        results.append({
+                            "file_path": str(file_path),
+                            "note_title": note_data["title"],
+                            "status": "failure",
+                            "message": f"Unexpected error: {type(e).__name__}"
+                        })
         return results
 
     def on_import_success_notes(results: List[Dict[str, Any]]):
-        log_text_parts = ["Note import process finished.\n\nResults:\n"]  # Renamed to avoid conflict
+        import_type = "template" if import_as_templates else "note"
+        log_text_parts = [f"{import_type.capitalize()} import process finished.\n\nResults:\n"]  # Renamed to avoid conflict
         successful_imports = 0
         failed_imports = 0
         for res in results:
@@ -1789,7 +2021,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             note_title = res.get("note_title", "N/A")
             message = res.get("message", "")
 
-            log_text_parts.append(f"File: {Path(file_path_str).name} (Note: '{note_title}')\n")
+            log_text_parts.append(f"File: {Path(file_path_str).name} ({import_type.capitalize()}: '{note_title}')\n")
             log_text_parts.append(f"  Status: {status.upper()}\n")
             if message:
                 log_text_parts.append(f"  Message: {message}\n")
@@ -1800,7 +2032,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             else:
                 failed_imports += 1
 
-        summary = f"\nSummary: {successful_imports} notes imported, {failed_imports} failed."
+        summary = f"\nSummary: {successful_imports} {import_type}s imported, {failed_imports} failed."
         log_text_parts.append(summary)
 
         try:
@@ -1809,28 +2041,33 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
         except QueryError:
             logger.error("Failed to find #ingest-notes-import-status-area in on_import_success_notes.")
 
-        app.notify(f"Note import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
+        app.notify(f"{import_type.capitalize()} import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
         logger.info(summary)
 
-        #app.call_later(load_and_display_notes_handler, app)
-        app.call_later(app.refresh_notes_tab_after_ingest)
-        try:
-            # Make sure to query the collapsible before creating the Toggled event instance
-            chat_notes_collapsible_widget = app.query_one("#chat-notes-collapsible", Collapsible)
-            app.call_later(app.on_chat_notes_collapsible_toggle, Collapsible.Toggled(chat_notes_collapsible_widget))
-        except QueryError:
-            logger.error("Failed to find #chat-notes-collapsible widget for refresh after note import.")
+        if import_as_templates:
+            # For templates, we need to reload the templates in the notes event handler
+            app.notify("Templates will be available after restarting the application.", severity="information", timeout=10)
+        else:
+            #app.call_later(load_and_display_notes_handler, app)
+            app.call_later(app.refresh_notes_tab_after_ingest)
+            try:
+                # Make sure to query the collapsible before creating the Toggled event instance
+                chat_notes_collapsible_widget = app.query_one("#chat-notes-collapsible", Collapsible)
+                app.call_later(app.on_chat_notes_collapsible_toggle, Collapsible.Toggled(chat_notes_collapsible_widget))
+            except QueryError:
+                logger.error("Failed to find #chat-notes-collapsible widget for refresh after note import.")
 
     def on_import_failure_notes(error: Exception):
-        logger.error(f"Note import worker failed critically: {error}", exc_info=True)
+        import_type = "template" if import_as_templates else "note"
+        logger.error(f"{import_type.capitalize()} import worker failed critically: {error}", exc_info=True)
         try:
             status_area_cb_fail = app.query_one("#ingest-notes-import-status-area", TextArea)
             current_text = status_area_cb_fail.text
             status_area_cb_fail.load_text(
-                current_text + f"\nNote import process failed critically: {error}\nCheck logs.\n")
+                current_text + f"\n{import_type.capitalize()} import process failed critically: {error}\nCheck logs.\n")
         except QueryError:
             logger.error("Failed to find #ingest-notes-import-status-area in on_import_failure_notes.")
-        app.notify(f"Note import CRITICALLY failed: {error}", severity="error", timeout=10)
+        app.notify(f"{import_type.capitalize()} import CRITICALLY failed: {error}", severity="error", timeout=10)
 
     app.run_worker(
         import_worker_notes,
@@ -2078,6 +2315,49 @@ async def handle_tldw_api_worker_success(app: 'TldwCli', event: 'Worker.StateCha
     notify_msg = f"{media_type.title()} Ingestion: {processed_count} done, {error_count} errors."
     app.notify(notify_msg, severity="information" if error_count == 0 else "warning", timeout=7)
 
+async def handle_ingest_local_web_button_pressed(app: 'TldwCli', event: 'Button.Pressed') -> None:
+    """Handle local web article button presses by delegating to IngestWindow methods."""
+    button_id = event.button.id
+    try:
+        ingest_window = app.query_one("#ingest-window", IngestWindow)
+        
+        if button_id == "ingest-local-web-clear-urls":
+            await ingest_window._handle_clear_urls()
+        elif button_id == "ingest-local-web-import-urls":
+            await ingest_window._handle_import_urls_from_file()
+        elif button_id == "ingest-local-web-remove-duplicates":
+            await ingest_window._handle_remove_duplicate_urls()
+        elif button_id == "ingest-local-web-process":
+            await ingest_window.handle_local_web_article_process()
+        elif button_id == "ingest-local-web-stop":
+            await ingest_window._handle_stop_web_scraping()
+        elif button_id == "ingest-local-web-retry":
+            await ingest_window._handle_retry_failed_urls()
+    except QueryError:
+        logger.error(f"Could not find IngestWindow to handle button {button_id}")
+    except Exception as e:
+        logger.error(f"Error handling local web button {button_id}: {e}")
+        app.notify(f"Error: {str(e)}", severity="error")
+
+async def handle_local_pdf_ebook_submit_button_pressed(app: 'TldwCli', event: 'Button.Pressed') -> None:
+    """Handle local PDF and ebook processing button presses."""
+    button_id = event.button.id
+    media_type = "pdf" if button_id == "local-submit-pdf" else "ebook"
+    
+    try:
+        ingest_window = app.query_one("#ingest-window", IngestWindow)
+        
+        if media_type == "pdf":
+            await ingest_window.handle_local_pdf_process()
+        else:  # ebook
+            await ingest_window.handle_local_ebook_process()
+            
+    except QueryError:
+        logger.error(f"Could not find IngestWindow to handle button {button_id}")
+    except Exception as e:
+        logger.error(f"Error handling local {media_type} button: {e}")
+        app.notify(f"Error: {str(e)}", severity="error")
+
 # --- Button Handler Map ---
 INGEST_BUTTON_HANDLERS = {
     # Prompts
@@ -2100,6 +2380,16 @@ INGEST_BUTTON_HANDLERS = {
     "tldw-api-submit-document": handle_tldw_api_submit_button_pressed,
     "tldw-api-submit-xml": handle_tldw_api_submit_button_pressed,
     "tldw-api-submit-mediawiki_dump": handle_tldw_api_submit_button_pressed,
+    # Local Web Article buttons
+    "ingest-local-web-clear-urls": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-import-urls": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-remove-duplicates": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-process": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-stop": handle_ingest_local_web_button_pressed,
+    "ingest-local-web-retry": handle_ingest_local_web_button_pressed,
+    # Local PDF and Ebook buttons
+    "local-submit-pdf": handle_local_pdf_ebook_submit_button_pressed,
+    "local-submit-ebook": handle_local_pdf_ebook_submit_button_pressed,
 }
 
 

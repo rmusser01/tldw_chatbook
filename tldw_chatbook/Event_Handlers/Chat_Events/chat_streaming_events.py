@@ -105,8 +105,8 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             # Display partial text along with the error.
             error_message_content = event.full_text + f"\n\n[bold red]Stream Error:[/]\n{escape_markup(event.error)}"
 
-            ai_widget.message_text = event.full_text + f"\nStream Error: {event.error}"  # Update internal raw text
-            static_text_widget.update(Text.from_markup(error_message_content))
+            ai_widget.message_text = event.full_text + f"\n\nStream Error:\n{event.error}"  # Update internal raw text
+            static_text_widget.update(ai_widget.message_text)
             ai_widget.role = "System"  # Change role to "System" or "Error"
             try:
                 header_label = ai_widget.query_one(".message-header", Label)
@@ -141,7 +141,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                     self.loguru_logger.debug("Not stripping tags from stream: strip_thinking_tags setting is disabled.")
 
             ai_widget.message_text = event.full_text  # Ensure internal state has the final, complete text
-            static_text_widget.update(escape_markup(event.full_text))  # Update display with final, escaped text
+            static_text_widget.update(event.full_text)  # Update display with final text
 
             # Determine sender name for DB (already set on widget by handle_api_call_worker_state_changed)
             # This is just to ensure the correct name is used for DB saving if needed.
@@ -181,6 +181,13 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                 logger.info("Stream finished with no error but content was empty/whitespace. Not saving to DB.")
 
         ai_widget.mark_generation_complete()  # Mark as complete in both error/success cases if widget exists
+        
+        # Update token counter after AI response is complete
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(self)
+        except Exception as e:
+            logger.debug(f"Could not update token counter: {e}")
 
     except QueryError as e:
         logger.error(f"QueryError during StreamDone UI update (event.error='{event.error}'): {e}", exc_info=True)
@@ -196,6 +203,10 @@ async def handle_stream_done(self, event: StreamDone) -> None:
         # Crucial for resetting state and UI.
         self.current_ai_message_widget = None  # Clear the reference to the AI message widget
         logger.debug("Cleared current_ai_message_widget in on_stream_done's finally block.")
+        
+        # Reset streaming state using thread-safe method
+        self.set_current_chat_is_streaming(False)
+        logger.debug("Reset current_chat_is_streaming to False in on_stream_done's finally block.")
 
         # Focus the appropriate input based on the current tab
         input_id_to_focus = None

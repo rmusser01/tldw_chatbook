@@ -15,6 +15,7 @@ Uses the existing fspicker component with evaluation-specific filters.
 
 from pathlib import Path
 from typing import List, Optional, Callable, Any
+from fnmatch import fnmatch
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal
@@ -25,6 +26,13 @@ from loguru import logger
 
 from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
 from .enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave, RecentLocations
+
+def create_filter(patterns: str):
+    """Create a filter function from semicolon-separated patterns."""
+    pattern_list = patterns.split(';')
+    def filter_func(path: Path) -> bool:
+        return any(fnmatch(path.name, pattern) for pattern in pattern_list)
+    return filter_func
 
 class EvalFilePickerDialog(ModalScreen):
     """Modal dialog for file selection in evaluation context."""
@@ -71,13 +79,13 @@ class EvalFilePickerDialog(ModalScreen):
                 # Use enhanced file picker with new features
                 if self.save_mode:
                     yield EnhancedFileSave(
-                        path=".",
+                        location=".",
                         filters=self.filters,
                         id="file-picker"
                     )
                 else:
                     yield EnhancedFileOpen(
-                        path=".",
+                        location=".",
                         filters=self.filters,
                         id="file-picker"
                     )
@@ -85,13 +93,13 @@ class EvalFilePickerDialog(ModalScreen):
                 # Fallback to original file picker
                 if self.save_mode:
                     yield FileSave(
-                        path=".",
+                        location=".",
                         filters=self.filters,
                         id="file-picker"
                     )
                 else:
                     yield FileOpen(
-                        path=".",
+                        location=".",
                         filters=self.filters,
                         id="file-picker"
                     )
@@ -100,19 +108,20 @@ class EvalFilePickerDialog(ModalScreen):
                 yield Button("Cancel", id="cancel-button", variant="error")
                 yield Button("Select", id="select-button", variant="primary")
     
-    @on(FileOpen.FileSelected)
-    @on(FileSave.FileSelected)
-    @on(EnhancedFileOpen.FileSelected)
-    @on(EnhancedFileSave.FileSelected)
-    def handle_file_selected(self, event):
-        """Handle file selection."""
-        self.selected_file = str(event.path)
-        logger.info(f"File selected: {self.selected_file}")
-        
-        # Add to recent locations if using enhanced picker
-        if self.use_enhanced and self.recent_locations:
-            from pathlib import Path
-            self.recent_locations.add(Path(event.path))
+    def on_dismiss(self, result):
+        """Handle dialog dismissal with selected file."""
+        if result:
+            self.selected_file = str(result)
+            logger.info(f"File selected: {self.selected_file}")
+            
+            # Add to recent locations if using enhanced picker
+            if self.use_enhanced and self.recent_locations:
+                from pathlib import Path
+                self.recent_locations.add(Path(result))
+            
+            # Call callback if provided
+            if self.callback:
+                self.callback(self.selected_file)
     
     @on(Button.Pressed, "#select-button")
     def handle_select(self):
@@ -160,8 +169,6 @@ class EvalFilePickerDialog(ModalScreen):
     @on(Button.Pressed, "#cancel-button")
     def handle_cancel(self):
         """Handle cancel button press."""
-        if self.callback:
-            self.callback(None)
         self.dismiss(None)
 
 class TaskFilePickerDialog(EvalFilePickerDialog):
@@ -169,10 +176,10 @@ class TaskFilePickerDialog(EvalFilePickerDialog):
     
     def __init__(self, callback: Optional[Callable[[Optional[str]], None]] = None, **kwargs):
         filters = Filters(
-            ("Task Files", "*.yaml;*.yml;*.json"),
-            ("YAML Files", "*.yaml;*.yml"),
-            ("JSON Files", "*.json"),
-            ("All Files", "*.*")
+            ("Task Files", create_filter("*.yaml;*.yml;*.json")),
+            ("YAML Files", create_filter("*.yaml;*.yml")),
+            ("JSON Files", create_filter("*.json")),
+            ("All Files", lambda path: True)
         )
         super().__init__(
             title="Select Evaluation Task File",
@@ -186,10 +193,10 @@ class DatasetFilePickerDialog(EvalFilePickerDialog):
     
     def __init__(self, callback: Optional[Callable[[Optional[str]], None]] = None, **kwargs):
         filters = Filters(
-            ("Dataset Files", "*.json;*.csv;*.tsv"),
-            ("JSON Files", "*.json"),
-            ("CSV Files", "*.csv;*.tsv"),
-            ("All Files", "*.*")
+            ("Dataset Files", create_filter("*.json;*.csv;*.tsv")),
+            ("JSON Files", create_filter("*.json")),
+            ("CSV Files", create_filter("*.csv;*.tsv")),
+            ("All Files", lambda path: True)
         )
         super().__init__(
             title="Select Dataset File",
@@ -203,9 +210,9 @@ class ExportFilePickerDialog(EvalFilePickerDialog):
     
     def __init__(self, callback: Optional[Callable[[Optional[str]], None]] = None, **kwargs):
         filters = Filters(
-            ("JSON Files", "*.json"),
-            ("CSV Files", "*.csv"),
-            ("All Files", "*.*")
+            ("JSON Files", create_filter("*.json")),
+            ("CSV Files", create_filter("*.csv")),
+            ("All Files", lambda path: True)
         )
         super().__init__(
             title="Export Results To",

@@ -17,7 +17,7 @@ from loguru import logger
 
 from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
-from ..config import get_cli_setting, set_cli_setting
+from ..config import get_cli_setting
 
 
 class RecentLocations:
@@ -29,20 +29,14 @@ class RecentLocations:
         self.load_from_config()
     
     def load_from_config(self):
-        """Load recent locations from config"""
-        try:
-            recent_data = get_cli_setting("filepicker_recent_locations", [])
-            self._recent = recent_data[:self.max_items]
-        except Exception as e:
-            logger.error(f"Failed to load recent locations: {e}")
-            self._recent = []
+        """Load recent locations from config (not implemented - using in-memory storage only)"""
+        # For now, we just use in-memory storage since set_cli_setting is not available
+        self._recent = []
     
     def save_to_config(self):
-        """Save recent locations to config"""
-        try:
-            set_cli_setting("filepicker_recent_locations", self._recent)
-        except Exception as e:
-            logger.error(f"Failed to save recent locations: {e}")
+        """Save recent locations to config (not implemented - using in-memory storage only)"""
+        # For now, we just use in-memory storage since set_cli_setting is not available
+        pass
     
     def add(self, path: Path, file_type: str = "file"):
         """Add a path to recent locations"""
@@ -97,7 +91,9 @@ class PathBreadcrumbs(Horizontal):
     }
     """
     
-    class PathChanged(ModalScreen.Message):
+    from textual.message import Message
+    
+    class PathChanged(Message):
         """Emitted when a breadcrumb is clicked"""
         def __init__(self, path: Path) -> None:
             self.path = path
@@ -156,7 +152,9 @@ class DirectorySearch(Horizontal):
     }
     """
     
-    class SearchChanged(ModalScreen.Message):
+    from textual.message import Message
+    
+    class SearchChanged(Message):
         """Emitted when search text changes"""
         def __init__(self, query: str) -> None:
             self.query = query

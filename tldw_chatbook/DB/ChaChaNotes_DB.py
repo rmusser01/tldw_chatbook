@@ -126,7 +126,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 5 # Incremented schema version for sync support
+    _CURRENT_SCHEMA_VERSION = 6 # Incremented schema version for message feedback support
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
 
     _FULL_SCHEMA_SQL_V4 = """
@@ -881,7 +881,7 @@ UPDATE db_schema_version
 
     _MIGRATE_V4_TO_V5_SQL = """
 /*───────────────────────────────────────────────────────────────
-  Migration from V4 to V5: Add sync support columns
+  Migration from V4 to V5: Add sync support columns and tables
 ───────────────────────────────────────────────────────────────*/
 -- Add sync-related columns to notes table (without UNIQUE constraint)
 ALTER TABLE notes ADD COLUMN file_path_on_disk TEXT;
@@ -898,15 +898,74 @@ ALTER TABLE notes ADD COLUMN file_extension TEXT DEFAULT '.md';
 CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path_on_disk) WHERE file_path_on_disk IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notes_sync_root ON notes(sync_root_folder) WHERE sync_root_folder IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notes_is_synced ON notes(is_externally_synced) WHERE is_externally_synced = 1;
+CREATE INDEX IF NOT EXISTS idx_notes_sync_excluded ON notes(sync_excluded);
 
 -- Create a unique index instead of UNIQUE constraint
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_file_path_unique ON notes(file_path_on_disk) WHERE file_path_on_disk IS NOT NULL;
+
+-- Create sync_sessions table to track sync operations
+CREATE TABLE IF NOT EXISTS sync_sessions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT UNIQUE NOT NULL,  -- UUID for the sync session
+  sync_root_folder TEXT NOT NULL,
+  sync_direction TEXT NOT NULL CHECK(sync_direction IN ('disk_to_db', 'db_to_disk', 'bidirectional')),
+  conflict_resolution TEXT NOT NULL CHECK(conflict_resolution IN ('ask', 'disk_wins', 'db_wins', 'newer_wins')),
+  started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME,
+  status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'cancelled')),
+  total_files INTEGER DEFAULT 0,
+  processed_files INTEGER DEFAULT 0,
+  conflicts_found INTEGER DEFAULT 0,
+  errors_count INTEGER DEFAULT 0,
+  client_id TEXT NOT NULL,
+  summary TEXT  -- JSON summary of the sync operation
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_sessions_status ON sync_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sync_sessions_started ON sync_sessions(started_at);
+
+-- Create sync_conflicts table to track unresolved conflicts
+CREATE TABLE IF NOT EXISTS sync_conflicts(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES sync_sessions(session_id),
+  note_id TEXT REFERENCES notes(id),
+  file_path TEXT NOT NULL,
+  conflict_type TEXT NOT NULL CHECK(conflict_type IN ('both_changed', 'deleted_on_disk', 'deleted_in_db')),
+  db_content_hash TEXT,
+  disk_content_hash TEXT,
+  db_modified_time DATETIME,
+  disk_modified_time REAL,
+  resolution TEXT CHECK(resolution IN ('use_db', 'use_disk', 'merge', 'skip', NULL)),
+  resolved_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_session ON sync_conflicts(session_id);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_note ON sync_conflicts(note_id);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_resolution ON sync_conflicts(resolution);
 
 -- Update schema version
 UPDATE db_schema_version
    SET version = 5
  WHERE schema_name = 'rag_char_chat_schema'
    AND version = 4;
+"""
+
+    _MIGRATE_V5_TO_V6_SQL = """
+/*───────────────────────────────────────────────────────────────
+  Migration from V5 to V6: Add message feedback support
+───────────────────────────────────────────────────────────────*/
+-- Add feedback column to messages table
+ALTER TABLE messages ADD COLUMN feedback TEXT;
+
+-- Create index for feedback queries
+CREATE INDEX IF NOT EXISTS idx_messages_feedback ON messages(feedback) WHERE feedback IS NOT NULL;
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 6
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 5;
 """
 
     def __init__(self, db_path: Union[str, Path], client_id: str):
@@ -1332,6 +1391,41 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V4 to V5 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v5_to_v6(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 5 to version 6.
+
+        This migration adds a feedback column to the messages table to support
+        thumbs up/down feedback with extensible string format.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 6 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V5 to V6 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V5_TO_V6_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V5→V6] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 6:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V5→V6] Migration version check failed. Expected 6, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V5→V6] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V5→V6] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V5 to V6 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V5 to V6 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _initialize_schema(self):
         """
         Initializes or migrates the database schema to `_CURRENT_SCHEMA_VERSION`.
@@ -1373,8 +1467,16 @@ UPDATE db_schema_version
                     current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 4 and target_version > 4:
                         self._migrate_from_v4_to_v5(conn)
-                elif current_db_version == 4 and target_version == 5:
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 5 and target_version > 5:
+                        self._migrate_from_v5_to_v6(conn)
+                elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
+                    current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 5 and target_version > 5:
+                        self._migrate_from_v5_to_v6(conn)
+                elif current_db_version == 5 and target_version == 6:
+                    self._migrate_from_v5_to_v6(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(
@@ -1951,6 +2053,40 @@ UPDATE db_schema_version
                 f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}",
                 exc_info=True)
             raise
+
+    def delete_character_card(self, character_id: int) -> bool:
+        """
+        Soft-deletes a character card with version checking.
+        
+        This method retrieves the current version of the character and performs
+        a soft delete. It's a convenience wrapper around soft_delete_character_card.
+        
+        Args:
+            character_id: The ID of the character card to delete.
+            
+        Returns:
+            True if the deletion was successful, False otherwise.
+            
+        Raises:
+            CharactersRAGDBError: For database-related errors.
+        """
+        try:
+            # Get current character to find its version
+            character = self.get_character_card_by_id(character_id)
+            if not character:
+                logger.warning(f"Character card ID {character_id} not found for deletion.")
+                return False
+                
+            # Use the current version for optimistic locking
+            current_version = character.get('version', 1)
+            return self.soft_delete_character_card(character_id, current_version)
+            
+        except ConflictError as e:
+            logger.error(f"Conflict error deleting character card ID {character_id}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error deleting character card ID {character_id}: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Error deleting character card: {e}") from e
 
     def search_character_cards(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -2726,7 +2862,7 @@ UPDATE db_schema_version
         fields_to_update_sql = []
         params_for_set_clause = []
 
-        allowed_to_update = ['content', 'ranking', 'parent_message_id', 'image_data', 'image_mime_type']
+        allowed_to_update = ['content', 'ranking', 'parent_message_id', 'image_data', 'image_mime_type', 'feedback']
 
         # Special handling for clearing image
         if 'image_data' in update_data and update_data['image_data'] is None:
@@ -2877,6 +3013,38 @@ UPDATE db_schema_version
             logger.error(f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}",
                          exc_info=True)
             raise
+
+    def update_message_feedback(self, message_id: str, feedback: str, expected_version: int) -> bool:
+        """
+        Updates the feedback for a message using optimistic locking.
+
+        This is a specialized method for updating only the feedback field of a message.
+        Uses a string-based format for extensibility: "1;" for thumbs up, "2;" for thumbs down.
+        Future versions may extend this to include comments like "1;Great response!".
+
+        Args:
+            message_id: The UUID of the message to update.
+            feedback: The feedback string. Must match pattern "^[12];.*$" or be None to clear.
+            expected_version: The client's expected version of the record.
+
+        Returns:
+            True if the update was successful.
+
+        Raises:
+            InputError: If feedback format is invalid.
+            ConflictError: If the message is not found, is soft-deleted, or if version mismatch.
+            CharactersRAGDBError: For database errors.
+        """
+        import re
+        
+        # Validate feedback format
+        if feedback is not None:
+            if not re.match(r'^[12];', feedback):
+                raise InputError(f"Invalid feedback format: '{feedback}'. Must start with '1;' or '2;'")
+        
+        # Use the existing update_message method with feedback in update_data
+        update_data = {'feedback': feedback}
+        return self.update_message(message_id, update_data, expected_version)
 
     def search_messages_by_content(self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
         """

@@ -82,6 +82,15 @@ class ConflictError(DatabaseError):
             details.append(f"ID: {self.identifier}")
         return f"{base} ({', '.join(details)})" if details else base
 
+# --- Custom JSON Encoder for DateTime ---
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            # Convert to ISO format string
+            return obj.isoformat()
+        return super().default(obj)
+
 # --- Database Class ---
 class MediaDatabase:
     """
@@ -872,7 +881,7 @@ class MediaDatabase:
                 del payload['vector_embedding']
             #  Add other fields to exclude if necessary
 
-        payload_json = json.dumps(payload, separators=(',', ':')) if payload else None  # Compact JSON
+        payload_json = json.dumps(payload, separators=(',', ':'), cls=DateTimeEncoder) if payload else None  # Compact JSON with datetime support
 
         try:
             conn.execute("""
@@ -903,6 +912,11 @@ class MediaDatabase:
             DatabaseError: If the FTS update fails.
         """
         content = content or ""
+        # Remove null bytes from content and title as they break FTS indexing
+        # Replace null bytes with spaces to preserve word boundaries
+        title = title.replace('\x00', ' ')
+        content = content.replace('\x00', ' ')
+        logging.debug(f"FTS update for media {media_id}: sanitized content - null bytes replaced")
         try:
             # Use INSERT OR REPLACE
             conn.execute("INSERT OR REPLACE INTO media_fts (rowid, title, content) VALUES (?, ?, ?)",
@@ -950,6 +964,8 @@ class MediaDatabase:
         Raises:
             DatabaseError: If the FTS update fails.
         """
+        # Remove null bytes from keyword as they break FTS indexing
+        keyword = keyword.replace('\x00', ' ')
         try:
             # Use INSERT OR REPLACE
             conn.execute("INSERT OR REPLACE INTO keyword_fts (rowid, keyword) VALUES (?, ?)",
@@ -1934,7 +1950,7 @@ class MediaDatabase:
                     (
                         media_id, ch["text"], idx, ch.get("start_char"), ch.get("end_char"), ch.get("chunk_type"),
                         created, created, False,
-                        json.dumps(ch.get("metadata")) if isinstance(ch.get("metadata"), dict) else None,
+                        json.dumps(ch.get("metadata"), cls=DateTimeEncoder) if isinstance(ch.get("metadata"), dict) else None,
                         chunk_uuid, created, 1, client_id, 0, None, None,
                     ),
                 )
@@ -1956,14 +1972,14 @@ class MediaDatabase:
 
                 # Find existing record by URL or content_hash
                 cur.execute(
-                    "SELECT id, uuid, version, url, content_hash FROM Media WHERE url = ? AND deleted = 0 LIMIT 1",
+                    "SELECT id, uuid, version, url, content_hash, title, type, author FROM Media WHERE url = ? AND deleted = 0 LIMIT 1",
                     (url,),
                 )
                 row = cur.fetchone()
 
                 if not row:
                     cur.execute(
-                        "SELECT id, uuid, version, url, content_hash FROM Media WHERE content_hash = ? AND deleted = 0 LIMIT 1",
+                        "SELECT id, uuid, version, url, content_hash, title, type, author FROM Media WHERE content_hash = ? AND deleted = 0 LIMIT 1",
                         (content_hash,),
                     )
                     row = cur.fetchone()
@@ -1978,30 +1994,60 @@ class MediaDatabase:
 
                     # Case A.1: Overwrite is requested.
                     if overwrite:
-                        # Case A.1.a: Content is identical. No version bump needed for main content.
+                        # Case A.1.a: Content is identical. Check if metadata needs updating.
                         if content_hash == existing_hash:
-                            logging.info(f"Media content for ID {media_id} is identical. Updating metadata/chunks only.")
+                            logging.info(f"Media content for ID {media_id} is identical. Checking metadata/chunks.")
 
-                            # Update keywords and chunks without changing the main Media record yet.
+                            # Check if any metadata has changed
+                            metadata_changed = False
+                            if row['title'] != title or row['author'] != author or row['type'] != media_type:
+                                metadata_changed = True
+                                logging.info(f"Metadata changed for media ID {media_id}: title, author, or type differs")
+
+                            # Update keywords first
                             self.update_keywords_for_media(media_id, keywords_norm)
                             _persist_chunks(conn, media_id)
 
-                            # If new chunks were provided, the media's chunking status has changed,
-                            # which justifies a version bump on the parent Media record.
-                            if chunks is not None:
-                                logging.info(f"Chunks provided for identical media; updating media chunk_status and version for ID {media_id}.")
+                            # If metadata changed or chunks were provided, update the Media record
+                            if metadata_changed or chunks is not None:
+                                logging.info(f"Updating media metadata/chunks for ID {media_id}.")
                                 new_ver = current_ver + 1
-                                cur.execute(
-                                    """UPDATE Media SET chunking_status = 'completed', version = ?, last_modified = ?
-                                       WHERE id = ? AND version = ?""",
-                                    (new_ver, now, media_id, current_ver)
-                                )
+                                
+                                # Build update query based on what changed
+                                update_fields = ["version = ?", "last_modified = ?", "client_id = ?"]
+                                update_params = [new_ver, now, client_id]
+                                
+                                if metadata_changed:
+                                    update_fields.extend(["title = ?", "type = ?", "author = ?"])
+                                    update_params.extend([title, media_type, author])
+                                
+                                if chunks is not None:
+                                    update_fields.append("chunking_status = ?")
+                                    update_params.append(final_chunk_status)
+                                
+                                update_params.extend([media_id, current_ver])
+                                update_sql = f"UPDATE Media SET {', '.join(update_fields)} WHERE id = ? AND version = ?"
+                                
+                                cur.execute(update_sql, update_params)
                                 if cur.rowcount == 0:
-                                    raise ConflictError(f"Media (updating chunk status for identical content id={media_id})", media_id)
+                                    raise ConflictError(f"Media (updating metadata for identical content id={media_id})", media_id)
 
-                                self._log_sync_event(conn, "Media", media_uuid, "update", new_ver, {"chunking_status": "completed", "last_modified": now})
+                                # Log sync event with updated fields
+                                sync_payload = {"last_modified": now, "version": new_ver, "client_id": client_id}
+                                if metadata_changed:
+                                    sync_payload.update({"title": title, "type": media_type, "author": author})
+                                if chunks is not None:
+                                    sync_payload["chunking_status"] = final_chunk_status
+                                
+                                self._log_sync_event(conn, "Media", media_uuid, "update", new_ver, sync_payload)
+                                
+                                # Update FTS with new title if it changed
+                                if metadata_changed:
+                                    self._update_fts_media(conn, media_id, title, content)
 
-                            return media_id, media_uuid, f"Media '{title}' is already up-to-date."
+                                return media_id, media_uuid, f"Media '{title}' metadata updated."
+                            else:
+                                return media_id, media_uuid, f"Media '{title}' is already up-to-date."
 
                         # Case A.1.b: Content is different. Proceed with a full versioned update.
                         new_ver = current_ver + 1
@@ -2808,7 +2854,7 @@ class MediaDatabase:
                             'last_modified_orig': chunk_dict.get('last_modified_orig') or current_time,
                             'is_processed': chunk_dict.get('is_processed', False),
                             # Ensure metadata is JSON string
-                            'metadata': json.dumps(chunk_dict.get('metadata')) if chunk_dict.get('metadata') else None,
+                            'metadata': json.dumps(chunk_dict.get('metadata'), cls=DateTimeEncoder) if chunk_dict.get('metadata') else None,
                             'uuid': chunk_uuid,
                             'last_modified': current_time,  # Set sync last_modified
                             'version': new_sync_version, 'client_id': client_id, 'deleted': 0,
