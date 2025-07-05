@@ -233,10 +233,13 @@ All optimizations have been successfully implemented and tested:
 2. Updated CCP tab population to handle lazy loading properly
 3. Removed premature widget population from `_post_mount_setup`
 
+### Additional Improvements:
+- **Logs Tab Early Loading**: Modified the lazy loading system to always load the Logs tab immediately alongside the initial tab. This ensures that application logs are captured from startup and are available for debugging when users switch to the Logs tab.
+
 ### Verified Working:
 - ✅ Application starts in under 0.7 seconds (0.669-0.716s observed)
 - ✅ Configuration caching prevents redundant file I/O
-- ✅ Lazy loading works for all tabs
+- ✅ Lazy loading works for all tabs (except Logs which loads immediately)
 - ✅ Parallel initialization completes quickly
 - ✅ All tabs initialize correctly when accessed:
   - ✅ Chat tab (initial tab)
@@ -247,9 +250,15 @@ All optimizations have been successfully implemented and tested:
   - ✅ Search tab (loads but has pre-existing internal issues)
   - ✅ Tools/Settings tab
   - ✅ LLM Management tab
+  - ✅ Logs tab (loads immediately to capture startup logs)
+  - ✅ Stats tab
+  - ✅ Evals tab
+  - ✅ Coding tab
+  - ✅ Embeddings tab
 - ✅ No more widget population errors from lazy loading
 - ✅ Fixed PlaceholderWindow child removal using `child.remove()`
 - ✅ Added safety checks in watchers to prevent premature access
+- ✅ Logs are captured from application startup
 
 ## Further Optimization Opportunities
 

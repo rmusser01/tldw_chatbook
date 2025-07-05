@@ -1463,9 +1463,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 initial_tab = self._initial_tab_value
                 is_initial_window = window_id == f"{initial_tab}-window"
                 
-                if is_initial_window:
-                    # Create the actual window for the initial tab
-                    logger.info(f"Creating actual window for initial tab: {window_name}")
+                # Always load LogsWindow immediately to capture startup logs
+                if is_initial_window or window_id == "logs-window":
+                    # Create the actual window for the initial tab AND logs tab
+                    logger.info(f"Creating actual window for {'initial' if is_initial_window else 'logs'} tab: {window_name}")
                     yield window_class(self, id=window_id, classes="window")
                 else:
                     # Create a placeholder for other tabs
@@ -1473,8 +1474,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     yield PlaceholderWindow(self, window_class, window_id, classes="window")
                 
                 window_duration = time.perf_counter() - window_start
+                is_actual_window = is_initial_window or window_id == "logs-window"
                 log_histogram("app_window_creation_duration_seconds", window_duration,
-                             labels={"window": window_name, "type": "actual" if is_initial_window else "placeholder"}, 
+                             labels={"window": window_name, "type": "actual" if is_actual_window else "placeholder"}, 
                              documentation="Time to create individual window")
                 
         # Log total content area creation time
