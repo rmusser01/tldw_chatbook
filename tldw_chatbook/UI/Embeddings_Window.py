@@ -569,6 +569,24 @@ class EmbeddingsWindow(Container):
         """Handle model selection change."""
         if event.value and event.value != Select.BLANK:
             self.selected_model = str(event.value)
+            logger.info(f"Selected embedding model: {self.selected_model}")
+            
+            # Show model information
+            if self.embedding_factory and hasattr(self.embedding_factory.config, 'models'):
+                model_config = self.embedding_factory.config.models.get(self.selected_model)
+                if model_config:
+                    info_parts = []
+                    info_parts.append(f"Model: {self.selected_model}")
+                    info_parts.append(f"Provider: {getattr(model_config, 'provider', 'Unknown')}")
+                    
+                    if hasattr(model_config, 'dimension'):
+                        info_parts.append(f"Dimension: {model_config.dimension}")
+                    
+                    if hasattr(model_config, 'model_name_or_path'):
+                        info_parts.append(f"Path: {model_config.model_name_or_path}")
+                    
+                    self.notify(" | ".join(info_parts), severity="information")
+            
             self._update_status(f"Selected model: {self.selected_model}")
     
     @on(Button.Pressed, "#embeddings-select-files")

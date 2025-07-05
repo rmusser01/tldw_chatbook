@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
 from loguru import logger
+import os
 
 # Third-party imports
 from textual import events, on
@@ -121,19 +122,30 @@ class EmbeddingsManagementWindow(Widget):
                         yield Label("Provider:", classes="embeddings-info-label")
                         yield Static("", id="embeddings-model-provider", classes="embeddings-info-value")
                         
+                        yield Label("Model Path:", classes="embeddings-info-label")
+                        yield Static("", id="embeddings-model-path", classes="embeddings-info-value")
+                        
                         yield Label("Dimension:", classes="embeddings-info-label")
                         yield Static("", id="embeddings-model-dimension", classes="embeddings-info-value")
                         
-                        yield Label("Status:", classes="embeddings-info-label")
-                        yield Static("", id="embeddings-model-status", classes="embeddings-info-value")
+                        yield Label("Download Status:", classes="embeddings-info-label")
+                        yield Static("Not Downloaded", id="embeddings-model-download-status", classes="embeddings-info-value")
                         
-                        yield Label("Cache Status:", classes="embeddings-info-label")
-                        yield Static("", id="embeddings-model-cache-status", classes="embeddings-info-value")
+                        yield Label("Model Size:", classes="embeddings-info-label")
+                        yield Static("Unknown", id="embeddings-model-size", classes="embeddings-info-value")
+                        
+                        yield Label("Memory Status:", classes="embeddings-info-label")
+                        yield Static("Not Loaded", id="embeddings-model-status", classes="embeddings-info-value")
+                        
+                        yield Label("Cache Location:", classes="embeddings-info-label")
+                        yield Static("", id="embeddings-model-cache-location", classes="embeddings-info-value")
                         
                         # Model actions
                         with Horizontal():
+                            yield Button("Download", id="embeddings-download-model", classes="embeddings-action-button")
                             yield Button("Load Model", id="embeddings-load-model", classes="embeddings-action-button")
                             yield Button("Unload Model", id="embeddings-unload-model", classes="embeddings-action-button")
+                            yield Button("Delete Model", id="embeddings-delete-model", classes="embeddings-action-button")
                     
                     # Collection information section
                     with Collapsible(title="Collection Information", id="embeddings-collection-info-collapsible"):
@@ -399,6 +411,146 @@ class EmbeddingsManagementWindow(Widget):
         finally:
             self.is_loading = False
     
+    @on(Button.Pressed, "#embeddings-download-model")
+    async def on_download_model(self) -> None:
+        """Download the selected model from HuggingFace."""
+        if not self.selected_model:
+            self.notify("Please select a model first", severity="warning")
+            return
+        
+        if not self.embedding_factory:
+            self.notify("Embedding factory not initialized", severity="error")
+            return
+        
+        try:
+            config = self.embedding_factory.config
+            if not config or not hasattr(config, 'models'):
+                self.notify("No model configuration found", severity="error")
+                return
+            
+            model_spec = config.models.get(self.selected_model)
+            if not model_spec:
+                self.notify("Model configuration not found", severity="error")
+                return
+            
+            # Only download HuggingFace models
+            if model_spec.provider != "huggingface":
+                self.notify("Only HuggingFace models can be downloaded", severity="warning")
+                return
+            
+            self.is_loading = True
+            download_status = self.query_one("#embeddings-model-download-status", Static)
+            download_status.update("Downloading...")
+            
+            # Use a worker to download the model
+            self.app_instance.run_worker(
+                self._download_model_worker,
+                model_id=self.selected_model,
+                model_spec=model_spec,
+                name=f"download_{self.selected_model}"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to start model download: {e}")
+            self.notify(f"Failed to start download: {str(e)}", severity="error")
+            self.is_loading = False
+    
+    @on(Button.Pressed, "#embeddings-unload-model")
+    async def on_unload_model(self) -> None:
+        """Unload the selected model from memory."""
+        if not self.selected_model:
+            self.notify("Please select a model first", severity="warning")
+            return
+        
+        if not self.embedding_factory:
+            self.notify("Embedding factory not initialized", severity="error")
+            return
+        
+        try:
+            # Check if model is in cache
+            cache = getattr(self.embedding_factory, '_cache', {})
+            if self.selected_model not in cache:
+                self.notify("Model is not loaded", severity="warning")
+                return
+            
+            # Remove from cache
+            if hasattr(self.embedding_factory, '_cache') and self.selected_model in self.embedding_factory._cache:
+                del self.embedding_factory._cache[self.selected_model]
+                self.notify(f"Model {self.selected_model} unloaded from memory", severity="information")
+                await self._update_model_info(self.selected_model)
+            
+        except Exception as e:
+            logger.error(f"Failed to unload model: {e}")
+            self.notify(f"Failed to unload model: {str(e)}", severity="error")
+    
+    @on(Button.Pressed, "#embeddings-delete-model")
+    async def on_delete_model(self) -> None:
+        """Delete the downloaded model files."""
+        if not self.selected_model:
+            self.notify("Please select a model first", severity="warning")
+            return
+        
+        # TODO: Implement model deletion from cache directory
+        self.notify("Model deletion not yet implemented", severity="information")
+    
+    async def _download_model_worker(self, model_id: str, model_spec: Any) -> None:
+        """Worker function to download a model."""
+        try:
+            from huggingface_hub import snapshot_download
+            import os
+            
+            # Get cache directory from model spec or use default
+            cache_dir = getattr(model_spec, 'cache_dir', None)
+            if cache_dir:
+                cache_dir = os.path.expanduser(cache_dir)
+            
+            model_path = model_spec.model_name_or_path
+            
+            # Download the model
+            logger.info(f"Starting download of model: {model_path}")
+            local_dir = snapshot_download(
+                repo_id=model_path,
+                cache_dir=cache_dir,
+                ignore_patterns=["*.bin", "*.safetensors"],  # Skip large files for initial download
+                resume_download=True
+            )
+            
+            # Now download the model files
+            local_dir = snapshot_download(
+                repo_id=model_path,
+                cache_dir=cache_dir,
+                resume_download=True
+            )
+            
+            logger.info(f"Model downloaded to: {local_dir}")
+            
+            # Update UI from main thread
+            self.app_instance.call_from_thread(self._download_complete, model_id, local_dir)
+            
+        except Exception as e:
+            logger.error(f"Failed to download model: {e}")
+            self.app_instance.call_from_thread(self._download_failed, model_id, str(e))
+    
+    def _download_complete(self, model_id: str, local_dir: str) -> None:
+        """Handle download completion."""
+        self.is_loading = False
+        download_status = self.query_one("#embeddings-model-download-status", Static)
+        download_status.update("Downloaded")
+        
+        # Update cache location
+        cache_location = self.query_one("#embeddings-model-cache-location", Static)
+        cache_location.update(local_dir)
+        
+        self.notify(f"Model {model_id} downloaded successfully", severity="information")
+    
+    def _download_failed(self, model_id: str, error: str) -> None:
+        """Handle download failure."""
+        self.is_loading = False
+        download_status = self.query_one("#embeddings-model-download-status", Static)
+        download_status.update("Download Failed")
+        
+        self.notify(f"Failed to download model {model_id}: {error}", severity="error")
+    
     async def _update_model_info(self, model_id: str) -> None:
         """Update the model information display."""
         if not self.embedding_factory:
@@ -417,21 +569,46 @@ class EmbeddingsManagementWindow(Widget):
             provider_widget = self.query_one("#embeddings-model-provider", Static)
             provider_widget.update(str(model_spec.provider))
             
+            # Update model path
+            path_widget = self.query_one("#embeddings-model-path", Static)
+            model_path = getattr(model_spec, 'model_name_or_path', 'Unknown')
+            path_widget.update(str(model_path))
+            
             # Update dimension
             dimension_widget = self.query_one("#embeddings-model-dimension", Static)
             dimension = getattr(model_spec, 'dimension', 'Unknown')
             dimension_widget.update(str(dimension))
             
-            # Update status
+            # Update download status
+            download_widget = self.query_one("#embeddings-model-download-status", Static)
+            if model_spec.provider == "huggingface":
+                # Check if model exists in cache
+                try:
+                    from huggingface_hub import cached_download
+                    import os
+                    cache_dir = getattr(model_spec, 'cache_dir', None)
+                    if cache_dir:
+                        cache_dir = os.path.expanduser(cache_dir)
+                    # TODO: Properly check if model is downloaded
+                    download_widget.update("Check Manually")
+                except:
+                    download_widget.update("Unknown")
+            else:
+                download_widget.update("N/A (Not HuggingFace)")
+            
+            # Update memory status
             status_widget = self.query_one("#embeddings-model-status", Static)
             # Check if model is in cache
             is_cached = model_id in getattr(self.embedding_factory, '_cache', {})
-            status_widget.update("Loaded" if is_cached else "Not Loaded")
+            status_widget.update("Loaded in Memory" if is_cached else "Not Loaded")
             
-            # Update cache status
-            cache_widget = self.query_one("#embeddings-model-cache-status", Static)
-            cache_info = f"Models in cache: {len(getattr(self.embedding_factory, '_cache', {}))}"
-            cache_widget.update(cache_info)
+            # Update cache location
+            cache_location_widget = self.query_one("#embeddings-model-cache-location", Static)
+            cache_dir = getattr(model_spec, 'cache_dir', None)
+            if cache_dir:
+                cache_location_widget.update(os.path.expanduser(cache_dir))
+            else:
+                cache_location_widget.update("Default HuggingFace Cache")
             
         except Exception as e:
             logger.error(f"Failed to update model info: {e}")

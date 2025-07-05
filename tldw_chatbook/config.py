@@ -1446,6 +1446,9 @@ situate_chunk_context_prompt = "You are an AI assistant. Please follow the instr
 [embedding_config]
 default_model_id = "e5-small-v2"
 default_llm_for_contextualization = "gpt-3.5-turbo"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = true
+cache_size_limit_gb = 10.0
 
     # --- HuggingFace Models ---
     [embedding_config.models.e5-small-v2]
@@ -1459,6 +1462,55 @@ default_llm_for_contextualization = "gpt-3.5-turbo"
     provider = "huggingface"
     model_name_or_path = "intfloat/multilingual-e5-large-instruct"
     dimension = 1024
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.e5-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-base-v2"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.e5-large-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-large-v2"
+    dimension = 1024
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.all-MiniLM-L6-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-MiniLM-L6-v2"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 256
+
+    [embedding_config.models.all-mpnet-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-mpnet-base-v2"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 384
+
+    [embedding_config.models.bge-small-en-v1.5]
+    provider = "huggingface"
+    model_name_or_path = "BAAI/bge-small-en-v1.5"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.bge-base-en-v1.5]
+    provider = "huggingface"
+    model_name_or_path = "BAAI/bge-base-en-v1.5"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.gte-small]
+    provider = "huggingface"
+    model_name_or_path = "thenlper/gte-small"
+    dimension = 384
     trust_remote_code = false
     max_length = 512
 

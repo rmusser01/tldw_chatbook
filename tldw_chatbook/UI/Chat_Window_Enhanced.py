@@ -146,7 +146,7 @@ class ChatWindowEnhanced(Container):
         def on_file_selected(file_path: Optional[Path]):
             if file_path:
                 # Process the selected file
-                self.app_instance.call_from_thread(self.process_file_attachment, str(file_path))
+                self.app_instance.call_after_refresh(self.process_file_attachment, str(file_path))
         
         # Create filter functions
         def create_filter(patterns: str):

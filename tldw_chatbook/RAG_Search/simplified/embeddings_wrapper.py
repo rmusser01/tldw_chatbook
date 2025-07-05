@@ -35,7 +35,8 @@ class EmbeddingsServiceWrapper:
                  cache_size: int = 2,  # Number of models to cache
                  device: Optional[str] = None,
                  api_key: Optional[str] = None,
-                 base_url: Optional[str] = None):
+                 base_url: Optional[str] = None,
+                 cache_dir: Optional[str] = None):
         """
         Initialize embeddings service using existing EmbeddingFactory.
         
@@ -48,6 +49,7 @@ class EmbeddingsServiceWrapper:
             device: Device to use (cpu, cuda, mps) - defaults to auto-detection
             api_key: Optional API key for OpenAI (overrides environment)
             base_url: Optional base URL for OpenAI-compatible APIs
+            cache_dir: Optional cache directory for HuggingFace model downloads
         """
         self.model_name = model_name
         self.device = device
@@ -71,7 +73,7 @@ class EmbeddingsServiceWrapper:
             logger.info("Using OPENAI_API_KEY from environment")
         
         # Determine provider and model configuration
-        config_dict = self._build_config(model_name, self.device, api_key, base_url)
+        config_dict = self._build_config(model_name, self.device, api_key, base_url, cache_dir)
         
         try:
             # Import EmbeddingConfigSchema for validation
@@ -106,7 +108,8 @@ class EmbeddingsServiceWrapper:
         self._cache_misses = 0
     
     def _build_config(self, model_name: str, device: Optional[str], 
-                     api_key: Optional[str], base_url: Optional[str]) -> Dict[str, Any]:
+                     api_key: Optional[str], base_url: Optional[str], 
+                     cache_dir: Optional[str]) -> Dict[str, Any]:
         """
         Build configuration dictionary for EmbeddingFactory.
         
@@ -154,6 +157,11 @@ class EmbeddingsServiceWrapper:
             # Add device if specified
             if device:
                 model_config["device"] = device
+            
+            # Add cache directory if specified
+            if cache_dir:
+                model_config["cache_dir"] = cache_dir
+                logger.info(f"Using cache directory for HuggingFace models: {cache_dir}")
         
         # Construct the full configuration
         config = {
