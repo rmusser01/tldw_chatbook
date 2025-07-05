@@ -1398,20 +1398,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self._created_windows = set()
         
         with Container(id="content"):
-            # Only create the initial tab's window on startup
-            if self._initial_tab_value in self._window_mapping:
-                window_class, window_id = self._window_mapping[self._initial_tab_value]
-                window_start = time.perf_counter()
-                yield window_class(self, id=window_id, classes="window")
-                window_duration = time.perf_counter() - window_start
-                log_histogram("app_window_creation_duration_seconds", window_duration,
-                             labels={"window": self._initial_tab_value}, 
-                             documentation="Time to create individual window")
-                self._created_windows.add(self._initial_tab_value)
-                windows_created = 1
-            else:
-                logger.error(f"Initial tab '{self._initial_tab_value}' not found in window mapping")
-                windows_created = 0
+            # Create placeholder windows for all tabs to maintain expected structure
+            windows_created = 0
+            for tab_name, (window_class, window_id) in self._window_mapping.items():
+                if tab_name == self._initial_tab_value:
+                    # Create and show the initial tab
+                    window_start = time.perf_counter()
+                    window = window_class(self, id=window_id, classes="window")
+                    yield window
+                    window_duration = time.perf_counter() - window_start
+                    log_histogram("app_window_creation_duration_seconds", window_duration,
+                                 labels={"window": tab_name}, 
+                                 documentation="Time to create individual window")
+                    self._created_windows.add(tab_name)
+                    windows_created += 1
+                else:
+                    # Create placeholder for lazy loading
+                    # Don't use "window" class on placeholders to avoid CSS conflicts
+                    placeholder = Container(id=window_id, classes="placeholder-window")
+                    placeholder.display = False
+                    yield placeholder
                 
         # Log total content area creation time
         content_area_duration = time.perf_counter() - content_area_start
@@ -1435,15 +1441,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         window_class, window_id = self._window_mapping[tab_name]
         
         try:
-            # Get the content container
-            content_container = self.query_one("#content", Container)
+            # Find and remove the placeholder
+            placeholder = self.query_one(f"#{window_id}")
+            parent = placeholder.parent
             
-            # Create the window
+            # Create the real window
             new_window = window_class(self, id=window_id, classes="window")
-            new_window.display = False  # Start hidden
+            new_window.display = False  # Start hidden, will be shown by watch_current_tab
             
-            # Mount it to the container
-            content_container.mount(new_window)
+            # Replace placeholder with real window
+            placeholder.remove()
+            parent.mount(new_window)
             
             # Mark as created
             self._created_windows.add(tab_name)
@@ -2194,7 +2202,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Hides all windows that are not the current active tab."""
         initial_tab = self._initial_tab_value
         self.loguru_logger.debug(f"Hiding inactive windows, keeping '{initial_tab}-window' visible.")
-        for window in self.query(".window"):
+        # Query both actual windows and placeholders
+        for window in self.query(".window, .placeholder-window"):
+            # Placeholders should always be hidden
+            if window.has_class("placeholder-window"):
+                window.display = False
+                continue
             is_active = window.id == f"{initial_tab}-window"
             window.display = is_active
 
@@ -2488,14 +2501,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self._create_window_lazily(new_tab)
             
             # Handle first-time initialization for specific tabs
+            # Use set_timer with a small delay to ensure widgets are fully mounted
             if new_tab == "ccp":
-                # Populate CCP tab data on first access
-                self.call_after_refresh(ccp_handlers.populate_ccp_character_select, self)
-                self.call_after_refresh(ccp_handlers.populate_ccp_prompts_list_view, self)
+                # Populate CCP tab data on first access with a delay
+                self.set_timer(0.1, lambda: ccp_handlers.populate_ccp_character_select(self))
+                self.set_timer(0.1, lambda: ccp_handlers.populate_ccp_prompts_list_view(self))
             elif new_tab == "chat":
                 # Populate chat filter on first access if not initial tab
                 if self._initial_tab_value != "chat":
-                    self.call_after_refresh(chat_handlers.populate_chat_conversation_character_filter_select, self)
+                    self.set_timer(0.1, lambda: chat_handlers.populate_chat_conversation_character_filter_select(self))
 
         # Show New Tab UI
         try:

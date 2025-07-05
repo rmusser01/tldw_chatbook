@@ -47,11 +47,13 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
     """Populates the character selection dropdown in the CCP tab."""
     logger = getattr(app, 'loguru_logger', logging)
     logger.info("Attempting to populate #conv-char-character-select dropdown.")
-    # Early exit if CCP window doesn't exist yet (lazy loading)
+    # Early exit if CCP window or the specific widget doesn't exist yet (lazy loading)
     try:
         app.query_one("#conversations_characters_prompts-window")
-    except QueryError:
-        logger.debug("CCP window not yet created, skipping character select population")
+        # Also check if the specific widget exists
+        app.query_one("#conv-char-character-select", Select)
+    except QueryError as e:
+        logger.debug(f"CCP window or character select widget not yet ready: {e}")
         return
     
     if not app.notes_service:
@@ -110,11 +112,13 @@ async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[s
     """Populates the prompts list view in the CCP tab."""
     logger = getattr(app, 'loguru_logger', logging)
     
-    # Early exit if CCP window doesn't exist yet (lazy loading)
+    # Early exit if CCP window or the specific widget doesn't exist yet (lazy loading)
     try:
         app.query_one("#conversations_characters_prompts-window")
-    except QueryError:
-        logger.debug("CCP window not yet created, skipping prompts list population")
+        # Also check if the specific widget exists
+        app.query_one("#ccp-prompts-listview", ListView)
+    except QueryError as e:
+        logger.debug(f"CCP window or prompts listview widget not yet ready: {e}")
         return
     
     if not app.prompts_service_initialized:
