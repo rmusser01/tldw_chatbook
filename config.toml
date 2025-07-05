@@ -442,6 +442,43 @@ allow_reset = false
 # provider = "openai"
 # ...
 
+[embedding_config]
+# Default model to use for embeddings
+default_model_id = "e5-small-v2"
+
+# Model configurations
+[embedding_config.models]
+[embedding_config.models.e5-small-v2]
+provider = "huggingface"
+model_name_or_path = "intfloat/e5-small-v2"
+dimension = 384
+max_length = 512
+device = "cpu"  # or "cuda", "mps"
+batch_size = 32
+
+[embedding_config.models.e5-large-v2]
+provider = "huggingface"
+model_name_or_path = "intfloat/e5-large-v2"
+dimension = 1024
+max_length = 512
+device = "cpu"
+batch_size = 16
+
+[embedding_config.models.all-MiniLM-L6-v2]
+provider = "huggingface"
+model_name_or_path = "sentence-transformers/all-MiniLM-L6-v2"
+dimension = 384
+max_length = 512
+device = "cpu"
+batch_size = 32
+
+# Example OpenAI embedding model configuration
+# [embedding_config.models.openai-text-embedding-3-small]
+# provider = "openai"
+# model_name_or_path = "text-embedding-3-small"
+# api_key = "${OPENAI_API_KEY}"  # Will use environment variable
+# dimension = 1536
+
 # [chunking_settings]
 # default_method = "words"
 # ...

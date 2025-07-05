@@ -193,12 +193,34 @@ def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type 
         logger.warning(f"Config key '{key}' has value '{value}' which could not be converted to {target_type}. Using default: '{default}'. Error: {e}")
         return default
 
-def load_settings() -> Dict:
+# Global cache for load_settings to avoid redundant file I/O
+_SETTINGS_CACHE: Optional[Dict[str, Any]] = None
+_SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
+
+def load_settings(force_reload: bool = False) -> Dict:
     """
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.
     It first loads a base config (e.g., server-local), then attempts to load a user-specific
     CLI config which can override or extend the base settings.
+    
+    Args:
+        force_reload: If True, bypasses the cache and reloads from disk.
+    
+    Returns:
+        Dictionary containing all configuration settings.
     """
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_LOCK
+    
+    # Initialize lock on first use to avoid import issues
+    if _SETTINGS_CACHE_LOCK is None:
+        import threading
+        _SETTINGS_CACHE_LOCK = threading.Lock()
+    
+    # Thread-safe cache check
+    with _SETTINGS_CACHE_LOCK:
+        if _SETTINGS_CACHE is not None and not force_reload:
+            logger.debug("load_settings: Returning cached configuration (cache hit)")
+            return _SETTINGS_CACHE
 
     current_file_path = Path(__file__).resolve()
     # config.py is in project_root/tldw_server_api/app/core/config.py
@@ -250,6 +272,7 @@ def load_settings() -> Dict:
     toml_config_data = deep_merge_dicts(toml_config_data, base_config_data) # Merge primary config
     toml_config_data = deep_merge_dicts(toml_config_data, user_override_config_data) # Merge user CLI overrides
     logger.info("Merged all configurations: CLI Defaults < Primary Config < User CLI Config.")
+    logger.debug("load_settings: Configuration loaded from disk (cache miss or forced reload)")
     # logger.debug(f"Final toml_config_data after potential merge: {toml_config_data}") # Optional: for verbose debugging
 
     # --- Extract settings from the (potentially merged) TOML, with fallbacks ---
@@ -883,6 +906,12 @@ def load_settings() -> Dict:
             user_data_base_dir_server.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             logger.error(f"Could not create server user data base directory {user_data_base_dir_server}: {e}")
+    
+    # Cache the configuration before returning
+    with _SETTINGS_CACHE_LOCK:
+        _SETTINGS_CACHE = config_dict
+        logger.debug("load_settings: Configuration cached for future use")
+    
     return config_dict
 
 # --- Define API Models (Combined Cloud & Local) ---
@@ -1795,7 +1824,7 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
     Returns:
         True if the setting was saved successfully, False otherwise.
     """
-    global _CONFIG_CACHE, settings
+    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     logger.info(f"Attempting to save setting: [{section}].{key} = {repr(value)}")
 
     # Ensure the parent directory for the config file exists.
@@ -1846,9 +1875,12 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
         logger.success(f"Successfully saved setting to {DEFAULT_CONFIG_PATH}")
 
         # Step 4: Invalidate and reload global config caches to reflect changes immediately.
+        # Clear both caches
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
         load_cli_config_and_ensure_existence(force_reload=True)
-        settings = load_settings()
-        logger.info("Global configuration caches reloaded.")
+        settings = load_settings(force_reload=True)
+        logger.info("Global configuration caches invalidated and reloaded.")
 
         return True
     except (IOError, toml.TomlDecodeError) as e:

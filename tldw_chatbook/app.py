@@ -2,6 +2,8 @@
 # Description: This file contains the main application logic for the tldw_cli, a Textual-based CLI for interacting with various LLM APIs.
 #
 # Imports
+import asyncio
+import concurrent.futures
 import functools
 import inspect
 import logging
@@ -709,6 +711,77 @@ class DeveloperProvider(Provider):
             self.app.notify(f"Failed to execute developer action: {e}", severity="error")
 
 
+# --- Placeholder Window for Lazy Loading ---
+class PlaceholderWindow(Container):
+    """A lightweight placeholder that defers actual window creation until needed."""
+    
+    def __init__(self, app_instance: 'TldwCli', window_class: type, window_id: str, classes: str = "") -> None:
+        """Initialize placeholder with window creation parameters."""
+        super().__init__(id=window_id, classes=f"placeholder-window {classes}")
+        self.app_instance = app_instance
+        self.window_class = window_class
+        self.window_id = window_id
+        self.actual_classes = classes
+        self._actual_window = None
+        self._initialized = False
+        # Log placeholder creation
+        logger.debug(f"PlaceholderWindow created for {window_id} (class: {window_class.__name__})")
+    
+    def initialize(self) -> None:
+        """Create and mount the actual window widget."""
+        if self._initialized:
+            return
+            
+        logger.info(f"Initializing actual window for {self.window_id}")
+        start_time = time.perf_counter()
+        
+        try:
+            # Remove the loading placeholder first
+            for child in list(self.children):
+                child.remove()
+            
+            # Create the actual window
+            self._actual_window = self.window_class(self.app_instance, id=self.window_id, classes=self.actual_classes)
+            
+            # Clear placeholder styling and mount actual window
+            self.remove_class("placeholder-window")
+            self.mount(self._actual_window)
+            self._initialized = True
+            
+            # Populate widgets for specific windows after initialization
+            self._populate_window_widgets()
+            
+            # Log timing
+            duration = time.perf_counter() - start_time
+            log_histogram("lazy_window_initialization_seconds", duration,
+                         labels={"window": self.window_id.replace("-window", "")},
+                         documentation="Time to initialize lazy-loaded window")
+            logger.info(f"Window {self.window_id} initialized in {duration:.3f} seconds")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize window {self.window_id}: {e}", exc_info=True)
+            # Clear any existing children before showing error
+            for child in list(self.children):
+                child.remove()
+            self.mount(Static(f"Error loading {self.window_id}: {str(e)}", classes="error"))
+    
+    def _populate_window_widgets(self) -> None:
+        """Populate widgets for specific windows after they're initialized."""
+        # Don't populate widgets here - let the watch_current_tab handle it
+        # This prevents timing issues where widgets aren't ready yet
+        pass
+    
+    @property
+    def is_initialized(self) -> bool:
+        """Check if the actual window has been initialized."""
+        return self._initialized
+    
+    def compose(self) -> ComposeResult:
+        """Show a loading message until initialized."""
+        if not self._initialized:
+            yield Static("Loading...", classes="loading-placeholder")
+
+
 # --- Main App ---
 class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
@@ -969,63 +1042,46 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                      labels={"phase": "attribute_init"}, 
                      documentation="Duration of startup phase in seconds")
 
-        # Phase 3: Notes service initialization
+        # Phase 3: Parallel initialization of independent services
         phase_start = time.perf_counter()
-        # 1. Get the user name from the loaded settings
-        # The fallback here should match what you expect if settings doesn't have it,
-        # or what's defined as the ultimate default in config.py.
-        user_name_for_notes = settings.get("USERS_NAME", "default_tui_user")
-        self.notes_user_id = user_name_for_notes  # This ID will be passed to service methods
-
-        # 2. Get the full path to the unified ChaChaNotes DB FILE
-        chachanotes_db_file_path = get_chachanotes_db_path()  # This comes from config.py
-        logger.info(f"Unified ChaChaNotes DB file path: {chachanotes_db_file_path}")
-
-        # 3. Determine the PARENT DIRECTORY for NotesInteropService's 'base_db_directory'
-        #    This is what NotesInteropService's __init__ expects for its mkdir check.
-        actual_base_directory_for_service = chachanotes_db_file_path.parent
-        unified_db_file_path = get_chachanotes_db_path()
-        base_directory_for_notes_service = unified_db_file_path.parent
-        logger.info(f"Notes for user '{self.notes_user_id}' will use the unified DB: {chachanotes_db_file_path}")
-        logger.info(f"Base directory to be passed to NotesInteropService: {actual_base_directory_for_service}")
-
-        try:
-            self.notes_service = NotesInteropService(
-                base_db_directory=actual_base_directory_for_service,
-                api_client_id="tldw_tui_client_v1",  # Consistent client ID
-                global_db_to_use=get_chachanotes_db_lazy()  # Pass the actual DB object
-            )
-            # The logger inside NotesInteropService.__init__ will confirm its setup.
-            logger.info(f"NotesInteropService successfully initialized for user '{self.notes_user_id}'.")
-
-        except CharactersRAGDBError as e:
-            logger.error(f"Failed to initialize NotesInteropService: {e}", exc_info=True)
-            self.notes_service = None
-        except Exception as e_notes_init:  # Catch any other unexpected error
-            logger.error(f"Unexpected error during NotesInteropService initialization: {e_notes_init}", exc_info=True)
-            self.notes_service = None
         
-        self._startup_phases["notes_service_init"] = time.perf_counter() - phase_start
-        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["notes_service_init"], 
-                     labels={"phase": "notes_service_init"}, 
-                     documentation="Duration of startup phase in seconds")
-        log_resource_usage()  # Check memory after notes service
+        # Prepare shared data
+        user_name_for_notes = settings.get("USERS_NAME", "default_tui_user")
+        self.notes_user_id = user_name_for_notes
+        
+        # Run independent initializations in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            # Submit all independent initialization tasks
+            futures = {
+                executor.submit(self._init_notes_service, user_name_for_notes): "notes_service",
+                executor.submit(self._init_providers_models): "providers_models",
+                executor.submit(self._init_prompts_service): "prompts_service",
+                executor.submit(self._init_media_db): "media_db"
+            }
+            
+            # Wait for all tasks to complete and log individual timings
+            for future in concurrent.futures.as_completed(futures):
+                task_name = futures[future]
+                try:
+                    task_start = time.perf_counter()
+                    result = future.result()
+                    task_duration = time.perf_counter() - task_start
+                    logger.info(f"Parallel init task '{task_name}' completed in {task_duration:.3f}s")
+                except Exception as e:
+                    logger.error(f"Parallel init task '{task_name}' failed: {e}", exc_info=True)
+        
+        # Log total parallel phase time
+        parallel_duration = time.perf_counter() - phase_start
+        self._startup_phases["parallel_init"] = parallel_duration
+        log_histogram("app_startup_phase_duration_seconds", parallel_duration, 
+                     labels={"phase": "parallel_init"}, 
+                     documentation="Duration of parallel initialization phase")
+        log_resource_usage()  # Check memory after parallel init
 
-        # Phase 4: Providers & Models
-        phase_start = time.perf_counter()
-        logging.debug("__INIT__: Attempting to get providers and models...")
-        try:
-            # Call the function from the config module
-            self.providers_models = get_cli_providers_and_models()
-            logging.info(
-                f"__INIT__: Successfully retrieved providers_models. Count: {len(self.providers_models)}. Keys: {list(self.providers_models.keys())}")
-        except Exception as e_providers:
-            logging.error(f"__INIT__: Failed to get providers and models: {e_providers}", exc_info=True)
+        # Providers, prompts, and media DB are initialized in parallel above
+        # Just ensure we have defaults if parallel init failed
+        if not hasattr(self, 'providers_models'):
             self.providers_models = {}
-        self._startup_phases["providers_models"] = time.perf_counter() - phase_start
-        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["providers_models"], 
-                     labels={"phase": "providers_models"}, 
-                     documentation="Duration of startup phase in seconds")
 
         # --- Initial Tab ---
         initial_tab_from_config = get_cli_setting("general", "default_tab", TAB_CHAT)
@@ -1037,53 +1093,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         self._rich_log_handler: Optional[RichLogHandler] = None # For the RichLog widget in Logs tab
 
-        # Phase 5: PromptsInteropService Initialization
-        phase_start = time.perf_counter()
-        self.prompts_service_initialized = False
-        try:
-            prompts_db_path_str = get_cli_setting("database", "prompts_db_path", str(Path.home() / ".local/share/tldw_cli/tldw_cli_prompts_v2.db"))
-            prompts_db_path = Path(prompts_db_path_str).expanduser().resolve()
-            prompts_db_path.parent.mkdir(parents=True, exist_ok=True)
-            prompts_interop.initialize_interop(db_path=prompts_db_path, client_id=self.prompts_client_id)
-            self.prompts_service_initialized = True
-            logging.info(f"Prompts Interop Service initialized with DB: {prompts_db_path}")
-        except Exception as e_prompts:
-            self.prompts_service_initialized = False
-            logging.error(f"Failed to initialize Prompts Interop Service: {e_prompts}", exc_info=True)
-        self._startup_phases["prompts_service_init"] = time.perf_counter() - phase_start
-        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["prompts_service_init"], 
-                     labels={"phase": "prompts_service_init"}, 
-                     documentation="Duration of startup phase in seconds")
+        # Prompts service is initialized in parallel above
+        # Set up timer
+        self._prompt_search_timer = None
 
-        self._prompt_search_timer = None  # Initialize here
+        # Media DB is initialized in parallel above
+        # Ensure we have media types for UI
+        if not hasattr(self, '_media_types_for_ui'):
+            self._media_types_for_ui = ["Error: Media DB not loaded"]
 
-        # Phase 6: Media DB initialization
-        phase_start = time.perf_counter()
-        try:
-            media_db_path = get_media_db_path()  # From your config.py
-            self.media_db = MediaDatabase(db_path=media_db_path,
-                                          client_id=CLI_APP_CLIENT_ID)  # Use constant for client_id
-            self.loguru_logger.info(
-                f"Media_DB_v2 initialized successfully for client '{CLI_APP_CLIENT_ID}' at {media_db_path}")
-            self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self.media_db instance: {self.media_db}")
-            if self.media_db:
-                self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self.media_db.db_path_str: {self.media_db.db_path_str}")
-            else:
-                self.loguru_logger.debug("ULTRA EARLY APP INIT: self.media_db is None immediately after successful initialization block (should not happen).")
-        except Exception as e_media_init:
-            self.loguru_logger.debug(f"ULTRA EARLY APP INIT: CRITICAL ERROR initializing self.media_db: {e_media_init}", exc_info=True)
-            self.media_db = None
-            self.loguru_logger.critical("ULTRA EARLY APP INIT: self.media_db is None due to exception during initialization.")
-
-        # --- Defer media types loading ---
-        # Media types will be loaded on first access
-        self._media_types_cached = None
-        
-        self._startup_phases["media_db_init"] = time.perf_counter() - phase_start
-        log_histogram("app_startup_phase_duration_seconds", self._startup_phases["media_db_init"], 
-                     labels={"phase": "media_db_init"}, 
-                     documentation="Duration of startup phase in seconds")
-        log_resource_usage()  # Check memory after media DB
+        self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
+        self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
 
         # --- Setup Default view for CCP tab ---
         # Initialize self.ccp_active_view based on initial tab or default state if needed
@@ -1139,27 +1159,69 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Final memory check
         log_resource_usage()
 
-    @property
-    def _media_types_for_ui(self):
-        """Lazy-load media types from database on first access."""
-        if self._media_types_cached is None:
-            load_start = time.perf_counter()
-            try:
-                if self.media_db:
-                    db_types = self.media_db.get_distinct_media_types(include_deleted=False, include_trash=False)
-                    # Now, construct the final list for the UI, adding "All Media"
-                    self._media_types_cached = ["All Media"] + sorted(list(set(db_types)))
-                    load_duration = time.perf_counter() - load_start
-                    self.loguru_logger.info(f"Lazy-loaded {len(self._media_types_cached)} media types for UI in {load_duration:.3f}s")
-                    log_histogram("media_types_lazy_load_duration_seconds", load_duration,
-                                 documentation="Time to lazy-load media types from database")
-                else:
-                    self.loguru_logger.error("self.media_db is None, cannot load media types.")
-                    self._media_types_cached = ["Error: Media DB not loaded"]
-            except Exception as e_media_types_fetch:
-                self.loguru_logger.error(f"Error lazy-loading media types: {e_media_types_fetch}", exc_info=True)
-                self._media_types_cached = ["Error: Exception fetching media types"]
-        return self._media_types_cached
+
+    def _init_notes_service(self, user_name_for_notes: str) -> None:
+        """Initialize notes service - for parallel execution."""
+        try:
+            # Get the full path to the unified ChaChaNotes DB FILE
+            chachanotes_db_file_path = get_chachanotes_db_path()
+            logger.info(f"Unified ChaChaNotes DB file path: {chachanotes_db_file_path}")
+            
+            # Determine the PARENT DIRECTORY for NotesInteropService's 'base_db_directory'
+            actual_base_directory_for_service = chachanotes_db_file_path.parent
+            logger.info(f"Notes for user '{user_name_for_notes}' will use the unified DB: {chachanotes_db_file_path}")
+            
+            self.notes_service = NotesInteropService(
+                base_db_directory=actual_base_directory_for_service,
+                api_client_id="tldw_tui_client_v1",
+                global_db_to_use=get_chachanotes_db_lazy()
+            )
+            logger.info(f"NotesInteropService successfully initialized for user '{user_name_for_notes}'.")
+        except Exception as e:
+            logger.error(f"Failed to initialize NotesInteropService: {e}", exc_info=True)
+            self.notes_service = None
+    
+    def _init_providers_models(self) -> None:
+        """Initialize providers and models - for parallel execution."""
+        try:
+            self.providers_models = get_cli_providers_and_models()
+            logger.info(f"Successfully retrieved providers_models. Count: {len(self.providers_models)}. Keys: {list(self.providers_models.keys())}")
+        except Exception as e:
+            logger.error(f"Failed to get providers and models: {e}", exc_info=True)
+            self.providers_models = {}
+    
+    def _init_prompts_service(self) -> None:
+        """Initialize prompts service - for parallel execution."""
+        self.prompts_service_initialized = False
+        try:
+            prompts_db_path_str = get_cli_setting("database", "prompts_db_path", str(Path.home() / ".local/share/tldw_cli/tldw_cli_prompts_v2.db"))
+            prompts_db_path = Path(prompts_db_path_str).expanduser().resolve()
+            prompts_db_path.parent.mkdir(parents=True, exist_ok=True)
+            prompts_interop.initialize_interop(db_path=prompts_db_path, client_id=self.prompts_client_id)
+            self.prompts_service_initialized = True
+            logger.info(f"Prompts Interop Service initialized with DB: {prompts_db_path}")
+        except Exception as e:
+            self.prompts_service_initialized = False
+            logger.error(f"Failed to initialize Prompts Interop Service: {e}", exc_info=True)
+    
+    def _init_media_db(self) -> None:
+        """Initialize media database - for parallel execution."""
+        try:
+            media_db_path = get_media_db_path()
+            self.media_db = MediaDatabase(db_path=media_db_path, client_id=CLI_APP_CLIENT_ID)
+            logger.info(f"Media_DB_v2 initialized successfully for client '{CLI_APP_CLIENT_ID}' at {media_db_path}")
+            
+            # Pre-fetch media types for UI
+            if self.media_db:
+                db_types = self.media_db.get_distinct_media_types(include_deleted=False, include_trash=False)
+                self._media_types_for_ui = ["All Media"] + sorted(list(set(db_types)))
+                logger.info(f"Pre-fetched {len(self._media_types_for_ui)} media types for UI.")
+            else:
+                self._media_types_for_ui = ["Error: Media DB not loaded"]
+        except Exception as e:
+            logger.error(f"Failed to initialize media DB: {e}", exc_info=True)
+            self.media_db = None
+            self._media_types_for_ui = ["Error: Exception fetching media types"]
 
     def _build_handler_map(self) -> dict:
         """Constructs the master button handler map from all event modules."""
@@ -1377,93 +1439,51 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
         logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
         
-        # Store window mapping for lazy creation
-        self._window_mapping = {
-            "chat": (chat_window_class, "chat-window"),
-            "ccp": (CCPWindow, "conversations_characters_prompts-window"),
-            "notes": (NotesWindow, "notes-window"),
-            "media": (MediaWindow, "media-window"),
-            "search": (SearchWindow, "search-window"),
-            "ingest": (IngestWindow, "ingest-window"),
-            "tools_settings": (ToolsSettingsWindow, "tools_settings-window"),
-            "llm_management": (LLMManagementWindow, "llm_management-window"),
-            "logs": (LogsWindow, "logs-window"),
-            "stats": (StatsWindow, "stats-window"),
-            "evals": (EvalsWindow, "evals-window"),
-            "coding": (CodingWindow, "coding-window"),
-            "embeddings": (EmbeddingsWindow, "embeddings-window"),
-        }
-        
-        # Track which windows have been created
-        self._created_windows = set()
-        
         with Container(id="content"):
-            # Create placeholder windows for all tabs to maintain expected structure
-            windows_created = 0
-            for tab_name, (window_class, window_id) in self._window_mapping.items():
-                if tab_name == self._initial_tab_value:
-                    # Create and show the initial tab
-                    window_start = time.perf_counter()
-                    window = window_class(self, id=window_id, classes="window")
-                    yield window
-                    window_duration = time.perf_counter() - window_start
-                    log_histogram("app_window_creation_duration_seconds", window_duration,
-                                 labels={"window": tab_name}, 
-                                 documentation="Time to create individual window")
-                    self._created_windows.add(tab_name)
-                    windows_created += 1
+            windows = [
+                ("chat", chat_window_class, "chat-window"),
+                ("ccp", CCPWindow, "conversations_characters_prompts-window"),
+                ("notes", NotesWindow, "notes-window"),
+                ("media", MediaWindow, "media-window"),
+                ("search", SearchWindow, "search-window"),
+                ("ingest", IngestWindow, "ingest-window"),
+                ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
+                ("llm_management", LLMManagementWindow, "llm_management-window"),
+                ("logs", LogsWindow, "logs-window"),
+                ("stats", StatsWindow, "stats-window"),
+                ("evals", EvalsWindow, "evals-window"),
+                ("coding", CodingWindow, "coding-window"),
+                ("embeddings", EmbeddingsWindow, "embeddings-window"),
+            ]
+            
+            for window_name, window_class, window_id in windows:
+                window_start = time.perf_counter()
+                
+                # Use lazy loading for non-initial tabs
+                initial_tab = self._initial_tab_value
+                is_initial_window = window_id == f"{initial_tab}-window"
+                
+                if is_initial_window:
+                    # Create the actual window for the initial tab
+                    logger.info(f"Creating actual window for initial tab: {window_name}")
+                    yield window_class(self, id=window_id, classes="window")
                 else:
-                    # Create placeholder for lazy loading
-                    # Don't use "window" class on placeholders to avoid CSS conflicts
-                    placeholder = Container(id=window_id, classes="placeholder-window")
-                    placeholder.display = False
-                    yield placeholder
+                    # Create a placeholder for other tabs
+                    logger.debug(f"Creating placeholder for tab: {window_name}")
+                    yield PlaceholderWindow(self, window_class, window_id, classes="window")
+                
+                window_duration = time.perf_counter() - window_start
+                log_histogram("app_window_creation_duration_seconds", window_duration,
+                             labels={"window": window_name, "type": "actual" if is_initial_window else "placeholder"}, 
+                             documentation="Time to create individual window")
                 
         # Log total content area creation time
         content_area_duration = time.perf_counter() - content_area_start
         log_histogram("ui_content_area_duration_seconds", content_area_duration,
                      documentation="Total time to create all content windows")
-        log_counter("ui_windows_created", windows_created, 
+        log_counter("ui_windows_created", len(windows), 
                    documentation="Number of UI windows created")
     
-    def _create_window_lazily(self, tab_name: str) -> None:
-        """Creates a window on demand when its tab is first accessed."""
-        if tab_name in self._created_windows:
-            return  # Already created
-        
-        if tab_name not in self._window_mapping:
-            logger.error(f"Cannot create window for unknown tab: {tab_name}")
-            return
-        
-        window_start = time.perf_counter()
-        logger.info(f"Lazy-creating window for tab: {tab_name}")
-        
-        window_class, window_id = self._window_mapping[tab_name]
-        
-        try:
-            # Find and remove the placeholder
-            placeholder = self.query_one(f"#{window_id}")
-            parent = placeholder.parent
-            
-            # Create the real window
-            new_window = window_class(self, id=window_id, classes="window")
-            new_window.display = False  # Start hidden, will be shown by watch_current_tab
-            
-            # Replace placeholder with real window
-            placeholder.remove()
-            parent.mount(new_window)
-            
-            # Mark as created
-            self._created_windows.add(tab_name)
-            
-            window_duration = time.perf_counter() - window_start
-            log_histogram("app_window_creation_duration_seconds", window_duration,
-                         labels={"window": tab_name, "lazy": "true"}, 
-                         documentation="Time to create individual window")
-            logger.info(f"Successfully lazy-created window for tab: {tab_name} in {window_duration:.3f}s")
-            
-        except Exception as e:
-            logger.error(f"Failed to lazy-create window for tab {tab_name}: {e}", exc_info=True)
 
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
@@ -1836,6 +1856,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def watch_search_active_sub_tab(self, old_sub_tab: Optional[str], new_sub_tab: Optional[str]) -> None:
         """Shows the correct sub-tab view in the Search tab and hides others."""
         if not self._ui_ready or not new_sub_tab:
+            return
+
+        # Check if search window is initialized (not a placeholder)
+        try:
+            search_window = self.query_one("#search-window")
+            if isinstance(search_window, PlaceholderWindow):
+                self.loguru_logger.debug("Search window is still a placeholder, deferring sub-tab switch")
+                return
+        except QueryError:
+            self.loguru_logger.debug("Search window not found, deferring sub-tab switch")
             return
 
         self.loguru_logger.debug(f"Search sub-tab watcher: Changing from '{old_sub_tab}' to '{new_sub_tab}'")
@@ -2258,10 +2288,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Populate dynamic selects and lists
         # These also might rely on the main tab windows being fully composed.
         phase_start = time.perf_counter()
-        # Only populate chat filter if chat tab is initially shown
-        if self._initial_tab_value == "chat":
+        # Only populate widgets for the initial tab to avoid errors with placeholders
+        initial_tab = self._initial_tab_value
+        if initial_tab == TAB_CHAT:
             self.call_later(chat_handlers.populate_chat_conversation_character_filter_select, self)
-        # CCP population moved to lazy loading in watch_current_tab
+        # Don't populate CCP widgets here - let watch_current_tab handle it when the tab is actually shown
+        # This prevents errors when the window isn't fully initialized yet
         log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
                      labels={"phase": "populate_lists"}, 
                      documentation="Duration of post-mount phase in seconds")
@@ -2496,25 +2528,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             try: self.query_one(f"#{old_tab}-window").display = False
             except QueryError: logging.warning(f"Watcher: Could not find old window #{old_tab}-window")
 
-        # Lazy window creation - create window if it doesn't exist yet
-        if hasattr(self, '_window_mapping') and new_tab not in self._created_windows:
-            self._create_window_lazily(new_tab)
-            
-            # Handle first-time initialization for specific tabs
-            # Use set_timer with a small delay to ensure widgets are fully mounted
-            if new_tab == "ccp":
-                # Populate CCP tab data on first access with a delay
-                self.set_timer(0.1, lambda: ccp_handlers.populate_ccp_character_select(self))
-                self.set_timer(0.1, lambda: ccp_handlers.populate_ccp_prompts_list_view(self))
-            elif new_tab == "chat":
-                # Populate chat filter on first access if not initial tab
-                if self._initial_tab_value != "chat":
-                    self.set_timer(0.1, lambda: chat_handlers.populate_chat_conversation_character_filter_select(self))
-
         # Show New Tab UI
         try:
             self.query_one(f"#tab-{new_tab}", Button).add_class("-active")
             new_window = self.query_one(f"#{new_tab}-window")
+            
+            # Initialize placeholder window if needed
+            if isinstance(new_window, PlaceholderWindow) and not new_window.is_initialized:
+                loguru_logger.info(f"Initializing lazy-loaded window for tab: {new_tab}")
+                new_window.initialize()
+            
             new_window.display = True
             
             # Update word count and token count in footer based on tab
@@ -2574,10 +2597,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.call_after_refresh(chat_handlers._populate_chat_character_search_list, self) # Populate character list
         elif new_tab == TAB_CCP:
             # Initial population for CCP tab when switched to
-            # Use call_after_refresh for async functions to ensure proper execution
-            self.call_after_refresh(ccp_handlers.populate_ccp_character_select, self)
-            self.call_after_refresh(ccp_handlers.populate_ccp_prompts_list_view, self)
-            self.call_after_refresh(ccp_handlers.perform_ccp_conversation_search, self) # Initial search/list for conversations
+            # Add a short delay to ensure the window is fully mounted and ready
+            def populate_ccp_widgets():
+                try:
+                    # Check if the window is actually initialized
+                    ccp_window = self.query_one("#conversations_characters_prompts-window")
+                    if isinstance(ccp_window, PlaceholderWindow):
+                        # Window isn't initialized yet, skip population
+                        loguru_logger.warning("CCP window is still a placeholder, skipping widget population")
+                        return
+                    
+                    # Now it's safe to populate widgets
+                    self.call_after_refresh(ccp_handlers.populate_ccp_character_select, self)
+                    self.call_after_refresh(ccp_handlers.populate_ccp_prompts_list_view, self)
+                    self.call_after_refresh(ccp_handlers.perform_ccp_conversation_search, self)
+                except QueryError:
+                    loguru_logger.error("CCP window not found during widget population")
+            
+            # Use a timer to ensure the window is fully initialized
+            self.set_timer(0.1, populate_ccp_widgets)
         elif new_tab == TAB_NOTES:
             # Use call_after_refresh for async function
             self.call_after_refresh(notes_handlers.load_and_display_notes_handler, self)
@@ -2588,8 +2626,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             except QueryError:
                 self.loguru_logger.error("Could not find MediaWindow to activate its initial view.")
         elif new_tab == TAB_SEARCH:
-            if not self.search_active_sub_tab:
-                self.search_active_sub_tab = self._initial_search_sub_tab_view
+            # Handle search tab initialization with a delay to ensure window is ready
+            def initialize_search_tab():
+                try:
+                    # Check if the window is actually initialized
+                    search_window = self.query_one("#search-window")
+                    if isinstance(search_window, PlaceholderWindow):
+                        # Window isn't initialized yet, skip setting sub-tab
+                        loguru_logger.warning("Search window is still a placeholder, skipping sub-tab initialization")
+                        return
+                    
+                    # Now it's safe to set the active sub-tab
+                    if not self.search_active_sub_tab:
+                        self.search_active_sub_tab = self._initial_search_sub_tab_view
+                except QueryError:
+                    loguru_logger.error("Search window not found during initialization")
+            
+            # Use a timer to ensure the window is fully initialized
+            self.set_timer(0.1, initialize_search_tab)
         elif new_tab == TAB_INGEST:
             if not self.ingest_active_view:
                 self.loguru_logger.debug(

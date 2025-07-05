@@ -12,4 +12,8 @@
     overflow: hidden;
 }
 
-.placeholder-window { align: center middle; background: $panel; }
+.placeholder-window { 
+    align: center middle; 
+    background: $panel; 
+    display: none;  /* Placeholders should always be hidden */
+}
