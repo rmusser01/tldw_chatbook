@@ -2339,6 +2339,25 @@ async def handle_ingest_local_web_button_pressed(app: 'TldwCli', event: 'Button.
         logger.error(f"Error handling local web button {button_id}: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
 
+async def handle_local_pdf_ebook_submit_button_pressed(app: 'TldwCli', event: 'Button.Pressed') -> None:
+    """Handle local PDF and ebook processing button presses."""
+    button_id = event.button.id
+    media_type = "pdf" if button_id == "local-submit-pdf" else "ebook"
+    
+    try:
+        ingest_window = app.query_one("#ingest-window", IngestWindow)
+        
+        if media_type == "pdf":
+            await ingest_window.handle_local_pdf_process()
+        else:  # ebook
+            await ingest_window.handle_local_ebook_process()
+            
+    except QueryError:
+        logger.error(f"Could not find IngestWindow to handle button {button_id}")
+    except Exception as e:
+        logger.error(f"Error handling local {media_type} button: {e}")
+        app.notify(f"Error: {str(e)}", severity="error")
+
 # --- Button Handler Map ---
 INGEST_BUTTON_HANDLERS = {
     # Prompts
@@ -2368,6 +2387,9 @@ INGEST_BUTTON_HANDLERS = {
     "ingest-local-web-process": handle_ingest_local_web_button_pressed,
     "ingest-local-web-stop": handle_ingest_local_web_button_pressed,
     "ingest-local-web-retry": handle_ingest_local_web_button_pressed,
+    # Local PDF and Ebook buttons
+    "local-submit-pdf": handle_local_pdf_ebook_submit_button_pressed,
+    "local-submit-ebook": handle_local_pdf_ebook_submit_button_pressed,
 }
 
 

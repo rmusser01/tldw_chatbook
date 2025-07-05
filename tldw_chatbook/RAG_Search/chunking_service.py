@@ -12,6 +12,16 @@ from tldw_chatbook.Chunking.Chunk_Lib import Chunker
 logger = logging.getLogger(__name__)
 
 
+class ChunkingError(Exception):
+    """Base exception for chunking-related errors."""
+    pass
+
+
+class InvalidChunkingMethodError(ChunkingError):
+    """Exception raised when an invalid chunking method is specified."""
+    pass
+
+
 class ChunkingService:
     """
     Minimal chunking service that wraps the existing Chunk_Lib functionality.
@@ -97,3 +107,35 @@ class ChunkingService:
                 'word_count': len(content.split()),
                 'chunk_index': 0
             }]
+
+
+def improved_chunking_process(text: str, options: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Wrapper function to provide compatibility with the server's chunking interface.
+    
+    Args:
+        text: The text to chunk
+        options: Dictionary containing chunking options:
+            - method: The chunking method to use
+            - max_size: Maximum size of each chunk
+            - overlap: Overlap between chunks
+            
+    Returns:
+        List of chunk dictionaries
+        
+    Raises:
+        InvalidChunkingMethodError: If the chunking method is not supported
+        ChunkingError: For other chunking-related errors
+    """
+    service = ChunkingService()
+    
+    # Validate method
+    valid_methods = ['words', 'sentences', 'paragraphs', 'tokens', 'semantic']
+    method = options.get('method', 'words')
+    if method not in valid_methods:
+        raise InvalidChunkingMethodError(f"Invalid chunking method: {method}. Valid methods are: {valid_methods}")
+    
+    try:
+        return service.chunk_text(text, options)
+    except Exception as e:
+        raise ChunkingError(f"Error during chunking: {str(e)}") from e

@@ -107,6 +107,19 @@ websearch = [
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
 local_transformers = ["transformers"]
+pdf = [
+    "pymupdf",
+    "pymupdf4llm",
+    "docling",
+]
+ebook = [
+    "ebooklib",
+    "beautifulsoup4",
+    "lxml",
+    "html2text",
+    "markdownify",
+    "defusedxml",
+]
 dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests

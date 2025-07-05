@@ -408,10 +408,14 @@ class IngestWindow(Container):
                 yield from self.compose_local_document_tab()
                 
             with VerticalScroll(id="ingest-view-local-pdf", classes="ingest-view-area"):
-                yield from self.compose_local_pdf_tab()
+                from ..Widgets.IngestLocalPdfWindow import IngestLocalPdfWindow
+                window = IngestLocalPdfWindow(self.app_instance)
+                yield from window.compose()
                 
             with VerticalScroll(id="ingest-view-local-ebook", classes="ingest-view-area"):
-                yield from self.compose_local_ebook_tab()
+                from ..Widgets.IngestLocalEbookWindow import IngestLocalEbookWindow
+                window = IngestLocalEbookWindow(self.app_instance)
+                yield from window.compose()
                 
             with VerticalScroll(id="ingest-view-local-web", classes="ingest-view-area"):
                 window = IngestLocalWebArticleWindow(self.app_instance)
@@ -591,6 +595,28 @@ class IngestWindow(Container):
         elif button_id == "ingest-local-web-stop":
             event.stop()
             await self._handle_stop_web_scraping()
+        
+        # Handle local PDF/Ebook browse buttons
+        elif button_id.startswith("local-browse-local-files-button-"):
+            event.stop()
+            media_type = button_id.replace("local-browse-local-files-button-", "")
+            self._current_media_type_for_file_dialog = f"local_{media_type}"
+            
+            raw_initial_path = self.app_instance.app_config.get("user_data_path", Path.home())
+            dialog_initial_path = str(raw_initial_path)
+            
+            # Set appropriate file filters based on media type
+            filters = self._get_file_filters_for_media_type(media_type)
+            
+            logger.debug(f"Opening file dialog for local {media_type} with initial path '{dialog_initial_path}'.")
+            
+            await self.app_instance.push_screen(
+                FileOpen(
+                    title=f"Select {media_type.title()} Files",
+                    filters=filters
+                ),
+                callback=self.handle_file_picker_dismissed
+            )
         
         # If IngestWindow has a superclass that also defines on_button_pressed, consider calling it:
         # else:
@@ -2012,6 +2038,344 @@ class IngestWindow(Container):
             if para:
                 cleaned_paragraphs.append(para)
         return '\n\n'.join(cleaned_paragraphs)
+    
+    async def handle_local_pdf_process(self) -> None:
+        """Handle processing of local PDF files."""
+        logger.info("Processing local PDF files")
+        
+        # Get UI elements
+        try:
+            loading_indicator = self.query_one("#local-loading-indicator-pdf", LoadingIndicator)
+            status_area = self.query_one("#local-status-area-pdf", TextArea)
+            process_button = self.query_one("#local-submit-pdf", Button)
+        except Exception as e:
+            logger.error(f"Error finding UI elements: {e}")
+            self.app_instance.notify("Error: UI elements not found", severity="error")
+            return
+        
+        # Show loading state
+        loading_indicator.display = True
+        loading_indicator.classes = loading_indicator.classes - {"hidden"}
+        status_area.clear()
+        status_area.load_text("Processing PDF files locally...")
+        status_area.display = True
+        status_area.classes = status_area.classes - {"hidden"}
+        process_button.disabled = True
+        
+        try:
+            # Get selected files
+            local_key = "local_pdf"
+            selected_files = self.selected_local_files.get(local_key, [])
+            
+            # Also check URLs
+            urls_textarea = self.query_one("#local-urls-pdf", TextArea)
+            urls_text = urls_textarea.text.strip()
+            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            
+            if not selected_files and not urls:
+                self.app_instance.notify("Please select at least one PDF file or provide URLs", severity="warning")
+                return
+            
+            # Get processing options
+            pdf_engine_select = self.query_one("#local-pdf-engine-pdf", Select)
+            pdf_engine = str(pdf_engine_select.value)
+            
+            # Get metadata
+            title_override = self.query_one("#local-title-pdf", Input).value.strip()
+            author = self.query_one("#local-author-pdf", Input).value.strip()
+            keywords_text = self.query_one("#local-keywords-pdf", TextArea).text.strip()
+            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
+            
+            # Get processing options
+            perform_analysis = self.query_one("#local-perform-analysis-pdf", Checkbox).value
+            custom_prompt = self.query_one("#local-custom-prompt-pdf", TextArea).text.strip()
+            system_prompt = self.query_one("#local-system-prompt-pdf", TextArea).text.strip()
+            
+            # Get chunking options
+            perform_chunking = self.query_one("#local-perform-chunking-pdf", Checkbox).value
+            chunk_method = self.query_one("#local-chunk-method-pdf", Select).value
+            chunk_size = int(self.query_one("#local-chunk-size-pdf", Input).value or "500")
+            chunk_overlap = int(self.query_one("#local-chunk-overlap-pdf", Input).value or "200")
+            
+            # Check if media DB is available
+            if not self.app_instance.media_db:
+                logger.error("Media database not initialized")
+                self.app_instance.notify("Error: Media database not available", severity="error")
+                status_area.load_text("Error: Media database not available")
+                return
+            
+            # Import the local PDF processing function
+            try:
+                from ..Local_Ingestion.PDF_Processing_Lib import process_pdf
+            except ImportError as e:
+                logger.error(f"Failed to import PDF processing library: {e}")
+                self.app_instance.notify("Error: PDF processing library not available. Please install with: pip install tldw-cli[pdf]", severity="error")
+                status_area.load_text("Error: PDF processing library not available.\nPlease install with: pip install tldw-cli[pdf]")
+                return
+            
+            # Process files
+            processed_count = 0
+            error_count = 0
+            status_messages = []
+            
+            # Process local files
+            for file_path in selected_files:
+                try:
+                    status_area.append(f"\nProcessing: {file_path.name}...")
+                    
+                    # Process PDF using local library
+                    result = await self.app_instance.run_worker(
+                        lambda: process_pdf(
+                            file_path=str(file_path),
+                            output_dir=None,  # We'll handle storage ourselves
+                            parser=pdf_engine,
+                            chunk_method=chunk_method if perform_chunking else None,
+                            chunk_size=chunk_size,
+                            chunk_overlap=chunk_overlap,
+                            summarize=perform_analysis,
+                            custom_prompt=custom_prompt if custom_prompt else None
+                        )
+                    )
+                    
+                    if result and result.get('status') == 'success':
+                        # Extract content and metadata
+                        content = result.get('content', '')
+                        title = title_override or result.get('metadata', {}).get('title', file_path.stem)
+                        
+                        # Add to media database
+                        media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
+                            url=str(file_path),
+                            title=title,
+                            media_type="pdf",
+                            content=content,
+                            keywords=keywords,
+                            author=author,
+                            metadata={
+                                'pdf_engine': pdf_engine,
+                                'chunks': result.get('chunks', []),
+                                'analysis': result.get('analysis', ''),
+                                'processing_time': result.get('processing_time', 0)
+                            }
+                        )
+                        
+                        if media_id:
+                            processed_count += 1
+                            status_messages.append(f"✅ {title} - ID: {media_id}")
+                            status_area.append(f"\n✅ Successfully processed: {title}")
+                        else:
+                            error_count += 1
+                            status_messages.append(f"❌ {file_path.name} - Database error: {msg}")
+                            status_area.append(f"\n❌ Database error for {file_path.name}: {msg}")
+                    else:
+                        error_count += 1
+                        error_msg = result.get('error', 'Unknown error') if result else 'Processing failed'
+                        status_messages.append(f"❌ {file_path.name} - {error_msg}")
+                        status_area.append(f"\n❌ Failed to process {file_path.name}: {error_msg}")
+                        
+                except Exception as e:
+                    error_count += 1
+                    error_msg = str(e)
+                    status_messages.append(f"❌ {file_path.name} - {error_msg}")
+                    status_area.append(f"\n❌ Error processing {file_path.name}: {error_msg}")
+                    logger.error(f"Error processing PDF {file_path}: {e}", exc_info=True)
+            
+            # Process URLs if any
+            if urls:
+                status_area.append(f"\n\nProcessing {len(urls)} URLs...")
+                # URLs would need web scraping support - for now just notify
+                status_area.append("\n⚠️ URL processing for PDFs requires web scraping support")
+            
+            # Final summary
+            status_area.append(f"\n\n## Processing Complete\n")
+            status_area.append(f"✅ Successfully processed: {processed_count} files\n")
+            if error_count > 0:
+                status_area.append(f"❌ Errors: {error_count} files\n")
+            
+            # Notifications
+            if processed_count > 0:
+                self.app_instance.notify(f"Successfully processed {processed_count} PDF files", severity="information")
+            if error_count > 0:
+                self.app_instance.notify(f"Failed to process {error_count} PDF files", severity="warning")
+                
+        except Exception as e:
+            logger.error(f"Error in PDF processing: {e}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+            status_area.append(f"\n\nError: {str(e)}")
+        finally:
+            # Reset UI state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+    
+    async def handle_local_ebook_process(self) -> None:
+        """Handle processing of local ebook files."""
+        logger.info("Processing local ebook files")
+        
+        # Get UI elements
+        try:
+            loading_indicator = self.query_one("#local-loading-indicator-ebook", LoadingIndicator)
+            status_area = self.query_one("#local-status-area-ebook", TextArea)
+            process_button = self.query_one("#local-submit-ebook", Button)
+        except Exception as e:
+            logger.error(f"Error finding UI elements: {e}")
+            self.app_instance.notify("Error: UI elements not found", severity="error")
+            return
+        
+        # Show loading state
+        loading_indicator.display = True
+        loading_indicator.classes = loading_indicator.classes - {"hidden"}
+        status_area.clear()
+        status_area.load_text("Processing ebook files locally...")
+        status_area.display = True
+        status_area.classes = status_area.classes - {"hidden"}
+        process_button.disabled = True
+        
+        try:
+            # Get selected files
+            local_key = "local_ebook"
+            selected_files = self.selected_local_files.get(local_key, [])
+            
+            # Also check URLs
+            urls_textarea = self.query_one("#local-urls-ebook", TextArea)
+            urls_text = urls_textarea.text.strip()
+            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            
+            if not selected_files and not urls:
+                self.app_instance.notify("Please select at least one ebook file or provide URLs", severity="warning")
+                return
+            
+            # Get processing options
+            extraction_method_select = self.query_one("#local-ebook-extraction-method-ebook", Select)
+            extraction_method = str(extraction_method_select.value)
+            
+            # Get metadata
+            title_override = self.query_one("#local-title-ebook", Input).value.strip()
+            author = self.query_one("#local-author-ebook", Input).value.strip()
+            keywords_text = self.query_one("#local-keywords-ebook", TextArea).text.strip()
+            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
+            
+            # Get processing options
+            perform_analysis = self.query_one("#local-perform-analysis-ebook", Checkbox).value
+            custom_prompt = self.query_one("#local-custom-prompt-ebook", TextArea).text.strip()
+            system_prompt = self.query_one("#local-system-prompt-ebook", TextArea).text.strip()
+            
+            # Get chunking options
+            perform_chunking = self.query_one("#local-perform-chunking-ebook", Checkbox).value
+            chunk_method = self.query_one("#local-chunk-method-ebook", Select).value
+            chunk_size = int(self.query_one("#local-chunk-size-ebook", Input).value or "500")
+            chunk_overlap = int(self.query_one("#local-chunk-overlap-ebook", Input).value or "200")
+            
+            # Check if media DB is available
+            if not self.app_instance.media_db:
+                logger.error("Media database not initialized")
+                self.app_instance.notify("Error: Media database not available", severity="error")
+                status_area.load_text("Error: Media database not available")
+                return
+            
+            # Import the local ebook processing function
+            try:
+                from ..Local_Ingestion.Book_Ingestion_Lib import process_epub
+            except ImportError as e:
+                logger.error(f"Failed to import ebook processing library: {e}")
+                self.app_instance.notify("Error: Ebook processing library not available. Please install with: pip install tldw-cli[ebook]", severity="error")
+                status_area.load_text("Error: Ebook processing library not available.\nPlease install with: pip install tldw-cli[ebook]")
+                return
+            
+            # Process files
+            processed_count = 0
+            error_count = 0
+            status_messages = []
+            
+            # Process local files
+            for file_path in selected_files:
+                try:
+                    status_area.append(f"\nProcessing: {file_path.name}...")
+                    
+                    # Process ebook using local library
+                    result = await self.app_instance.run_worker(
+                        lambda: process_epub(
+                            file_path=str(file_path),
+                            output_dir=None,  # We'll handle storage ourselves
+                            extraction_method=extraction_method,
+                            chunk_method=chunk_method if perform_chunking else None,
+                            chunk_size=chunk_size,
+                            chunk_overlap=chunk_overlap,
+                            summarize=perform_analysis,
+                            custom_prompt=custom_prompt if custom_prompt else None
+                        )
+                    )
+                    
+                    if result and result.get('status') == 'success':
+                        # Extract content and metadata
+                        content = result.get('content', '')
+                        title = title_override or result.get('metadata', {}).get('title', file_path.stem)
+                        book_author = result.get('metadata', {}).get('author', '')
+                        
+                        # Add to media database
+                        media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
+                            url=str(file_path),
+                            title=title,
+                            media_type="ebook",
+                            content=content,
+                            keywords=keywords,
+                            author=author or book_author,
+                            metadata={
+                                'extraction_method': extraction_method,
+                                'chunks': result.get('chunks', []),
+                                'analysis': result.get('analysis', ''),
+                                'chapters': result.get('chapters', []),
+                                'processing_time': result.get('processing_time', 0)
+                            }
+                        )
+                        
+                        if media_id:
+                            processed_count += 1
+                            status_messages.append(f"✅ {title} - ID: {media_id}")
+                            status_area.append(f"\n✅ Successfully processed: {title}")
+                        else:
+                            error_count += 1
+                            status_messages.append(f"❌ {file_path.name} - Database error: {msg}")
+                            status_area.append(f"\n❌ Database error for {file_path.name}: {msg}")
+                    else:
+                        error_count += 1
+                        error_msg = result.get('error', 'Unknown error') if result else 'Processing failed'
+                        status_messages.append(f"❌ {file_path.name} - {error_msg}")
+                        status_area.append(f"\n❌ Failed to process {file_path.name}: {error_msg}")
+                        
+                except Exception as e:
+                    error_count += 1
+                    error_msg = str(e)
+                    status_messages.append(f"❌ {file_path.name} - {error_msg}")
+                    status_area.append(f"\n❌ Error processing {file_path.name}: {error_msg}")
+                    logger.error(f"Error processing ebook {file_path}: {e}", exc_info=True)
+            
+            # Process URLs if any
+            if urls:
+                status_area.append(f"\n\nProcessing {len(urls)} URLs...")
+                # URLs would need web scraping support - for now just notify
+                status_area.append("\n⚠️ URL processing for ebooks requires web scraping support")
+            
+            # Final summary
+            status_area.append(f"\n\n## Processing Complete\n")
+            status_area.append(f"✅ Successfully processed: {processed_count} files\n")
+            if error_count > 0:
+                status_area.append(f"❌ Errors: {error_count} files\n")
+            
+            # Notifications
+            if processed_count > 0:
+                self.app_instance.notify(f"Successfully processed {processed_count} ebook files", severity="information")
+            if error_count > 0:
+                self.app_instance.notify(f"Failed to process {error_count} ebook files", severity="warning")
+                
+        except Exception as e:
+            logger.error(f"Error in ebook processing: {e}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+            status_area.append(f"\n\nError: {str(e)}")
+        finally:
+            # Reset UI state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
     
     def compose_subscriptions_tab(self) -> ComposeResult:
         """Composes the Subscriptions tab content for RSS/Atom feed and URL monitoring."""
