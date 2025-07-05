@@ -1956,6 +1956,52 @@ def initialize_all_databases():
     logger.info("CLI database initialization complete.")
 
 
+# --- Lazy Database Getters ---
+def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
+    """Get the ChaChaNotes database instance, initializing it lazily if needed."""
+    global chachanotes_db
+    if chachanotes_db is None:
+        chachanotes_path = get_chachanotes_db_path()
+        logger.info(f"Lazy-initializing ChaChaNotes_DB at: {chachanotes_path}")
+        try:
+            chachanotes_db = CharactersRAGDB(db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID)
+            logger.success(f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}")
+        except Exception as e:
+            logger.error(f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}", exc_info=True)
+            chachanotes_db = None
+    return chachanotes_db
+
+
+def get_prompts_db_lazy() -> Optional[PromptsDatabase]:
+    """Get the Prompts database instance, initializing it lazily if needed."""
+    global prompts_db
+    if prompts_db is None:
+        prompts_path = get_prompts_db_path()
+        logger.info(f"Lazy-initializing Prompts_DB at: {prompts_path}")
+        try:
+            prompts_db = PromptsDatabase(db_path=prompts_path, client_id=CLI_APP_CLIENT_ID)
+            logger.success(f"Prompts_DB lazy-initialized successfully at {prompts_path}")
+        except Exception as e:
+            logger.error(f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}", exc_info=True)
+            prompts_db = None
+    return prompts_db
+
+
+def get_media_db_lazy() -> Optional[MediaDatabase]:
+    """Get the Media database instance, initializing it lazily if needed."""
+    global media_db
+    if media_db is None:
+        media_path = get_media_db_path()
+        logger.info(f"Lazy-initializing Media_DB_v2 at: {media_path}")
+        try:
+            media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
+            logger.success(f"Media_DB_v2 lazy-initialized successfully at {media_path}")
+        except Exception as e:
+            logger.error(f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}", exc_info=True)
+            media_db = None
+    return media_db
+
+
 # --- API Models (should be defined based on CONFIG_TOML_CONTENT or loaded from it) ---
 # These can be loaded dynamically from the config or kept as fallback statics
 # For simplicity, if CONFIG_TOML_CONTENT has [providers], use that.
@@ -2010,17 +2056,10 @@ CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT = settings.get("prompts_strings", {}).get("s
 
 # --- Load CLI Config and Initialize Databases on module import ---
 # The `settings` global variable is now the result of the unified load_settings()
-logger.debug("CRITICAL DEBUG: CALLING initialize_all_databases() from config.py module level.") # Add this
+logger.debug("CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access")
 
-# Check if we're in test mode before initializing databases
-if os.getenv("TLDW_TEST_MODE") != "1":
-    initialize_all_databases()
-else:
-    logger.info("TLDW_TEST_MODE is set - skipping database initialization during import")
-    # Initialize database variables to None for tests to handle
-    chachanotes_db = None
-    prompts_db = None
-    media_db = None
+# Databases will be initialized lazily on first access
+# This significantly improves startup time by deferring expensive DB operations
 
 # Make APP_CONFIG available globally if needed by other modules that import from config.py
 # This will be the same as `settings` if `load_settings` is the sole config loader.

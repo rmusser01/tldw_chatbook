@@ -47,6 +47,13 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
     """Populates the character selection dropdown in the CCP tab."""
     logger = getattr(app, 'loguru_logger', logging)
     logger.info("Attempting to populate #conv-char-character-select dropdown.")
+    # Early exit if CCP window doesn't exist yet (lazy loading)
+    try:
+        app.query_one("#conversations_characters_prompts-window")
+    except QueryError:
+        logger.debug("CCP window not yet created, skipping character select population")
+        return
+    
     if not app.notes_service:
         logger.error("Notes service not available, cannot populate character select for CCP tab.")
         try:
@@ -102,6 +109,14 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
 async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[str] = None) -> None:
     """Populates the prompts list view in the CCP tab."""
     logger = getattr(app, 'loguru_logger', logging)
+    
+    # Early exit if CCP window doesn't exist yet (lazy loading)
+    try:
+        app.query_one("#conversations_characters_prompts-window")
+    except QueryError:
+        logger.debug("CCP window not yet created, skipping prompts list population")
+        return
+    
     if not app.prompts_service_initialized:
         try:
             list_view_prompt_err = app.query_one("#ccp-prompts-listview", ListView)
