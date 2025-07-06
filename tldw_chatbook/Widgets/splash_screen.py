@@ -30,7 +30,20 @@ from ..Utils.splash_animations import (
     GlitchEffect,
     TypewriterEffect,
     FadeEffect,
-    RetroTerminalEffect
+    RetroTerminalEffect,
+    PulseEffect,
+    CodeScrollEffect,
+    BlinkEffect,
+    DigitalRainEffect,
+    LoadingBarEffect,
+    StarfieldEffect,
+    TerminalBootEffect,
+    GlitchRevealEffect,
+    AsciiMorphEffect,
+    GameOfLifeEffect,
+    ScrollingCreditsEffect,
+    SpotlightEffect,
+    SoundBarsEffect
 )
 
 class SplashScreen(Container):
@@ -118,7 +131,12 @@ class SplashScreen(Container):
             "fade_in_duration": 0.3,
             "fade_out_duration": 0.2,
             "animation_speed": 1.0,
-            "active_cards": ["default", "matrix", "glitch", "retro"]
+            "active_cards": [
+                "default", "matrix", "glitch", "retro", # Original
+                "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score", # Batch 1
+                "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal", # Batch 2
+                "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars" # Batch 3
+            ]
         }
         
         # Get config from settings
@@ -194,6 +212,196 @@ class SplashScreen(Container):
                 "style": "bold green on black",
                 "scanline_speed": 0.02,
                 "phosphor_glow": True
+            },
+            "tech_pulse": {
+                "type": "animated",
+                "effect": "pulse",
+                "content": get_ascii_art("tech_pulse"),
+                "style": "bold white on black", # Base style, effect will override color
+                "pulse_speed": 0.5, # Cycles per second
+                "min_brightness": 80,
+                "max_brightness": 200,
+                "color": (100, 180, 255) # A light blue
+            },
+            "code_scroll": {
+                "type": "animated",
+                "effect": "code_scroll",
+                "title": "TLDW CHATBOOK",
+                "subtitle": f"{splashscreen_message_selection}",
+                "style": "white on black", # General style, effect handles specifics
+                "scroll_speed": 0.1,
+                "num_code_lines": 18, # Adjusted for typical 24 line height
+                "code_line_style": "dim blue",
+                "title_style": "bold yellow",
+                "subtitle_style": "green"
+            },
+            "minimal_fade": {
+                "type": "animated",
+                "effect": "typewriter", # Using typewriter for a slow reveal
+                "content": get_ascii_art("minimal_fade"),
+                "style": "white on black",
+                "animation_speed": 0.08, # Controls typewriter speed
+            },
+            "blueprint": {
+                "type": "static",
+                "content": get_ascii_art("blueprint"),
+                "style": "bold cyan on rgb(0,0,30)", # Cyan on dark blue
+                "effect": None
+            },
+            "arcade_high_score": {
+                "type": "animated",
+                "effect": "blink",
+                "content": get_ascii_art("arcade_high_score"),
+                "style": "bold yellow on rgb(0,0,70)", # Yellow on dark blue
+                "animation_speed": 0.1, # Interval for the animation timer
+                "blink_speed": 0.5,     # How long each blink state (on/off) lasts
+                "blink_targets": ["LOADING...", "PRESS ANY KEY TO START!"],
+                "blink_style_off": "dim", # How targets look when "off"
+            },
+            "digital_rain": {
+                "type": "animated",
+                "effect": "digital_rain",
+                "title": "TLDW CHATBOOK v2.0",
+                "subtitle": f"Enhancing neural pathways... {splashscreen_message_selection}",
+                "style": "white on black", # Base, effect controls most styling
+                "animation_speed": 0.05, # Interval for animation timer
+                "base_chars": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+                "highlight_chars": "!@#$%^*()-+=[]{};:,.<>/?",
+                "base_color": "dim green",
+                "highlight_color": "bold green",
+                "title_style": "bold magenta",
+                "subtitle_style": "cyan",
+                "highlight_chance": 0.05
+            },
+            "loading_bar": {
+                "type": "animated",
+                "effect": "loading_bar",
+                "content": get_ascii_art("loading_bar_frame"), # Base frame
+                "style": "white on black", # General style for text
+                "animation_speed": 0.1, # How often effect's update() is called
+                "fill_char": "█",
+                "bar_style": "bold green",
+                "text_above": "SYSTEM INITIALIZATION SEQUENCE",
+                # text_below will use SplashScreen.progress_text by default from effect
+                # or "text_below_template": "{progress:.0f}% Synced" can be set here
+            },
+            "starfield": {
+                "type": "animated",
+                "effect": "starfield",
+                "title": "Hyperdrive Initializing...",
+                "style": "black on black", # Background, stars provide visuals
+                "animation_speed": 0.04, # Faster updates for smoother stars
+                "num_stars": 200,
+                "warp_factor": 0.25,
+                "max_depth": 40.0,
+                "star_chars": ["·", ".", "*", "+"],
+                "star_styles": ["dim white", "white", "bold white", "bold yellow"],
+                "title_style": "bold cyan"
+            },
+            "terminal_boot": {
+                "type": "animated",
+                "effect": "terminal_boot",
+                "style": "green on black", # Default style for lines
+                "animation_speed": 0.03, # Interval for animation timer (effects internal timing)
+                "cursor": "▋",
+                "boot_sequence": [
+                    {"text": "TLDW BIOS v4.2.1 initializing...", "type_speed": 0.02, "pause_after": 0.3, "style": "bold white"},
+                    {"text": "Memory Test: 65536 KB OK", "delay_before": 0.1, "type_speed": 0.01, "pause_after": 0.2},
+                    {"text": "Detecting CPU Type: Quantum Entangled Processor", "type_speed": 0.02, "pause_after": 0.1},
+                    {"text": "Initializing USB Controllers ... Done.", "type_speed": 0.015, "pause_after": 0.2},
+                    {"text": "Loading TL-DOS...", "delay_before": 0.3, "type_speed": 0.04, "pause_after": 0.3, "style": "yellow"},
+                    {"text": "Starting services:", "type_speed": 0.02, "pause_after": 0.1},
+                    {"text": "  Network Stack .............. [OK]", "delay_before": 0.2, "type_speed": 0.01, "style": "dim green"},
+                    {"text": "  AI Core Diagnostics ........ [OK]", "type_speed": 0.01, "style": "dim green"},
+                    {"text": "  Sarcasm Module ............. [ENABLED]", "type_speed": 0.01, "style": "dim green"},
+                    {"text": f"Welcome to TLDW Chatbook - {splashscreen_message_selection}", "delay_before": 0.5, "type_speed": 0.03, "style": "bold cyan"}
+                ]
+            },
+            "glitch_reveal": {
+                "type": "animated",
+                "effect": "glitch_reveal",
+                "content": get_ascii_art("app_logo_clear"), # The final, clear logo
+                "style": "bold white on black", # Base style for the final clear logo
+                "animation_speed": 0.05, # Interval for animation timer
+                "duration": 2.5, # Total duration for the reveal effect itself
+                "glitch_chars": "!@#$%^&*▓▒░█",
+                "start_intensity": 0.9,
+                "end_intensity": 0.0
+            },
+            "ascii_morph": {
+                "type": "animated",
+                "effect": "ascii_morph",
+                "style": "bold white on black",
+                "animation_speed": 0.05, # Interval for animation timer
+                "duration": 3.0, # Duration of the morph itself
+                "start_art_name": "morph_art_start", # Key for get_ascii_art
+                "end_art_name": "morph_art_end",     # Key for get_ascii_art
+                "morph_style": "dissolve" # "dissolve", "random_pixel", "wipe_left_to_right"
+            },
+            "game_of_life": {
+                "type": "animated",
+                "effect": "game_of_life",
+                "title": "Cellular Automata Initializing...",
+                "style": "black on black", # Background, effect handles cell colors
+                "animation_speed": 0.1,  # Timer for the effect's update method
+                "gol_update_interval": 0.15, # How often GoL simulation steps
+                "grid_width": 50,
+                "grid_height": 18,
+                "cell_alive_char": "■", # "█"
+                "cell_dead_char": " ",
+                "alive_style": "bold blue",
+                "dead_style": "on black", # So spaces take background color
+                "initial_pattern": "glider", # "random", "glider"
+                "title_style": "bold yellow"
+            },
+            "scrolling_credits": {
+                "type": "animated",
+                "effect": "scrolling_credits",
+                "title": "TLDW Chatbook", # This title is part of the scrolling credits
+                "style": "white on black", # Overall background for the splash screen
+                "animation_speed": 0.03, # How often the effect's update() is called
+                "scroll_speed": 2.0, # Lines per second for credits scroll
+                "line_spacing": 1,
+                "title_style": "bold magenta",
+                "role_style": "bold cyan",
+                "name_style": "green",
+                "line_style": "white",
+                "credits_list": [
+                    {"role": "Lead Developer", "name": "Jules AI"},
+                    {"role": "ASCII Art Design", "name": "The Byte Smiths"},
+                    {"role": "Animation Engine", "name": "Temporal Mechanics Inc."},
+                    {"line": ""},
+                    {"line": "Special Thanks To:"},
+                    {"line": "All the Electrons"},
+                    {"line": "The Coffee Machine"},
+                    {"line": ""},
+                    {"line": f"And You! (User: {splashscreen_message_selection})"}
+                ]
+            },
+            "spotlight_reveal": {
+                "type": "animated",
+                "effect": "spotlight",
+                "background_art_name": "spotlight_background", # Key for get_ascii_art
+                "style": "dim black on black", # Base style for hidden areas
+                "animation_speed": 0.05,
+                "spotlight_radius": 7,
+                "movement_speed": 15.0, # Cells per second for path calculation
+                "path_type": "lissajous", # "lissajous", "random_walk", "circle"
+                "visible_style": "bold yellow on black", # Style within spotlight
+                "hidden_style": "rgb(30,30,30) on black" # Very dim for outside spotlight
+            },
+            "sound_bars": {
+                "type": "animated",
+                "effect": "sound_bars",
+                "title": "Frequency Analysis Engaged",
+                "style": "black on black", # Background, bars provide color
+                "animation_speed": 0.05, # Timer for effect's update method
+                "num_bars": 25,
+                "bar_char_filled": "┃", # Alternatives: █ ▓ ▒ ░ ║ ┃
+                "bar_char_empty": " ",
+                "bar_styles": ["bold blue", "bold magenta", "bold cyan", "bold green", "bold yellow", "bold red", "bold white"],
+                "title_style": "bold white",
+                "update_speed": 0.05 # How fast bars change their heights
             }
         }
 
@@ -294,7 +502,235 @@ class SplashScreen(Container):
                 self.card_data.get("scanline_speed", 0.02),
                 self._update_animation
             )
-    
+        elif effect_type == "pulse":
+            self.effect_handler = PulseEffect(
+                self,
+                content=self.card_data.get("content", ""),
+                pulse_speed=self.card_data.get("pulse_speed", 0.5),
+                min_brightness=self.card_data.get("min_brightness", 100),
+                max_brightness=self.card_data.get("max_brightness", 255),
+                color=self.card_data.get("color", (255, 255, 255))
+            )
+            # Use a reasonable interval for smooth animation, effect handles timing by elapsed time
+            self.animation_timer = self.set_interval(0.05, self._update_animation)
+        elif effect_type == "code_scroll":
+            # Get width and height from the splash screen main area if possible, else default
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+
+            self.effect_handler = CodeScrollEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                subtitle=self.card_data.get("subtitle", splashscreen_message_selection),
+                width=width if width > 0 else 80,
+                height=height if height > 0 else 24,
+                scroll_speed=self.card_data.get("scroll_speed", 0.1),
+                num_code_lines=self.card_data.get("num_code_lines", 15),
+                code_line_style=self.card_data.get("code_line_style", "dim cyan"),
+                title_style=self.card_data.get("title_style", "bold white"),
+                subtitle_style=self.card_data.get("subtitle_style", "white")
+            )
+            # Interval should align with or be faster than effect's internal scroll_speed
+            self.animation_timer = self.set_interval(
+                min(0.1, self.card_data.get("scroll_speed", 0.1)),
+                self._update_animation
+            )
+        elif effect_type == "blink":
+            self.effect_handler = BlinkEffect(
+                self,
+                content=self.card_data.get("content", ""),
+                blink_speed=self.card_data.get("blink_speed", 0.5),
+                blink_targets=self.card_data.get("blink_targets", []),
+                blink_style_off=self.card_data.get("blink_style_off", "dim")
+                # blink_style_on could be added if needed
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1), # Animation timer interval
+                self._update_animation
+            )
+        elif effect_type == "digital_rain":
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+            self.effect_handler = DigitalRainEffect(
+                self,
+                title=self.card_data.get("title", "Digital Rain"),
+                subtitle=self.card_data.get("subtitle", splashscreen_message_selection),
+                width=width if width > 0 else 80,
+                height=height if height > 0 else 24,
+                speed=self.card_data.get("animation_speed", 0.05),
+                base_chars=self.card_data.get("base_chars", "abc0123"),
+                highlight_chars=self.card_data.get("highlight_chars", "!@#$"),
+                base_color=self.card_data.get("base_color", "dim green"),
+                highlight_color=self.card_data.get("highlight_color", "bold green"),
+                title_style=self.card_data.get("title_style", "bold white"),
+                subtitle_style=self.card_data.get("subtitle_style", "white"),
+                highlight_chance=self.card_data.get("highlight_chance", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "loading_bar":
+            main_widget = self.query_one("#splash-main", Static)
+            width, _ = main_widget.content_size # Only width needed for centering text
+            self.effect_handler = LoadingBarEffect(
+                self, # Pass SplashScreen instance as parent
+                bar_frame_content=self.card_data.get("content", "[----------]"),
+                fill_char=self.card_data.get("fill_char", "#"),
+                bar_style=self.card_data.get("bar_style", "bold green"),
+                text_above=self.card_data.get("text_above", "LOADING..."),
+                text_below=self.card_data.get("text_below_template", ""), # Effect defaults to progress_text
+                text_style=self.card_data.get("text_style", "white"),
+                width=width if width > 0 else 80
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "starfield":
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+            self.effect_handler = StarfieldEffect(
+                self,
+                title=self.card_data.get("title", "Warping..."),
+                num_stars=self.card_data.get("num_stars", 150),
+                warp_factor=self.card_data.get("warp_factor", 0.2),
+                max_depth=self.card_data.get("max_depth", 50.0),
+                star_chars=self.card_data.get("star_chars", ["."]),
+                star_styles=self.card_data.get("star_styles", ["white"]),
+                width=width if width > 0 else 80,
+                height=height if height > 0 else 24,
+                title_style=self.card_data.get("title_style", "bold yellow")
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "terminal_boot":
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+            self.effect_handler = TerminalBootEffect(
+                self,
+                boot_sequence=self.card_data.get("boot_sequence", [{"text": "Booting..."}]),
+                width=width if width > 0 else 80,
+                height=height if height > 0 else 24,
+                cursor=self.card_data.get("cursor", "_")
+            )
+            # The effect's internal timing is driven by elapsed time,
+            # so timer interval just needs to be frequent enough for smooth typing.
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.03),
+                self._update_animation
+            )
+        elif effect_type == "glitch_reveal":
+            self.effect_handler = GlitchRevealEffect(
+                self,
+                content=self.card_data.get("content", "REVEAL!"),
+                duration=self.card_data.get("duration", 2.0),
+                glitch_chars=self.card_data.get("glitch_chars", "!@#$%^&*"),
+                start_intensity=self.card_data.get("start_intensity", 0.8),
+                end_intensity=self.card_data.get("end_intensity", 0.0)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "ascii_morph":
+            start_art = get_ascii_art(self.card_data.get("start_art_name", "default"))
+            end_art = get_ascii_art(self.card_data.get("end_art_name", "default"))
+            self.effect_handler = AsciiMorphEffect(
+                self,
+                start_content=start_art,
+                end_content=end_art,
+                duration=self.card_data.get("duration", 2.0),
+                morph_style=self.card_data.get("morph_style", "dissolve")
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "game_of_life":
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+            self.effect_handler = GameOfLifeEffect(
+                self,
+                title=self.card_data.get("title", "Evolving..."),
+                width=self.card_data.get("grid_width", 40),
+                height=self.card_data.get("grid_height", 20),
+                cell_alive_char=self.card_data.get("cell_alive_char", "█"),
+                cell_dead_char=self.card_data.get("cell_dead_char", " "),
+                alive_style=self.card_data.get("alive_style", "bold green"),
+                dead_style=self.card_data.get("dead_style", "on black"),
+                initial_pattern=self.card_data.get("initial_pattern", "random"),
+                update_interval=self.card_data.get("gol_update_interval", 0.2),
+                title_style=self.card_data.get("title_style", "bold white"),
+                display_width=display_width if display_width > 0 else 80,
+                display_height=display_height if display_height > 0 else 24
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "scrolling_credits":
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+            self.effect_handler = ScrollingCreditsEffect(
+                self,
+                title=self.card_data.get("title", "Credits"),
+                credits_list=self.card_data.get("credits_list", []),
+                scroll_speed=self.card_data.get("scroll_speed", 1.0),
+                line_spacing=self.card_data.get("line_spacing", 1),
+                width=display_width if display_width > 0 else 80,
+                height=display_height if display_height > 0 else 24,
+                title_style=self.card_data.get("title_style", "bold yellow"),
+                role_style=self.card_data.get("role_style", "bold white"),
+                name_style=self.card_data.get("name_style", "white"),
+                line_style=self.card_data.get("line_style", "white")
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.03),
+                self._update_animation
+            )
+        elif effect_type == "spotlight":
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+            background_art = get_ascii_art(self.card_data.get("background_art_name", "default"))
+            self.effect_handler = SpotlightEffect(
+                self,
+                background_content=background_art,
+                spotlight_radius=self.card_data.get("spotlight_radius", 5),
+                movement_speed=self.card_data.get("movement_speed", 10.0),
+                path_type=self.card_data.get("path_type", "lissajous"),
+                visible_style=self.card_data.get("visible_style", "bold white"),
+                hidden_style=self.card_data.get("hidden_style", "dim black on black"),
+                width=display_width if display_width > 0 else 80,
+                height=display_height if display_height > 0 else 24
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "sound_bars":
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+            self.effect_handler = SoundBarsEffect(
+                self,
+                title=self.card_data.get("title", "Visualizing..."),
+                num_bars=self.card_data.get("num_bars", 15),
+                max_bar_height=self.card_data.get("max_bar_height"), # None will use default calc
+                bar_char_filled=self.card_data.get("bar_char_filled", "█"),
+                bar_char_empty=self.card_data.get("bar_char_empty", " "),
+                bar_styles=self.card_data.get("bar_styles", ["bold green"]),
+                width=display_width if display_width > 0 else 80,
+                height=display_height if display_height > 0 else 24,
+                title_style=self.card_data.get("title_style", "bold white"),
+                update_speed=self.card_data.get("update_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+
     def _update_animation(self) -> None:
         """Update animation frame."""
         if self.effect_handler and hasattr(self.effect_handler, "update"):
