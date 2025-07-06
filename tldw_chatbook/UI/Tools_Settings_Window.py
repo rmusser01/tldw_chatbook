@@ -1715,15 +1715,30 @@ class ToolsSettingsWindow(Container):
         """Save raw TOML configuration."""
         try:
             config_text_area = self.query_one("#config-text-area", TextArea)
+            # Parse the TOML to validate it
             config_data = toml.loads(config_text_area.text)
-            with open(DEFAULT_CONFIG_PATH, "w") as f:
+            
+            # Ensure the config directory exists
+            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write the configuration to file
+            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
                 toml.dump(config_data, f)
+            
+            # Force reload the configuration to update all caches
+            from tldw_chatbook.config import load_settings
             self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
-            self.app_instance.notify("Configuration saved successfully.")
-        except toml.TOMLDecodeError as e:
+            # Also reload the main settings cache
+            load_settings(force_reload=True)
+            
+            self.app_instance.notify("Configuration saved successfully!", severity="success")
+            
+        except toml.TomlDecodeError as e:
             self.app_instance.notify(f"Error: Invalid TOML format: {e}", severity="error")
         except IOError as e:
             self.app_instance.notify(f"Error: Could not write to configuration file: {e}", severity="error")
+        except Exception as e:
+            self.app_instance.notify(f"Error saving configuration: {e}", severity="error")
     
     async def _reload_raw_toml_config(self) -> None:
         """Reload raw TOML configuration."""

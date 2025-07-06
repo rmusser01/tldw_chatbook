@@ -73,13 +73,7 @@ class TestRunner:
     }
     
     # Quick smoke tests for critical functionality
-    SMOKE_TESTS = [
-        "Tests/ChaChaNotesDB/test_chachanotes_db.py::TestChaChaNotesDatabaseOperations::test_db_creation_and_schema_version",
-        "Tests/Chat/test_chat_functions.py::test_add_conversation",
-        "Tests/Character_Chat/test_character_chat.py::TestCharacterOperations::test_add_character_basic",
-        "Tests/Notes/test_notes_library_unit.py::TestNotesLibraryMocked::test_create_note",
-        "Tests/DB/test_sql_validation.py::test_valid_identifiers",
-    ]
+    SMOKE_TESTS = ["Tests/test_smoke.py"]
     
     def __init__(self, mode: str = "quick", parallel: bool = False, 
                  html_report: bool = True, track_history: bool = True,

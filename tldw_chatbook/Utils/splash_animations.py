@@ -52,7 +52,7 @@ class MatrixRainEffect(BaseEffect):
     def __init__(
         self,
         parent_widget: Any,
-        title: str = "TLDW chatbook",
+        title: str = "tldw chatbook",
         subtitle: str = (f"Loading user interface...{splashscreen_message_selection}"),
         width: int = 80,
         height: int = 24,
@@ -419,7 +419,7 @@ class DigitalRainEffect(BaseEffect):
     def __init__(
         self,
         parent_widget: Any,
-        title: str = "TLDW Chatbook",
+        title: str = "tldw chatbook",
         subtitle: str = "Interface Loading...",
         width: int = 80,
         height: int = 24,
@@ -1526,7 +1526,7 @@ class ScrollingCreditsEffect(BaseEffect):
     def __init__(
         self,
         parent_widget: Any,
-        title: str = "TLDW Chatbook",
+        title: str = "tldw chatbook",
         credits_list: List[Dict[str, str]] = None, # Each dict: {"role": "Concept", "name": "The Universe"} or just {"line": "Some text"}
         scroll_speed: float = 1.0, # Lines per second (can be fractional)
         line_spacing: int = 1, # Number of blank lines between credit entries
@@ -1748,7 +1748,7 @@ class CodeScrollEffect(BaseEffect):
     def __init__(
         self,
         parent_widget: Any,
-        title: str = "TLDW Chatbook",
+        title: str = "tldw chatbook",
         subtitle: str = "Initializing Systems...",
         width: int = 80, # Target width
         height: int = 24, # Target height

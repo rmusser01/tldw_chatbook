@@ -57,7 +57,7 @@ TLDW_ASCII_MINIMAL = r"""
     ┌─┐┬  ┌┬┐┬ ┬   ┌─┐┬ ┬┌─┐┌┬┐┌┐ ┌─┐┌─┐┬┌─
     │  │   ││││││   │  ├─┤├─┤ │ ├┴┐│ ││ │├┴┐
     └─┘┴─┘─┴┘└┴┘   └─┘┴ ┴┴ ┴ ┴ └─┘└─┘└─┘┴ ┴
-           Too Long; Didn't Watch aka ChatBook
+           tldw chatbook
 """
 
 TECH_PULSE_ASCII = r"""
@@ -75,9 +75,9 @@ TECH_PULSE_ASCII = r"""
 MINIMAL_FADE_ASCII = r"""
 
 
-          TLDW
+          tldw
 
-      Chatbook AI
+      chatbook AI Taking over....
 
 
 
@@ -86,8 +86,8 @@ MINIMAL_FADE_ASCII = r"""
 
 BLUEPRINT_ASCII = r"""
 +----------------------------------------------------------------------+
-| PROJECT: TLDW Chatbook AI                                            |
-| REV: 1.0                                   DATE: 2024-07-15          |
+| PROJECT: tldw chatbook AI                                            |
+| REV: 1.0                                   DATE: 2083-04-15          |
 +----------------------------------------------------------------------+
 | MODULE: Splash Screen Interface                                      |
 | DESIGNER: J. Doe (AI)                                                |
@@ -119,11 +119,11 @@ ARCADE_HIGH_SCORE_ASCII = r"""
 |                                        |
 | RANK  NAME                SCORE        |
 |                                        |
-|  1ST  TLDW CHATBOOK       LOADING...   |
-|  2ND  SYSTEM CORE         ONLINE       |
-|  3RD  AI MODULE           ACTIVE       |
-|  4TH  USER INPUT          READY        |
-|  5TH  COFFEE LEVEL        CRITICAL     |
+|  1ST  tldw_chatbook       31,687,490   |
+|  2ND  DABEST              445,893      |
+|  3RD  8008SNA55           800,085      |
+|  4TH  OH!                 233,333      |
+|  5TH  ABRMS               40,000       |
 |                                        |
 |                                        |
 |       PRESS ANY KEY TO START!          |

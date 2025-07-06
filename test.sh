@@ -31,6 +31,10 @@ case "$1" in
         echo -e "${BLUE}Running tests with coverage...${NC}"
         python run_tests.py --mode coverage
         ;;
+    "coverage-report")
+        echo -e "${BLUE}Generating detailed coverage report...${NC}"
+        python generate_coverage.py --format html,term --threshold 70
+        ;;
     "parallel")
         echo -e "${BLUE}Running tests in parallel...${NC}"
         python run_tests.py --mode full --parallel
@@ -120,6 +124,7 @@ case "$1" in
         echo "  quick      Run quick tests - critical groups only (default)"
         echo "  full       Run full test suite"
         echo "  coverage   Run tests with coverage report"
+        echo "  coverage-report Generate detailed coverage analysis"
         echo "  parallel   Run full tests in parallel"
         echo "  failed     Re-run previously failed tests"
         echo "  changed    Run tests for changed files only"
