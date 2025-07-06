@@ -197,8 +197,22 @@ def get_ascii_art(name: str = "default") -> str:
         "morph_art_start": MORPH_ART_START_ASCII,
         "morph_art_end": MORPH_ART_END_ASCII,
         "spotlight_background": TLDW_ASCII_ART, # Using the main logo as background
+        "pixel_art_target": TLDW_ASCII_COMPACT, # Target for pixel/zoom effect
     }
-    
+    # Note: For OldFilmEffect, frames will be passed directly in card config
+    # or specific frame names can be added here if desired.
+    # For this example, let's assume frames are small and defined in card or a generic one is used.
+    # Adding one generic frame that can be referenced if needed.
+    ascii_arts["film_generic_frame"] = """
++----------------------+
+|       TLDW PRESENTS  |
+|                      |
+|   A Feature Splash   |
+|                      |
+|      Starring...     |
+|        YOU!          |
++----------------------+
+"""
     return ascii_arts.get(name, TLDW_ASCII_ART)
 
 def get_splash_card_config(name: str) -> Dict[str, Any]:
