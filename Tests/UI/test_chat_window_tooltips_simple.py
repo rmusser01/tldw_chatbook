@@ -20,12 +20,11 @@ class TestChatButtonTooltips:
         with open(source_file, "r") as f:
             source = f.read()
         
-        # Expected tooltips
+        # Expected tooltips - some are dynamic
         expected_tooltips = [
             ('tooltip="Toggle left sidebar (Ctrl+[)"', "Left sidebar toggle tooltip"),
-            ('tooltip="Send message (Enter)"', "Send button tooltip"),
+            ('tooltip="Send message" if self.is_send_button else "Stop generation"', "Send/Stop button dynamic tooltip"),
             ('tooltip="Suggest a response"', "Suggest button tooltip"),
-            ('tooltip="Stop generation"', "Stop button tooltip"),
             ('tooltip="Toggle right sidebar (Ctrl+])"', "Right sidebar toggle tooltip"),
         ]
         

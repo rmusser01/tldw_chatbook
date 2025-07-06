@@ -34,7 +34,7 @@ def test_image_filters_are_comprehensive():
     assert "*.gif" in filter_pattern
 
 def test_process_image_attachment_stores_data():
-    """Test that process_image_attachment properly stores image data."""
+    """Test that process_file_attachment properly stores image data."""
     # Create a mock app instance
     mock_app = Mock()
     mock_app.notify = Mock()
@@ -61,18 +61,26 @@ def test_process_image_attachment_stores_data():
     test_mime_type = "image/png"
     test_path = "/tmp/test_image.png"
     
-    # Mock the ChatImageHandler.process_image_file
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events.ChatImageHandler.process_image_file') as mock_process:
-        # Create an async mock that returns the test data
+    # Mock the file handler registry
+    with patch('tldw_chatbook.Utils.file_handlers.file_handler_registry.process_file') as mock_process:
+        # Create a mock processed file result
+        mock_result = Mock()
+        mock_result.insert_mode = "attachment"
+        mock_result.attachment_data = test_image_data
+        mock_result.attachment_mime_type = test_mime_type
+        mock_result.display_name = "test_image.png"
+        mock_result.file_type = "image"
+        
+        # Create an async mock that returns the mock result
         import asyncio
         
-        async def mock_process_image(path):
-            return test_image_data, test_mime_type
+        async def mock_process_file(path):
+            return mock_result
         
-        mock_process.side_effect = mock_process_image
+        mock_process.side_effect = mock_process_file
         
-        # Run the process_image_attachment method
-        asyncio.run(chat_window.process_image_attachment(test_path))
+        # Run the process_file_attachment method
+        asyncio.run(chat_window.process_file_attachment(test_path))
     
     # Check that pending_image was set correctly
     assert chat_window.pending_image is not None
@@ -86,7 +94,7 @@ def test_process_image_attachment_stores_data():
     mock_indicator.remove_class.assert_called_with("hidden")
     
     # Check notification
-    mock_app.notify.assert_called_with("Image attached: test_image.png")
+    mock_app.notify.assert_called_with("test_image.png attached")
 
 def test_clear_image_attachment():
     """Test that clearing image attachment works properly."""

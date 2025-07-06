@@ -62,6 +62,19 @@ class TestPlaintextProcessing:
     """Test plaintext processing functionality."""
     
     @pytest.fixture
+    def mock_app(self):
+        """Create a mock app instance."""
+        app = Mock()
+        app.app_config = {
+            "tldw_api": {"base_url": "http://test.api"},
+            "api_settings": {"test_provider": {"api_key": "test_key"}},
+            "user_data_path": Path("/test/path")
+        }
+        app.media_db = Mock()
+        app.notify = Mock()
+        return app
+    
+    @pytest.fixture
     def ingest_window(self, mock_app):
         """Create an IngestWindow instance."""
         return IngestWindow(mock_app)
@@ -133,11 +146,16 @@ class TestPlaintextIngestionIntegration:
     @pytest.fixture
     def mock_ui_elements(self, mock_app_with_db):
         """Mock UI elements for testing."""
+        # Create mock objects that will be reused
+        loading_mock = Mock(display=False)
+        status_mock = Mock(clear=Mock(), load_text=Mock(), display=False)
+        process_mock = Mock(disabled=False)
+        
         def query_one_side_effect(selector, widget_type=None):
             mocks = {
-                "#ingest-local-plaintext-loading": Mock(display=False),
-                "#ingest-local-plaintext-status": Mock(clear=Mock(), load_text=Mock(), display=False),
-                "#ingest-local-plaintext-process": Mock(disabled=False),
+                "#ingest-local-plaintext-loading": loading_mock,
+                "#ingest-local-plaintext-status": status_mock,
+                "#ingest-local-plaintext-process": process_mock,
                 "#ingest-local-plaintext-encoding": Mock(value="utf-8"),
                 "#ingest-local-plaintext-line-ending": Mock(value="auto"),
                 "#ingest-local-plaintext-remove-whitespace": Mock(value=True),
@@ -149,8 +167,10 @@ class TestPlaintextIngestionIntegration:
             }
             return mocks.get(selector, Mock())
         
-        mock_app_with_db.query_one = Mock(side_effect=query_one_side_effect)
-        return mock_app_with_db
+        # Create the IngestWindow's query_one method
+        window = IngestWindow(mock_app_with_db)
+        window.query_one = Mock(side_effect=query_one_side_effect)
+        return window
     
     @pytest.mark.asyncio
     async def test_handle_local_plaintext_process(self, mock_ui_elements, tmp_path):
@@ -159,16 +179,16 @@ class TestPlaintextIngestionIntegration:
         test_file = tmp_path / "test.txt"
         test_file.write_text("Test content")
         
-        # Create IngestWindow with mocked app
-        window = IngestWindow(mock_ui_elements)
+        # Use the window from the fixture
+        window = mock_ui_elements
         window.selected_local_files = {"local_plaintext": [test_file]}
         
         # Run the process handler
         await window.handle_local_plaintext_process()
         
         # Verify database was called
-        mock_ui_elements.media_db.add_media_with_keywords.assert_called_once()
-        call_args = mock_ui_elements.media_db.add_media_with_keywords.call_args[1]
+        window.app_instance.media_db.add_media_with_keywords.assert_called_once()
+        call_args = window.app_instance.media_db.add_media_with_keywords.call_args[1]
         
         assert call_args["media_type"] == "plaintext"
         assert call_args["content"] == "Test content"
@@ -176,7 +196,7 @@ class TestPlaintextIngestionIntegration:
         assert call_args["author"] == "Test Author"
         
         # Verify notification was sent
-        mock_ui_elements.notify.assert_called()
+        window.app_instance.notify.assert_called()
 
 
 class TestTLDWAPIPlaintextIntegration:

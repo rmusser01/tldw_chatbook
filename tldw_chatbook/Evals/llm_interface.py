@@ -37,11 +37,12 @@ def _get_llm_functions():
 def _get_local_llm_functions():
     """Import local LLM functions at runtime to avoid circular imports."""
     from ...LLM_Calls.LLM_API_Calls_Local import (
-        chat_with_ollama, chat_with_vllm
+        chat_with_ollama, chat_with_vllm, chat_with_llama
     )
     return {
         'chat_with_ollama': chat_with_ollama,
-        'chat_with_vllm': chat_with_vllm
+        'chat_with_vllm': chat_with_vllm,
+        'chat_with_llama': chat_with_llama
     }
 
 # Define our own error classes to avoid circular imports
@@ -741,6 +742,91 @@ class OllamaProvider(LLMProvider):
         logger.warning("Log probabilities not fully supported by Ollama API")
         return {'logprobs': [], 'tokens': [], 'note': 'Ollama does not provide detailed logprobs'}
 
+class LlamaCppProvider(LLMProvider):
+    """llama.cpp provider for evaluations."""
+    
+    def __init__(self, model_id: str, config: Dict[str, Any]):
+        super().__init__(model_id, config)
+        settings = load_settings()
+        api_settings = settings.get('api_settings', {})
+        llama_config = api_settings.get('llama_cpp', {})
+        
+        # Get API URL from config
+        self.api_url = config.get('api_url') or llama_config.get('api_url', 'http://localhost:8080/completion')
+        # llama.cpp typically serves one model at a time, so model_id is optional
+        self.model = model_id or "loaded_model"
+    
+    async def generate_async(self, prompt: str, **kwargs) -> str:
+        """Generate text using llama.cpp API."""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            result = await loop.run_in_executor(
+                None,
+                self._call_llama_sync,
+                prompt,
+                kwargs
+            )
+            
+            return result
+            
+        except Exception as e:
+            # Handle known API errors
+            if 'connection' in str(e).lower() or 'refused' in str(e).lower():
+                logger.error(f"llama.cpp connection error: {e}")
+                raise EvalProviderError(f"llama.cpp connection failed - is the server running?: {e}", provider="llama_cpp")
+            else:
+                logger.error(f"llama.cpp generation failed: {e}")
+                raise EvalProviderError(f"llama.cpp generation failed: {e}", provider="llama_cpp")
+    
+    def _call_llama_sync(self, prompt: str, kwargs: Dict[str, Any]) -> str:
+        """Call llama.cpp API synchronously."""
+        # Get functions at runtime to avoid circular imports
+        local_llm_functions = _get_local_llm_functions()
+        chat_with_llama = local_llm_functions['chat_with_llama']
+        
+        # Prepare message format
+        messages = [{"role": "user", "content": prompt}]
+        
+        # Map max_tokens to n_predict for llama.cpp
+        if 'max_tokens' in kwargs and 'n_predict' not in kwargs:
+            kwargs['n_predict'] = kwargs['max_tokens']
+        
+        result = chat_with_llama(
+            input_data=messages,
+            api_url=self.api_url,
+            api_key=None,  # llama.cpp typically doesn't use API keys
+            model=self.model,
+            system_message=kwargs.get('system_prompt'),
+            temperature=kwargs.get('temperature', 0.0),
+            max_tokens=kwargs.get('max_tokens', 100),
+            streaming=False,
+            **kwargs  # Pass through any additional llama.cpp-specific parameters
+        )
+        
+        # Extract text from response
+        if isinstance(result, dict):
+            # OpenAI-compatible response
+            if 'choices' in result and len(result['choices']) > 0:
+                return result['choices'][0].get('message', {}).get('content', '')
+            # Direct text response
+            elif 'content' in result:
+                return result['content']
+        
+        return str(result)
+    
+    async def generate_with_system_async(self, prompt: str, system_prompt: str = None, **kwargs) -> str:
+        """Generate text with optional system prompt."""
+        if system_prompt:
+            kwargs['system_prompt'] = system_prompt
+        return await self.generate_async(prompt, **kwargs)
+    
+    async def get_logprobs_async(self, text: str, **kwargs) -> Dict[str, Any]:
+        """Get log probabilities from llama.cpp API."""
+        # llama.cpp's native API doesn't provide detailed logprobs like OpenAI
+        logger.warning("Detailed log probabilities not available from llama.cpp native API")
+        return {'logprobs': [], 'tokens': [], 'note': 'llama.cpp does not provide detailed logprobs'}
+
 class VllmProvider(LLMProvider):
     """vLLM provider for evaluations."""
     
@@ -961,6 +1047,7 @@ def get_llm_provider(provider_name: str, model_id: str, config: Dict[str, Any]) 
         'groq': GroqProvider,
         'openrouter': OpenRouterProvider,
         'ollama': OllamaProvider,
+        'llama_cpp': LlamaCppProvider,
         'vllm': VllmProvider,
     }
     

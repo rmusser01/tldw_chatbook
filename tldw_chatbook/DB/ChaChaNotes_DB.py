@@ -2723,7 +2723,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted FROM messages WHERE id = ? AND deleted = 0"
+        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback FROM messages WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (message_id,))
             row = cursor.fetchone()
@@ -2746,7 +2746,7 @@ UPDATE db_schema_version
         query = f"""
             SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
-                   m.last_modified, m.version, m.client_id, m.deleted 
+                   m.last_modified, m.version, m.client_id, m.deleted, m.feedback 
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ? 
@@ -2787,7 +2787,7 @@ UPDATE db_schema_version
             WITH ranked_messages AS (
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                        m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
-                       m.last_modified, m.version, m.client_id, m.deleted,
+                       m.last_modified, m.version, m.client_id, m.deleted, m.feedback,
                        ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
                 FROM messages m
                 JOIN conversations c ON m.conversation_id = c.id

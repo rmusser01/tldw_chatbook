@@ -54,10 +54,9 @@ dependencies = [
     "pycryptodomex",
     "keyring",
     "markdownify",
+    "aiofiles",
     # Metrics library
     "prometheus_client",
-    # Additional dependencies found in codebase
-    "aiofiles",
 ]
 
 # --- Optional Dependencies ---

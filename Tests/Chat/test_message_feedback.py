@@ -13,8 +13,17 @@ class TestMessageFeedback:
     
     @pytest.fixture
     def test_db(self):
-        """Create test database."""
+        """Create test database with default character."""
         db = CharactersRAGDB(":memory:", "test_client")
+        # Create a default character that conversations require
+        db.add_character_card({
+            'name': 'Default Character',
+            'description': 'Default test character',
+            'personality': 'Test personality',
+            'scenario': 'Test scenario',
+            'first_mes': 'Hello',
+            'mes_example': 'Example message'
+        })
         return db
     
     def test_update_message_feedback_thumbs_up(self, test_db):
@@ -22,7 +31,8 @@ class TestMessageFeedback:
         # Create a conversation and message
         conv_id = test_db.add_conversation({
             'title': 'Test Conversation',
-            'rating': 5
+            'rating': 5,
+            'character_id': 1  # Use the default character
         })
         
         msg_id = test_db.add_message({
@@ -45,7 +55,8 @@ class TestMessageFeedback:
         # Create a conversation and message
         conv_id = test_db.add_conversation({
             'title': 'Test Conversation',
-            'rating': 5
+            'rating': 5,
+            'character_id': 1  # Use the default character
         })
         
         msg_id = test_db.add_message({
@@ -68,7 +79,8 @@ class TestMessageFeedback:
         # Create message with feedback
         conv_id = test_db.add_conversation({
             'title': 'Test Conversation',
-            'rating': 5
+            'rating': 5,
+            'character_id': 1  # Use the default character
         })
         
         msg_id = test_db.add_message({
@@ -93,7 +105,8 @@ class TestMessageFeedback:
         """Test that invalid feedback format raises InputError."""
         conv_id = test_db.add_conversation({
             'title': 'Test Conversation',
-            'rating': 5
+            'rating': 5,
+            'character_id': 1  # Use the default character
         })
         
         msg_id = test_db.add_message({
@@ -116,7 +129,8 @@ class TestMessageFeedback:
         """Test version conflict when updating feedback."""
         conv_id = test_db.add_conversation({
             'title': 'Test Conversation',
-            'rating': 5
+            'rating': 5,
+            'character_id': 1  # Use the default character
         })
         
         msg_id = test_db.add_message({
@@ -133,7 +147,8 @@ class TestMessageFeedback:
         """Test that feedback format supports future extension with comments."""
         conv_id = test_db.add_conversation({
             'title': 'Test Conversation',
-            'rating': 5
+            'rating': 5,
+            'character_id': 1  # Use the default character
         })
         
         msg_id = test_db.add_message({
@@ -200,6 +215,21 @@ class TestChatMessageWidget:
 class TestFeedbackDialog:
     """Test the feedback dialog functionality."""
     
+    @pytest.fixture
+    def test_db(self):
+        """Create test database with default character."""
+        db = CharactersRAGDB(":memory:", "test_client")
+        # Create a default character that conversations require
+        db.add_character_card({
+            'name': 'Default Character',
+            'description': 'Default test character',
+            'personality': 'Test personality',
+            'scenario': 'Test scenario',
+            'first_mes': 'Hello',
+            'mes_example': 'Example message'
+        })
+        return db
+    
     def test_feedback_dialog_initialization(self):
         """Test FeedbackDialog initialization."""
         from tldw_chatbook.Widgets.feedback_dialog import FeedbackDialog
@@ -226,7 +256,8 @@ class TestFeedbackDialog:
         """Test feedback storage with comments."""
         conv_id = test_db.add_conversation({
             'title': 'Test Conversation',
-            'rating': 5
+            'rating': 5,
+            'character_id': 1  # Use the default character
         })
         
         msg_id = test_db.add_message({

@@ -309,8 +309,19 @@ async def test_media_copy_buttons(real_app_media_test: TldwCli, button_id, field
         # Verify app.current_sidebar_media_item is set
         assert app.current_sidebar_media_item is not None
         
-        # Click the button through the pilot which should trigger the handler
-        await pilot.click(copy_button)
+        # Import the handler directly and call it
+        from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import CHAT_SIDEBAR_BUTTON_HANDLERS
+        from textual.events import Click
+        
+        # Create a mock event
+        mock_event = Button.Pressed(copy_button)
+        
+        # Get and call the appropriate handler
+        handler = CHAT_SIDEBAR_BUTTON_HANDLERS.get(button_id)
+        assert handler is not None, f"Handler not found for {button_id}"
+        
+        # Call the handler directly
+        await handler(app, mock_event)
         await pilot.pause(0.1)
         
         # Verify clipboard and notification

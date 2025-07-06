@@ -16,6 +16,8 @@ class TestChatWindowTooltips:
         mock_app = MagicMock()
         mock_app.app_config = {}
         mock_app.current_chat_is_ephemeral = False
+        mock_app.get_current_chat_is_streaming = MagicMock(return_value=False)
+        mock_app.current_chat_worker = None
         
         # Use widget_pilot to test the ChatWindow in a proper Textual context
         async with await widget_pilot(ChatWindow, app_instance=mock_app) as pilot:
@@ -26,9 +28,8 @@ class TestChatWindowTooltips:
             # Expected tooltips for each button ID
             expected_tooltips = {
                 "toggle-chat-left-sidebar": "Toggle left sidebar (Ctrl+[)",
-                "send-chat": "Send message (Enter)",
+                "send-stop-chat": "Send message",  # This button ID is used for both send and stop
                 "respond-for-me-button": "Suggest a response",
-                "stop-chat-generation": "Stop generation",
                 "toggle-chat-right-sidebar": "Toggle right sidebar (Ctrl+])"
             }
             
@@ -58,6 +59,8 @@ class TestChatWindowTooltips:
         mock_app = MagicMock()
         mock_app.app_config = {}
         mock_app.current_chat_is_ephemeral = False
+        mock_app.get_current_chat_is_streaming = MagicMock(return_value=False)
+        mock_app.current_chat_worker = None
         
         async with await widget_pilot(ChatWindow, app_instance=mock_app) as pilot:
             app = pilot.app
@@ -83,13 +86,15 @@ async def test_chat_window_tooltip_interactions(widget_pilot):
     mock_app = MagicMock()
     mock_app.app_config = {}
     mock_app.current_chat_is_ephemeral = False
+    mock_app.get_current_chat_is_streaming = MagicMock(return_value=False)
+    mock_app.current_chat_worker = None
     
     async with await widget_pilot(ChatWindow, app_instance=mock_app) as pilot:
         app = pilot.app
         await pilot.pause()
         
-        # Get the send button
-        send_button = app.query_one("#send-chat", Button)
+        # Get the send button (the ID is send-stop-chat, not send-chat)
+        send_button = app.query_one("#send-stop-chat", Button)
         
         # Move mouse over the button (this would trigger tooltip display)
         await pilot.hover(send_button)
@@ -97,7 +102,7 @@ async def test_chat_window_tooltip_interactions(widget_pilot):
         
         # In a real scenario, we would check if tooltip is visible
         # For now, we just verify the tooltip text is set
-        assert send_button.tooltip == "Send message (Enter)"
+        assert send_button.tooltip == "Send message"  # Tooltip doesn't include "(Enter)"
 
 
 @pytest.mark.asyncio  
@@ -107,6 +112,8 @@ async def test_all_interactive_elements_have_tooltips(widget_pilot):
     mock_app = MagicMock()
     mock_app.app_config = {}
     mock_app.current_chat_is_ephemeral = False
+    mock_app.get_current_chat_is_streaming = MagicMock(return_value=False)
+    mock_app.current_chat_worker = None
     
     async with await widget_pilot(ChatWindow, app_instance=mock_app) as pilot:
         app = pilot.app
@@ -118,9 +125,8 @@ async def test_all_interactive_elements_have_tooltips(widget_pilot):
         # List of button IDs that should have tooltips
         interactive_button_ids = [
             "toggle-chat-left-sidebar",
-            "send-chat", 
+            "send-stop-chat",  # This is the unified send/stop button
             "respond-for-me-button",
-            "stop-chat-generation",
             "toggle-chat-right-sidebar"
         ]
         
