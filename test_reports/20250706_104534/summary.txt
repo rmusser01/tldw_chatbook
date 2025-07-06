@@ -1,0 +1,11 @@
+Test Run Summary
+================
+Date: 2025-07-06 10:45:34
+Mode: smoke
+Total Tests: 0
+Passed: 0
+Failed: 0
+Errors: 0
+Skipped: 0
+Pass Rate: N/A
+Duration: 0.7s

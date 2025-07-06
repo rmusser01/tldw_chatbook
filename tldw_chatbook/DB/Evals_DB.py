@@ -452,12 +452,23 @@ class EvalsDB:
     def search_tasks(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search tasks using FTS5."""
         conn = self._get_connection()
-        cursor = conn.execute("""
-            SELECT t.* FROM eval_tasks t
-            JOIN eval_tasks_fts fts ON t.id = fts.id
-            WHERE eval_tasks_fts MATCH ? AND t.deleted_at IS NULL
-            ORDER BY rank LIMIT ?
-        """, (query, limit))
+        
+        # For special characters or very short queries, use LIKE instead of FTS
+        if len(query) <= 2 or any(c in query for c in ':*"\'[]()'):
+            cursor = conn.execute("""
+                SELECT * FROM eval_tasks 
+                WHERE (name LIKE ? OR description LIKE ?) AND deleted_at IS NULL
+                ORDER BY created_at DESC LIMIT ?
+            """, (f'%{query}%', f'%{query}%', limit))
+        else:
+            # For normal queries, use FTS5 with proper escaping
+            safe_query = f'"{query}"' if query else '""'
+            cursor = conn.execute("""
+                SELECT t.* FROM eval_tasks t
+                JOIN eval_tasks_fts fts ON t.id = fts.id
+                WHERE eval_tasks_fts MATCH ? AND t.deleted_at IS NULL
+                ORDER BY rank LIMIT ?
+            """, (safe_query, limit))
         
         tasks = []
         for row in cursor.fetchall():
@@ -536,13 +547,16 @@ class EvalsDB:
     
     def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search datasets using FTS5."""
+        # Escape special characters in FTS5 query by wrapping in quotes
+        safe_query = f'"{query}"' if query else '""'
+        
         conn = self._get_connection()
         cursor = conn.execute("""
             SELECT d.* FROM eval_datasets d
             JOIN eval_datasets_fts fts ON d.id = fts.id
             WHERE eval_datasets_fts MATCH ? AND d.deleted_at IS NULL
             ORDER BY rank LIMIT ?
-        """, (query, limit))
+        """, (safe_query, limit))
         
         datasets = []
         for row in cursor.fetchall():

@@ -981,9 +981,27 @@ auth_token = "default-secret-key-for-single-user"
 enabled = true  # Enable/disable splash screen
 duration = 1.5  # Duration in seconds to display splash screen
 skip_on_keypress = true  # Allow users to skip with any keypress
-card_selection = "random"  # "random", "sequential", or specific card name
+
+# Card selection mode:
+# - "random": Randomly selects from active_cards list (default)
+# - "sequential": Cycles through active_cards in order (not yet implemented)
+# - "<card_name>": Always use a specific card (e.g., "matrix", "glitch", etc.)
+card_selection = "random"
+
 show_progress = true  # Show initialization progress bar
-active_cards = ["default", "matrix", "glitch", "retro", "classic", "compact", "minimal"]  # Available splash cards
+
+# All available splash cards are enabled by default for variety
+# To customize: Remove cards you don't want, or replace the entire list with your preferred cards
+# Static cards: default, classic, compact, minimal, blueprint
+# Animated cards: matrix, glitch, retro, tech_pulse, code_scroll, minimal_fade, arcade_high_score,
+#                digital_rain, loading_bar, starfield, terminal_boot, glitch_reveal, ascii_morph,
+#                game_of_life, scrolling_credits, spotlight_reveal, sound_bars
+active_cards = [
+    "default", "matrix", "glitch", "retro", "classic", "compact", "minimal",
+    "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
+    "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal",
+    "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars"
+]
 
 [splash_screen.effects]
 # Animation effect settings

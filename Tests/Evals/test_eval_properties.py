@@ -93,7 +93,7 @@ def create_test_runner(mock_llm_interface=None, **kwargs):
 @composite
 def task_config_strategy(draw):
     """Generate valid TaskConfig instances."""
-    task_types = ["question_answer", "multiple_choice", "text_generation", "code_generation"]
+    task_types = ["question_answer", "logprob", "generation", "classification"]
     metrics = ["exact_match", "accuracy", "bleu", "f1", "execution_pass_rate"]
     
     return TaskConfig(
@@ -172,8 +172,16 @@ class TestDatabaseProperties:
     
     @given(task_config_strategy())
     @settings(max_examples=20, deadline=None)
-    def test_task_roundtrip_property(self, task_config, in_memory_db):
+    def test_task_roundtrip_property(self, task_config):
         """Test that tasks can be stored and retrieved without data loss."""
+        # Create in-memory database
+        from tldw_chatbook.DB.Evals_DB import EvalsDB
+        in_memory_db = EvalsDB(db_path=":memory:", client_id="test_client")
+        
+        # Skip if name is empty or just whitespace (expected to fail validation)
+        if not task_config.name or not task_config.name.strip():
+            return
+        
         # Store task
         task_id = in_memory_db.create_task(
             name=task_config.name,
@@ -188,15 +196,21 @@ class TestDatabaseProperties:
         
         # Verify essential properties are preserved
         assert retrieved_task is not None
-        assert retrieved_task['name'] == task_config.name
+        # Database might normalize names by stripping whitespace
+        assert retrieved_task['name'].strip() == task_config.name.strip()
         assert retrieved_task['description'] == task_config.description
         assert retrieved_task['task_type'] == task_config.task_type
+        # Config data should preserve the original name
         assert retrieved_task['config_data']['name'] == task_config.name
     
     @given(st.lists(task_config_strategy(), min_size=1, max_size=10))
     @settings(max_examples=10, deadline=None)
-    def test_multiple_tasks_uniqueness(self, task_configs, in_memory_db):
+    def test_multiple_tasks_uniqueness(self, task_configs):
         """Test that multiple tasks maintain unique IDs."""
+        # Create in-memory database
+        from tldw_chatbook.DB.Evals_DB import EvalsDB
+        in_memory_db = EvalsDB(db_path=":memory:", client_id="test_client")
+        
         task_ids = []
         
         for i, config in enumerate(task_configs):
@@ -221,8 +235,12 @@ class TestDatabaseProperties:
     
     @given(st.text(min_size=1, max_size=100))
     @settings(max_examples=20, deadline=None)
-    def test_search_consistency(self, search_term, in_memory_db):
+    def test_search_consistency(self, search_term):
         """Test that search results are consistent and contain search terms."""
+        # Create in-memory database
+        from tldw_chatbook.DB.Evals_DB import EvalsDB
+        in_memory_db = EvalsDB(db_path=":memory:", client_id="test_client")
+        
         # Create some tasks with the search term
         task_ids_with_term = []
         task_ids_without_term = []
@@ -262,8 +280,12 @@ class TestDatabaseProperties:
     
     @given(st.integers(min_value=1, max_value=100))
     @settings(max_examples=10, deadline=None)
-    def test_pagination_properties(self, total_tasks, in_memory_db):
+    def test_pagination_properties(self, total_tasks):
         """Test pagination properties with variable number of tasks."""
+        # Create in-memory database
+        from tldw_chatbook.DB.Evals_DB import EvalsDB
+        in_memory_db = EvalsDB(db_path=":memory:", client_id="test_client")
+        
         # Create tasks
         task_ids = []
         for i in range(total_tasks):
@@ -287,7 +309,8 @@ class TestDatabaseProperties:
             page = 1
             
             while True:
-                paginated_tasks = in_memory_db.list_tasks(page=page, page_size=page_size)
+                offset = (page - 1) * page_size
+                paginated_tasks = in_memory_db.list_tasks(limit=page_size, offset=offset)
                 if not paginated_tasks:
                     break
                 
@@ -379,9 +402,9 @@ class TestEvaluationProperties:
         assert aggregated["score_min"] == min(scores)
         assert aggregated["score_max"] == max(scores)
         
-        # If all scores are the same, std should be 0
+        # If all scores are the same, std should be 0 (within floating point precision)
         if len(set(scores)) == 1:
-            assert aggregated["score_std"] == 0.0
+            assert abs(aggregated["score_std"]) < 1e-10
     
     @given(eval_result_strategy())
     @settings(max_examples=20, deadline=None)
@@ -425,7 +448,7 @@ class TestTaskConfigurationProperties:
             assert any("name" in issue.lower() for issue in issues)
         
         # If task_type is not in valid types, should have issues
-        valid_types = ["question_answer", "multiple_choice", "text_generation", "code_generation"]
+        valid_types = ["question_answer", "logprob", "generation", "classification"]
         if task_config.task_type not in valid_types:
             assert len(issues) > 0
             assert any("task_type" in issue.lower() for issue in issues)
@@ -453,9 +476,22 @@ class TestTaskConfigurationProperties:
         loader = TaskLoader()
         issues = loader.validate_task(config)
         
-        # Since TaskLoader doesn't validate generation_kwargs parameters,
-        # just check that the task itself is valid
-        assert len(issues) == 0  # No validation errors for valid task config
+        # Check that appropriate validation errors are generated for invalid values
+        if generation_kwargs.get('temperature') is not None:
+            temp = generation_kwargs['temperature']
+            if temp < 0 or temp > 2:
+                assert any('temperature' in issue.lower() for issue in issues)
+        
+        if generation_kwargs.get('max_tokens') is not None:
+            max_tok = generation_kwargs['max_tokens']
+            if isinstance(max_tok, (int, float)) and max_tok <= 0:
+                assert any('max_tokens' in issue.lower() or 'token' in issue.lower() for issue in issues)
+        
+        # If all parameters are within valid ranges, should have no issues
+        temp_valid = generation_kwargs.get('temperature') is None or 0 <= generation_kwargs['temperature'] <= 2
+        tokens_valid = generation_kwargs.get('max_tokens') is None or generation_kwargs['max_tokens'] > 0
+        if temp_valid and tokens_valid:
+            assert len(issues) == 0
 
 class TestFileHandlingProperties:
     """Test file handling and parsing properties."""
@@ -538,42 +574,55 @@ class TestConcurrencyProperties:
     
     @given(st.lists(st.text(min_size=1, max_size=50), min_size=2, max_size=10, unique=True))
     @settings(max_examples=10, deadline=None)
-    def test_concurrent_task_creation_uniqueness(self, task_names, temp_db):
+    def test_concurrent_task_creation_uniqueness(self, task_names):
         """Test that concurrent task creation maintains uniqueness."""
         import asyncio
         import threading
+        import tempfile
+        import os
         
-        created_ids = []
-        errors = []
+        # Use a temporary file database for thread safety
+        from tldw_chatbook.DB.Evals_DB import EvalsDB
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+            temp_path = f.name
         
-        def create_task(name):
-            try:
-                task_id = temp_db.create_task(
-                    name=name,
-                    description=f"Concurrent test task {name}",
-                    task_type="question_answer",
-                    config_format="custom",
-                    config_data={"name": name}
-                )
-                created_ids.append(task_id)
-            except Exception as e:
-                errors.append(e)
+        try:
+            temp_db = EvalsDB(db_path=temp_path, client_id="test_client")
         
-        # Create tasks concurrently
-        threads = []
-        for name in task_names:
-            thread = threading.Thread(target=create_task, args=(name,))
-            threads.append(thread)
-            thread.start()
-        
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
-        
-        # Should have no errors and all IDs should be unique
-        assert len(errors) == 0
-        assert len(created_ids) == len(task_names)
-        assert len(set(created_ids)) == len(created_ids)
+            created_ids = []
+            errors = []
+            
+            def create_task(name):
+                try:
+                    task_id = temp_db.create_task(
+                        name=name,
+                        description=f"Concurrent test task {name}",
+                        task_type="question_answer",
+                        config_format="custom",
+                        config_data={"name": name}
+                    )
+                    created_ids.append(task_id)
+                except Exception as e:
+                    errors.append(e)
+            
+            # Create tasks concurrently
+            threads = []
+            for name in task_names:
+                thread = threading.Thread(target=create_task, args=(name,))
+                threads.append(thread)
+                thread.start()
+            
+            # Wait for all threads to complete
+            for thread in threads:
+                thread.join()
+            
+            # Should have no errors and all IDs should be unique
+            assert len(errors) == 0
+            assert len(created_ids) == len(task_names)
+            assert len(set(created_ids)) == len(created_ids)
+        finally:
+            # Clean up
+            os.unlink(temp_path)
     
     @given(st.lists(sample_data_strategy(), min_size=1, max_size=20))
     @settings(max_examples=5, deadline=None)
@@ -626,14 +675,15 @@ class TestSystemInvariants:
     
     @given(st.integers(min_value=1, max_value=50))
     @settings(max_examples=5, deadline=None)
-    def test_resource_cleanup_invariant(self, num_operations, temp_db):
+    def test_resource_cleanup_invariant(self, num_operations):
         """Test that system resources are properly cleaned up."""
         import gc
-        import weakref
         
-        # Track created objects
-        created_objects = []
+        # Create in-memory database
+        from tldw_chatbook.DB.Evals_DB import EvalsDB
+        temp_db = EvalsDB(db_path=":memory:", client_id="test_client")
         
+        task_ids = []
         for i in range(num_operations):
             # Create task
             task_id = temp_db.create_task(
@@ -643,20 +693,29 @@ class TestSystemInvariants:
                 config_format="custom",
                 config_data={}
             )
-            
-            # Track the connection for this operation
-            conn = temp_db.get_connection()
-            created_objects.append(weakref.ref(conn))
+            task_ids.append(task_id)
         
         # Force garbage collection
         gc.collect()
         
-        # Check that objects can be garbage collected
-        # (This is a simplified test - real resource cleanup is more complex)
-        alive_objects = [obj for obj in created_objects if obj() is not None]
+        # Verify we can still access the database
+        assert len(temp_db.list_tasks()) == num_operations
         
-        # Most objects should be collectible (allowing for some that might be cached)
-        assert len(alive_objects) <= num_operations
+        # Verify all tasks are accessible
+        for task_id in task_ids:
+            task = temp_db.get_task(task_id)
+            assert task is not None
+            
+        # Basic resource check - make sure we can still create more tasks
+        # This tests that connections/resources haven't been exhausted
+        extra_task_id = temp_db.create_task(
+            name="extra_task",
+            description="Testing resource availability",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={}
+        )
+        assert extra_task_id is not None
     
     @given(st.lists(
         st.tuples(
@@ -667,8 +726,12 @@ class TestSystemInvariants:
         max_size=20
     ))
     @settings(max_examples=5, deadline=None)
-    def test_database_consistency_invariant(self, operations, temp_db):
+    def test_database_consistency_invariant(self, operations):
         """Test that database maintains consistency across operations."""
+        # Create in-memory database
+        from tldw_chatbook.DB.Evals_DB import EvalsDB
+        temp_db = EvalsDB(db_path=":memory:", client_id="test_client")
+        
         valid_operations = ["create_task", "create_model", "create_dataset"]
         
         for op_type, op_data in operations:

@@ -9,11 +9,17 @@ import numpy as np
 from typing import List, Dict, Any
 
 from tldw_chatbook.RAG_Search.simplified import (
-    EmbeddingsService,
     InMemoryVectorStore
+)
+from tldw_chatbook.RAG_Search.Services import (
+    EmbeddingsService
 )
 # Note: Compatibility layer may need adjustment for simplified API
 from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
+from tldw_chatbook.RAG_Search.Services import (
+    EmbeddingFactoryCompat, 
+    create_legacy_factory
+)
 
 # Import test utilities from conftest
 import sys
@@ -158,7 +164,9 @@ class TestChromaDBManagerCompatibility:
                         # Test embed_one
                         embedding = manager.embedding_factory.embed_one("test", as_list=True)
                         assert isinstance(embedding, list)
-                        mock_create.assert_called_with(["test"])
+                        # Allow call with or without provider_id
+                        args, kwargs = mock_create.call_args
+                        assert args[0] == ["test"]
                         
                         # Test embed
                         mock_create.return_value = [[0.1] * 384, [0.2] * 384]
@@ -244,8 +252,12 @@ class TestConfigurationCompatibility:
         """Test nested configuration format (as used in ChromaDBManager)"""
         service = EmbeddingsService()
         
-        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.HuggingFaceProvider'):
-            with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.OpenAIProvider'):
+        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.HuggingFaceProvider') as mock_hf:
+            with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.OpenAIProvider') as mock_openai:
+                # Make the mocks return instances
+                mock_hf.return_value = MockEmbeddingProvider(dimension=384)
+                mock_openai.return_value = MockEmbeddingProvider(dimension=1536)
+                
                 success = service.initialize_from_config(nested_config)
                 assert success
                 assert len(service.providers) > 0

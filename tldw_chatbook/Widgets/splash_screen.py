@@ -138,35 +138,67 @@ class SplashScreen(Container):
                 "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars" # Batch 3
             ]
         }
-        
+
         # Get config from settings
         splash_config = get_cli_setting("splash_screen", None, {})
-        
-        # Merge with defaults
+        if not splash_config:
+            logger.debug("No splash screen config found in settings, using defaults")
+            splash_config = {}
+
+        # Merge with defaults, ensuring we don't override active_cards if it's empty
+        if "active_cards" in splash_config and not splash_config["active_cards"]:
+            splash_config.pop("active_cards")
+
         config = {**default_config, **splash_config}
-        
+
+        # Double check the critical settings
+        if not config["active_cards"]:
+            config["active_cards"] = default_config["active_cards"]
+            logger.warning("Active cards list was empty, restored defaults")
+
+        if config["card_selection"] not in ["random", "sequential"] and config["card_selection"] not in config[
+            "active_cards"]:
+            config["card_selection"] = "random"
+            logger.warning("Invalid card_selection setting, defaulting to random")
+
         # Get effects config
         effects_config = get_cli_setting("splash_screen.effects", None, {})
-        config.update(effects_config)
-        
+        if effects_config:
+            config.update(effects_config)
+
+        logger.debug(f"Loaded splash config: {config}")
         return config
-    
+
     def _select_card(self) -> str:
         """Select which splash card to display based on configuration."""
         selection_mode = self.config.get("card_selection", "random")
         active_cards = self.config.get("active_cards", ["default"])
-        
-        if selection_mode == "random" and active_cards:
-            return random.choice(active_cards)
+
+        logger.debug(f"Splash card selection mode: {selection_mode}")
+        logger.debug(f"Available active cards: {active_cards}")
+
+        if not active_cards:
+            logger.warning("No active cards available, falling back to default")
+            return "default"
+
+        if selection_mode == "random":
+            # Make a random choice from active cards
+            selected = random.choice(active_cards) if active_cards else "default"
+            logger.debug(f"Randomly selected card: {selected}")
+            return selected
         elif selection_mode == "sequential":
             # TODO: Implement sequential selection with persistence
-            return active_cards[0] if active_cards else "default"
+            selected = active_cards[0] if active_cards else "default"
+            logger.debug(f"Sequential selection, chose: {selected}")
+            return selected
         elif selection_mode in active_cards:
             # Specific card selected
+            logger.debug(f"Specific card selected: {selection_mode}")
             return selection_mode
         else:
+            logger.debug("Invalid selection mode, falling back to default")
             return "default"
-    
+
     def _load_card(self, card_name: str) -> Dict[str, Any]:
         """Load splash card data from file or return built-in card."""
         # Check for custom card file

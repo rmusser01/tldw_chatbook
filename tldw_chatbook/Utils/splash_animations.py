@@ -5,7 +5,7 @@
 import random
 import time
 import math
-from typing import List, Optional, Tuple, Any
+from typing import List, Optional, Tuple, Any, Dict
 from dataclasses import dataclass
 from rich.text import Text
 from rich.style import Style
@@ -878,7 +878,7 @@ class SpotlightEffect(BaseEffect):
                             # For now, simple binary visible/hidden
                             styled_line_segments.append(f"[{self.hidden_style}]{escaped_char}[/{self.hidden_style}]")
                     else: # Outside content width, but within display width (padding)
-                        styled_line_segments.append(f"[{self.hidden_style}] {[/ {self.hidden_style}]}")
+                        styled_line_segments.append(f"[{self.hidden_style}] [/{self.hidden_style}]")
                 output_lines.append("".join(styled_line_segments))
             else: # Outside content height (padding)
                 output_lines.append(f"[{self.hidden_style}]{' ' * self.display_width}[/{self.hidden_style}]")
@@ -1489,7 +1489,7 @@ class GameOfLifeEffect(BaseEffect):
                     char, style = cell_content
                     line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
                 else: # It's a space from initialization
-                    line_segments.append(f"[{self.dead_style}] {[/ {self.dead_style}]}") # Styled background space
+                    line_segments.append(f"[{self.dead_style}] [/{self.dead_style}]") # Styled background space
             styled_output_lines[r_idx] = "".join(line_segments)
 
 
@@ -1514,7 +1514,7 @@ class GameOfLifeEffect(BaseEffect):
                             char, style = cell_content
                             title_line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
                         else:
-                             title_line_segments.append(f"[{self.dead_style}] {[/ {self.dead_style}]}")
+                             title_line_segments.append(f"[{self.dead_style}] [/{self.dead_style}]")
                 styled_output_lines[title_y] = "".join(title_line_segments)
 
         return "\n".join(styled_output_lines)

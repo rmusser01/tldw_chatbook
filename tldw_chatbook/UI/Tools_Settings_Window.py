@@ -1741,7 +1741,7 @@ class ToolsSettingsWindow(Container):
             config_text_area = self.query_one("#config-text-area", TextArea)
             toml.loads(config_text_area.text)
             self.app_instance.notify("TOML configuration is valid!", severity="information")
-        except toml.TOMLDecodeError as e:
+        except toml.TomlDecodeError as e:
             self.app_instance.notify(f"TOML validation error: {e}", severity="error")
     
     async def _save_general_config_form(self) -> None:
