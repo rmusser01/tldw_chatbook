@@ -105,7 +105,7 @@ def task_config_strategy(draw):
         metric=draw(st.sampled_from(metrics)),
         num_fewshot=draw(st.integers(min_value=0, max_value=20)),
         generation_kwargs=draw(st.dictionaries(
-            keys=st.sampled_from(["temperature", "max_tokens", "top_p", "top_k"]),
+            keys=st.sampled_from(["temperature", "max_length", "top_p", "top_k"]),
             values=st.one_of(
                 st.floats(min_value=0.0, max_value=2.0),
                 st.integers(min_value=1, max_value=2048)
@@ -454,7 +454,7 @@ class TestTaskConfigurationProperties:
             assert any("task_type" in issue.lower() for issue in issues)
     
     @given(st.dictionaries(
-        keys=st.sampled_from(["temperature", "max_tokens", "top_p", "top_k"]),
+        keys=st.sampled_from(["temperature", "max_length", "top_p", "top_k"]),
         values=st.one_of(
             st.floats(min_value=-1.0, max_value=3.0),  # Include invalid ranges
             st.integers(min_value=-100, max_value=5000)
@@ -482,15 +482,15 @@ class TestTaskConfigurationProperties:
             if temp < 0 or temp > 2:
                 assert any('temperature' in issue.lower() for issue in issues)
         
-        if generation_kwargs.get('max_tokens') is not None:
-            max_tok = generation_kwargs['max_tokens']
-            if isinstance(max_tok, (int, float)) and max_tok <= 0:
-                assert any('max_tokens' in issue.lower() or 'token' in issue.lower() for issue in issues)
+        if generation_kwargs.get('max_length') is not None:
+            max_len = generation_kwargs['max_length']
+            if isinstance(max_len, (int, float)) and max_len <= 0:
+                assert any('max_length' in issue.lower() or 'length' in issue.lower() for issue in issues)
         
         # If all parameters are within valid ranges, should have no issues
         temp_valid = generation_kwargs.get('temperature') is None or 0 <= generation_kwargs['temperature'] <= 2
-        tokens_valid = generation_kwargs.get('max_tokens') is None or generation_kwargs['max_tokens'] > 0
-        if temp_valid and tokens_valid:
+        length_valid = generation_kwargs.get('max_length') is None or generation_kwargs['max_length'] > 0
+        if temp_valid and length_valid:
             assert len(issues) == 0
 
 class TestFileHandlingProperties:

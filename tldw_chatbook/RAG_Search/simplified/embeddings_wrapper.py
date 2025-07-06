@@ -225,6 +225,10 @@ class EmbeddingsServiceWrapper:
             # Use the factory's embed method
             embeddings = self.factory.embed(texts, as_list=False)
             
+            # Ensure embeddings is a numpy array
+            if not isinstance(embeddings, np.ndarray):
+                embeddings = np.array(embeddings)
+            
             # Get memory usage after
             memory_after = process.memory_info().rss / (1024 * 1024)  # MB
             memory_delta = memory_after - memory_before
@@ -271,6 +275,10 @@ class EmbeddingsServiceWrapper:
             # Use the factory's async embed method
             embeddings = await self.factory.async_embed(texts, as_list=False)
             
+            # Ensure embeddings is a numpy array
+            if not isinstance(embeddings, np.ndarray):
+                embeddings = np.array(embeddings)
+            
             # Update metrics
             self._embeddings_created += 1
             self._total_texts_processed += len(texts)
@@ -295,13 +303,19 @@ class EmbeddingsServiceWrapper:
         
         Convenience method for single text embedding.
         """
-        return self.factory.embed_one(text, as_list=False)
+        result = self.factory.embed_one(text, as_list=False)
+        if not isinstance(result, np.ndarray):
+            result = np.array(result)
+        return result
     
     async def create_embedding_async(self, text: str) -> np.ndarray:
         """
         Async version of create_embedding for single text.
         """
-        return await self.factory.async_embed_one(text, as_list=False)
+        result = await self.factory.async_embed_one(text, as_list=False)
+        if not isinstance(result, np.ndarray):
+            result = np.array(result)
+        return result
     
     def get_embedding_dimension(self) -> Optional[int]:
         """
@@ -393,6 +407,45 @@ class EmbeddingsServiceWrapper:
             pass
         
         return metrics
+    
+    def get_memory_usage(self) -> Dict[str, float]:
+        """
+        Get memory usage statistics for the embeddings service.
+        
+        Returns:
+            Dict with memory usage in MB for different components
+        """
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        
+        # Get current memory usage
+        rss_mb = memory_info.rss / (1024 * 1024)  # Resident Set Size in MB
+        vms_mb = memory_info.vms / (1024 * 1024)  # Virtual Memory Size in MB
+        
+        # Try to get GPU memory if using CUDA
+        gpu_memory_mb = 0.0
+        if self.device == "cuda":
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    gpu_memory_mb = torch.cuda.memory_allocated() / (1024 * 1024)
+            except Exception as e:
+                logger.debug(f"Could not get GPU memory usage: {e}")
+        
+        memory_usage = {
+            "rss_mb": rss_mb,
+            "vms_mb": vms_mb,
+            "gpu_mb": gpu_memory_mb,
+            "total_mb": rss_mb + gpu_memory_mb
+        }
+        
+        # Log memory metrics
+        log_gauge("embeddings_memory_rss_mb", rss_mb)
+        log_gauge("embeddings_memory_vms_mb", vms_mb)
+        if gpu_memory_mb > 0:
+            log_gauge("embeddings_memory_gpu_mb", gpu_memory_mb)
+        
+        return memory_usage
     
     def clear_cache(self):
         """

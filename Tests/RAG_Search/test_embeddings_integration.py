@@ -10,13 +10,17 @@ import threading
 from pathlib import Path
 from typing import List, Dict, Any
 import os
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, MagicMock
 
 from tldw_chatbook.RAG_Search.simplified import (
-    EmbeddingsService,
+    EmbeddingsServiceWrapper,
     ChromaVectorStore,
     InMemoryVectorStore,
-    create_embeddings_service
+    create_embeddings_service,
+    RAGService,
+    create_rag_service,
+    RAGConfig,
+    create_config_for_testing
 )
 # Note: Provider classes are handled internally in simplified API
 from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
@@ -25,6 +29,7 @@ from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 # Import test markers from conftest
 import sys
 import os
+import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from conftest import requires_embeddings, requires_chromadb, requires_numpy
 
@@ -34,481 +39,474 @@ class TestEndToEndWorkflow:
     """Test complete embedding workflow from text to search results"""
     
     @requires_embeddings
-    def test_full_rag_workflow(self, temp_dir, sample_texts):
-        """Test complete RAG workflow with real providers"""
-        # Create service with real providers
-        service = EmbeddingsService(persist_directory=temp_dir)
+    def test_full_rag_workflow_with_wrapper(self, temp_dir, sample_texts):
+        """Test complete RAG workflow using the simplified API"""
+        # Create embeddings service
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Mock the embedding factory
+            mock_instance = MagicMock()
+            mock_instance.embed.return_value = np.array([[0.1 + i * 0.01] * 384 for i in range(len(sample_texts))])
+            mock_factory.return_value = mock_instance
+            
+            embeddings_service = EmbeddingsServiceWrapper(
+                model_name="sentence-transformers/all-MiniLM-L6-v2"
+            )
+            
+            # Create vector store
+            vector_store = InMemoryVectorStore()
+            
+            # Create RAG config for testing
+            config = create_config_for_testing(use_memory_store=True)
+            
+            # Create RAG service
+            rag_service = RAGService(config=config)
+            
+            # Index documents
+            results = []
+            for i, text in enumerate(sample_texts):
+                result = rag_service.index_document_sync(
+                    doc_id=f"doc_{i}",
+                    content=text,
+                    title=f"Test Document {i}",
+                    metadata={"source": "test", "index": i}
+                )
+                results.append(result)
+            
+            assert all(r.success for r in results)
+            assert sum(r.chunks_created for r in results) > 0
+            
+            # Search for similar documents
+            query = "What programming language is mentioned?"
+            search_results = rag_service.search_sync(
+                query=query,
+                top_k=3
+            )
+            
+            assert search_results is not None
+            assert len(search_results) <= 3
+            
+            # Cleanup
+            rag_service.clear_index()
+            embeddings_service.close()
+    
+    def test_concurrent_operations(self, temp_dir, sample_texts):
+        """Test concurrent embedding operations"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Thread-safe mock
+            lock = threading.Lock()
+            call_count = 0
+            
+            def thread_safe_embed(texts, as_list=True):
+                nonlocal call_count
+                with lock:
+                    call_count += 1
+                    return np.array([[float(call_count) + i * 0.1] * 384 for i in range(len(texts))])
+            
+            mock_instance = MagicMock()
+            mock_instance.embed.side_effect = thread_safe_embed
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            
+            results = []
+            errors = []
+            
+            def process_documents(thread_id):
+                try:
+                    # Each thread processes different documents
+                    thread_texts = [f"{text} - Thread {thread_id}" for text in sample_texts[:2]]
+                    
+                    # Create embeddings
+                    embeddings = service.create_embeddings(thread_texts)
+                    if embeddings is None:
+                        raise RuntimeError(f"Thread {thread_id} failed to create embeddings")
+                    
+                    results.append((thread_id, embeddings.shape))
+                except Exception as e:
+                    errors.append((thread_id, str(e)))
+            
+            # Run concurrent operations
+            threads = []
+            for i in range(5):
+                thread = threading.Thread(target=process_documents, args=(i,))
+                threads.append(thread)
+                thread.start()
+            
+            for thread in threads:
+                thread.join(timeout=10)
+            
+            assert len(errors) == 0, f"Thread errors: {errors}"
+            assert len(results) == 5
+            
+            # All threads should get correct shape
+            for thread_id, shape in results:
+                assert shape == (2, 384)  # 2 texts, 384 dimensions
+            
+            service.close()
+
+
+@pytest.mark.integration
+class TestVectorStoreIntegration:
+    """Test integration with vector stores"""
+    
+    def test_in_memory_vector_store(self):
+        """Test InMemoryVectorStore operations"""
+        store = InMemoryVectorStore()
         
-        # Initialize a real embedding model
-        assert service.initialize_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
+        # Add documents
+        collection_name = "test_collection"
+        documents = ["First document", "Second document", "Third document"]
+        embeddings = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]
+        metadatas = [{"index": i} for i in range(3)]
+        ids = [f"doc_{i}" for i in range(3)]
         
-        # Create embeddings
-        embeddings = service.create_embeddings(sample_texts)
-        assert embeddings is not None
-        assert len(embeddings) == len(sample_texts)
-        
-        # Add to collection
-        collection_name = "test_documents"
-        doc_ids = [f"doc_{i}" for i in range(len(sample_texts))]
-        metadatas = [{"source": "test", "index": i} for i in range(len(sample_texts))]
-        
-        success = service.add_documents_to_collection(
+        success = store.add_documents(
             collection_name,
-            sample_texts,
+            documents,
             embeddings,
             metadatas,
-            doc_ids
+            ids
         )
         assert success
         
-        # Search for similar documents
-        query = "What programming language is mentioned?"
-        query_embeddings = service.create_embeddings([query])
+        # List collections
+        collections = store.list_collections()
+        assert collection_name in collections
         
-        results = service.search_collection(
+        # Search
+        query_embeddings = [[0.15, 0.25, 0.35]]  # Similar to first document
+        results = store.search(
             collection_name,
             query_embeddings,
-            n_results=3
+            n_results=2
         )
         
         assert results is not None
         assert "ids" in results
-        assert len(results["ids"][0]) <= 3
+        assert len(results["ids"][0]) == 2
         
-        # Cleanup
-        service.delete_collection(collection_name)
-    
-    @requires_embeddings
-    def test_multi_provider_workflow(self, temp_dir):
-        """Test workflow with multiple providers"""
-        service = EmbeddingsService(persist_directory=temp_dir)
-        
-        # Add multiple providers
-        st_provider = SentenceTransformerProvider("all-MiniLM-L6-v2")
-        service.add_provider("minilm", st_provider)
-        
-        # Create different embeddings with different providers
-        texts = ["This is a test document about machine learning"]
-        
-        # Use first provider
-        service.set_provider("minilm")
-        embeddings1 = service.create_embeddings(texts)
-        
-        # Add documents with first provider
-        service.add_documents_to_collection(
-            "collection1",
-            texts,
-            embeddings1,
-            [{"provider": "minilm"}],
-            ["doc1"]
-        )
-        
-        # Search should work
-        results = service.search_collection("collection1", embeddings1, n_results=1)
-        assert results is not None
-        assert len(results["ids"][0]) == 1
-    
-    def test_concurrent_operations(self, service_with_multiple_providers, sample_texts, thread_helper):
-        """Test concurrent embedding operations"""
-        service = service_with_multiple_providers
-        
-        def process_documents(thread_id):
-            # Each thread processes different documents
-            thread_texts = [f"{text} - Thread {thread_id}" for text in sample_texts]
-            
-            # Create embeddings
-            embeddings = service.create_embeddings(thread_texts)
-            if embeddings is None:
-                raise RuntimeError(f"Thread {thread_id} failed to create embeddings")
-            
-            # Add to collection
-            collection_name = f"thread_{thread_id}_collection"
-            doc_ids = [f"thread_{thread_id}_doc_{i}" for i in range(len(thread_texts))]
-            
-            success = service.add_documents_to_collection(
-                collection_name,
-                thread_texts,
-                embeddings,
-                [{"thread": thread_id} for _ in thread_texts],
-                doc_ids
-            )
-            
-            if not success:
-                raise RuntimeError(f"Thread {thread_id} failed to add documents")
-            
-            # Search in own collection
-            query_embeddings = service.create_embeddings([thread_texts[0]])
-            results = service.search_collection(collection_name, query_embeddings, n_results=1)
-            
-            return results is not None
-        
-        # Run concurrent operations
-        results, errors = thread_helper.run_concurrent(process_documents, num_threads=5)
-        
-        assert len(errors) == 0, f"Thread errors: {errors}"
-        assert all(result[1] for result in results)  # All searches successful
-        
-        # Verify all collections were created
-        collections = service.list_collections()
-        assert len([c for c in collections if c.startswith("thread_")]) == 5
-
-
-@pytest.mark.integration
-class TestChromaDBIntegration:
-    """Test integration with ChromaDB"""
+        # Delete collection
+        assert store.delete_collection(collection_name)
+        assert collection_name not in store.list_collections()
     
     @requires_chromadb
-    def test_chromadb_persistence(self, persist_dir):
-        """Test that ChromaDB persists data across service instances"""
-        collection_name = "persistent_collection"
-        test_doc = "This document should persist"
-        
-        # First service instance
-        service1 = EmbeddingsService(persist_directory=persist_dir)
-        service1.initialize_embedding_model()
-        
-        # Add document
-        embeddings = service1.create_embeddings([test_doc])
-        service1.add_documents_to_collection(
-            collection_name,
-            [test_doc],
-            embeddings,
-            [{"persistent": True}],
-            ["persist_doc_1"]
-        )
-        
-        # Close first service
-        del service1
-        
-        # Create new service instance
-        service2 = EmbeddingsService(persist_directory=persist_dir)
-        service2.initialize_embedding_model()
-        
-        # Collection should still exist
-        collections = service2.list_collections()
-        assert collection_name in collections
-        
-        # Search should find the document
-        query_embeddings = service2.create_embeddings([test_doc])
-        results = service2.search_collection(collection_name, query_embeddings)
-        
-        assert results is not None
-        assert len(results["ids"][0]) > 0
-        assert results["documents"][0][0] == test_doc
-    
-    @requires_chromadb
-    def test_chromadb_collection_management(self, persist_dir):
-        """Test ChromaDB collection operations"""
-        service = EmbeddingsService(persist_directory=persist_dir)
-        service.initialize_embedding_model()
-        
-        # Create multiple collections
-        collections = ["collection_a", "collection_b", "collection_c"]
-        
-        for collection in collections:
-            embeddings = service.create_embeddings([f"Document for {collection}"])
-            service.add_documents_to_collection(
-                collection,
-                [f"Document for {collection}"],
-                embeddings,
-                [{"collection": collection}],
-                [f"{collection}_doc"]
-            )
-        
-        # List collections
-        all_collections = service.list_collections()
-        for collection in collections:
-            assert collection in all_collections
-        
-        # Delete one collection
-        assert service.delete_collection("collection_b")
-        
-        # Verify deletion
-        remaining = service.list_collections()
-        assert "collection_a" in remaining
-        assert "collection_b" not in remaining
-        assert "collection_c" in remaining
-        
-        # Clear a collection
-        assert service.clear_collection("collection_a")
-        
-        # Collection should exist but be empty
-        info = service.get_collection_info("collection_a")
-        assert info is not None
-        # Note: ChromaDB doesn't expose count easily, so we search instead
-        query_embeddings = service.create_embeddings(["test"])
-        results = service.search_collection("collection_a", query_embeddings)
-        assert results is None or len(results.get("ids", [[]])[0]) == 0
-
-
-@pytest.mark.integration
-class TestLegacyCompatibility:
-    """Test compatibility with legacy systems"""
-    
-    def test_chromadb_manager_integration(self, temp_dir, legacy_config):
-        """Test integration with ChromaDBManager"""
-        # Set environment variable to use new service
-        os.environ["USE_NEW_EMBEDDINGS_SERVICE"] = "true"
-        
+    def test_chromadb_vector_store(self, temp_dir):
+        """Test ChromaVectorStore operations"""
+        # This test requires actual ChromaDB to be installed
         try:
-            # Create a mock user config that ChromaDBManager expects
-            user_config = {
-                "embedding_config": legacy_config,
-                "USER_DB_BASE_DIR": str(temp_dir),
-                "chroma_client_settings": {
-                    "anonymized_telemetry": False,
-                    "allow_reset": True
-                }
-            }
-            
-            # Mock the embeddings dependency check
-            with patch('tldw_chatbook.Embeddings.Chroma_Lib.DEPENDENCIES_AVAILABLE', {'embeddings_rag': True}):
-                with patch('tldw_chatbook.Embeddings.Chroma_Lib.chromadb'):
-                    # Initialize ChromaDBManager
-                    manager = ChromaDBManager("test_user", user_config)
-                    
-                    # Verify it's using the compatibility layer
-                    assert hasattr(manager.embedding_factory, '_service')
-                    
-                    # Test embed methods work
-                    with patch.object(manager.embedding_factory._service, 'create_embeddings', return_value=[[0.1] * 384]):
-                        embedding = manager.embedding_factory.embed_one("test", as_list=True)
-                        assert isinstance(embedding, list)
+            persist_dir = temp_dir / "chromadb_test"
+            persist_dir.mkdir(exist_ok=True)
+            store = ChromaVectorStore(persist_directory=str(persist_dir))
+        except ImportError:
+            pytest.skip("ChromaDB not installed")
+            return
         
-        finally:
-            # Clean up environment variable
-            os.environ.pop("USE_NEW_EMBEDDINGS_SERVICE", None)
-    
-    def test_factory_compat_with_real_providers(self, legacy_config):
-        """Test EmbeddingFactoryCompat with real providers"""
-        with patch('tldw_chatbook.RAG_Search.Services.embeddings_service.sentence_transformers'):
-            factory = EmbeddingFactoryCompat(legacy_config)
-            
-            # Mock the service's providers
-            mock_provider = Mock()
-            mock_provider.create_embeddings.return_value = [[0.1] * 384, [0.2] * 384]
-            factory._service.providers["test-model"] = mock_provider
-            factory._service.current_provider_id = "test-model"
-            
-            # Test legacy API
-            embeddings = factory.embed(["text1", "text2"], model_id="test-model", as_list=True)
-            
-            assert len(embeddings) == 2
-            assert all(len(emb) == 384 for emb in embeddings)
-
-
-@pytest.mark.integration
-class TestCacheIntegration:
-    """Test cache service integration"""
-    
-    def test_cache_integration_workflow(self, embeddings_service, cache_with_hits):
-        """Test workflow with cache hits and misses"""
-        embeddings_service.cache_service = cache_with_hits
+        # Add documents
+        collection_name = "chroma_test"
+        documents = ["ChromaDB document 1", "ChromaDB document 2"]
+        embeddings = [[0.1, 0.2], [0.3, 0.4]]
+        metadatas = [{"source": "test"} for _ in documents]
+        ids = ["chroma_1", "chroma_2"]
         
-        # First call - mix of cached and uncached
-        texts = ["cached_text", "uncached_text"]
-        embeddings1 = embeddings_service.create_embeddings(texts)
-        
-        assert embeddings1 is not None
-        assert len(embeddings1) == 2
-        
-        # Verify cache was used
-        cache_with_hits.get_embeddings_batch.assert_called()
-        cache_with_hits.cache_embeddings_batch.assert_called()
-    
-    def test_cache_failure_recovery(self, embeddings_service):
-        """Test recovery when cache service fails"""
-        # Create a cache that fails intermittently
-        failing_cache = Mock()
-        call_count = 0
-        
-        def get_embeddings_batch_side_effect(texts):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise Exception("Cache temporarily unavailable")
-            return {}, texts  # No cache hits
-        
-        failing_cache.get_embeddings_batch.side_effect = get_embeddings_batch_side_effect
-        failing_cache.cache_embeddings_batch.return_value = None
-        
-        embeddings_service.cache_service = failing_cache
-        
-        # First call - cache fails but embeddings still created
-        embeddings1 = embeddings_service.create_embeddings(["text1"])
-        assert embeddings1 is not None
-        
-        # Second call - cache works
-        embeddings2 = embeddings_service.create_embeddings(["text2"])
-        assert embeddings2 is not None
-
-
-@pytest.mark.integration
-class TestMemoryManagement:
-    """Test memory management integration"""
-    
-    def test_memory_manager_integration(self, embeddings_service):
-        """Test memory manager integration"""
-        # Create mock memory manager
-        mock_memory_manager = Mock()
-        mock_memory_manager.update_collection_access_time.return_value = None
-        mock_memory_manager.get_memory_usage_summary.return_value = {"total_bytes": 1000}
-        
-        embeddings_service.set_memory_manager(mock_memory_manager)
-        
-        # Perform search - should update access time
-        embeddings_service.search_collection("test_collection", [[0.1, 0.2]])
-        
-        mock_memory_manager.update_collection_access_time.assert_called_with("test_collection")
-        
-        # Get memory summary
-        summary = embeddings_service.get_memory_usage_summary()
-        assert summary == {"total_bytes": 1000}
-    
-    @requires_chromadb
-    def test_chromadb_memory_limits(self, persist_dir):
-        """Test ChromaDB with memory limits"""
-        memory_limit = 100 * 1024 * 1024  # 100MB
-        
-        service = EmbeddingsService(
-            persist_directory=persist_dir,
-            memory_limit_bytes=memory_limit
-        )
-        
-        # Verify ChromaDB was configured with memory limit
-        assert service.vector_store is not None
-        if isinstance(service.vector_store, ChromaDBStore):
-            assert service.vector_store.memory_limit_bytes == memory_limit
-
-
-@pytest.mark.integration
-class TestProviderSpecificIntegration:
-    """Test provider-specific integration scenarios"""
-    
-    @requires_embeddings
-    @patch('requests.post')
-    def test_openai_provider_integration(self, mock_post):
-        """Test OpenAI provider in full workflow"""
-        # Mock successful API response
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "data": [
-                {"embedding": [0.1 + i * 0.01 for i in range(1536)]}
-                for _ in range(3)  # 3 texts
-            ]
-        }
-        mock_post.return_value = mock_response
-        
-        # Create service with OpenAI provider
-        service = EmbeddingsService()
-        openai_provider = OpenAIProvider(api_key="test-key")
-        service.add_provider("openai", openai_provider)
-        service.set_provider("openai")
-        
-        # Full workflow
-        texts = ["Text 1", "Text 2", "Text 3"]
-        embeddings = service.create_embeddings(texts)
-        
-        assert embeddings is not None
-        assert len(embeddings) == 3
-        assert all(len(emb) == 1536 for emb in embeddings)
-        
-        # Add to collection
-        success = service.add_documents_to_collection(
-            "openai_docs",
-            texts,
+        success = store.add_documents(
+            collection_name,
+            documents,
             embeddings,
-            [{"source": "openai"} for _ in texts],
-            ["doc1", "doc2", "doc3"]
+            metadatas,
+            ids
         )
         assert success
+        
+        # Search
+        results = store.search(
+            collection_name,
+            [[0.15, 0.25]],
+            n_results=1
+        )
+        
+        assert results is not None
+        assert len(results["ids"][0]) == 1
+
+
+@pytest.mark.integration 
+class TestRAGServiceIntegration:
+    """Test full RAG service integration"""
     
-    @requires_embeddings
-    def test_provider_switching_workflow(self, service_with_multiple_providers, sample_texts):
-        """Test switching providers during workflow"""
-        service = service_with_multiple_providers
-        
-        # Process with fast provider
-        service.set_provider("fast")
-        start_time = time.time()
-        embeddings_fast = service.create_embeddings(sample_texts[:2])
-        fast_time = time.time() - start_time
-        
-        # Process with slow provider
-        service.set_provider("slow")
-        start_time = time.time()
-        embeddings_slow = service.create_embeddings(sample_texts[2:4])
-        slow_time = time.time() - start_time
-        
-        assert embeddings_fast is not None
-        assert embeddings_slow is not None
-        assert slow_time > fast_time  # Slow provider should take longer
-        
-        # Both should produce valid embeddings
-        assert all(len(emb) == 384 for emb in embeddings_fast)
-        assert all(len(emb) == 384 for emb in embeddings_slow)
+    def test_rag_service_workflow(self, temp_dir):
+        """Test complete RAG workflow with RAGService"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Mock embeddings
+            mock_instance = MagicMock()
+            def mock_embed(texts, as_list=True):
+                # Return different embeddings for different texts
+                return np.array([[hash(text) % 100 / 100.0 + i * 0.01 for i in range(384)] for text in texts])
+            
+            mock_instance.embed.side_effect = mock_embed
+            mock_factory.return_value = mock_instance
+            
+            # Create RAG service
+            rag_service = create_rag_service(
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                vector_store_type="memory"
+            )
+            
+            # Index documents
+            documents = [
+                "Python is a high-level programming language.",
+                "Machine learning uses statistical techniques.",
+                "Neural networks are inspired by biological neurons."
+            ]
+            
+            result = rag_service.index_documents(
+                documents=documents,
+                collection_name="test_rag",
+                metadata_list=[{"topic": "programming"}, {"topic": "ml"}, {"topic": "ai"}]
+            )
+            
+            assert result.success
+            assert result.indexed_count == 3
+            
+            # Search
+            search_results = rag_service.search(
+                query="programming languages like Python",
+                collection_name="test_rag",
+                n_results=2
+            )
+            
+            assert len(search_results) == 2
+            assert any("Python" in result.content for result in search_results)
+            
+            # Cleanup
+            rag_service.delete_collection("test_rag")
+
+
+@pytest.mark.integration
+class TestBatchProcessingIntegration:
+    """Test batch processing integration"""
+    
+    def test_large_batch_processing(self):
+        """Test processing large batches of documents"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Track batch sizes
+            batch_sizes = []
+            
+            def track_batches(texts, as_list=True):
+                batch_sizes.append(len(texts))
+                return np.array([[0.1] * 384 for _ in texts])
+            
+            mock_instance = MagicMock()
+            mock_instance.embed.side_effect = track_batches
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            
+            # Process large number of texts
+            texts = [f"Document number {i}" for i in range(1000)]
+            embeddings = service.create_embeddings(texts)
+            
+            assert embeddings is not None
+            assert embeddings.shape == (1000, 384)
+            
+            # Check batching occurred
+            assert len(batch_sizes) > 0
+            total_processed = sum(batch_sizes)
+            assert total_processed == 1000
+            
+            service.close()
+    
+    def test_mixed_length_documents(self):
+        """Test handling documents of varying lengths"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            mock_instance = MagicMock()
+            mock_instance.embed.return_value = np.array([[0.1] * 384 for _ in range(5)])
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            
+            # Mix of short and long documents
+            texts = [
+                "Short",
+                "A medium length document with more content",
+                "A" * 1000,  # Very long document
+                "Another short one",
+                "Medium document here"
+            ]
+            
+            embeddings = service.create_embeddings(texts)
+            
+            assert embeddings is not None
+            assert embeddings.shape == (5, 384)
+            
+            service.close()
+
+
+@pytest.mark.integration
+class TestMemoryTracking:
+    """Test memory tracking in embeddings service"""
+    
+    def test_memory_usage_tracking(self):
+        """Test memory usage tracking"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
+            with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.psutil.Process') as mock_process:
+                # Mock memory info
+                mock_memory = MagicMock()
+                mock_memory.memory_info.return_value.rss = 500 * 1024 * 1024  # 500MB
+                mock_process.return_value = mock_memory
+                
+                service = EmbeddingsServiceWrapper()
+                
+                # Get initial memory
+                initial_memory = service.get_memory_usage()
+                assert initial_memory == 500.0  # MB
+                
+                # Simulate memory growth
+                mock_memory.memory_info.return_value.rss = 600 * 1024 * 1024  # 600MB
+                
+                # Check memory again
+                current_memory = service.get_memory_usage()
+                assert current_memory == 600.0
+                
+                # Memory increased by 100MB
+                assert current_memory - initial_memory == 100.0
+                
+                service.close()
+
+
+@pytest.mark.integration
+class TestDifferentModelTypes:
+    """Test integration with different model types"""
+    
+    def test_huggingface_model_integration(self):
+        """Test HuggingFace model integration"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            mock_instance = MagicMock()
+            mock_instance.embed.return_value = np.array([[0.1] * 768 for _ in range(2)])
+            mock_factory.return_value = mock_instance
+            
+            # Test with a BERT-style model
+            service = EmbeddingsServiceWrapper(
+                model_name="bert-base-uncased",
+                device="cpu"
+            )
+            
+            texts = ["Test BERT embeddings", "Another test"]
+            embeddings = service.create_embeddings(texts)
+            
+            assert embeddings is not None
+            assert embeddings.shape == (2, 768)  # BERT has 768 dimensions
+            
+            service.close()
+    
+    def test_openai_model_integration(self):
+        """Test OpenAI model integration"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            mock_instance = MagicMock()
+            # OpenAI embeddings have different dimensions
+            mock_instance.embed.return_value = np.array([[0.1] * 1536 for _ in range(2)])
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper(
+                model_name="openai/text-embedding-3-small",
+                api_key="test-key"
+            )
+            
+            texts = ["Test OpenAI embeddings", "Another test"]
+            embeddings = service.create_embeddings(texts)
+            
+            assert embeddings is not None
+            assert embeddings.shape == (2, 1536)
+            
+            # Verify API key was used
+            assert service._api_key == "test-key"
+            
+            service.close()
 
 
 @pytest.mark.integration
 class TestErrorRecoveryIntegration:
     """Test error recovery in integrated scenarios"""
     
-    def test_partial_batch_failure_recovery(self, embeddings_service, mock_vector_store):
-        """Test recovery from partial batch failures"""
-        # Make vector store fail on second batch
+    def test_embedding_creation_error_recovery(self):
+        """Test recovery from embedding creation errors"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Mock that fails intermittently
+            call_count = 0
+            
+            def failing_embed(texts, as_list=True):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 2:
+                    raise Exception("Temporary failure")
+                return np.array([[0.1] * 384 for _ in texts])
+            
+            mock_instance = MagicMock()
+            mock_instance.embed.side_effect = failing_embed
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            
+            # First call succeeds
+            embeddings1 = service.create_embeddings(["text1"])
+            assert embeddings1 is not None
+            
+            # Second call fails
+            with pytest.raises(Exception) as exc_info:
+                embeddings2 = service.create_embeddings(["text2"])
+            assert "Temporary failure" in str(exc_info.value)
+            
+            # Third call succeeds again
+            embeddings3 = service.create_embeddings(["text3"])
+            assert embeddings3 is not None
+            
+            service.close()
+    
+    def test_vector_store_failure_recovery(self):
+        """Test recovery from vector store failures"""
+        # Create a failing vector store
+        store = InMemoryVectorStore()
+        
+        # Override add_documents to fail
+        original_add = store.add_documents
         call_count = 0
-        original_add = mock_vector_store.add_documents
         
         def failing_add(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 2:
-                raise RuntimeError("Batch 2 failed")
+                raise RuntimeError("Storage failure")
             return original_add(*args, **kwargs)
         
-        mock_vector_store.add_documents = failing_add
+        store.add_documents = failing_add
         
-        # Try to add large batch (will be split)
-        texts = [f"Document {i}" for i in range(100)]
-        embeddings = embeddings_service.create_embeddings(texts)
-        
-        # Configure small batch size to force multiple batches
-        embeddings_service.configure_performance(batch_size=30)
-        
-        # Add documents - should partially succeed
-        success = embeddings_service.add_documents_to_collection(
-            "partial_collection",
-            texts,
-            embeddings,
-            [{"id": i} for i in range(100)],
-            [f"doc_{i}" for i in range(100)]
+        # First add succeeds
+        success1 = store.add_documents(
+            "test_collection",
+            ["doc1"],
+            [[0.1, 0.2]],
+            [{"id": 1}],
+            ["id1"]
         )
+        assert success1
         
-        # Should fail overall but some documents added
-        assert not success
-        assert call_count > 1  # Multiple batches attempted
-    
-    def test_provider_fallback_workflow(self, embeddings_service, mock_provider, failing_provider):
-        """Test fallback when primary provider fails"""
-        # Add both providers
-        embeddings_service.add_provider("primary", failing_provider)
-        embeddings_service.add_provider("fallback", mock_provider)
-        embeddings_service.set_provider("primary")
+        # Second add fails
+        with pytest.raises(RuntimeError):
+            store.add_documents(
+                "test_collection",
+                ["doc2"],
+                [[0.3, 0.4]],
+                [{"id": 2}],
+                ["id2"]
+            )
         
-        # First few calls work
-        for i in range(3):
-            embeddings = embeddings_service.create_embeddings([f"text{i}"])
-            assert embeddings is not None
-        
-        # Next call fails - manually switch to fallback
-        embeddings = embeddings_service.create_embeddings(["text4"])
-        if embeddings is None:
-            # Switch to fallback
-            embeddings_service.set_provider("fallback")
-            embeddings = embeddings_service.create_embeddings(["text4"])
-        
-        assert embeddings is not None
+        # Third add succeeds
+        success3 = store.add_documents(
+            "test_collection",
+            ["doc3"],
+            [[0.5, 0.6]],
+            [{"id": 3}],
+            ["id3"]
+        )
+        assert success3
 
 
 if __name__ == "__main__":

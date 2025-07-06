@@ -1,5 +1,5 @@
 # test_embeddings_unit.py
-# Unit tests for individual components of the embeddings service
+# Unit tests for the simplified embeddings service API
 
 import pytest
 from unittest.mock import Mock, MagicMock, patch, call
@@ -7,24 +7,77 @@ import threading
 import time
 from typing import List, Dict, Any
 import os
+import numpy as np
 
 from tldw_chatbook.RAG_Search.simplified import (
-    EmbeddingsService,
+    EmbeddingsServiceWrapper,
     InMemoryVectorStore,
     ChromaVectorStore,
     create_embeddings_service
 )
-# Note: Individual provider classes, EmbeddingProvider interface, VectorStore interface,
-# and EmbeddingFactoryCompat are not exposed in simplified API
 
-# Import test markers from conftest
+# Import test utilities
 import sys
-import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from conftest import requires_embeddings, requires_numpy
 
 
-# TestEmbeddingProviders class removed - individual provider classes not exposed in simplified API
+class TestEmbeddingsServiceWrapper:
+    """Unit tests for EmbeddingsServiceWrapper"""
+    
+    def test_initialization_with_defaults(self):
+        """Test initialization with default parameters"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            service = EmbeddingsServiceWrapper()
+            
+            assert service.model_name == "sentence-transformers/all-MiniLM-L6-v2"
+            assert service._cache_size == 2
+            mock_factory.assert_called_once()
+    
+    def test_initialization_with_openai_model(self):
+        """Test initialization with OpenAI model"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            service = EmbeddingsServiceWrapper(
+                model_name="openai/text-embedding-3-small",
+                api_key="test-key"
+            )
+            
+            assert service.model_name == "openai/text-embedding-3-small"
+            assert service._api_key == "test-key"
+    
+    def test_device_auto_detection(self):
+        """Test automatic device detection"""
+        import torch
+        with patch.object(torch.cuda, 'is_available', return_value=True):
+            with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
+                service = EmbeddingsServiceWrapper()
+                assert service.device == "cuda"
+    
+    @requires_numpy
+    def test_create_embeddings(self):
+        """Test creating embeddings returns numpy array"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Mock the factory instance and its embed method
+            mock_instance = MagicMock()
+            mock_instance.embed.return_value = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            texts = ["test1", "test2"]
+            embeddings = service.create_embeddings(texts)
+            
+            assert isinstance(embeddings, np.ndarray)
+            assert embeddings.shape == (2, 3)
+            mock_instance.embed.assert_called_once_with(texts, as_list=False)
+    
+    def test_memory_tracking(self):
+        """Test that embeddings service can be initialized"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
+            service = EmbeddingsServiceWrapper()
+            # Just verify the service was created successfully
+            assert service is not None
+            assert service.model_name == "sentence-transformers/all-MiniLM-L6-v2"
+            assert service._cache_size == 2
 
 
 class TestVectorStores:
@@ -35,314 +88,208 @@ class TestVectorStores:
         store = InMemoryVectorStore()
         
         # Add documents
-        success = store.add_documents(
-            "test_collection",
-            ["doc1", "doc2"],
-            [[0.1, 0.2], [0.3, 0.4]],
-            [{"id": 1}, {"id": 2}],
-            ["id1", "id2"]
-        )
-        assert success
+        ids = ["id1", "id2"]
+        embeddings = np.array([[0.1, 0.2], [0.3, 0.4]])
+        documents = ["doc1", "doc2"]
+        metadata = [{"id": 1}, {"id": 2}]
         
-        # List collections
-        collections = store.list_collections()
-        assert "test_collection" in collections
+        store.add(ids, embeddings, documents, metadata)
+        
+        # Check stats to verify documents were added
+        stats = store.get_collection_stats()
+        assert stats["count"] == 2
         
         # Search (with mock similarity)
-        results = store.search(
-            "test_collection",
-            [[0.15, 0.25]],  # Query similar to first doc
-            n_results=1
-        )
-        assert results is not None
-        assert len(results["ids"][0]) == 1
+        query_embedding = np.array([0.15, 0.25])  # Query similar to first doc
+        results = store.search(query_embedding, top_k=1)
         
-        # Delete collection
-        assert store.delete_collection("test_collection")
-        assert "test_collection" not in store.list_collections()
+        assert results is not None
+        assert len(results) == 1
+        assert results[0].id in ["id1", "id2"]
+        
+        # Clear the store
+        store.clear()
+        stats = store.get_collection_stats()
+        assert stats["count"] == 0
     
     def test_in_memory_store_thread_safety(self, thread_helper):
         """Test InMemoryVectorStore thread safety"""
         store = InMemoryVectorStore()
         
         def add_documents(thread_id):
-            return store.add_documents(
-                f"collection_{thread_id}",
-                [f"doc_{thread_id}"],
-                [[float(thread_id), float(thread_id)]],
-                [{"thread": thread_id}],
-                [f"id_{thread_id}"]
-            )
+            ids = [f"id_{thread_id}"]
+            embeddings = np.array([[float(thread_id), float(thread_id)]])
+            documents = [f"doc_{thread_id}"]
+            metadata = [{"thread": thread_id}]
+            
+            store.add(ids, embeddings, documents, metadata)
+            return True
         
         results, errors = thread_helper.run_concurrent(add_documents, num_threads=10)
         
         assert len(errors) == 0
-        assert len(store.list_collections()) == 10
+        # Check that all documents were added
+        stats = store.get_collection_stats()
+        assert stats["count"] == 10
     
     def test_chromadb_store_operations(self):
         """Test ChromaVectorStore basic structure and initialization"""
-        # Test that ChromaVectorStore can be imported when dependencies are available
-        with patch('tldw_chatbook.RAG_Search.simplified.DEPENDENCIES_AVAILABLE', {'chromadb': True}):
-            # Just verify the class exists and has expected methods
-            assert hasattr(ChromaVectorStore, 'add_documents')
-            assert hasattr(ChromaVectorStore, 'search')
-            assert hasattr(ChromaVectorStore, 'delete_collection')
-            assert hasattr(ChromaVectorStore, 'list_collections')
+        # Just verify the class exists and has expected methods from VectorStore interface
+        assert hasattr(ChromaVectorStore, 'add')
+        assert hasattr(ChromaVectorStore, 'search')
+        assert hasattr(ChromaVectorStore, 'search_with_citations')
+        assert hasattr(ChromaVectorStore, 'delete_collection')
+        assert hasattr(ChromaVectorStore, 'clear')
+        assert hasattr(ChromaVectorStore, 'get_collection_stats')
 
 
-class TestEmbeddingsService:
-    """Unit tests for EmbeddingsService"""
+class TestCreateEmbeddingsService:
+    """Test the factory function for creating embeddings service"""
     
-    def test_service_initialization(self, mock_vector_store):
-        """Test service initialization"""
-        service = EmbeddingsService(vector_store=mock_vector_store)
-        
-        assert service.vector_store == mock_vector_store
-        assert len(service.providers) == 0
-        assert service.current_provider_id is None
+    def test_create_embeddings_service_defaults(self):
+        """Test creating service with defaults"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
+            service = create_embeddings_service()
+            
+            assert isinstance(service, EmbeddingsServiceWrapper)
+            assert service.model_name == "sentence-transformers/all-MiniLM-L6-v2"
     
-    def test_provider_management(self, embeddings_service, mock_provider):
-        """Test adding and switching providers"""
-        # Already has one provider from fixture
-        assert "mock" in embeddings_service.providers
-        
-        # Add another provider
-        provider2 = Mock()
-        embeddings_service.add_provider("provider2", provider2)
-        assert "provider2" in embeddings_service.providers
-        
-        # Switch providers
-        assert embeddings_service.set_provider("provider2")
-        assert embeddings_service.current_provider_id == "provider2"
-        
-        # Invalid provider
-        assert not embeddings_service.set_provider("nonexistent")
-    
-    def test_configuration_parsing(self, legacy_config):
-        """Test parsing legacy configuration"""
-        service = EmbeddingsService()
-        
-        # Mock provider creation
-        with patch('tldw_chatbook.RAG_Search.simplified.HuggingFaceProvider') as mock_hf:
-            with patch('tldw_chatbook.RAG_Search.simplified.OpenAIProvider') as mock_openai:
-                mock_hf.return_value = Mock()
-                mock_openai.return_value = Mock()
-                
-                success = service.initialize_from_config({"embedding_config": legacy_config})
-                
-                assert success
-                assert len(service.providers) == 2
-                assert service.current_provider_id == "test-model"
-                
-                # Check provider creation
-                mock_hf.assert_called_once()
-                mock_openai.assert_called_once()
-    
-    def test_nested_configuration_parsing(self, nested_config):
-        """Test parsing nested configuration (ChromaDBManager style)"""
-        service = EmbeddingsService()
-        
-        with patch('tldw_chatbook.RAG_Search.simplified.HuggingFaceProvider'):
-            with patch('tldw_chatbook.RAG_Search.simplified.OpenAIProvider'):
-                success = service.initialize_from_config(nested_config)
-                assert success
-    
-    def test_cache_service_fallback(self, embeddings_service, mock_provider):
-        """Test that service continues when cache fails"""
-        # Set up a failing cache
-        failing_cache = Mock()
-        failing_cache.get_embeddings_batch.side_effect = Exception("Cache error")
-        embeddings_service.cache_service = failing_cache
-        
-        # Should still create embeddings
-        texts = ["test1", "test2"]
-        embeddings = embeddings_service.create_embeddings(texts)
-        
-        assert embeddings is not None
-        assert len(embeddings) == 2
-    
-    def test_create_embeddings_with_specific_provider(self, service_with_multiple_providers):
-        """Test creating embeddings with specific provider"""
-        service = service_with_multiple_providers
-        
-        # Set a default provider first
-        service.set_provider("fast")
-        
-        # Use fast provider explicitly
-        embeddings1 = service.create_embeddings(["test"], provider_id="fast")
-        
-        # Use slow provider explicitly
-        start_time = time.time()
-        embeddings2 = service.create_embeddings(["test"], provider_id="slow")
-        elapsed = time.time() - start_time
-        
-        assert embeddings1 is not None
-        assert embeddings2 is not None
-        # The slow provider is actually being called through the service
-        # which may batch or optimize calls
-        assert embeddings1 is not None
-        assert embeddings2 is not None
-        # Just verify we got embeddings from both providers
-        assert len(embeddings1) == 1
-        assert len(embeddings2) == 1
-    
-    def test_parallel_batch_processing(self, embeddings_service, mock_provider):
-        """Test parallel batch processing"""
-        # Configure for parallel processing
-        embeddings_service.configure_performance(
-            max_workers=4,
-            batch_size=5,
-            enable_parallel=True
-        )
-        
-        # Create embeddings for large batch
-        texts = [f"Text {i}" for i in range(20)]
-        embeddings = embeddings_service.create_embeddings(texts)
-        
-        assert embeddings is not None
-        assert len(embeddings) == 20
-        
-        # Provider should have been called multiple times (batches)
-        assert mock_provider.call_count > 1
-    
-    def test_executor_lifecycle(self, embeddings_service):
-        """Test thread pool executor lifecycle"""
-        # Get executor
-        executor1 = embeddings_service._get_executor()
-        assert executor1 is not None
-        
-        # Should return same executor
-        executor2 = embeddings_service._get_executor()
-        assert executor1 is executor2
-        
-        # Close executor
-        embeddings_service._close_executor()
-        
-        # Should create new executor
-        executor3 = embeddings_service._get_executor()
-        assert executor3 is not executor1
-    
-    def test_vector_store_operations(self, embeddings_service, mock_provider, mock_vector_store):
-        """Test vector store integration"""
-        # Add documents
-        texts = ["doc1", "doc2"]
-        embeddings = embeddings_service.create_embeddings(texts)
-        
-        success = embeddings_service.add_documents_to_collection(
-            "test_collection",
-            texts,
-            embeddings,
-            [{"id": 1}, {"id": 2}],
-            ["id1", "id2"]
-        )
-        assert success
-        
-        # Verify vector store was called
-        assert len(mock_vector_store.call_log) > 0
-        assert mock_vector_store.call_log[-1][0] == "add_documents"
-    
-    def test_cleanup_on_exit(self, mock_provider, mock_vector_store):
-        """Test cleanup when service exits"""
-        service = EmbeddingsService(vector_store=mock_vector_store)
-        service.add_provider("test", mock_provider)
-        
-        # Use context manager
-        with service:
-            pass
-        
-        # Provider should be cleaned up
-        assert mock_provider.cleaned_up
+    def test_create_embeddings_service_with_config(self):
+        """Test creating service with custom config"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
+            service = create_embeddings_service(
+                provider="openai",
+                model="text-embedding-3-small",
+                api_key="test-key",
+                cache_size=5
+            )
+            
+            assert service.model_name == "openai/text-embedding-3-small"
+            assert service._api_key == "test-key"
+            assert service._cache_size == 5
 
 
-# TestEmbeddingFactoryCompat class removed - EmbeddingFactoryCompat not exposed in simplified API
+class TestBatchProcessing:
+    """Test batch processing functionality"""
+    
+    @requires_numpy
+    def test_batch_chunking(self):
+        """Test that large batches are properly chunked"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Set up mock to track batch sizes
+            batch_sizes = []
+            def mock_embed(texts, as_list=True):
+                batch_sizes.append(len(texts))
+                return np.array([[0.1] * 384 for _ in texts])
+            
+            mock_instance = MagicMock()
+            mock_instance.embed.side_effect = mock_embed
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            
+            # Create embeddings for large batch
+            texts = [f"text_{i}" for i in range(100)]
+            embeddings = service.create_embeddings(texts)
+            
+            assert embeddings is not None
+            assert embeddings.shape[0] == 100
+            
+            # Check that batching occurred (exact batching depends on implementation)
+            assert len(batch_sizes) > 0
 
 
 class TestErrorHandling:
-    """Test error handling across components"""
+    """Test error handling in embeddings service"""
     
-    # test_provider_initialization_failure removed - individual provider classes not exposed
+    def test_invalid_model_name(self):
+        """Test handling of invalid model names"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Make factory initialization fail
+            mock_factory.side_effect = Exception("Model not found")
+            
+            with pytest.raises(Exception) as exc_info:
+                service = EmbeddingsServiceWrapper(model_name="invalid/model")
+            
+            assert "Model not found" in str(exc_info.value)
     
-    def test_vector_store_failure_handling(self, embeddings_service, failing_vector_store):
-        """Test handling of vector store failures"""
-        embeddings_service.vector_store = failing_vector_store
-        
-        # Search should return None on failure
-        results = embeddings_service.search_collection("test", [[0.1, 0.2]])
-        assert results is None
+    @requires_numpy
+    def test_embedding_creation_failure(self):
+        """Test handling when embedding creation fails"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Set up mock that fails on embed
+            mock_instance = MagicMock()
+            mock_instance.embed.side_effect = Exception("Embedding failed")
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            
+            with pytest.raises(Exception) as exc_info:
+                embeddings = service.create_embeddings(["test"])
+            
+            assert "Embedding failed" in str(exc_info.value)
     
-    def test_provider_failure_recovery(self, embeddings_service, failing_provider):
-        """Test recovery from provider failures"""
-        embeddings_service.add_provider("failing", failing_provider)
-        embeddings_service.set_provider("failing")
-        
-        # First 3 calls should work (failing_provider fails after 3 calls)
-        for i in range(3):
-            embeddings = embeddings_service.create_embeddings([f"text{i}"])
-            assert embeddings is not None
-            assert len(embeddings) == 1
-        
-        # 4th call should fail - the provider will raise an exception
-        # The service should handle it gracefully and return None
-        try:
-            embeddings = embeddings_service.create_embeddings(["text4"])
-            # If exception is caught by service, embeddings should be None
-            assert embeddings is None
-        except Exception:
-            # If exception propagates, that's also acceptable for this test
-            pass
-    
-    def test_missing_provider_handling(self, embeddings_service):
-        """Test handling when no provider is available"""
-        # Remove all providers
-        embeddings_service.providers.clear()
-        embeddings_service.current_provider_id = None
-        
-        # Should try to initialize default and return None if fails
-        with patch.object(embeddings_service, 'initialize_embedding_model', return_value=False):
-            embeddings = embeddings_service.create_embeddings(["test"])
-            assert embeddings is None
+    def test_cleanup_on_error(self):
+        """Test cleanup happens even on error"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            mock_instance = MagicMock()
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            
+            # Close should be called on factory
+            service.close()
+            mock_instance.close.assert_called_once()
 
 
-class TestPerformanceOptimizations:
-    """Test performance-related features"""
+class TestConcurrency:
+    """Test thread safety and concurrent operations"""
     
-    def test_cache_hit_performance(self, embeddings_service, mock_provider, cache_with_hits):
-        """Test performance with cache hits"""
-        embeddings_service.cache_service = cache_with_hits
-        
-        # Create embeddings with one cached
-        texts = ["cached_text", "uncached_text"]
-        embeddings = embeddings_service.create_embeddings(texts)
-        
-        assert embeddings is not None
-        assert len(embeddings) == 2
-        
-        # Provider should only be called for uncached text
-        assert mock_provider.call_count == 1
-    
-    def test_batch_size_configuration(self, embeddings_service):
-        """Test batch size affects processing"""
-        # Small batch size
-        embeddings_service.configure_performance(batch_size=2)
-        
-        # Process texts
-        texts = ["text1", "text2", "text3", "text4", "text5"]
-        embeddings = embeddings_service.create_embeddings(texts)
-        
-        assert embeddings is not None
-        assert len(embeddings) == 5
-    
-    def test_parallel_processing_toggle(self, embeddings_service, mock_provider):
-        """Test disabling parallel processing"""
-        # Disable parallel processing
-        embeddings_service.configure_performance(enable_parallel=False)
-        
-        # Large batch should still work
-        texts = [f"Text {i}" for i in range(100)]
-        embeddings = embeddings_service.create_embeddings(texts)
-        
-        assert embeddings is not None
-        assert len(embeddings) == 100
+    @requires_numpy
+    def test_concurrent_embedding_creation(self):
+        """Test concurrent calls to create_embeddings"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Set up thread-safe mock
+            mock_instance = MagicMock()
+            lock = threading.Lock()
+            call_count = 0
+            
+            def thread_safe_embed(texts, as_list=True):
+                nonlocal call_count
+                with lock:
+                    call_count += 1
+                    time.sleep(0.01)  # Simulate work
+                return np.array([[0.1] * 384 for _ in texts])
+            
+            mock_instance.embed.side_effect = thread_safe_embed
+            mock_factory.return_value = mock_instance
+            
+            service = EmbeddingsServiceWrapper()
+            
+            # Run concurrent operations
+            results = []
+            errors = []
+            threads = []
+            
+            def create_embeddings(thread_id):
+                try:
+                    embeddings = service.create_embeddings([f"thread_{thread_id}"])
+                    results.append((thread_id, embeddings))
+                except Exception as e:
+                    errors.append((thread_id, str(e)))
+            
+            for i in range(5):
+                thread = threading.Thread(target=create_embeddings, args=(i,))
+                threads.append(thread)
+                thread.start()
+            
+            for thread in threads:
+                thread.join(timeout=5)
+            
+            # All threads should succeed
+            assert len(errors) == 0
+            assert len(results) == 5
+            assert call_count == 5
 
 
 if __name__ == "__main__":

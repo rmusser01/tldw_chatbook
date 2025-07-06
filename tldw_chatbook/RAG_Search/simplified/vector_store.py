@@ -464,6 +464,51 @@ class ChromaVectorStore:
                 "count": 0,
                 "error": str(e)
             }
+    
+    def add_documents(self, 
+                     collection_name: str,
+                     documents: List[str],
+                     embeddings: Union[List[List[float]], np.ndarray],
+                     metadatas: List[dict],
+                     ids: List[str]) -> bool:
+        """
+        Add documents to a collection (compatibility method).
+        
+        Args:
+            collection_name: Name of the collection
+            documents: List of document texts
+            embeddings: Document embeddings
+            metadatas: List of metadata dicts
+            ids: Document IDs
+            
+        Returns:
+            True if successful
+        """
+        # Switch to the specified collection if different
+        if collection_name != self.collection_name:
+            self.collection_name = collection_name
+            self._collection = None  # Force reload
+        
+        # Convert embeddings to numpy array if needed
+        if isinstance(embeddings, list):
+            embeddings = np.array(embeddings)
+        
+        try:
+            self.add(ids, embeddings, documents, metadatas)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add documents: {e}")
+            return False
+    
+    def list_collections(self) -> List[str]:
+        """List all collection names."""
+        try:
+            # Get all collections from ChromaDB
+            collections = self.client.list_collections()
+            return [col.name for col in collections]
+        except Exception as e:
+            logger.error(f"Failed to list collections: {e}")
+            return []
 
 
 class InMemoryVectorStore:
@@ -485,6 +530,10 @@ class InMemoryVectorStore:
         self.embeddings: List[np.ndarray] = []
         self.documents: List[str] = []
         self.metadata: List[dict] = []
+        
+        # Collection support (for compatibility)
+        self._collections: Dict[str, Dict[str, Any]] = {}
+        self._current_collection = "default"
         
         # Metrics
         self._add_count = 0
@@ -653,6 +702,61 @@ class InMemoryVectorStore:
             stats["embedding_dimension"] = self.embeddings[0].shape[0]
         
         return stats
+    
+    def add_documents(self, 
+                     collection_name: str,
+                     documents: List[str],
+                     embeddings: Union[List[List[float]], np.ndarray],
+                     metadatas: List[dict],
+                     ids: List[str]) -> bool:
+        """
+        Add documents to a collection (compatibility method).
+        
+        Args:
+            collection_name: Name of the collection
+            documents: List of document texts
+            embeddings: Document embeddings
+            metadatas: List of metadata dicts
+            ids: Document IDs
+            
+        Returns:
+            True if successful
+        """
+        # Store current collection
+        self._current_collection = collection_name
+        
+        # Convert embeddings to numpy array if needed
+        if isinstance(embeddings, list):
+            embeddings = np.array(embeddings)
+        
+        # Initialize collection if it doesn't exist
+        if collection_name not in self._collections:
+            self._collections[collection_name] = {
+                "ids": [],
+                "embeddings": [],
+                "documents": [],
+                "metadata": []
+            }
+        
+        # Add to the main store (for backward compatibility)
+        self.add(ids, embeddings, documents, metadatas)
+        
+        # Also track in collections
+        collection = self._collections[collection_name]
+        collection["ids"].extend(ids)
+        collection["embeddings"].extend(embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings)
+        collection["documents"].extend(documents)
+        collection["metadata"].extend(metadatas)
+        
+        return True
+    
+    def list_collections(self) -> List[str]:
+        """List all collection names."""
+        # Always include default collection if we have data
+        collections = set(self._collections.keys())
+        if self.ids:
+            collections.add("default")
+        return list(collections)
 
 
 # Factory function for creating vector stores

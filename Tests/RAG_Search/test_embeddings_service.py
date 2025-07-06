@@ -1,5 +1,5 @@
 # test_embeddings_service.py
-# Tests for the enhanced embeddings service with multi-provider support
+# Tests for the simplified embeddings service wrapper
 
 import pytest
 import threading
@@ -8,19 +8,16 @@ from pathlib import Path
 from typing import List, Dict, Any
 import tempfile
 import shutil
+import numpy as np
+from unittest.mock import Mock, MagicMock, patch
 
 from tldw_chatbook.RAG_Search.simplified import (
-    EmbeddingsService,
+    EmbeddingsServiceWrapper,
     InMemoryVectorStore,
-    ChromaVectorStore
+    ChromaVectorStore,
+    create_embeddings_service
 )
-# Note: Provider classes are no longer directly exposed in simplified API
-# Using the simplified API which handles providers internally
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
-# Import mock providers from conftest
-from Tests.RAG_Search.conftest import SentenceTransformerProvider, HuggingFaceProvider
-
 
 # Skip tests if dependencies not available
 pytestmark = pytest.mark.skipif(
@@ -29,8 +26,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-class TestEmbeddingsService:
-    """Test suite for EmbeddingsService"""
+class TestEmbeddingsServiceWrapper:
+    """Test suite for EmbeddingsServiceWrapper"""
     
     @pytest.fixture
     def temp_dir(self):
@@ -40,11 +37,19 @@ class TestEmbeddingsService:
         shutil.rmtree(temp_dir)
     
     @pytest.fixture
-    def service_with_memory_store(self, temp_dir):
-        """Create service with default configuration"""
-        # The simplified API uses different initialization
-        # EmbeddingsService is an alias for EmbeddingsServiceWrapper
-        service = EmbeddingsService(
+    def mock_embedding_factory(self):
+        """Mock EmbeddingFactory for tests"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            mock_instance = MagicMock()
+            # Return numpy array instead of list
+            mock_instance.embed.return_value = np.array([[0.1] * 384, [0.2] * 384, [0.3] * 384])
+            mock_factory.return_value = mock_instance
+            yield mock_factory
+    
+    @pytest.fixture
+    def service_with_mock_factory(self, mock_embedding_factory):
+        """Create service with mocked factory"""
+        service = EmbeddingsServiceWrapper(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             cache_size=2
         )
@@ -53,61 +58,51 @@ class TestEmbeddingsService:
         if hasattr(service, 'close'):
             service.close()
     
-    def test_service_initialization(self, service_with_memory_store):
+    def test_service_initialization(self, mock_embedding_factory):
         """Test basic service initialization"""
-        service = service_with_memory_store
+        service = EmbeddingsServiceWrapper()
         
-        # The simplified API doesn't expose providers directly
-        # Just verify the service is initialized
         assert service is not None
-        
-        # For compatibility with tests expecting provider access,
-        # the conftest adds mock provider methods
-        if hasattr(service, 'providers'):
-            assert isinstance(service.providers, dict)
+        assert service.model_name == "sentence-transformers/all-MiniLM-L6-v2"
+        assert service._cache_size == 2
+        mock_embedding_factory.assert_called_once()
     
-    def test_embeddings_compatibility(self, service_with_memory_store):
-        """Test that the compatibility wrapper works"""
-        service = service_with_memory_store
+    def test_openai_model_initialization(self, mock_embedding_factory):
+        """Test initialization with OpenAI model"""
+        service = EmbeddingsServiceWrapper(
+            model_name="openai/text-embedding-3-small",
+            api_key="test-key",
+            base_url="https://api.openai.com/v1"
+        )
         
-        # If using the compatibility wrapper from conftest, test it
-        if hasattr(service, 'add_provider'):
-            # Add mock providers for testing
-            provider1 = SentenceTransformerProvider("all-MiniLM-L6-v2")
-            service.add_provider("provider1", provider1)
-            
-            # Test provider methods if available
-            if hasattr(service, 'set_provider'):
-                assert service.set_provider("provider1")
-                assert service.current_provider_id == "provider1"
-                
-                # Test invalid provider
-                assert not service.set_provider("nonexistent")
-        else:
-            # For the real simplified API, just verify it's initialized
-            assert service is not None
+        assert service.model_name == "openai/text-embedding-3-small"
+        assert service._api_key == "test-key"
+        assert service._base_url == "https://api.openai.com/v1"
     
-    def test_embeddings_creation(self, service_with_memory_store):
+    def test_embeddings_creation(self, service_with_mock_factory):
         """Test creating embeddings"""
-        service = service_with_memory_store
-        
-        # The simplified API doesn't have initialize_embedding_model
-        # Just test that we can create embeddings
+        service = service_with_mock_factory
         
         # Create embeddings
         texts = ["Hello world", "This is a test", "Embeddings are useful"]
         embeddings = service.create_embeddings(texts)
         
         assert embeddings is not None
-        assert embeddings.shape[0] == len(texts)  # numpy array shape
-        assert embeddings.shape[1] > 0  # embedding dimension
-        # Verify it's a numpy array
-        import numpy as np
         assert isinstance(embeddings, np.ndarray)
+        assert embeddings.shape == (3, 384)  # 3 texts, 384 dimensions
     
-    def test_thread_safety(self, service_with_memory_store):
+    def test_thread_safety(self, service_with_mock_factory):
         """Test thread safety of embedding creation"""
-        service = service_with_memory_store
+        service = service_with_mock_factory
+        
+        # Make the mock return different embeddings for each call
+        call_count = 0
+        def mock_embed(texts, as_list=True):
+            nonlocal call_count
+            call_count += 1
+            return np.array([[float(call_count) + i * 0.1] * 384 for i in range(len(texts))])
+        
+        service.factory.embed.side_effect = mock_embed
         
         results = []
         errors = []
@@ -138,112 +133,159 @@ class TestEmbeddingsService:
         # Verify each thread got valid embeddings
         for thread_id, embeddings in results:
             assert embeddings is not None
-            assert len(embeddings) == 5
+            assert embeddings.shape == (5, 384)
     
-    @pytest.mark.skip(reason="Vector store operations not directly exposed in simplified API")
-    def test_vector_store_operations(self, service_with_memory_store):
-        """Test vector store operations"""
-        # The simplified API doesn't expose direct vector store operations
-        # These are handled by the RAG service layer
-        pass
-    
-    @pytest.mark.skip(reason="Legacy config parsing not directly exposed in simplified API")
-    def test_legacy_config_parsing(self, temp_dir):
-        """Test parsing legacy embedding configuration"""
-        # The simplified API doesn't expose config parsing directly
-        # This functionality is handled internally
-        pass
-    
-    def test_cache_service_fallback(self, service_with_memory_store):
-        """Test that service continues without cache if cache fails"""
-        service = service_with_memory_store
+    def test_memory_usage_tracking(self, service_with_mock_factory):
+        """Test memory usage tracking functionality"""
+        service = service_with_mock_factory
         
-        # The simplified API handles cache failures internally
-        # Just verify we can still create embeddings
-        texts = ["Test without cache"]
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.psutil.Process') as mock_process:
+            mock_memory = MagicMock()
+            mock_memory.memory_info.return_value.rss = 1024 * 1024 * 256  # 256MB
+            mock_process.return_value = mock_memory
+            
+            memory = service.get_memory_usage()
+            
+            assert memory == 256.0  # Should be in MB
+    
+    def test_close_cleanup(self, service_with_mock_factory):
+        """Test that close properly cleans up resources"""
+        service = service_with_mock_factory
+        
+        # Close should call factory.close()
+        service.close()
+        service.factory.close.assert_called_once()
+    
+    def test_large_batch_processing(self, service_with_mock_factory):
+        """Test processing large batches of texts"""
+        service = service_with_mock_factory
+        
+        # Mock should return appropriate number of embeddings
+        def mock_large_batch(texts, as_list=True):
+            return np.array([[0.1] * 384 for _ in texts])
+        
+        service.factory.embed.side_effect = mock_large_batch
+        
+        # Test with large batch
+        texts = [f"Text number {i}" for i in range(1000)]
         embeddings = service.create_embeddings(texts)
         
         assert embeddings is not None
-        assert embeddings.shape[0] == 1  # numpy array shape
+        assert embeddings.shape == (1000, 384)
     
-    @pytest.mark.skip(reason="Performance configuration not directly exposed in simplified API")
-    def test_parallel_batch_processing(self, service_with_memory_store):
-        """Test parallel batch processing"""
-        service = service_with_memory_store
+    def test_empty_text_handling(self, service_with_mock_factory):
+        """Test handling of empty text list"""
+        service = service_with_mock_factory
         
-        # The simplified API handles batch processing internally
-        # Just test that we can process a large batch
-        texts = [f"Text number {i}" for i in range(50)]
-        embeddings = service.create_embeddings(texts)
+        # Mock should handle empty list
+        service.factory.embed.return_value = np.array([]).reshape(0, 384)
+        
+        embeddings = service.create_embeddings([])
         
         assert embeddings is not None
-        assert embeddings.shape[0] == 50  # numpy array shape
-        
-        # Check it's a numpy array
-        import numpy as np
         assert isinstance(embeddings, np.ndarray)
+        assert embeddings.shape == (0,)  # Empty 1D array
 
 
-@pytest.mark.skip(reason="EmbeddingFactoryCompat not part of simplified API")
-class TestEmbeddingFactoryCompat:
-    """Test the legacy compatibility layer"""
+class TestConfigurationHandling:
+    """Test configuration handling in EmbeddingsServiceWrapper"""
     
-    def test_legacy_interface(self):
-        """Test that legacy interface works correctly"""
-        # The simplified API doesn't expose EmbeddingFactoryCompat
-        pass
+    def test_huggingface_model_detection(self):
+        """Test detection of HuggingFace models"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            # Test sentence-transformers model
+            service = EmbeddingsServiceWrapper(
+                model_name="sentence-transformers/all-mpnet-base-v2"
+            )
+            
+            # Check that config was built correctly
+            args, kwargs = mock_factory.call_args
+            config = args[0] if args else kwargs.get('cfg')
+            assert config is not None
+    
+    def test_openai_model_detection(self):
+        """Test detection of OpenAI models"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+            service = EmbeddingsServiceWrapper(
+                model_name="openai/text-embedding-ada-002",
+                api_key="test-key"
+            )
+            
+            # Check that config was built correctly for OpenAI
+            args, kwargs = mock_factory.call_args
+            config = args[0] if args else kwargs.get('cfg')
+            assert config is not None
+    
+    def test_device_configuration(self):
+        """Test device configuration options"""
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.torch') as mock_torch:
+            # Test CUDA device
+            mock_torch.cuda.is_available.return_value = True
+            
+            with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
+                service = EmbeddingsServiceWrapper(device="cuda")
+                assert service.device == "cuda"
+            
+            # Test CPU device
+            with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
+                service = EmbeddingsServiceWrapper(device="cpu")
+                assert service.device == "cpu"
 
 
-class TestProviderImplementations:
-    """Test individual provider implementations"""
+class TestRealModelIntegration:
+    """Test with real models when available"""
     
     @pytest.mark.skipif(
         not DEPENDENCIES_AVAILABLE.get('sentence_transformers', False),
         reason="sentence-transformers not available"
     )
-    def test_sentence_transformer_provider(self):
-        """Test SentenceTransformerProvider"""
-        provider = SentenceTransformerProvider("all-MiniLM-L6-v2")
-        
-        # Test single text
-        embeddings = provider.create_embeddings(["Test text"])
-        assert len(embeddings) == 1
-        assert len(embeddings[0]) == provider.get_dimension()
-        
-        # Test multiple texts
-        embeddings = provider.create_embeddings(["Text 1", "Text 2", "Text 3"])
-        assert len(embeddings) == 3
-        
-        # Test cleanup
-        provider.cleanup()
-    
-    @pytest.mark.skipif(
-        not DEPENDENCIES_AVAILABLE.get('transformers', False),
-        reason="transformers not available"
-    )
-    def test_huggingface_provider(self):
-        """Test HuggingFaceProvider"""
-        provider = HuggingFaceProvider(
-            model_name="bert-base-uncased",
-            max_length=128,
-            batch_size=2
+    def test_real_sentence_transformer(self):
+        """Test with real sentence transformer model"""
+        # Use actual model without mocking
+        service = EmbeddingsServiceWrapper(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
         
-        # Test embeddings
-        texts = ["Short text", "Another short text"]
-        embeddings = provider.create_embeddings(texts)
-        
-        assert len(embeddings) == 2
-        assert all(len(emb) == provider.get_dimension() for emb in embeddings)
-        
-        # Test cleanup
-        provider.cleanup()
+        try:
+            # Test with real texts
+            texts = [
+                "The quick brown fox jumps over the lazy dog",
+                "Machine learning is a subset of artificial intelligence",
+                "Python is a popular programming language"
+            ]
+            
+            embeddings = service.create_embeddings(texts)
+            
+            assert embeddings is not None
+            assert embeddings.shape == (3, 384)  # MiniLM-L6-v2 has 384 dimensions
+            
+            # Check that embeddings are different for different texts
+            assert not np.allclose(embeddings[0], embeddings[1])
+            assert not np.allclose(embeddings[1], embeddings[2])
+            
+        finally:
+            service.close()
     
-    @pytest.mark.skip(reason="OpenAIProvider not part of simplified API")
-    def test_openai_provider_mock(self, monkeypatch):
-        """Test OpenAIProvider with mocked API"""
-        # The simplified API doesn't expose provider classes directly
-        pass
+    @pytest.mark.skipif(
+        not (DEPENDENCIES_AVAILABLE.get('openai', False) and os.environ.get('OPENAI_API_KEY')),
+        reason="OpenAI not available or API key not set"
+    )
+    def test_real_openai_embeddings(self):
+        """Test with real OpenAI embeddings API"""
+        service = EmbeddingsServiceWrapper(
+            model_name="openai/text-embedding-3-small"
+        )
+        
+        try:
+            texts = ["Test embedding with OpenAI"]
+            embeddings = service.create_embeddings(texts)
+            
+            assert embeddings is not None
+            assert embeddings.shape[0] == 1
+            assert embeddings.shape[1] > 0  # OpenAI embeddings have specific dimensions
+            
+        finally:
+            service.close()
 
 
 if __name__ == "__main__":
