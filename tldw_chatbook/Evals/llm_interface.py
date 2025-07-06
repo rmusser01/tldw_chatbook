@@ -1749,6 +1749,53 @@ class MLXProvider(LLMProvider):
         logger.warning("Log probabilities not supported by MLX-LM API")
         return {'logprobs': [], 'tokens': [], 'note': 'MLX-LM does not support logprobs'}
 
+
+class MockProvider(LLMProvider):
+    """Mock provider for testing purposes."""
+    
+    def __init__(self, model_id: str, config: Dict[str, Any]):
+        super().__init__(model_id, config)
+        self.responses = config.get('mock_responses', {})
+        self.call_count = 0
+    
+    async def generate_async(self, prompt: str, **kwargs) -> str:
+        """Generate a mock response."""
+        self.call_count += 1
+        
+        # Check for specific mock responses
+        if prompt in self.responses:
+            return self.responses[prompt]
+        
+        # Return a default mock response
+        return f"Mock response for: {prompt[:50]}..."
+    
+    async def generate_with_system_async(self, prompt: str, system_prompt: str = None, **kwargs) -> str:
+        """Generate a mock response with system prompt."""
+        self.call_count += 1
+        
+        full_prompt = f"{system_prompt}\n{prompt}" if system_prompt else prompt
+        if full_prompt in self.responses:
+            return self.responses[full_prompt]
+        
+        return f"Mock response with system: {prompt[:50]}..."
+    
+    async def get_logprobs_async(self, text: str, **kwargs) -> Dict[str, Any]:
+        """Get mock log probabilities."""
+        # Return mock logprobs
+        tokens = text.split()
+        mock_logprobs = [-0.5 - (i * 0.1) for i in range(len(tokens))]
+        
+        return {
+            'tokens': tokens,
+            'logprobs': mock_logprobs,
+            'text': text
+        }
+    
+    async def get_completion_logprobs_async(self, prompt: str, completion: str, **kwargs) -> Dict[str, Any]:
+        """Get mock completion log probabilities."""
+        return await self.get_logprobs_async(completion, **kwargs)
+
+
 def get_llm_provider(provider_name: str, model_id: str, config: Dict[str, Any]) -> LLMProvider:
     """Get an LLM provider instance based on provider name."""
     provider_classes = {
@@ -1774,6 +1821,8 @@ def get_llm_provider(provider_name: str, model_id: str, config: Dict[str, Any]) 
         'custom_openai': CustomOpenAIProvider,
         'mlx': MLXProvider,
         'mlx_lm': MLXProvider,  # Alias
+        # Testing
+        'mock': MockProvider,
     }
     
     if provider_name.lower() not in provider_classes:

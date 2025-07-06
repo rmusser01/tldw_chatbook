@@ -24,6 +24,7 @@ from loguru import logger
 
 from .task_loader import TaskLoader, TaskConfig
 from .eval_runner import EvalRunner, EvalSampleResult
+from .llm_interface import LLMInterface
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 
 class EvaluationOrchestrator:
@@ -110,6 +111,14 @@ class EvaluationOrchestrator:
         logger.info(f"Created model config: {name} ({model_config_id})")
         return model_config_id
     
+    def _create_llm_interface(self, model_data: Dict[str, Any]) -> LLMInterface:
+        """Create an LLM interface from model configuration data."""
+        provider = model_data.get('provider', '')
+        model_id = model_data.get('model_id', '')
+        config = model_data.get('config', {})
+        
+        return LLMInterface(provider_name=provider, model_id=model_id, config=config)
+    
     async def run_evaluation(self, 
                            task_id: str, 
                            model_id: str, 
@@ -166,8 +175,13 @@ class EvaluationOrchestrator:
             # Update run status to running
             self.db.update_run_status(run_id, 'running')
             
-            # Create evaluation runner
-            eval_runner = EvalRunner(task_config, model_data)
+            # Create evaluation runner with model config
+            model_config = {
+                'provider': model_data['provider'],
+                'model_id': model_data['model_id'],
+                **model_data.get('config', {})
+            }
+            eval_runner = EvalRunner(task_config, model_config)
             
             # Create progress callback wrapper
             def progress_wrapper(completed: int, total: int, result: EvalSampleResult):

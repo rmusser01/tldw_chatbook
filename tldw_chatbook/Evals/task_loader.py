@@ -234,7 +234,7 @@ class TaskLoader:
         elif output_type == 'generate_until':
             return 'generate_until'
         elif output_type == 'multiple_choice':
-            return 'multiple_choice'
+            return 'classification'  # Map multiple_choice to classification
         
         # Check for common patterns
         if config.get('doc_to_choice') or 'choice' in str(config).lower():

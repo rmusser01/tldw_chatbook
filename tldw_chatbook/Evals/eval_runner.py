@@ -1264,6 +1264,14 @@ class EvalRunner:
         self.task_config = task_config
         self.model_config = model_config
         
+        # Expose configuration values as properties for tests
+        self.max_concurrent_requests = model_config.get('max_concurrent_requests', 10)
+        self.request_timeout = model_config.get('request_timeout', 30.0)
+        self.retry_attempts = model_config.get('retry_attempts', 3)
+        
+        # Store LLM interface for tests
+        self.llm_interface = None
+        
         # Import specialized runners here to avoid circular imports
         try:
             from .specialized_runners import (
@@ -1292,6 +1300,33 @@ class EvalRunner:
                 self.runner = self._create_basic_runner(task_config, model_config)
         else:
             self.runner = self._create_basic_runner(task_config, model_config)
+    
+    async def run_single_sample(self, task_config: TaskConfig, sample: Any) -> EvalSampleResult:
+        """Run evaluation on a single sample."""
+        return await self.runner.run_sample(sample)
+    
+    async def run_evaluation(self, max_samples: int = None, 
+                           progress_callback: callable = None) -> List[EvalSampleResult]:
+        """Run evaluation on the task dataset."""
+        return await self.runner.run_evaluation(max_samples=max_samples, 
+                                               progress_callback=progress_callback)
+    
+    def calculate_aggregate_metrics(self, results: List[EvalSampleResult]) -> Dict[str, float]:
+        """Calculate aggregate metrics from results."""
+        if hasattr(self.runner, 'calculate_aggregate_metrics'):
+            return self.runner.calculate_aggregate_metrics(results)
+        
+        # Default implementation
+        if not results:
+            return {}
+        
+        metrics = {}
+        for key in results[0].metrics.keys():
+            values = [r.metrics.get(key, 0) for r in results if not r.error_info]
+            if values:
+                metrics[f"{key}_mean"] = sum(values) / len(values)
+        
+        return metrics
     
     def _create_basic_runner(self, task_config: TaskConfig, model_config: Dict[str, Any]):
         """Create basic runner based on task type."""

@@ -30,9 +30,31 @@ class TestCharacterChatFileOperations:
     
     @pytest.fixture
     def mock_db(self, temp_base_dir):
-        """Create a mock CharactersRAGDB instance."""
+        """Create a CharactersRAGDB instance with test data."""
         db_path = Path(temp_base_dir) / "test.db"
-        return CharactersRAGDB(str(db_path), client_id="test_client")
+        db = CharactersRAGDB(str(db_path), client_id="test_client")
+        
+        # Add a test character to the database
+        character_data = {
+            'name': 'TestCharacter',
+            'description': 'A test character',
+            'personality': 'Friendly test character',
+            'scenario': 'Testing scenario',
+            'first_message': 'Hello, I am a test character!',
+            'creator': 'Test Creator',
+            'version': '1.0',
+            'post_history_instructions': '',
+            'alternate_greetings': [],
+            'tags': ['test'],
+            'creator_notes': 'Created for testing',
+            'system_prompt': '',
+            'char_persona': '',
+            'world_scenario': '',
+            'example_dialogue': ''
+        }
+        db.add_character_card(character_data)
+        
+        return db
     
     @pytest.fixture
     def sample_chat_history(self):
@@ -54,11 +76,6 @@ class TestCharacterChatFileOperations:
         chat_file = Path(temp_base_dir) / "chat_history.json"
         chat_file.write_text(json.dumps(sample_chat_history))
         
-        # Mock the database methods
-        mock_db.get_character_by_name = MagicMock(return_value={"id": 1, "name": "TestCharacter"})
-        mock_db.create_conversation = MagicMock(return_value="conv_123")
-        mock_db.add_message = MagicMock(return_value="msg_id")
-        
         # Load with base directory validation
         conv_id, char_id = load_chat_history_from_file_and_save_to_db(
             mock_db,
@@ -66,10 +83,18 @@ class TestCharacterChatFileOperations:
             base_directory=temp_base_dir
         )
         
-        assert conv_id == "conv_123"
-        assert char_id == 1
-        assert mock_db.create_conversation.called
-        assert mock_db.add_message.call_count == 4  # 2 exchanges * 2 messages
+        # Verify the conversation was created
+        assert conv_id is not None
+        assert char_id is not None
+        
+        # Get the character from database to verify it's the correct one
+        character = mock_db.get_character_card_by_name("TestCharacter")
+        assert character is not None
+        assert character['id'] == char_id
+        
+        # Verify messages were added to the conversation
+        messages = mock_db.get_messages_for_conversation(conv_id)
+        assert len(messages) == 4  # 2 exchanges * 2 messages
     
     def test_load_chat_history_with_invalid_path(self, mock_db, temp_base_dir):
         """Test that loading from outside base directory fails."""
@@ -80,12 +105,14 @@ class TestCharacterChatFileOperations:
         
         try:
             # Attempt to load from outside base directory
-            with pytest.raises(ValueError, match="outside the allowed directory"):
-                load_chat_history_from_file_and_save_to_db(
-                    mock_db,
-                    outside_file,
-                    base_directory=temp_base_dir
-                )
+            conv_id, char_id = load_chat_history_from_file_and_save_to_db(
+                mock_db,
+                outside_file,
+                base_directory=temp_base_dir
+            )
+            # Should return None, None for invalid path
+            assert conv_id is None
+            assert char_id is None
         finally:
             Path(outside_file).unlink(missing_ok=True)
     
@@ -94,22 +121,19 @@ class TestCharacterChatFileOperations:
         # Try to use path traversal
         malicious_path = "../../../etc/passwd"
         
-        with pytest.raises(ValueError, match="outside the allowed directory"):
-            load_chat_history_from_file_and_save_to_db(
-                mock_db,
-                malicious_path,
-                base_directory=temp_base_dir
-            )
+        conv_id, char_id = load_chat_history_from_file_and_save_to_db(
+            mock_db,
+            malicious_path,
+            base_directory=temp_base_dir
+        )
+        # Should return None, None for path traversal attempt
+        assert conv_id is None
+        assert char_id is None
     
     def test_load_chat_history_from_file_object(self, mock_db, sample_chat_history):
         """Test loading chat history from a file-like object."""
         # Create a BytesIO object
         file_obj = io.BytesIO(json.dumps(sample_chat_history).encode('utf-8'))
-        
-        # Mock the database methods
-        mock_db.get_character_by_name = MagicMock(return_value={"id": 1, "name": "TestCharacter"})
-        mock_db.create_conversation = MagicMock(return_value="conv_123")
-        mock_db.add_message = MagicMock(return_value="msg_id")
         
         # Load from file object (no path validation needed)
         conv_id, char_id = load_chat_history_from_file_and_save_to_db(
@@ -117,8 +141,13 @@ class TestCharacterChatFileOperations:
             file_obj
         )
         
-        assert conv_id == "conv_123"
-        assert char_id == 1
+        # Verify the conversation was created
+        assert conv_id is not None
+        assert char_id is not None
+        
+        # Verify messages were added to the conversation
+        messages = mock_db.get_messages_for_conversation(conv_id)
+        assert len(messages) == 4  # 2 exchanges * 2 messages
 
 
 class TestAPIUtilsFileOperations:

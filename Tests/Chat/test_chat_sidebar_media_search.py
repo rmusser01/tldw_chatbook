@@ -25,7 +25,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_events_sidebar import (
 
 
 @pytest_asyncio.fixture
-async def real_app_media_test(tmp_path):
+async def real_app_media_test(tmp_path, monkeypatch):
     """A real TldwCli app instance for integration testing media search sidebar."""
     # Create temporary directories for databases
     db_dir = tmp_path / "db"
@@ -39,6 +39,9 @@ async def real_app_media_test(tmp_path):
 log_level = "DEBUG"
 default_tab = "chat"
 USERS_NAME = "TestUser"
+
+[splash_screen]
+enabled = false
 
 [chat_defaults]
 provider = "Ollama"
@@ -54,6 +57,16 @@ data_dir = "{}"
 
     # Set environment variables for test
     os.environ['TLDW_CONFIG_PATH'] = str(config_path)
+    
+    # Patch the get_cli_setting to ensure splash screen is disabled
+    from tldw_chatbook.config import get_cli_setting as original_get_cli_setting
+    def mock_get_cli_setting(section, key, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return original_get_cli_setting(section, key, default)
+    
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", mock_get_cli_setting)
+    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", mock_get_cli_setting)
     
     # Create the app instance
     app = TldwCli()
@@ -118,13 +131,62 @@ async def test_media_search_initial_state(real_app_media_test: TldwCli):
         # Wait for UI to be ready
         await pilot.pause(0.5)
         
+        # First, check if any UI is loaded at all
+        all_widgets = list(app.query("*").results())
+        print(f"\nTotal widgets found: {len(all_widgets)}")
+        print(f"Widget IDs: {[w.id for w in all_widgets[:20] if w.id]}")  # First 20 IDs
+        
+        # Check if splash screen is present
+        try:
+            splash = app.query_one("#app-splash-screen")
+            print("Splash screen is active, waiting for it to close...")
+            # Press any key to skip splash screen if skip_on_keypress is enabled
+            await pilot.press("space")
+            await pilot.pause(2.0)  # Wait for splash to close and main UI to load
+            
+            # Check again
+            all_widgets = list(app.query("*").results())
+            print(f"\nAfter splash close - Total widgets: {len(all_widgets)}")
+            print(f"Widget IDs after splash: {[w.id for w in all_widgets[:20] if w.id]}")
+        except Exception:
+            print("No splash screen found (good!)")
+        
+        # Check if we're in a tabbed interface
+        try:
+            tabbed_content = app.query("TabbedContent").first()
+            if tabbed_content:
+                print(f"TabbedContent found with {len(tabbed_content.children)} children")
+                active_tab = tabbed_content.active
+                print(f"Active tab: {active_tab}")
+        except Exception:
+            print("No TabbedContent found")
+        
         # Navigate to chat tab
-        await pilot.press("c")
-        await pilot.pause(0.1)
+        await pilot.press("ctrl+c")  # Use ctrl+c for chat tab
+        await pilot.pause(0.5)  # Give time for tab to load
+        
+        # Check again after navigation
+        all_widgets = list(app.query("*").results())
+        print(f"\nAfter navigation - Total widgets: {len(all_widgets)}")
         
         # Check that all required UI elements exist
-        collapsible = app.query_one("#chat-media-collapsible", Collapsible)
-        assert collapsible is not None
+        # Try to find the collapsible directly
+        try:
+            collapsible = app.query_one("#chat-media-collapsible", Collapsible)
+            assert collapsible is not None
+        except Exception as e:
+            # If not found, try to debug what's available
+            print(f"\nError finding chat-media-collapsible: {str(e)}")
+            # List all Collapsible widgets
+            collapsibles = app.query(Collapsible).results()
+            print(f"Available Collapsibles: {[(c.id, c.title) for c in collapsibles if c.id]}")
+            # List all widgets with 'media' in their ID
+            media_widgets = [w for w in app.query("*").results() if w.id and 'media' in w.id]
+            print(f"Media-related widgets: {[(w.id, type(w).__name__) for w in media_widgets]}")
+            # Check for chat-related widgets
+            chat_widgets = [w for w in app.query("*").results() if w.id and 'chat' in w.id]
+            print(f"Chat-related widgets: {[(w.id, type(w).__name__) for w in chat_widgets[:10]]}")  # First 10
+            raise
         
         search_input = app.query_one("#chat-media-search-input", Input)
         assert search_input is not None
