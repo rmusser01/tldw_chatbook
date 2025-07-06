@@ -1078,7 +1078,7 @@ local_mlx_lm = ["None"]
     # --- Cloud Providers ---
     [api_settings.openai]
     api_key_env_var = "OPENAI_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "gpt-4o" # Default model for direct calls (if not overridden)
     temperature = 0.7
     top_p = 1.0 # OpenAI uses top_p (represented as maxp sometimes in UI)
@@ -1090,7 +1090,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.anthropic]
     api_key_env_var = "ANTHROPIC_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "claude-3-haiku-20240307"
     temperature = 0.7
     top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)
@@ -1103,7 +1103,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.cohere]
     api_key_env_var = "COHERE_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "command-r-plus"
     temperature = 0.3
     top_p = 0.75 # Cohere uses 'p' (represented as topp in UI)
@@ -1116,7 +1116,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.deepseek]
     api_key_env_var = "DEEPSEEK_API_KEY"
-    api_key = "<KEY_GOES_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "deepseek-chat"
     temperature = 0.7
     top_p = 1.0 # Deepseek uses top_p (represented as topp in UI)
@@ -1128,7 +1128,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.groq]
     api_key_env_var = "GROQ_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "llama3-70b-8192"
     temperature = 0.7
     top_p = 1.0 # Groq uses top_p (represented as maxp in UI)
@@ -1153,7 +1153,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.huggingface]
     api_key_env_var = "HUGGINGFACE_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
     temperature = 0.7
     top_p = 1.0 # HF Inference API uses top_p
@@ -1166,7 +1166,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.mistralai] # Matches key in [providers]
     api_key_env_var = "MISTRAL_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "mistral-large-latest"
     temperature = 0.7
     top_p = 1.0 # Mistral uses top_p (represented as topp in UI)
@@ -1178,7 +1178,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.openrouter]
     api_key_env_var = "OPENROUTER_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "meta-llama/Llama-3.1-8B-Instruct"
     temperature = 0.7
     top_p = 1.0 # OpenRouter uses top_p
@@ -1500,6 +1500,21 @@ sub_question_generation_prompt = "Based on the user query and chat history, gene
 search_result_relevance_eval_prompt = "Evaluate the relevance of the following search result snippet to the query. Score from 1 (not relevant) to 5 (highly relevant)."
 analyze_search_results_prompt = "Analyze the provided search results and synthesize a comprehensive answer to the original query."
 situate_chunk_context_prompt = "You are an AI assistant. Please follow the instructions provided in the input text carefully and accurately."
+
+[prompts.document_generation.timeline]
+prompt = "Create a detailed text-based timeline based on our conversation/materials being referenced. Include key dates, events, and their relationships in chronological order."
+temperature = 0.3
+max_tokens = 2000
+
+[prompts.document_generation.study_guide]
+prompt = "Create a detailed and well produced study guide based on the current focus of our conversation/materials in reference. Include key concepts, definitions, learning objectives, and potential exam questions."
+temperature = 0.5
+max_tokens = 3000
+
+[prompts.document_generation.briefing]
+prompt = "Create a detailed and well produced executive briefing document regarding this conversation and the subject material. Include key points, actionable insights, strategic implications, and recommendations."
+temperature = 0.4
+max_tokens = 2500
 
 
 # ==========================================================
