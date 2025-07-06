@@ -314,7 +314,7 @@ The application includes a customizable splash screen system inspired by Call of
 - Configurable duration and skip options
 - Support for custom splash cards
 
-For detailed information on creating and customizing splash screens, see the [Splash Screen Guide](SPLASH_SCREEN_GUIDE.md).
+For detailed information on creating and customizing splash screens, see the [Splash Screen Guide](Docs/Development/SPLASH_SCREEN_GUIDE.md).
 
 ## Upgrading from requirements.txt
 

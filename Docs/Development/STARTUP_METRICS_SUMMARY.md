@@ -1,4 +1,4 @@
-# Startup Performance Metrics Implementation
+# Startup Performance Metrics Implementation (LLM Generated)
 
 ## Overview
 Added comprehensive startup timing and memory profiling instrumentation to the tldw_chatbook application using the existing metrics infrastructure.

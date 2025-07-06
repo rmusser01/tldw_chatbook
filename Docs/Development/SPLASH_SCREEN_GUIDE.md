@@ -1,4 +1,4 @@
-# TLDW CLI Splash Screen Guide
+# TLDW CLI Splash Screen Guide (LLM Generated)
 
 ## Table of Contents
 1. [Overview](#overview)
@@ -660,7 +660,7 @@ def _select_card(self) -> str:
 
 ## Future Enhancements
 
-### Planned Features
+### Planned Features (lol no, maybe)
 1. **Sound Effects**: Optional audio for animations
 2. **Custom Card Loader**: Load cards from user directory
 3. **Transition Effects**: More elaborate transitions between splash and main UI
