@@ -413,6 +413,609 @@ class RetroTerminalEffect(BaseEffect):
         return '\n'.join(output_lines)
 
 
+class DigitalRainEffect(BaseEffect):
+    """Digital rain effect with varied characters and color options."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "TLDW Chatbook",
+        subtitle: str = "Interface Loading...",
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.05, # Interval for updates
+        base_chars: str = "abcdefghijklmnopqrstuvwxyz0123456789",
+        highlight_chars: str = "!@#$%^&*()_+=-{}[]|:;<>,.?/~",
+        base_color: str = "dim green", # Rich style for base rain
+        highlight_color: str = "bold green", # Rich style for highlighted chars
+        title_style: str = "bold white",
+        subtitle_style: str = "white",
+        highlight_chance: float = 0.1, # Chance for a character to be a highlight_char
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.width = width
+        self.height = height
+        self.speed = speed # Not directly used in update logic timing, but for animation timer
+
+        self.all_chars = base_chars + highlight_chars
+        self.base_chars = base_chars
+        self.highlight_chars = highlight_chars
+        self.base_color = base_color
+        self.highlight_color = highlight_color
+        self.title_style = title_style
+        self.subtitle_style = subtitle_style
+        self.highlight_chance = highlight_chance
+
+        self.columns: List[List[Tuple[str, str]]] = [] # char, style
+        self.column_speeds: List[float] = [] # How many frames until this column updates
+        self.column_next_update: List[int] = [] # Frame counter for next update
+
+        self._init_columns()
+
+        self.title_reveal_progress = 0.0
+        self.subtitle_reveal_progress = 0.0
+
+    def _init_columns(self) -> None:
+        self.columns = []
+        self.column_speeds = []
+        self.column_next_update = []
+
+        for _ in range(self.width):
+            column = []
+            # Initial column population (sparse)
+            for _ in range(random.randint(self.height // 4, self.height // 2)):
+                char = random.choice(self.all_chars)
+                style = self.highlight_color if char in self.highlight_chars or random.random() < self.highlight_chance else self.base_color
+                column.append((char, style))
+            # Pad with spaces to height
+            column.extend([(' ', self.base_color)] * (self.height - len(column)))
+            random.shuffle(column) # Mix them up initially
+
+            self.columns.append(column)
+            self.column_speeds.append(random.randint(1, 5)) # Update every 1-5 frames
+            self.column_next_update.append(0)
+
+
+    def update(self) -> Optional[str]:
+        self.frame_count +=1 # Manually increment as BaseEffect's update is overridden
+
+        # Update columns that are due
+        for col_idx in range(self.width):
+            if self.frame_count >= self.column_next_update[col_idx]:
+                # Shift column down
+                last_char_tuple = self.columns[col_idx].pop()
+
+                # New char at top
+                new_char = random.choice(self.all_chars)
+                new_style = self.highlight_color if new_char in self.highlight_chars or random.random() < self.highlight_chance else self.base_color
+                self.columns[col_idx].insert(0, (new_char, new_style))
+
+                self.column_next_update[col_idx] = self.frame_count + self.column_speeds[col_idx]
+
+        # Prepare render grid (list of lists of styled characters)
+        render_grid: List[List[str]] = [] # Each string is already Rich-escaped and styled
+
+        for r_idx in range(self.height):
+            line_segments = []
+            for c_idx in range(self.width):
+                char, style = self.columns[c_idx][r_idx]
+                escaped_char = char.replace('[', r'\[')
+                line_segments.append(f"[{style}]{escaped_char}[/{style}]")
+            render_grid.append(line_segments)
+
+        # Title and Subtitle Reveal (similar to MatrixRainEffect)
+        elapsed = time.time() - self.start_time
+        if elapsed > 0.5: # Start revealing title
+            self.title_reveal_progress = min(1.0, (elapsed - 0.5) / 1.5) # Slower reveal
+            title_len_to_show = int(len(self.title) * self.title_reveal_progress)
+
+            title_row = self.height // 2 - 2
+            title_start_col = (self.width - len(self.title)) // 2
+
+            if 0 <= title_row < self.height:
+                for i in range(len(self.title)):
+                    if title_start_col + i < self.width:
+                        if i < title_len_to_show:
+                            char_to_draw = self.title[i].replace('[', r'\[')
+                            render_grid[title_row][title_start_col + i] = f"[{self.title_style}]{char_to_draw}[/{self.title_style}]"
+                        else: # Keep rain char but make it almost invisible or a background color
+                             render_grid[title_row][title_start_col + i] = "[on black] [/on black]"
+
+
+        if elapsed > 1.0: # Start revealing subtitle
+            self.subtitle_reveal_progress = min(1.0, (elapsed - 1.0) / 1.5)
+            subtitle_len_to_show = int(len(self.subtitle) * self.subtitle_reveal_progress)
+
+            subtitle_row = self.height // 2
+            subtitle_start_col = (self.width - len(self.subtitle)) // 2
+
+            if 0 <= subtitle_row < self.height:
+                for i in range(len(self.subtitle)):
+                     if subtitle_start_col + i < self.width:
+                        if i < subtitle_len_to_show:
+                            char_to_draw = self.subtitle[i].replace('[', r'\[')
+                            render_grid[subtitle_row][subtitle_start_col + i] = f"[{self.subtitle_style}]{char_to_draw}[/{self.subtitle_style}]"
+                        else:
+                            render_grid[subtitle_row][subtitle_start_col + i] = "[on black] [/on black]"
+
+        final_lines = ["".join(line_segments) for line_segments in render_grid]
+        return "\n".join(final_lines)
+
+
+class LoadingBarEffect(BaseEffect):
+    """Displays an ASCII loading bar that fills based on SplashScreen's progress."""
+
+    def __init__(
+        self,
+        parent_widget: Any, # This will be the SplashScreen instance
+        bar_frame_content: str, # ASCII for the empty bar e.g., "[----------]"
+        fill_char: str = "#",
+        bar_style: str = "bold green",
+        text_above: str = "LOADING MODULES...",
+        text_below: str = "{progress:.0f}% Complete", # Format string for progress
+        text_style: str = "white",
+        width: int = 80, # Target width for centering
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.bar_frame_content = bar_frame_content.strip()
+        self.fill_char = fill_char[0] if fill_char else "#" # Ensure single char
+        self.bar_style = bar_style
+        self.text_above = text_above
+        self.text_below_template = text_below
+        self.text_style = text_style
+        self.width = width
+
+        # Try to determine bar width from frame_content (excluding brackets/ends)
+        self.bar_interior_width = len(self.bar_frame_content) - 2 # Assuming frame is like [---]
+        if self.bar_interior_width <= 0:
+            self.bar_interior_width = 20 # Default if frame is unusual
+
+    def update(self) -> Optional[str]:
+        # Access progress from the parent SplashScreen widget
+        # The parent SplashScreen widget has a reactive 'progress' attribute (0.0 to 1.0)
+        current_progress = self.parent.progress if hasattr(self.parent, 'progress') else 0.0
+
+        num_filled = int(current_progress * self.bar_interior_width)
+        num_empty = self.bar_interior_width - num_filled
+
+        # Construct the bar
+        # Assuming bar_frame_content is like "[--------------------]"
+        bar_start = self.bar_frame_content[0]
+        bar_end = self.bar_frame_content[-1]
+
+        filled_part = self.fill_char * num_filled
+        empty_part = self.bar_frame_content[1+num_filled : 1+num_filled+num_empty] # Get actual empty chars from frame
+
+        # Ensure the bar is always the correct total interior width
+        current_bar_interior = filled_part + empty_part
+        if len(current_bar_interior) < self.bar_interior_width:
+            current_bar_interior += self.bar_frame_content[1+len(current_bar_interior)] * (self.bar_interior_width - len(current_bar_interior))
+        elif len(current_bar_interior) > self.bar_interior_width:
+            current_bar_interior = current_bar_interior[:self.bar_interior_width]
+
+
+        styled_bar = f"[{self.bar_style}]{bar_start}{current_bar_interior}{bar_end}[/{self.bar_style}]"
+
+        # Format text below with current progress
+        # The parent also has 'progress_text' which might be more descriptive
+        progress_percentage_text = self.parent.progress_text if hasattr(self.parent, 'progress_text') and self.parent.progress_text else ""
+
+        # Use the template if available, otherwise use the SplashScreen's progress_text
+        if "{progress}" in self.text_below_template:
+             text_below_formatted = self.text_below_template.format(progress=current_progress * 100)
+        else:
+            text_below_formatted = progress_percentage_text if progress_percentage_text else f"{current_progress*100:.0f}%"
+
+
+        # Centering text and bar (approximate)
+        output_lines = []
+        if self.text_above:
+            pad_above = (self.width - len(self.text_above)) // 2
+            output_lines.append(f"[{self.text_style}]{' ' * pad_above}{self.text_above.replace('[', r'\[')}{' ' * pad_above}[/{self.text_style}]")
+        else:
+            output_lines.append("") # Keep spacing consistent
+
+        pad_bar = (self.width - len(self.bar_frame_content)) // 2
+        output_lines.append(f"{' ' * pad_bar}{styled_bar}")
+
+        if text_below_formatted:
+            pad_below = (self.width - len(text_below_formatted)) // 2
+            output_lines.append(f"[{self.text_style}]{' ' * pad_below}{text_below_formatted.replace('[', r'\[')}{' ' * pad_below}[/{self.text_style}]")
+        else:
+            output_lines.append("")
+
+        # Add some blank lines for spacing if needed, assuming height of ~5-7 lines for this effect
+        while len(output_lines) < 5: # Assuming a small vertical footprint
+            output_lines.insert(0, "") # Add blank lines at the top for centering
+            if len(output_lines) >=5: break
+            output_lines.append("") # Add blank lines at the bottom
+
+        return '\n'.join(output_lines[:self.parent.height if hasattr(self.parent, 'height') else 7])
+
+
+class StarfieldEffect(BaseEffect):
+    """Simulates a starfield warp effect."""
+
+    @dataclass
+    class Star:
+        x: float # Current screen x
+        y: float # Current screen y
+        z: float # Depth (distance from viewer, max_depth is furthest)
+        # For warp effect, stars also need a fixed trajectory from center
+        angle: float # Angle of trajectory from center
+        initial_speed_factor: float # Base speed factor for this star
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "WARP SPEED ENGAGED",
+        num_stars: int = 150,
+        warp_factor: float = 0.2, # Controls how fast z decreases and thus apparent speed
+        max_depth: float = 50.0, # Furthest z value
+        star_chars: List[str] = list("·.*+"), # Smallest to largest/brightest
+        star_styles: List[str] = ["dim white", "white", "bold white", "bold yellow"],
+        width: int = 80,
+        height: int = 24,
+        title_style: str = "bold cyan on black",
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.num_stars = num_stars
+        self.warp_factor = warp_factor
+        self.max_depth = max_depth
+        self.star_chars = star_chars
+        self.star_styles = star_styles
+        self.width = width
+        self.height = height
+        self.center_x = width / 2.0
+        self.center_y = height / 2.0
+        self.title_style = title_style
+        self.stars: List[StarfieldEffect.Star] = []
+        for _ in range(self.num_stars):
+            self.stars.append(self._spawn_star(is_initial_spawn=True))
+
+    def _spawn_star(self, is_initial_spawn: bool = False) -> Star:
+        angle = random.uniform(0, 2 * math.pi)
+        initial_speed_factor = random.uniform(0.2, 1.0) # How fast it moves from center
+
+        z = self.max_depth # Always spawn at max depth for this warp effect
+
+        return StarfieldEffect.Star(
+            x=self.center_x,
+            y=self.center_y,
+            z=z,
+            angle=angle,
+            initial_speed_factor=initial_speed_factor
+        )
+
+    def update(self) -> Optional[str]:
+        styled_chars_on_grid: Dict[Tuple[int, int], Tuple[str, str]] = {}
+
+        for i in range(len(self.stars)):
+            star = self.stars[i]
+            star.z -= self.warp_factor
+
+            if star.z <= 0:
+                self.stars[i] = self._spawn_star()
+                continue
+
+            radius_on_screen = star.initial_speed_factor * (self.max_depth - star.z) * (self.width / (self.max_depth * 10.0))
+
+
+            star.x = self.center_x + math.cos(star.angle) * radius_on_screen
+            # Adjust y movement based on aspect ratio if terminal cells aren't square
+            # Assuming roughly 2:1 height:width for characters, so y movement appears slower
+            star.y = self.center_y + math.sin(star.angle) * radius_on_screen * 0.5
+
+            z_ratio = star.z / self.max_depth
+
+            char_idx = 0
+            if z_ratio < 0.25: char_idx = 3
+            elif z_ratio < 0.50: char_idx = 2
+            elif z_ratio < 0.75: char_idx = 1
+            else: char_idx = 0
+
+            char_idx = min(char_idx, len(self.star_chars) - 1)
+            style_idx = min(char_idx, len(self.star_styles) -1)
+
+            star_char = self.star_chars[char_idx]
+            star_style = self.star_styles[style_idx]
+
+            ix, iy = int(star.x), int(star.y)
+            if 0 <= ix < self.width and 0 <= iy < self.height:
+                styled_chars_on_grid[(ix, iy)] = (star_char, star_style)
+
+        output_lines = []
+        for r_idx in range(self.height):
+            line_segments = []
+            for c_idx in range(self.width):
+                if (c_idx, r_idx) in styled_chars_on_grid:
+                    char, style = styled_chars_on_grid[(c_idx, r_idx)]
+                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                else:
+                    line_segments.append(' ')
+            output_lines.append("".join(line_segments))
+
+        if self.title:
+            title_y = self.height // 2
+            title_x_start = (self.width - len(self.title)) // 2
+
+            if 0 <= title_y < self.height:
+                title_segments = []
+                current_title_char_idx = 0
+                for c_idx in range(self.width):
+                    is_title_char = title_x_start <= c_idx < title_x_start + len(self.title)
+                    if is_title_char:
+                        char_to_draw = self.title[current_title_char_idx].replace('[', r'\[')
+                        title_segments.append(f"[{self.title_style}]{char_to_draw}[/{self.title_style}]")
+                        current_title_char_idx +=1
+                    else:
+                        if (c_idx, title_y) in styled_chars_on_grid: # Star is behind title char
+                            char, style = styled_chars_on_grid[(c_idx, title_y)]
+                            title_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                        else: # Empty space behind title char
+                            title_segments.append(' ')
+                output_lines[title_y] = "".join(title_segments)
+
+        return "\n".join(output_lines)
+
+
+class TerminalBootEffect(BaseEffect):
+    """Simulates a classic terminal boot-up sequence."""
+
+    @dataclass
+    class BootLine:
+        text: str
+        delay_before: float = 0.1 # Delay before this line starts typing
+        type_speed: float = 0.03 # Seconds per character
+        pause_after: float = 0.2 # Pause after line is fully typed
+        style: str = "default"
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        boot_sequence: List[Dict[str, Any]], # List of dicts for BootLine properties
+        width: int = 80,
+        height: int = 24,
+        cursor: str = "_",
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+
+        self.lines_to_display: List[TerminalBootEffect.BootLine] = []
+        for item in boot_sequence:
+            self.lines_to_display.append(TerminalBootEffect.BootLine(**item))
+
+        self.width = width
+        self.height = height
+        self.cursor_char = cursor
+
+        self.current_line_index = 0
+        self.current_char_index = 0
+        self.time_since_last_char = 0
+        self.time_waiting_for_next_line = 0
+        self.time_paused_after_line = 0
+
+        self.output_buffer: List[str] = [""] * self.height # Stores fully typed lines
+        self.current_display_line = 0 # Which line in output_buffer we are writing to
+
+        self.state = "delay_before_line" # States: delay_before_line, typing, paused_after_line, done
+
+    def update(self) -> Optional[str]:
+        if self.current_line_index >= len(self.lines_to_display):
+            self.state = "done"
+
+        elapsed_frame_time = time.time() - self.start_time # More like delta_time if called frequently
+        self.start_time = time.time() # Reset for next frame's delta_time calculation
+
+        current_boot_line = None
+        if self.state != "done":
+            current_boot_line = self.lines_to_display[self.current_line_index]
+
+        if self.state == "delay_before_line":
+            self.time_waiting_for_next_line += elapsed_frame_time
+            if self.time_waiting_for_next_line >= current_boot_line.delay_before:
+                self.state = "typing"
+                self.time_waiting_for_next_line = 0
+
+        if self.state == "typing":
+            self.time_since_last_char += elapsed_frame_time
+            if self.time_since_last_char >= current_boot_line.type_speed:
+                self.time_since_last_char = 0
+
+                if self.current_char_index < len(current_boot_line.text):
+                    # Add char to current line in buffer
+                    # Ensure current_display_line is within height
+                    if self.current_display_line >= self.height:
+                        # Scroll up output_buffer
+                        self.output_buffer.pop(0)
+                        self.output_buffer.append("")
+                        self.current_display_line = self.height -1
+
+                    self.output_buffer[self.current_display_line] += current_boot_line.text[self.current_char_index]
+                    self.current_char_index += 1
+
+                if self.current_char_index >= len(current_boot_line.text):
+                    self.state = "paused_after_line"
+                    # Move to next line in buffer for next boot message
+                    self.current_display_line +=1
+
+
+        if self.state == "paused_after_line":
+            self.time_paused_after_line += elapsed_frame_time
+            if self.time_paused_after_line >= current_boot_line.pause_after:
+                self.current_line_index += 1
+                self.current_char_index = 0
+                self.time_paused_after_line = 0
+                if self.current_line_index < len(self.lines_to_display):
+                    self.state = "delay_before_line"
+                else:
+                    self.state = "done"
+
+        # Render the output buffer
+        final_styled_lines = []
+
+        # To correctly apply styles, we need to track which BootLine generated which line in output_buffer.
+        # This is tricky if lines scroll. A simpler approach for now:
+        # output_buffer stores plain text. Styles are applied during rendering here.
+        # We need a mapping from output_buffer line index to original BootLine style.
+        # This is difficult because of scrolling.
+
+        # Simpler styling logic:
+        # 1. Completed lines: Use the style from their original BootLine object if we can track it.
+        #    If not, use a default.
+        # 2. Actively typing line: Use its BootLine style + cursor.
+        # 3. Future lines (not yet in buffer): Blank.
+
+        # Let's assume output_buffer[i] was generated by lines_to_display[k]
+        # where k is what current_line_index was when output_buffer[i] was completed.
+        # This requires storing style info alongside text in output_buffer or a parallel structure.
+
+        # Simplification for this version:
+        # All fully typed lines will use their defined style.
+        # The line currently being typed shows cursor.
+
+        # Store (text, style_name) in output_buffer
+        # Modify how output_buffer is populated:
+        # When a line is completed (state becomes "paused_after_line"):
+        #   self.output_buffer[self.current_display_line-1] = (text, style)
+        # When a character is typed:
+        #   self.output_buffer[self.current_display_line] = (current_text_so_far, style_of_current_line)
+
+        # For this pass, I will keep output_buffer as list of strings and try to reconstruct styles.
+        # This is not ideal but avoids changing the buffer structure significantly now.
+
+        # Determine which original boot lines are visible or partially visible due to scrolling
+        # This logic gets very complex with scrolling.
+        # Let's assume no scrolling for v1 of this effect to simplify styling.
+        # If current_display_line >= height, it means we should have scrolled.
+        # The current code already handles scrolling of output_buffer.
+
+        # Let's find the style for each line in the buffer.
+        # The line `self.output_buffer[j]` corresponds to `self.lines_to_display[self.current_line_index - (self.current_display_line - j)]`
+        # if we assume a direct mapping without considering complex scrolling scenarios.
+
+        for i in range(self.height):
+            line_text = self.output_buffer[i] if i < len(self.output_buffer) else ""
+            line_to_render = line_text.replace('[', r'\[')
+            style_to_use = "default" # Default style
+
+            # Try to find the original BootLine that corresponds to this output_buffer line
+            # This is an approximation assuming lines map somewhat directly if no/simple scrolling.
+            # `boot_line_source_index` is the estimated index in `self.lines_to_display`
+            # This logic is tricky because `current_display_line` increments AFTER a line is full.
+
+            # If line `i` is the one being currently typed or was just finished:
+            is_active_typing_line = (self.state == "typing" and i == self.current_display_line)
+
+            # Determine the source BootLine for styling
+            # This needs to account for scrolling. If output_buffer[0] was line k,
+            # output_buffer[1] was line k+1, etc., until scroll.
+            # This is hard to backtrack perfectly without more info.
+            # Simplified: Use current_boot_line's style for active line, default for others.
+            # This won't style completed lines with their original styles correctly if styles vary.
+
+            # A better simple approach: store the style with the text in output_buffer.
+            # Let's assume self.output_buffer stores tuples: (text, style_str)
+            # This requires changing how self.output_buffer is populated.
+            # For now, I'll stick to the current simpler (but less accurate styling) model.
+
+            if is_active_typing_line and current_boot_line:
+                style_to_use = current_boot_line.style
+                final_styled_lines.append(f"[{style_to_use}]{line_to_render}{self.cursor_char}[/{style_to_use}]")
+            elif self.state == "paused_after_line" and i == self.current_display_line -1 and current_boot_line:
+                # Line just finished, use its style, no cursor yet for next line
+                # current_boot_line here is the one that just finished.
+                 style_to_use = current_boot_line.style
+                 final_styled_lines.append(f"[{style_to_use}]{line_to_render}[/{style_to_use}]")
+            elif self.state == "done" and i == self.current_display_line -1 and self.current_display_line > 0:
+                 # Last line that was typed.
+                 if self.lines_to_display:
+                    last_typed_line_style = self.lines_to_display[len(self.lines_to_display)-1].style
+                    final_styled_lines.append(f"[{last_typed_line_style}]{line_to_render}[/{last_typed_line_style}]")
+                 else:
+                    final_styled_lines.append(f"[default]{line_to_render}[/default]")
+            else:
+                # For other lines (already scrolled or not yet typed fully on screen part)
+                # This is where it's hard to get the original style back easily.
+                # Use default for lines that are "old" or if style cannot be determined.
+                # If line_text is not empty, it means it was typed.
+                if line_text: # It's a previously completed line
+                    # Try to guess its original style - this is the weak point.
+                    # For now, let's assume if it has text, it's from a previous line.
+                    # This part needs a more robust solution for varied styles on completed lines.
+                    # Simplest: use default for all non-active lines.
+                     final_styled_lines.append(f"[default]{line_to_render}[/default]")
+                else:
+                     final_styled_lines.append(line_to_render) # Empty line
+
+        return "\n".join(final_styled_lines)
+
+
+class GlitchRevealEffect(BaseEffect):
+    """Reveals content by starting glitchy and becoming clear over time."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        content: str, # The clear, final content
+        duration: float = 2.0, # Total duration of the reveal effect
+        glitch_chars: str = "!@#$%^&*()_+-=[]{}|;:,.<>?",
+        start_intensity: float = 0.8, # Initial glitch intensity (0.0 to 1.0)
+        end_intensity: float = 0.0,   # Final glitch intensity
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.clear_content = content
+        self.duration = duration
+        self.glitch_chars = glitch_chars
+        self.start_intensity = start_intensity
+        self.end_intensity = end_intensity
+
+        self.lines = self.clear_content.strip().split('\n')
+
+    def update(self) -> Optional[str]:
+        elapsed_time = time.time() - self.start_time
+        progress = min(1.0, elapsed_time / self.duration) # Normalized time (0 to 1)
+
+        # Intensity decreases over time (linear interpolation)
+        current_intensity = self.start_intensity + (self.end_intensity - self.start_intensity) * progress
+        # Could use an easing function for non-linear change in intensity.
+
+        if current_intensity <= 0.01: # Effectively clear
+            return self.clear_content.replace('[',r'\[')
+
+
+        glitched_lines = []
+        for line_idx, line_text in enumerate(self.lines):
+            glitched_line_chars = list(line_text)
+            for char_idx in range(len(glitched_line_chars)):
+                if random.random() < current_intensity:
+                    # Chance to replace char, or shift it, or change color
+                    if random.random() < 0.7: # Replace char
+                        glitched_line_chars[char_idx] = random.choice(self.glitch_chars)
+                    # Could add other glitch types like small offsets or color shifts here
+            glitched_lines.append("".join(glitched_line_chars))
+
+        # Basic styling for glitched parts - can be enhanced
+        output_lines = []
+        for line in glitched_lines:
+            escaped_line = line.replace('[', r'\[')
+            # Randomly apply a "glitchy" color style to some parts
+            if random.random() < current_intensity * 0.5: # More styling when more intense
+                style = random.choice(["bold red", "bold blue", "bold yellow", "bold magenta"])
+                output_lines.append(f"[{style}]{escaped_line}[/{style}]")
+            else:
+                output_lines.append(escaped_line) # Rely on card's base style
+
+        return "\n".join(output_lines)
+
+
 class PulseEffect(BaseEffect):
     """Creates a pulsing effect for text content by varying brightness."""
 

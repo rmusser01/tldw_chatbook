@@ -131,6 +131,19 @@ ARCADE_HIGH_SCORE_ASCII = r"""
 +----------------------------------------+
 """
 
+LOADING_BAR_FRAME_ASCII = r"""
+[--------------------]
+"""
+
+# A few options for fill characters, card config can pick one
+LOADING_BAR_FILL_CHARS = {
+    "default": "#",
+    "block": "█",
+    "dots": ".",
+    "arrow": ">"
+}
+
+
 #
 # Functions:
 
@@ -159,6 +172,8 @@ def get_ascii_art(name: str = "default") -> str:
         "minimal_fade": MINIMAL_FADE_ASCII,
         "blueprint": BLUEPRINT_ASCII,
         "arcade_high_score": ARCADE_HIGH_SCORE_ASCII,
+        "loading_bar_frame": LOADING_BAR_FRAME_ASCII,
+        "app_logo_clear": TLDW_ASCII_COMPACT, # Using compact version as the clear logo
     }
     
     return ascii_arts.get(name, TLDW_ASCII_ART)

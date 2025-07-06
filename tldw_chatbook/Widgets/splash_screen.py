@@ -33,7 +33,12 @@ from ..Utils.splash_animations import (
     RetroTerminalEffect,
     PulseEffect,
     CodeScrollEffect,
-    BlinkEffect
+    BlinkEffect,
+    DigitalRainEffect,
+    LoadingBarEffect,
+    StarfieldEffect,
+    TerminalBootEffect,
+    GlitchRevealEffect
 )
 
 class SplashScreen(Container):
@@ -122,8 +127,9 @@ class SplashScreen(Container):
             "fade_out_duration": 0.2,
             "animation_speed": 1.0,
             "active_cards": [
-                "default", "matrix", "glitch", "retro", # Existing
-                "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score" # New
+                "default", "matrix", "glitch", "retro",
+                "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score", # Previous batch
+                "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal" # Current batch
             ]
         }
         
@@ -245,6 +251,76 @@ class SplashScreen(Container):
                 "blink_speed": 0.5,     # How long each blink state (on/off) lasts
                 "blink_targets": ["LOADING...", "PRESS ANY KEY TO START!"],
                 "blink_style_off": "dim", # How targets look when "off"
+            },
+            "digital_rain": {
+                "type": "animated",
+                "effect": "digital_rain",
+                "title": "TLDW CHATBOOK v2.0",
+                "subtitle": f"Enhancing neural pathways... {splashscreen_message_selection}",
+                "style": "white on black", # Base, effect controls most styling
+                "animation_speed": 0.05, # Interval for animation timer
+                "base_chars": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+                "highlight_chars": "!@#$%^*()-+=[]{};:,.<>/?",
+                "base_color": "dim green",
+                "highlight_color": "bold green",
+                "title_style": "bold magenta",
+                "subtitle_style": "cyan",
+                "highlight_chance": 0.05
+            },
+            "loading_bar": {
+                "type": "animated",
+                "effect": "loading_bar",
+                "content": get_ascii_art("loading_bar_frame"), # Base frame
+                "style": "white on black", # General style for text
+                "animation_speed": 0.1, # How often effect's update() is called
+                "fill_char": "█",
+                "bar_style": "bold green",
+                "text_above": "SYSTEM INITIALIZATION SEQUENCE",
+                # text_below will use SplashScreen.progress_text by default from effect
+                # or "text_below_template": "{progress:.0f}% Synced" can be set here
+            },
+            "starfield": {
+                "type": "animated",
+                "effect": "starfield",
+                "title": "Hyperdrive Initializing...",
+                "style": "black on black", # Background, stars provide visuals
+                "animation_speed": 0.04, # Faster updates for smoother stars
+                "num_stars": 200,
+                "warp_factor": 0.25,
+                "max_depth": 40.0,
+                "star_chars": ["·", ".", "*", "+"],
+                "star_styles": ["dim white", "white", "bold white", "bold yellow"],
+                "title_style": "bold cyan"
+            },
+            "terminal_boot": {
+                "type": "animated",
+                "effect": "terminal_boot",
+                "style": "green on black", # Default style for lines
+                "animation_speed": 0.03, # Interval for animation timer (effects internal timing)
+                "cursor": "▋",
+                "boot_sequence": [
+                    {"text": "TLDW BIOS v4.2.1 initializing...", "type_speed": 0.02, "pause_after": 0.3, "style": "bold white"},
+                    {"text": "Memory Test: 65536 KB OK", "delay_before": 0.1, "type_speed": 0.01, "pause_after": 0.2},
+                    {"text": "Detecting CPU Type: Quantum Entangled Processor", "type_speed": 0.02, "pause_after": 0.1},
+                    {"text": "Initializing USB Controllers ... Done.", "type_speed": 0.015, "pause_after": 0.2},
+                    {"text": "Loading TL-DOS...", "delay_before": 0.3, "type_speed": 0.04, "pause_after": 0.3, "style": "yellow"},
+                    {"text": "Starting services:", "type_speed": 0.02, "pause_after": 0.1},
+                    {"text": "  Network Stack .............. [OK]", "delay_before": 0.2, "type_speed": 0.01, "style": "dim green"},
+                    {"text": "  AI Core Diagnostics ........ [OK]", "type_speed": 0.01, "style": "dim green"},
+                    {"text": "  Sarcasm Module ............. [ENABLED]", "type_speed": 0.01, "style": "dim green"},
+                    {"text": f"Welcome to TLDW Chatbook - {splashscreen_message_selection}", "delay_before": 0.5, "type_speed": 0.03, "style": "bold cyan"}
+                ]
+            },
+            "glitch_reveal": {
+                "type": "animated",
+                "effect": "glitch_reveal",
+                "content": get_ascii_art("app_logo_clear"), # The final, clear logo
+                "style": "bold white on black", # Base style for the final clear logo
+                "animation_speed": 0.05, # Interval for animation timer
+                "duration": 2.5, # Total duration for the reveal effect itself
+                "glitch_chars": "!@#$%^&*▓▒░█",
+                "start_intensity": 0.9,
+                "end_intensity": 0.0
             }
         }
 
@@ -389,6 +465,93 @@ class SplashScreen(Container):
             )
             self.animation_timer = self.set_interval(
                 self.card_data.get("animation_speed", 0.1), # Animation timer interval
+                self._update_animation
+            )
+        elif effect_type == "digital_rain":
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+            self.effect_handler = DigitalRainEffect(
+                self,
+                title=self.card_data.get("title", "Digital Rain"),
+                subtitle=self.card_data.get("subtitle", splashscreen_message_selection),
+                width=width if width > 0 else 80,
+                height=height if height > 0 else 24,
+                speed=self.card_data.get("animation_speed", 0.05),
+                base_chars=self.card_data.get("base_chars", "abc0123"),
+                highlight_chars=self.card_data.get("highlight_chars", "!@#$"),
+                base_color=self.card_data.get("base_color", "dim green"),
+                highlight_color=self.card_data.get("highlight_color", "bold green"),
+                title_style=self.card_data.get("title_style", "bold white"),
+                subtitle_style=self.card_data.get("subtitle_style", "white"),
+                highlight_chance=self.card_data.get("highlight_chance", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "loading_bar":
+            main_widget = self.query_one("#splash-main", Static)
+            width, _ = main_widget.content_size # Only width needed for centering text
+            self.effect_handler = LoadingBarEffect(
+                self, # Pass SplashScreen instance as parent
+                bar_frame_content=self.card_data.get("content", "[----------]"),
+                fill_char=self.card_data.get("fill_char", "#"),
+                bar_style=self.card_data.get("bar_style", "bold green"),
+                text_above=self.card_data.get("text_above", "LOADING..."),
+                text_below=self.card_data.get("text_below_template", ""), # Effect defaults to progress_text
+                text_style=self.card_data.get("text_style", "white"),
+                width=width if width > 0 else 80
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "starfield":
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+            self.effect_handler = StarfieldEffect(
+                self,
+                title=self.card_data.get("title", "Warping..."),
+                num_stars=self.card_data.get("num_stars", 150),
+                warp_factor=self.card_data.get("warp_factor", 0.2),
+                max_depth=self.card_data.get("max_depth", 50.0),
+                star_chars=self.card_data.get("star_chars", ["."]),
+                star_styles=self.card_data.get("star_styles", ["white"]),
+                width=width if width > 0 else 80,
+                height=height if height > 0 else 24,
+                title_style=self.card_data.get("title_style", "bold yellow")
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "terminal_boot":
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+            self.effect_handler = TerminalBootEffect(
+                self,
+                boot_sequence=self.card_data.get("boot_sequence", [{"text": "Booting..."}]),
+                width=width if width > 0 else 80,
+                height=height if height > 0 else 24,
+                cursor=self.card_data.get("cursor", "_")
+            )
+            # The effect's internal timing is driven by elapsed time,
+            # so timer interval just needs to be frequent enough for smooth typing.
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.03),
+                self._update_animation
+            )
+        elif effect_type == "glitch_reveal":
+            self.effect_handler = GlitchRevealEffect(
+                self,
+                content=self.card_data.get("content", "REVEAL!"),
+                duration=self.card_data.get("duration", 2.0),
+                glitch_chars=self.card_data.get("glitch_chars", "!@#$%^&*"),
+                start_intensity=self.card_data.get("start_intensity", 0.8),
+                end_intensity=self.card_data.get("end_intensity", 0.0)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
                 self._update_animation
             )
 
