@@ -847,17 +847,22 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                 await generate_document_with_llm(app, document_type, message_content, conversation_context)
         
         # Show document generation modal and wait for result
-        modal = DocumentGenerationModal(
-            message_content=message_text,
-            conversation_context=conversation_context
-        )
+        # We need to run this in a worker since push_screen_wait requires it
+        async def show_document_modal():
+            modal = DocumentGenerationModal(
+                message_content=message_text,
+                conversation_context=conversation_context
+            )
+            
+            # Push modal and wait for result
+            result = await app.push_screen_wait(modal)
+            
+            # Handle the result if user selected an option
+            if result:
+                await handle_document_generation(result, message_text)
         
-        # Push modal and wait for result
-        result = await app.push_screen_wait(modal)
-        
-        # Handle the result if user selected an option
-        if result:
-            await handle_document_generation(result, message_text)
+        # Run in worker
+        app.run_worker(show_document_modal())
 
     elif "file-extract-button" in button_classes:
         logging.info("Action: Extract Files clicked for %s message: '%s...'", message_role, message_text[:50])
@@ -869,16 +874,18 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
             return
         
         # Show extraction dialog
-        dialog = FileExtractionDialog(extracted_files)
-        result = await app.push_screen_wait(dialog)
+        # We need to run this in a worker since push_screen_wait requires it
+        async def show_extraction_dialog():
+            dialog = FileExtractionDialog(extracted_files)
+            result = await app.push_screen_wait(dialog)
+            
+            if result and result.get('files'):
+                # Files were saved successfully
+                saved_count = len(result['files'])
+                loguru_logger.info(f"Saved {saved_count} files from message")
         
-        if result and result.get('files'):
-            # Files were saved successfully
-            saved_count = len(result['files'])
-            loguru_logger.info(f"Saved {saved_count} files from message")
-        else:
-            # User cancelled or no files saved
-            loguru_logger.debug("File extraction cancelled or no files saved")
+        # Run in worker
+        app.run_worker(show_extraction_dialog())
     
     elif "speak-button" in button_classes:
         logging.info(f"Action: Speak clicked for {message_role} message: '{message_text[:50]}...'")
