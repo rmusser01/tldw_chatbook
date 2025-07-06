@@ -1014,6 +1014,193 @@ class SoundBarsEffect(BaseEffect):
         return "\n".join(styled_output_lines)
 
 
+class MazeGeneratorEffect(BaseEffect):
+    """Animates the generation of a random maze using Depth First Search."""
+
+    CELL_PATH_N = 1
+    CELL_PATH_E = 2
+    CELL_PATH_S = 4
+    CELL_PATH_W = 8
+    CELL_VISITED = 16
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "Generating Labyrinth...",
+        maze_width: int = 39, # Grid cells (must be odd for typical wall representation)
+        maze_height: int = 19, # Grid cells (must be odd)
+        wall_char: str = "█",
+        path_char: str = " ",
+        cursor_char: str = "░", # Char for the current cell being processed
+        wall_style: str = "bold blue",
+        path_style: str = "on black", # Path is often just background
+        cursor_style: str = "bold yellow",
+        title_style: str = "bold white",
+        generation_speed: float = 0.01, # Delay between steps of generation
+        display_width: int = 80, # Total splash screen width
+        display_height: int = 24,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        # Ensure maze dimensions are odd for typical cell/wall structure
+        self.maze_cols = maze_width if maze_width % 2 != 0 else maze_width -1
+        self.maze_rows = maze_height if maze_height % 2 != 0 else maze_height -1
+        if self.maze_cols < 3: self.maze_cols = 3
+        if self.maze_rows < 3: self.maze_rows = 3
+
+        self.wall_char = wall_char
+        self.path_char = path_char
+        self.cursor_char = cursor_char
+        self.wall_style = wall_style
+        self.path_style = path_style
+        self.cursor_style = cursor_style
+        self.title_style = title_style
+        self.generation_speed = generation_speed # Interval for maze generation steps
+        self.display_width = display_width
+        self.display_height = display_height
+
+        # Maze grid: stores bitmasks for paths and visited status
+        self.maze_grid = [[0 for _ in range(self.maze_cols)] for _ in range(self.maze_rows)]
+        self.stack = [] # For DFS algorithm
+
+        # Start DFS from a random cell (must be an actual cell, not a wall position)
+        # In our grid, (0,0) is a cell.
+        self.current_cx = random.randrange(0, self.maze_cols, 2) # Ensure starting on a "cell" column if we consider walls
+        self.current_cy = random.randrange(0, self.maze_rows, 2) # Ensure starting on a "cell" row
+        # Simpler: map to a conceptual grid of cells (width/2, height/2) then map back to drawing grid
+        # Let's use a cell-based grid for logic, then render to character grid.
+        self.logic_cols = (self.maze_cols +1) // 2
+        self.logic_rows = (self.maze_rows +1) // 2
+        self.logic_grid = [[0 for _ in range(self.logic_cols)] for _ in range(self.logic_rows)]
+
+        self.current_logic_x = self.current_cx // 2
+        self.current_logic_y = self.current_cy // 2
+        self.logic_grid[self.current_logic_y][self.current_logic_x] = self.CELL_VISITED
+        self.stack.append((self.current_logic_x, self.current_logic_y))
+
+        self.is_generating = True
+        self._last_gen_step_time = time.time()
+
+    def _generation_step_dfs(self):
+        if not self.stack:
+            self.is_generating = False
+            return
+
+        x, y = self.stack[-1] # Current cell
+        self.current_logic_x, self.current_logic_y = x,y # For cursor drawing
+
+        neighbors = []
+        # Check North
+        if y > 0 and self.logic_grid[y-1][x] & self.CELL_VISITED == 0: neighbors.append(('N', x, y-1))
+        # Check East
+        if x < self.logic_cols - 1 and self.logic_grid[y][x+1] & self.CELL_VISITED == 0: neighbors.append(('E', x+1, y))
+        # Check South
+        if y < self.logic_rows - 1 and self.logic_grid[y+1][x] & self.CELL_VISITED == 0: neighbors.append(('S', x, y+1))
+        # Check West
+        if x > 0 and self.logic_grid[y][x-1] & self.CELL_VISITED == 0: neighbors.append(('W', x-1, y))
+
+        if neighbors:
+            direction, nx, ny = random.choice(neighbors)
+            if direction == 'N':
+                self.logic_grid[y][x] |= self.CELL_PATH_N
+                self.logic_grid[ny][nx] |= self.CELL_PATH_S
+            elif direction == 'E':
+                self.logic_grid[y][x] |= self.CELL_PATH_E
+                self.logic_grid[ny][nx] |= self.CELL_PATH_W
+            elif direction == 'S':
+                self.logic_grid[y][x] |= self.CELL_PATH_S
+                self.logic_grid[ny][nx] |= self.CELL_PATH_N
+            elif direction == 'W':
+                self.logic_grid[y][x] |= self.CELL_PATH_W
+                self.logic_grid[ny][nx] |= self.CELL_PATH_E
+
+            self.logic_grid[ny][nx] |= self.CELL_VISITED
+            self.stack.append((nx, ny))
+        else:
+            self.stack.pop() # Backtrack
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        if self.is_generating and (current_time - self._last_gen_step_time >= self.generation_speed):
+            self._generation_step_dfs()
+            self._last_gen_step_time = current_time
+
+        # Render the maze to the display grid (display_width x display_height)
+        # The maze itself is self.maze_cols x self.maze_rows characters
+        output_grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+        styled_output_lines = [""] * self.display_height
+
+        maze_start_row = (self.display_height - self.maze_rows) // 2
+        maze_start_col = (self.display_width - self.maze_cols) // 2
+
+        for r_draw in range(self.maze_rows):
+            for c_draw in range(self.maze_cols):
+                r_disp = maze_start_row + r_draw
+                c_disp = maze_start_col + c_draw
+
+                if not (0 <= r_disp < self.display_height and 0 <= c_disp < self.display_width):
+                    continue # Skip drawing outside display boundary
+
+                char_to_draw = self.wall_char
+                style_to_use = self.wall_style
+
+                # Convert draw coords to logic grid cell coords and wall/path determination
+                logic_x, logic_y = c_draw // 2, r_draw // 2
+
+                is_wall_row = r_draw % 2 == 1
+                is_wall_col = c_draw % 2 == 1
+
+                if not is_wall_row and not is_wall_col: # Cell center
+                    char_to_draw = self.path_char
+                    style_to_use = self.path_style
+                    if self.is_generating and logic_x == self.current_logic_x and logic_y == self.current_logic_y:
+                        char_to_draw = self.cursor_char
+                        style_to_use = self.cursor_style
+
+                elif not is_wall_row and is_wall_col: # Horizontal wall/path between cells (y, x) and (y, x+1)
+                    if logic_x < self.logic_cols -1 and \
+                       (self.logic_grid[logic_y][logic_x] & self.CELL_PATH_E or \
+                        self.logic_grid[logic_y][logic_x+1] & self.CELL_PATH_W):
+                        char_to_draw = self.path_char
+                        style_to_use = self.path_style
+
+                elif is_wall_row and not is_wall_col: # Vertical wall/path between cells (y,x) and (y+1,x)
+                     if logic_y < self.logic_rows -1 and \
+                       (self.logic_grid[logic_y][logic_x] & self.CELL_PATH_S or \
+                        self.logic_grid[logic_y+1][logic_x] & self.CELL_PATH_N):
+                        char_to_draw = self.path_char
+                        style_to_use = self.path_style
+                # else it's a wall intersection, keep wall_char
+
+                output_grid[r_disp][c_disp] = (char_to_draw, style_to_use)
+
+        # Convert to styled lines
+        for r_idx in range(self.display_height):
+            line_segments = []
+            for c_idx in range(self.display_width):
+                cell = output_grid[r_idx][c_idx]
+                if isinstance(cell, tuple):
+                    char, style = cell
+                    line_segments.append(f"[{style}]{char.replace('[',r'\[')}[/{style}]")
+                else: # Space, apply default path style or background
+                    line_segments.append(f"[{self.path_style}] {[/ {self.path_style}]}")
+            styled_output_lines[r_idx] = "".join(line_segments)
+
+        # Overlay title
+        if self.title:
+            title_y = maze_start_row - 2 if maze_start_row > 1 else self.display_height - 1
+            if not self.is_generating: title_y = self.display_height // 2 # Center title when done
+
+            title_x_start = (self.display_width - len(self.title)) // 2
+            if 0 <= title_y < self.display_height:
+                # Simplified title overlay for now: assumes it replaces the line
+                title_line_str = self.title.center(self.display_width).replace('[',r'\[')
+                styled_output_lines[title_y] = f"[{self.title_style}]{title_line_str}[/{self.title_style}]"
+
+        return "\n".join(styled_output_lines)
+
+
 class TerminalBootEffect(BaseEffect):
     """Simulates a classic terminal boot-up sequence."""
 
@@ -1377,6 +1564,457 @@ class AsciiMorphEffect(BaseEffect):
 
 
         return "\n".join("".join(row) for row in self.current_art_chars).replace('[',r'\[')
+
+
+class RaindropsEffect(BaseEffect):
+    """Simulates raindrops creating ripples on a pond surface."""
+
+    @dataclass
+    class Ripple:
+        cx: int # Center x
+        cy: int # Center y
+        radius: float = 0.0
+        max_radius: int = 5
+        current_char_index: int = 0
+        speed: float = 1.0 # Radius increase per second
+        life: float = 2.0 # Lifespan in seconds
+        alive_time: float = 0.0
+        style: str = "blue"
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "Aqua Reflections",
+        width: int = 80,
+        height: int = 24,
+        spawn_rate: float = 0.5, # Average drops per second
+        ripple_chars: List[str] = list("·oO()"), # Smallest to largest, then fades maybe
+        ripple_styles: List[str] = ["blue", "cyan", "dim blue"],
+        max_concurrent_ripples: int = 15,
+        base_water_char: str = "~",
+        water_style: str = "dim blue",
+        title_style: str = "bold white on blue",
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.display_width = width
+        self.display_height = height
+        self.spawn_rate = spawn_rate
+        self.ripple_chars = ripple_chars
+        self.ripple_styles = ripple_styles
+        self.max_concurrent_ripples = max_concurrent_ripples
+        self.base_water_char = base_water_char
+        self.water_style = water_style
+        self.title_style = title_style
+
+        self.ripples: List[RaindropsEffect.Ripple] = []
+        self.time_since_last_spawn = 0.0
+        self.time_at_last_frame = time.time()
+
+    def _spawn_ripple(self):
+        if len(self.ripples) < self.max_concurrent_ripples:
+            cx = random.randint(0, self.display_width -1)
+            cy = random.randint(0, self.display_height -1)
+            max_r = random.randint(3, 8)
+            speed = random.uniform(3.0, 6.0) # Faster ripples
+            life = random.uniform(0.8, 1.5)   # Shorter lifespan
+            style = random.choice(self.ripple_styles)
+            self.ripples.append(RaindropsEffect.Ripple(cx=cx, cy=cy, max_radius=max_r, speed=speed, life=life, style=style))
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        delta_time = current_time - self.time_at_last_frame
+        self.time_at_last_frame = current_time
+
+        # Spawn new ripples
+        self.time_since_last_spawn += delta_time
+        if self.time_since_last_spawn * self.spawn_rate >= 1.0:
+            self._spawn_ripple()
+            self.time_since_last_spawn = 0.0
+            # Could spawn multiple if spawn_rate is high and delta_time was large
+            while random.random() < (self.time_since_last_spawn * self.spawn_rate) -1:
+                 self._spawn_ripple()
+                 self.time_since_last_spawn -= 1.0/self.spawn_rate
+
+
+        # Update and filter ripples
+        active_ripples = []
+        for ripple in self.ripples:
+            ripple.alive_time += delta_time
+            if ripple.alive_time < ripple.life:
+                ripple.radius += ripple.speed * delta_time
+                # Determine current ripple character based on radius progression
+                # Progress through chars as radius grows, then maybe fade
+                char_progress = (ripple.radius / ripple.max_radius) * (len(self.ripple_chars) -1)
+                ripple.current_char_index = min(len(self.ripple_chars)-1, int(char_progress))
+                active_ripples.append(ripple)
+        self.ripples = active_ripples
+
+        # Render to a grid first, handling overlaps (newer/smaller ripples on top conceptually)
+        # For simplicity, let's not handle complex overlaps perfectly. Last drawn wins.
+        # Initialize with base water pattern
+        char_grid = [[(self.base_water_char, self.water_style) for _ in range(self.display_width)] for _ in range(self.display_height)]
+
+        for ripple in sorted(self.ripples, key=lambda r: r.radius, reverse=True): # Draw larger (older) ripples first
+            char_to_use = self.ripple_chars[ripple.current_char_index]
+            # Could also fade style based on ripple.life vs ripple.alive_time
+
+            # Draw the circle (approximate)
+            # This is a simple way to draw a circle on a grid. More advanced algorithms exist.
+            for angle_deg in range(0, 360, 10): # Draw points on the circle
+                angle_rad = math.radians(angle_deg)
+                # For character aspect ratio, y movement might need scaling if cells aren't square
+                # Assume x_scale = 1, y_scale = 0.5 (chars are twice as tall as wide)
+                # So, for a visually circular ripple, the "y radius" in grid cells is smaller.
+                # Let's draw actual grid circles for now.
+                x = int(ripple.cx + ripple.radius * math.cos(angle_rad))
+                y = int(ripple.cy + ripple.radius * math.sin(angle_rad) * 0.6) # Y correction for char aspect
+
+                if 0 <= x < self.display_width and 0 <= y < self.display_height:
+                    char_grid[y][x] = (char_to_use, ripple.style)
+
+        # Convert char_grid to styled output lines
+        styled_output_lines = []
+        for r_idx in range(self.display_height):
+            line_segments = []
+            for c_idx in range(self.display_width):
+                char, style = char_grid[r_idx][c_idx]
+                line_segments.append(f"[{style}]{char.replace('[',r'\[')}[/{style}]")
+            styled_output_lines.append("".join(line_segments))
+
+        # Overlay title (centered)
+        if self.title:
+            title_y = self.display_height // 2
+            title_x_start = (self.display_width - len(self.title)) // 2
+            if 0 <= title_y < self.display_height:
+                # Reconstruct the title line to overlay on top of ripples
+                title_line_segments = []
+                current_title_char_idx = 0
+                for c_idx in range(self.display_width):
+                    is_title_char_pos = title_x_start <= c_idx < title_x_start + len(self.title)
+                    if is_title_char_pos:
+                        char_to_draw = self.title[current_title_char_idx].replace('[', r'\[')
+                        title_line_segments.append(f"[{self.title_style}]{char_to_draw}[/{self.title_style}]")
+                        current_title_char_idx +=1
+                    else: # Use the already determined char from char_grid (ripple or water)
+                        char, style = char_grid[title_y][c_idx]
+                        title_line_segments.append(f"[{style}]{char.replace('[',r'\[')}[/{style}]")
+                styled_output_lines[title_y] = "".join(title_line_segments)
+
+        return "\n".join(styled_output_lines)
+
+
+class PixelZoomEffect(BaseEffect):
+    """Starts with a pixelated (blocky) version of an ASCII art and resolves to clear."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        target_content: str, # The clear, final ASCII art
+        duration: float = 2.5, # Total duration of the effect
+        max_pixel_size: int = 8, # Max block size for pixelation (e.g., 8x8 chars become one block)
+        effect_type: str = "resolve", # "resolve" (pixelated to clear) or "pixelate" (clear to pixelated)
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.target_lines = target_content.splitlines()
+        self.duration = duration
+        self.max_pixel_size = max(1, max_pixel_size) # Must be at least 1
+        self.effect_type = effect_type
+
+        # Normalize target content dimensions
+        self.content_height = len(self.target_lines)
+        self.content_width = max(len(line) for line in self.target_lines) if self.target_lines else 0
+
+        self.padded_target_lines = []
+        if self.content_height > 0 and self.content_width > 0:
+            for i in range(self.content_height):
+                line = self.target_lines[i] if i < len(self.target_lines) else ""
+                self.padded_target_lines.append(line + ' ' * (self.content_width - len(line)))
+        else: # Handle empty target_content
+            self.content_height = 1
+            self.content_width = 1
+            self.padded_target_lines = [" "]
+
+
+    def _get_block_char(self, r_start: int, c_start: int, pixel_size: int) -> str:
+        """Determines the representative character for a block."""
+        if not self.padded_target_lines: return " "
+
+        char_counts = {}
+        num_chars_in_block = 0
+        for r_offset in range(pixel_size):
+            for c_offset in range(pixel_size):
+                r, c = r_start + r_offset, c_start + c_offset
+                if 0 <= r < self.content_height and 0 <= c < self.content_width:
+                    char = self.padded_target_lines[r][c]
+                    if char != ' ': # Ignore spaces for dominant char, or include if you want space to dominate
+                        char_counts[char] = char_counts.get(char, 0) + 1
+                        num_chars_in_block +=1
+
+        if not char_counts: # Block is all spaces or out of bounds
+            # Check the top-left char of the block in target art for a hint
+            if 0 <= r_start < self.content_height and 0 <= c_start < self.content_width:
+                 return self.padded_target_lines[r_start][c_start] # Could be a space
+            return " "
+
+        # Return the most frequent character in the block
+        dominant_char = max(char_counts, key=char_counts.get)
+        return dominant_char
+
+    def update(self) -> Optional[str]:
+        if not self.padded_target_lines : return " "
+
+        elapsed_time = time.time() - self.start_time
+        progress = min(1.0, elapsed_time / self.duration)
+
+        current_pixel_size = 1
+        if self.effect_type == "resolve":
+            # Pixel size decreases from max_pixel_size to 1
+            # Using (1-progress) for size factor, so at progress=0, factor=1 (max size)
+            # and at progress=1, factor=0 (min size = 1)
+            size_factor = 1.0 - progress
+            current_pixel_size = 1 + int(size_factor * (self.max_pixel_size - 1))
+        elif self.effect_type == "pixelate":
+            # Pixel size increases from 1 to max_pixel_size
+            size_factor = progress
+            current_pixel_size = 1 + int(size_factor * (self.max_pixel_size - 1))
+
+        current_pixel_size = max(1, current_pixel_size) # Ensure it's at least 1
+
+        if current_pixel_size == 1 and self.effect_type == "resolve":
+            return "\n".join(self.padded_target_lines).replace('[',r'\[')
+        if current_pixel_size == self.max_pixel_size and self.effect_type == "pixelate" and progress >=1.0:
+            # Final pixelated state, render it once more and then could be static
+             pass # Let it render below
+
+        output_art_chars = [[' ' for _ in range(self.content_width)] for _ in range(self.content_height)]
+
+        for r_block_start in range(0, self.content_height, current_pixel_size):
+            for c_block_start in range(0, self.content_width, current_pixel_size):
+                block_char = self._get_block_char(r_block_start, c_block_start, current_pixel_size)
+                for r_offset in range(current_pixel_size):
+                    for c_offset in range(current_pixel_size):
+                        r, c = r_block_start + r_offset, c_block_start + c_offset
+                        if 0 <= r < self.content_height and 0 <= c < self.content_width:
+                            output_art_chars[r][c] = block_char
+
+        # The card's base style will apply. No specific styling here unless needed.
+        return "\n".join("".join(row) for row in output_art_chars).replace('[',r'\[')
+
+
+class TextExplosionEffect(BaseEffect):
+    """Animates characters of a text to explode outwards or implode inwards."""
+
+    @dataclass
+    class AnimatedChar:
+        char: str
+        origin_x: float # Final x in assembled text
+        origin_y: float # Final y in assembled text
+        current_x: float
+        current_y: float
+        vx: float # velocity for explosion (if random start)
+        vy: float # velocity for explosion
+        style: str = "bold white"
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        text: str = "EXPLODE!",
+        effect_type: str = "explode", # "explode" or "implode"
+        duration: float = 1.5,
+        width: int = 80, # Display area
+        height: int = 24,
+        char_style: str = "bold yellow",
+        particle_spread: float = 30.0, # How far particles spread for explosion/implosion start
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.target_text = text
+        self.effect_type = effect_type
+        self.duration = duration
+        self.display_width = width
+        self.display_height = height
+        self.char_style = char_style # Can be a list of styles too
+        self.particle_spread = particle_spread
+
+        self.chars: List[TextExplosionEffect.AnimatedChar] = []
+        self._prepare_chars()
+
+    def _prepare_chars(self):
+        # Simple centered text for now
+        text_width = len(self.target_text)
+        start_x = (self.display_width - text_width) / 2.0
+        origin_y = self.display_height / 2.0
+
+        for i, char_val in enumerate(self.target_text):
+            ox = start_x + i
+            oy = origin_y
+
+            if self.effect_type == "explode":
+                # Start at origin, will move outwards
+                cx, cy = ox, oy
+                # Velocity is random, pointing outwards from text's rough center
+                angle = random.uniform(0, 2 * math.pi)
+                speed = random.uniform(self.particle_spread*0.5, self.particle_spread*1.5) / self.duration
+                vx, vy = math.cos(angle) * speed, math.sin(angle) * speed * 0.5 # Y velocity halved for aspect
+            else: # implode
+                # Start at random spread-out position, move towards origin
+                angle = random.uniform(0, 2 * math.pi)
+                dist = random.uniform(self.particle_spread * 0.5, self.particle_spread)
+                cx = ox + math.cos(angle) * dist
+                cy = oy + math.sin(angle) * dist * 0.5 # Y spread halved
+                vx, vy = 0,0 # Not used for velocity in implode, calculated by interpolation
+
+            self.chars.append(TextExplosionEffect.AnimatedChar(
+                char=char_val, origin_x=ox, origin_y=oy, current_x=cx, current_y=cy, vx=vx, vy=vy, style=self.char_style
+            ))
+
+    def update(self) -> Optional[str]:
+        elapsed_time = time.time() - self.start_time
+        progress = min(1.0, elapsed_time / self.duration) # Normalized time 0 to 1
+
+        grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+        # Store (char, style) to handle multiple chars on same spot (last one wins, or brightest)
+        styled_grid: Dict[Tuple[int,int], Tuple[str,str]] = {}
+
+
+        for achar in self.chars:
+            if self.effect_type == "explode":
+                # Move based on initial velocity, progress acting as time factor
+                # This makes them fly out at constant speed after "explosion"
+                # A better explosion might have initial burst then slowdown.
+                # For now, constant velocity after start.
+                if progress > 0.05 : # Small delay before explosion starts or to ensure movement
+                    achar.current_x += achar.vx * progress * 20 # Scale velocity effect by progress and arbitrary factor
+                    achar.current_y += achar.vy * progress * 20
+            else: # implode
+                # Interpolate from start (current_x, current_y at progress=0) to origin_x, origin_y
+                # Initial current_x/y were set in _prepare_chars
+                # We need to store the very initial random positions
+                if not hasattr(achar, 'initial_x'): # Store initial random pos if not already
+                    achar.initial_x = achar.current_x
+                    achar.initial_y = achar.current_y
+
+                # Interpolate based on progress. At progress=0, use initial. At progress=1, use origin.
+                achar.current_x = achar.initial_x + (achar.origin_x - achar.initial_x) * progress
+                achar.current_y = achar.initial_y + (achar.origin_y - achar.initial_y) * progress
+
+            ix, iy = int(achar.current_x), int(achar.current_y)
+            if 0 <= ix < self.display_width and 0 <= iy < self.display_height:
+                # Simplistic: last char to land on a cell wins
+                styled_grid[(ix,iy)] = (achar.char, achar.style)
+
+        # Render styled_grid to output lines
+        output_lines = []
+        for r_idx in range(self.display_height):
+            line_segments = []
+            for c_idx in range(self.display_width):
+                if (c_idx, r_idx) in styled_grid:
+                    char, style = styled_grid[(c_idx, r_idx)]
+                    line_segments.append(f"[{style}]{char.replace('[',r'\[')}[/{style}]")
+                else:
+                    line_segments.append(' ')
+            output_lines.append("".join(line_segments))
+
+        return "\n".join(output_lines)
+
+
+class OldFilmEffect(BaseEffect):
+    """Simulates an old film projector effect with shaky frames and film grain."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        frames_content: List[str], # List of ASCII art strings, each a frame
+        frame_duration: float = 0.5, # How long each frame stays before switching
+        shake_intensity: int = 1, # Max character offset for shake (0 for no shake)
+        grain_density: float = 0.05, # Chance for a character to be a grain speck
+        grain_chars: str = ".:'",
+        base_style: str = "sepia", # e.g., "sepia", "grayscale", or just "white on black"
+        # Projector beam not implemented in this version for simplicity
+        width: int = 80,
+        height: int = 24,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.frames = [frame.splitlines() for frame in frames_content]
+        if not self.frames: # Ensure there's at least one frame
+            self.frames = [["Error: No frames provided".center(width)]]
+
+        # Normalize all frames to consistent dimensions
+        self.frame_height = max(len(f) for f in self.frames)
+        self.frame_width = max(max(len(line) for line in f) if f else 0 for f in self.frames)
+
+        padded_frames = []
+        for frame_idx, frame_data in enumerate(self.frames):
+            current_padded_frame = []
+            for i in range(self.frame_height):
+                line = frame_data[i] if i < len(frame_data) else ""
+                current_padded_frame.append(line + ' ' * (self.frame_width - len(line)))
+            padded_frames.append(current_padded_frame)
+        self.frames = padded_frames
+
+        self.frame_duration = frame_duration
+        self.shake_intensity = shake_intensity
+        self.grain_density = grain_density
+        self.grain_chars = grain_chars
+        self.base_style = base_style # This style will be applied to the frame content
+        self.display_width = width
+        self.display_height = height
+
+        self.current_frame_index = 0
+        self.time_on_current_frame = 0.0
+        self.time_at_last_frame_render = time.time()
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        delta_time = current_time - self.time_at_last_frame_render
+        self.time_at_last_frame_render = current_time
+        self.time_on_current_frame += delta_time
+
+        if self.time_on_current_frame >= self.frame_duration:
+            self.current_frame_index = (self.current_frame_index + 1) % len(self.frames)
+            self.time_on_current_frame = 0.0
+
+        current_frame_data = self.frames[self.current_frame_index]
+
+        # Apply shake
+        dx, dy = 0, 0
+        if self.shake_intensity > 0:
+            dx = random.randint(-self.shake_intensity, self.shake_intensity)
+            dy = random.randint(-self.shake_intensity, self.shake_intensity)
+
+        # Prepare display grid (chars only first)
+        # Output grid matches display_width, display_height
+        # Frame content is centered within this.
+
+        output_grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+
+        frame_start_row = (self.display_height - self.frame_height) // 2 + dy
+        frame_start_col = (self.display_width - self.frame_width) // 2 + dx
+
+        for r_frame in range(self.frame_height):
+            for c_frame in range(self.frame_width):
+                r_disp, c_disp = frame_start_row + r_frame, frame_start_col + c_frame
+                if 0 <= r_disp < self.display_height and 0 <= c_disp < self.display_width:
+                    char_to_draw = current_frame_data[r_frame][c_frame]
+
+                    # Apply film grain
+                    if random.random() < self.grain_density:
+                        char_to_draw = random.choice(self.grain_chars)
+
+                    output_grid[r_disp][c_disp] = char_to_draw
+
+        # Convert to styled lines
+        styled_output_lines = []
+        for r_idx in range(self.display_height):
+            line_str = "".join(output_grid[r_idx]).replace('[',r'\[')
+            # Apply base style to the whole line (simpler than per-char if base_style is uniform)
+            styled_output_lines.append(f"[{self.base_style}]{line_str}[/{self.base_style}]")
+
+        return "\n".join(styled_output_lines)
 
 
 class GameOfLifeEffect(BaseEffect):
