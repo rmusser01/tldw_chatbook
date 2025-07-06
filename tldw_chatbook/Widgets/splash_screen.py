@@ -30,7 +30,10 @@ from ..Utils.splash_animations import (
     GlitchEffect,
     TypewriterEffect,
     FadeEffect,
-    RetroTerminalEffect
+    RetroTerminalEffect,
+    PulseEffect,
+    CodeScrollEffect,
+    BlinkEffect
 )
 
 class SplashScreen(Container):
@@ -118,7 +121,10 @@ class SplashScreen(Container):
             "fade_in_duration": 0.3,
             "fade_out_duration": 0.2,
             "animation_speed": 1.0,
-            "active_cards": ["default", "matrix", "glitch", "retro"]
+            "active_cards": [
+                "default", "matrix", "glitch", "retro", # Existing
+                "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score" # New
+            ]
         }
         
         # Get config from settings
@@ -194,6 +200,51 @@ class SplashScreen(Container):
                 "style": "bold green on black",
                 "scanline_speed": 0.02,
                 "phosphor_glow": True
+            },
+            "tech_pulse": {
+                "type": "animated",
+                "effect": "pulse",
+                "content": get_ascii_art("tech_pulse"),
+                "style": "bold white on black", # Base style, effect will override color
+                "pulse_speed": 0.5, # Cycles per second
+                "min_brightness": 80,
+                "max_brightness": 200,
+                "color": (100, 180, 255) # A light blue
+            },
+            "code_scroll": {
+                "type": "animated",
+                "effect": "code_scroll",
+                "title": "TLDW CHATBOOK",
+                "subtitle": f"{splashscreen_message_selection}",
+                "style": "white on black", # General style, effect handles specifics
+                "scroll_speed": 0.1,
+                "num_code_lines": 18, # Adjusted for typical 24 line height
+                "code_line_style": "dim blue",
+                "title_style": "bold yellow",
+                "subtitle_style": "green"
+            },
+            "minimal_fade": {
+                "type": "animated",
+                "effect": "typewriter", # Using typewriter for a slow reveal
+                "content": get_ascii_art("minimal_fade"),
+                "style": "white on black",
+                "animation_speed": 0.08, # Controls typewriter speed
+            },
+            "blueprint": {
+                "type": "static",
+                "content": get_ascii_art("blueprint"),
+                "style": "bold cyan on rgb(0,0,30)", # Cyan on dark blue
+                "effect": None
+            },
+            "arcade_high_score": {
+                "type": "animated",
+                "effect": "blink",
+                "content": get_ascii_art("arcade_high_score"),
+                "style": "bold yellow on rgb(0,0,70)", # Yellow on dark blue
+                "animation_speed": 0.1, # Interval for the animation timer
+                "blink_speed": 0.5,     # How long each blink state (on/off) lasts
+                "blink_targets": ["LOADING...", "PRESS ANY KEY TO START!"],
+                "blink_style_off": "dim", # How targets look when "off"
             }
         }
 
@@ -294,7 +345,53 @@ class SplashScreen(Container):
                 self.card_data.get("scanline_speed", 0.02),
                 self._update_animation
             )
-    
+        elif effect_type == "pulse":
+            self.effect_handler = PulseEffect(
+                self,
+                content=self.card_data.get("content", ""),
+                pulse_speed=self.card_data.get("pulse_speed", 0.5),
+                min_brightness=self.card_data.get("min_brightness", 100),
+                max_brightness=self.card_data.get("max_brightness", 255),
+                color=self.card_data.get("color", (255, 255, 255))
+            )
+            # Use a reasonable interval for smooth animation, effect handles timing by elapsed time
+            self.animation_timer = self.set_interval(0.05, self._update_animation)
+        elif effect_type == "code_scroll":
+            # Get width and height from the splash screen main area if possible, else default
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+
+            self.effect_handler = CodeScrollEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                subtitle=self.card_data.get("subtitle", splashscreen_message_selection),
+                width=width if width > 0 else 80,
+                height=height if height > 0 else 24,
+                scroll_speed=self.card_data.get("scroll_speed", 0.1),
+                num_code_lines=self.card_data.get("num_code_lines", 15),
+                code_line_style=self.card_data.get("code_line_style", "dim cyan"),
+                title_style=self.card_data.get("title_style", "bold white"),
+                subtitle_style=self.card_data.get("subtitle_style", "white")
+            )
+            # Interval should align with or be faster than effect's internal scroll_speed
+            self.animation_timer = self.set_interval(
+                min(0.1, self.card_data.get("scroll_speed", 0.1)),
+                self._update_animation
+            )
+        elif effect_type == "blink":
+            self.effect_handler = BlinkEffect(
+                self,
+                content=self.card_data.get("content", ""),
+                blink_speed=self.card_data.get("blink_speed", 0.5),
+                blink_targets=self.card_data.get("blink_targets", []),
+                blink_style_off=self.card_data.get("blink_style_off", "dim")
+                # blink_style_on could be added if needed
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1), # Animation timer interval
+                self._update_animation
+            )
+
     def _update_animation(self) -> None:
         """Update animation frame."""
         if self.effect_handler and hasattr(self.effect_handler, "update"):

@@ -4,6 +4,7 @@
 
 import random
 import time
+import math
 from typing import List, Optional, Tuple, Any
 from dataclasses import dataclass
 from rich.text import Text
@@ -409,4 +410,229 @@ class RetroTerminalEffect(BaseEffect):
             escaped_static = static_line.replace('[', r'\[').replace(']', r'\]')
             output_lines.append(f"[rgb(50,50,50)]{escaped_static}[/rgb(50,50,50)]")
         
+        return '\n'.join(output_lines)
+
+
+class PulseEffect(BaseEffect):
+    """Creates a pulsing effect for text content by varying brightness."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        content: str,
+        pulse_speed: float = 0.1,
+        min_brightness: int = 100,
+        max_brightness: int = 255,
+        color: Tuple[int, int, int] = (255, 255, 255),  # Default white
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.content = content
+        self.pulse_speed = pulse_speed  # Not directly used by time, but for step in cycle
+        self.min_brightness = min_brightness
+        self.max_brightness = max_brightness
+        self.base_color = color
+        self._pulse_direction = 1
+        self._current_brightness_step = 0
+        self.num_steps = 20  # Number of steps from min to max brightness
+
+    def update(self) -> Optional[str]:
+        """Update the pulsing effect."""
+        # Calculate brightness based on a sine wave for smooth pulsing
+        # The frequency of the sine wave determines the pulse speed
+        # time.time() - self.start_time gives elapsed time
+        elapsed_time = time.time() - self.start_time
+
+        # Create a sine wave that oscillates between 0 and 1
+        # pulse_speed here could adjust the frequency of the sine wave
+        # A higher pulse_speed value would make it pulse faster.
+        # Let's define pulse_speed as cycles per second.
+        # So, angle = 2 * pi * elapsed_time * pulse_speed
+        # sin_value ranges from -1 to 1. We map it to 0 to 1.
+        sin_value = (math.sin(2 * math.pi * elapsed_time * self.pulse_speed) + 1) / 2
+
+        # Map the 0-1 sin_value to the brightness range
+        brightness = self.min_brightness + (self.max_brightness - self.min_brightness) * sin_value
+        brightness = int(max(0, min(255, brightness))) # Clamp
+
+        # Apply brightness to the base color
+        # Scale base color components by brightness/255
+        r = int(self.base_color[0] * brightness / 255)
+        g = int(self.base_color[1] * brightness / 255)
+        b = int(self.base_color[2] * brightness / 255)
+
+        pulsing_style = f"rgb({r},{g},{b})"
+
+        # Apply style to content, escaping Rich markup
+        output_lines = []
+        for line in self.content.split('\n'):
+            escaped_line = line.replace('[', r'\[').replace(']', r'\]')
+            output_lines.append(f"[{pulsing_style}]{escaped_line}[/{pulsing_style}]")
+
+        return '\n'.join(output_lines)
+
+
+class BlinkEffect(BaseEffect):
+    """Makes specified parts of the text blink."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        content: str,
+        blink_speed: float = 0.5,  # Time for one state (on or off)
+        blink_targets: Optional[List[str]] = None, # List of exact strings to blink
+        blink_style_on: str = "default", # Style when text is visible
+        blink_style_off: str = "dim",  # Style when text is "off" (e.g., dimmed or hidden via color)
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.original_content = content
+        self.blink_speed = blink_speed
+        self.blink_targets = blink_targets if blink_targets else []
+        self.blink_style_on = blink_style_on # Not actively used if "default" means use card's base style
+        self.blink_style_off = blink_style_off
+        self._is_on = True
+        self._last_blink_time = time.time()
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        if current_time - self._last_blink_time >= self.blink_speed:
+            self._is_on = not self._is_on
+            self._last_blink_time = current_time
+
+        # This is a simplified blink effect. For complex Rich text, direct string
+        # manipulation of styled text is tricky. This version applies a style to target
+        # strings when they should be "off" or replaces them.
+
+        # Start with the original content, pre-escaped for Rich tags.
+        # This assumes the card's main style will handle the "on" state appearance.
+        # The effect focuses on altering the "off" state or replacing text.
+
+        output_text = Text.from_markup(self.original_content.replace('[', r'\['))
+
+        if not self._is_on:
+            for target_text in self.blink_targets:
+                # Find all occurrences of target_text and apply blink_style_off or hide
+                start_index = 0
+                while True:
+                    try:
+                        # Search in the plain string version of the Text object
+                        found_pos = output_text.plain.find(target_text, start_index)
+                        if found_pos == -1:
+                            break
+
+                        if self.blink_style_off == "hidden":
+                            # Replace with spaces
+                            output_text.plain = output_text.plain[:found_pos] + ' ' * len(target_text) + output_text.plain[found_pos+len(target_text):]
+                            # This modification of .plain is a bit of a hack.
+                            # A more robust way would be to reconstruct the Text object or use Text.replace.
+                            # For now, let's rebuild the text object to ensure spans are cleared.
+                            current_plain = output_text.plain
+                            output_text = Text(current_plain) # Re-create to clear old spans over modified region
+                        else:
+                            # Apply style
+                            output_text.stylize(self.blink_style_off, start=found_pos, end=found_pos + len(target_text))
+
+                        start_index = found_pos + len(target_text)
+                    except ValueError: # Should not happen with plain.find
+                        break
+        # If _is_on, the text remains as is, relying on the Static widget's base style.
+        # If blink_style_on was not "default", one would apply it here to the targets.
+
+        return output_text.markup # Return the Rich markup string
+
+
+class CodeScrollEffect(BaseEffect):
+    """Shows scrolling lines of pseudo-code with a title overlay."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "TLDW Chatbook",
+        subtitle: str = "Initializing Systems...",
+        width: int = 80, # Target width
+        height: int = 24, # Target height
+        scroll_speed: float = 0.1, # Affects how often lines shift
+        num_code_lines: int = 15, # Number of visible code lines
+        code_line_style: str = "dim cyan",
+        title_style: str = "bold white",
+        subtitle_style: str = "white",
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.width = width
+        self.height = height
+        self.scroll_speed = scroll_speed # Interpreted as interval for scrolling
+        self.num_code_lines = min(num_code_lines, height -4) # Ensure space for title/subtitle
+        self.code_line_style = code_line_style
+        self.title_style = title_style
+        self.subtitle_style = subtitle_style
+
+        self.code_lines: List[str] = []
+        self._last_scroll_time = time.time()
+        self._generate_initial_code_lines()
+
+    def _generate_random_code_line(self) -> str:
+        """Generates a random line of pseudo-code."""
+        line_len = random.randint(self.width // 2, self.width - 10)
+        chars = "abcdef0123456789[];():=" + " " * 20 # More spaces
+        line = "".join(random.choice(chars) for _ in range(line_len))
+        # Add some indents
+        indent = " " * random.randint(0, 8)
+        return (indent + line)[:self.width]
+
+
+    def _generate_initial_code_lines(self):
+        for _ in range(self.num_code_lines):
+            self.code_lines.append(self._generate_random_code_line())
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        if current_time - self._last_scroll_time >= self.scroll_speed:
+            self.code_lines.pop(0)  # Remove oldest line
+            self.code_lines.append(self._generate_random_code_line())  # Add new line
+            self._last_scroll_time = current_time
+
+        output_lines = []
+
+        # Determine positions for title and subtitle
+        code_block_start_row = (self.height - self.num_code_lines) // 2
+        code_block_end_row = code_block_start_row + self.num_code_lines
+
+        # Title position: centered, a few lines above the code block or screen center
+        # Ensure it's within bounds and leaves space for subtitle if code block is small or high
+        title_row_ideal = self.height // 2 - 3
+        title_row = max(0, min(title_row_ideal, code_block_start_row - 2 if self.num_code_lines > 0 else title_row_ideal))
+
+        # Subtitle position: centered, below title
+        subtitle_row_ideal = title_row + 2
+        subtitle_row = max(title_row + 1, min(subtitle_row_ideal, self.height -1))
+        if subtitle_row >= code_block_start_row and self.num_code_lines > 0 : # Adjust if subtitle overlaps code block
+             subtitle_row = min(self.height -1, code_block_start_row -1)
+             if subtitle_row <= title_row: # if code block is too high, push title up
+                 title_row = max(0, subtitle_row - 2)
+
+
+        for r_idx in range(self.height):
+            current_line_content = ""
+            if r_idx == title_row:
+                padding = (self.width - len(self.title)) // 2
+                current_line_content = f"{' ' * padding}{self.title}{' ' * (self.width - len(self.title) - padding)}"
+                current_line_content = f"[{self.title_style}]{current_line_content.replace('[', r'\[')}[/{self.title_style}]"
+            elif r_idx == subtitle_row:
+                padding = (self.width - len(self.subtitle)) // 2
+                current_line_content = f"{' ' * padding}{self.subtitle}{' ' * (self.width - len(self.subtitle) - padding)}"
+                current_line_content = f"[{self.subtitle_style}]{current_line_content.replace('[', r'\[')}[/{self.subtitle_style}]"
+            elif code_block_start_row <= r_idx < code_block_end_row:
+                code_line_index = r_idx - code_block_start_row
+                code_text = self.code_lines[code_line_index]
+                # Ensure code_text is padded to full width if needed, or handled by terminal
+                current_line_content = f"[{self.code_line_style}]{code_text.replace('[', r'\[')}{' ' * (self.width - len(code_text))}[/{self.code_line_style}]"
+            else:
+                current_line_content = ' ' * self.width
+
+            output_lines.append(current_line_content)
+
         return '\n'.join(output_lines)

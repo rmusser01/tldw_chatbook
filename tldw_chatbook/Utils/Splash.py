@@ -60,6 +60,77 @@ TLDW_ASCII_MINIMAL = r"""
            Too Long; Didn't Watch aka ChatBook
 """
 
+TECH_PULSE_ASCII = r"""
+      .--''''''--.
+    .'            '.
+   /   O      O   \
+  :                :
+  |                |
+  :    --------    :
+   \   O      O   /
+    '.            .'
+      '--......--'
+"""
+
+MINIMAL_FADE_ASCII = r"""
+
+
+          TLDW
+
+      Chatbook AI
+
+
+
+
+"""
+
+BLUEPRINT_ASCII = r"""
++----------------------------------------------------------------------+
+| PROJECT: TLDW Chatbook AI                                            |
+| REV: 1.0                                   DATE: 2024-07-15          |
++----------------------------------------------------------------------+
+| MODULE: Splash Screen Interface                                      |
+| DESIGNER: J. Doe (AI)                                                |
++----------------------------------------------------------------------+
+|                                                                      |
+|   +---------------------+        +---------------------+             |
+|   |   Input Processor   |------->|   Core Logic Unit   |             |
+|   | (ASCII Art Engine)  |        | (Animation Control) |             |
+|   +---------------------+        +---------------------+             |
+|         ^      |                         ^      |                    |
+|         |      |                         |      |                    |
+|         |      v                         |      v                    |
+|   +---------------------+        +---------------------+             |
+|   |  Resource Loader    |<-------|   Display Renderer  |             |
+|   | (Cards & Config)  |        | (Rich Text Output)  |             |
+|   +---------------------+        +---------------------+             |
+|                                                                      |
+|                                                                      |
+|   LOADING SYSTEMS...                                                 |
++----------------------------------------------------------------------+
+| STATUS: INITIALIZING ALL COMPONENTS                                  |
++----------------------------------------------------------------------+
+"""
+
+ARCADE_HIGH_SCORE_ASCII = r"""
++----------------------------------------+
+|         **** HIGH SCORES ****         |
++----------------------------------------+
+|                                        |
+| RANK  NAME                SCORE        |
+|                                        |
+|  1ST  TLDW CHATBOOK       LOADING...   |
+|  2ND  SYSTEM CORE         ONLINE       |
+|  3RD  AI MODULE           ACTIVE       |
+|  4TH  USER INPUT          READY        |
+|  5TH  COFFEE LEVEL        CRITICAL     |
+|                                        |
+|                                        |
+|       PRESS ANY KEY TO START!          |
+|                                        |
++----------------------------------------+
+"""
+
 #
 # Functions:
 
@@ -84,6 +155,10 @@ def get_ascii_art(name: str = "default") -> str:
         "compact": TLDW_ASCII_COMPACT,
         "minimal": TLDW_ASCII_MINIMAL,
         "classic": TLDW_ASCII_ART,  # Alias
+        "tech_pulse": TECH_PULSE_ASCII,
+        "minimal_fade": MINIMAL_FADE_ASCII,
+        "blueprint": BLUEPRINT_ASCII,
+        "arcade_high_score": ARCADE_HIGH_SCORE_ASCII,
     }
     
     return ascii_arts.get(name, TLDW_ASCII_ART)
