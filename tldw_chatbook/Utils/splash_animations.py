@@ -765,6 +765,255 @@ class StarfieldEffect(BaseEffect):
         return "\n".join(output_lines)
 
 
+class SpotlightEffect(BaseEffect):
+    """Moves a 'spotlight' over content, revealing parts of it."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        background_content: str,
+        spotlight_radius: int = 5,
+        movement_speed: float = 10.0, # Pixels (grid cells) per second
+        path_type: str = "lissajous", # "lissajous", "random_walk", "circle"
+        visible_style: str = "bold white", # Style of text inside spotlight
+        hidden_style: str = "dim black on black", # Style of text outside spotlight (very dim)
+        width: int = 80, # display width
+        height: int = 24, # display height
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.lines = background_content.splitlines()
+        # Normalize background content dimensions
+        self.content_height = len(self.lines)
+        self.content_width = max(len(line) for line in self.lines) if self.lines else 0
+
+        self.padded_lines = []
+        for i in range(self.content_height):
+            line = self.lines[i]
+            self.padded_lines.append(line + ' ' * (self.content_width - len(line)))
+
+        self.spotlight_radius = spotlight_radius
+        self.spotlight_radius_sq = spotlight_radius ** 2
+        self.movement_speed = movement_speed # Cells per second
+        self.path_type = path_type
+        self.visible_style = visible_style
+        self.hidden_style = hidden_style
+        self.display_width = width # Max width of the rendered output
+        self.display_height = height # Max height
+
+        self.spotlight_x = float(self.content_width // 2)
+        self.spotlight_y = float(self.content_height // 2)
+
+        # Path specific parameters
+        self.time_elapsed_for_path = 0
+        if self.path_type == "random_walk":
+            self.vx = random.uniform(-self.movement_speed, self.movement_speed)
+            self.vy = random.uniform(-self.movement_speed, self.movement_speed)
+
+        self.time_at_last_frame = time.time()
+
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        delta_time = current_time - self.time_at_last_frame
+        self.time_at_last_frame = current_time
+        self.time_elapsed_for_path += delta_time
+
+        # Update spotlight position
+        if self.path_type == "lissajous":
+            # Simple Lissajous curve for movement
+            # Adjust frequencies (e.g., 0.1, 0.07) and phase for different paths
+            self.spotlight_x = (self.content_width / 2) + (self.content_width / 2 - self.spotlight_radius) * math.sin(self.time_elapsed_for_path * 0.15)
+            self.spotlight_y = (self.content_height / 2) + (self.content_height / 2 - self.spotlight_radius) * math.cos(self.time_elapsed_for_path * 0.1)
+        elif self.path_type == "circle":
+            radius = min(self.content_width, self.content_height) / 2 - self.spotlight_radius
+            self.spotlight_x = (self.content_width / 2) + radius * math.cos(self.time_elapsed_for_path * self.movement_speed * 0.02) # speed factor
+            self.spotlight_y = (self.content_height / 2) + radius * math.sin(self.time_elapsed_for_path * self.movement_speed * 0.02)
+        elif self.path_type == "random_walk":
+            self.spotlight_x += self.vx * delta_time
+            self.spotlight_y += self.vy * delta_time
+            # Boundary checks and bounce / change direction
+            if not (0 <= self.spotlight_x < self.content_width):
+                self.vx *= -1
+                self.spotlight_x = max(0, min(self.spotlight_x, self.content_width -1))
+            if not (0 <= self.spotlight_y < self.content_height):
+                self.vy *= -1
+                self.spotlight_y = max(0, min(self.spotlight_y, self.content_height -1))
+            # Occasionally change direction randomly
+            if random.random() < 0.01: # 1% chance per frame
+                 self.vx = random.uniform(-self.movement_speed, self.movement_speed) * 0.1 # Slower random walk
+                 self.vy = random.uniform(-self.movement_speed, self.movement_speed) * 0.1
+
+
+        # Render the content with spotlight effect
+        output_lines = []
+        # Determine rendering bounds based on display_height/width and content_height/width
+        render_height = min(self.display_height, self.content_height)
+
+        # Center the content if smaller than display area
+        content_start_row = (self.display_height - render_height) // 2
+
+        for r_disp in range(self.display_height):
+            if content_start_row <= r_disp < content_start_row + render_height:
+                r_content = r_disp - content_start_row # Index in self.padded_lines
+                line = self.padded_lines[r_content]
+                styled_line_segments = []
+
+                content_start_col = (self.display_width - self.content_width) // 2
+
+                for c_disp in range(self.display_width):
+                    if content_start_col <= c_disp < content_start_col + self.content_width:
+                        c_content = c_disp - content_start_col # Index in line
+                        char = line[c_content]
+                        escaped_char = char.replace('[', r'\[')
+
+                        # Check distance from spotlight center
+                        # Adjust for character aspect ratio if desired (y distances count more)
+                        dist_sq = (c_content - self.spotlight_x)**2 + ((r_content - self.spotlight_y)*2)**2 # Y weighted
+
+                        if dist_sq <= self.spotlight_radius_sq:
+                            styled_line_segments.append(f"[{self.visible_style}]{escaped_char}[/{self.visible_style}]")
+                        else:
+                            # Optional: fade effect at edges of spotlight
+                            # For now, simple binary visible/hidden
+                            styled_line_segments.append(f"[{self.hidden_style}]{escaped_char}[/{self.hidden_style}]")
+                    else: # Outside content width, but within display width (padding)
+                        styled_line_segments.append(f"[{self.hidden_style}] {[/ {self.hidden_style}]}")
+                output_lines.append("".join(styled_line_segments))
+            else: # Outside content height (padding)
+                output_lines.append(f"[{self.hidden_style}]{' ' * self.display_width}[/{self.hidden_style}]")
+
+        return "\n".join(output_lines)
+
+
+class SoundBarsEffect(BaseEffect):
+    """Simulates abstract sound visualizer bars."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "Audio Core Calibrating...",
+        num_bars: int = 15,
+        max_bar_height: Optional[int] = None, # If None, calculated from display_height
+        bar_char_filled: str = "█",
+        bar_char_empty: str = " ", # Usually not visible if styled with background
+        bar_styles: List[str] = ["bold blue", "bold magenta", "bold cyan", "bold green", "bold yellow", "bold red"],
+        width: int = 80, # display width
+        height: int = 24, # display height
+        title_style: str = "bold white",
+        update_speed: float = 0.05, # How fast bars change height
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.num_bars = num_bars
+        self.display_width = width
+        self.display_height = height
+
+        # Title takes ~1 line + 1 for spacing, rest for bars
+        self.title_area_height = 2 if self.title else 0
+        self.max_bar_height = max_bar_height if max_bar_height is not None else self.display_height - self.title_area_height -1 # -1 for base line
+        if self.max_bar_height <=0: self.max_bar_height = 1
+
+        self.bar_char_filled = bar_char_filled[0]
+        self.bar_char_empty = bar_char_empty[0]
+        self.bar_styles = bar_styles
+        self.title_style = title_style
+        self.update_speed = update_speed # Interval for changing bar heights
+
+        self.bar_heights = [random.randint(1, self.max_bar_height) for _ in range(self.num_bars)]
+        self.bar_targets = list(self.bar_heights) # Target heights for smooth transition
+        self.bar_colors = [random.choice(self.bar_styles) for _ in range(self.num_bars)]
+
+        self._last_bar_update_time = time.time()
+
+    def _update_bar_heights(self):
+        """Update target heights and smoothly move current heights."""
+        for i in range(self.num_bars):
+            # Chance to pick a new target height
+            if random.random() < 0.2 or self.bar_heights[i] == self.bar_targets[i]:
+                self.bar_targets[i] = random.randint(1, self.max_bar_height)
+                self.bar_colors[i] = random.choice(self.bar_styles) # Change color too
+
+            # Move towards target
+            if self.bar_heights[i] < self.bar_targets[i]:
+                self.bar_heights[i] = min(self.bar_targets[i], self.bar_heights[i] + 1) # Step of 1 for simplicity
+            elif self.bar_heights[i] > self.bar_targets[i]:
+                 self.bar_heights[i] = max(self.bar_targets[i], self.bar_heights[i] -1)
+
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        if current_time - self._last_bar_update_time >= self.update_speed:
+            self._update_bar_heights()
+            self._last_bar_update_time = current_time
+
+        output_lines = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+        styled_output_lines = [""] * self.display_height
+
+        # Render title if present
+        title_start_row = 0
+        if self.title:
+            title_x_start = (self.display_width - len(self.title)) // 2
+            for c, char_val in enumerate(self.title):
+                if title_x_start + c < self.display_width:
+                    output_lines[title_start_row][title_x_start + c] = (char_val.replace('[',r'\['), self.title_style)
+            title_start_row += 1 # Move down for next line (e.g. spacing or bars)
+            if self.title_area_height > 1: # if spacing was reserved
+                 title_start_row += (self.title_area_height -1)
+
+
+        # Render bars
+        # Calculate bar width and spacing (simple equal spacing)
+        bar_display_area_width = self.display_width
+        total_bar_chars_width = self.num_bars # Assuming each bar is 1 char wide
+
+        # If we want wider bars, e.g. 2 chars wide:
+        # bar_char_width = 2
+        # total_bar_chars_width = self.num_bars * bar_char_width
+        # For simplicity, 1 char wide bars.
+
+        spacing = (bar_display_area_width - total_bar_chars_width) // (self.num_bars + 1)
+        if spacing < 0: spacing = 0 # Bars might overlap if too many
+
+        current_c = spacing # Start position for first bar
+
+        for i in range(self.num_bars):
+            if current_c >= self.display_width: break # No more space for bars
+
+            bar_h = self.bar_heights[i]
+            bar_style_to_use = self.bar_colors[i]
+
+            for r in range(self.max_bar_height):
+                # Bars are drawn from bottom up
+                row_idx_on_display = (title_start_row + self.max_bar_height -1) - r
+                if row_idx_on_display < title_start_row : continue # Don't draw into title area from bottom
+                if row_idx_on_display >= self.display_height : continue
+
+
+                if r < bar_h : # This part of bar is filled
+                    output_lines[row_idx_on_display][current_c] = (self.bar_char_filled, bar_style_to_use)
+                else: # This part is empty (above the current bar height)
+                    output_lines[row_idx_on_display][current_c] = (self.bar_char_empty, "default") # or specific empty style
+
+            current_c += 1 # Next char column for this bar (if multi-char wide)
+            current_c += spacing # Move to start of next bar
+
+        # Convert the character grid to styled lines
+        for r_idx in range(self.display_height):
+            line_segments = []
+            for c_idx in range(self.display_width):
+                cell = output_lines[r_idx][c_idx]
+                if isinstance(cell, tuple):
+                    char, style = cell
+                    line_segments.append(f"[{style}]{char}[/{style}]")
+                else: # Space
+                    line_segments.append(' ') # Default background
+            styled_output_lines[r_idx] = "".join(line_segments)
+
+        return "\n".join(styled_output_lines)
+
+
 class TerminalBootEffect(BaseEffect):
     """Simulates a classic terminal boot-up sequence."""
 
@@ -1012,6 +1261,354 @@ class GlitchRevealEffect(BaseEffect):
                 output_lines.append(f"[{style}]{escaped_line}[/{style}]")
             else:
                 output_lines.append(escaped_line) # Rely on card's base style
+
+        return "\n".join(output_lines)
+
+
+class AsciiMorphEffect(BaseEffect):
+    """Smoothly morphs one ASCII art into another."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        start_content: str,
+        end_content: str,
+        duration: float = 2.0, # Total duration of the morph
+        morph_style: str = "dissolve", # "dissolve", "random_pixel", "wipe_left_to_right"
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.start_lines = start_content.splitlines()
+        self.end_lines = end_content.splitlines()
+        self.duration = duration
+        self.morph_style = morph_style
+
+        # Normalize line lengths and line counts for consistent morphing
+        self.height = max(len(self.start_lines), len(self.end_lines))
+        self.width = 0
+        for line in self.start_lines + self.end_lines:
+            if len(line) > self.width:
+                self.width = len(line)
+
+        self.start_lines = self._pad_art(self.start_lines)
+        self.end_lines = self._pad_art(self.end_lines)
+
+        # For 'dissolve' or 'random_pixel', precompute all character positions
+        self.all_positions = []
+        if self.morph_style in ["dissolve", "random_pixel"]:
+            for r in range(self.height):
+                for c in range(self.width):
+                    if self.start_lines[r][c] != self.end_lines[r][c]:
+                        self.all_positions.append((r, c))
+            if self.morph_style == "dissolve": # Shuffle for dissolve
+                random.shuffle(self.all_positions)
+
+        self.current_art_chars = [list(line) for line in self.start_lines]
+
+    def _pad_art(self, art_lines: List[str]) -> List[str]:
+        """Pads ASCII art to consistent width and height."""
+        padded_art = []
+        for i in range(self.height):
+            if i < len(art_lines):
+                line = art_lines[i]
+                padded_art.append(line + ' ' * (self.width - len(line)))
+            else:
+                padded_art.append(' ' * self.width)
+        return padded_art
+
+    def update(self) -> Optional[str]:
+        elapsed_time = time.time() - self.start_time
+        progress = min(1.0, elapsed_time / self.duration)
+
+        if progress >= 1.0:
+            return "\n".join(self.end_lines).replace('[',r'\[')
+
+        if self.morph_style == "dissolve" or self.morph_style == "random_pixel":
+            num_chars_to_change = int(progress * len(self.all_positions))
+            for i in range(num_chars_to_change):
+                if i < len(self.all_positions):
+                    r, c = self.all_positions[i]
+                    if self.morph_style == "dissolve":
+                         # For dissolve, directly set to end char
+                        self.current_art_chars[r][c] = self.end_lines[r][c]
+                    elif self.morph_style == "random_pixel":
+                        # For random_pixel, set to a random char during transition, then final
+                        # This needs another state or to be driven by progress.
+                        # Simpler: if not fully progressed, pick start or end based on sub-progress for that pixel
+                        if random.random() < progress: # As progress increases, more chance to be end_char
+                           self.current_art_chars[r][c] = self.end_lines[r][c]
+                        else:
+                           self.current_art_chars[r][c] = self.start_lines[r][c] # Or a random char
+
+            # For random_pixel, we should re-evaluate all pixels each frame based on progress
+            if self.morph_style == "random_pixel":
+                 for r_idx in range(self.height):
+                    for c_idx in range(self.width):
+                        if self.start_lines[r_idx][c_idx] != self.end_lines[r_idx][c_idx]:
+                            if random.random() < progress:
+                                self.current_art_chars[r_idx][c_idx] = self.end_lines[r_idx][c_idx]
+                            else:
+                                # Optionally, insert a random "transition" character
+                                # self.current_art_chars[r_idx][c_idx] = random.choice(".:-=+*#%@")
+                                self.current_art_chars[r_idx][c_idx] = self.start_lines[r_idx][c_idx]
+                        else:
+                            self.current_art_chars[r_idx][c_idx] = self.start_lines[r_idx][c_idx]
+
+
+        elif self.morph_style == "wipe_left_to_right":
+            wipe_column = int(progress * self.width)
+            for r in range(self.height):
+                for c in range(self.width):
+                    if c < wipe_column:
+                        self.current_art_chars[r][c] = self.end_lines[r][c]
+                    else:
+                        self.current_art_chars[r][c] = self.start_lines[r][c]
+
+        # Default or fallback: simple crossfade (alpha blending not possible with chars)
+        # So, stick to one of the above, or make dissolve the default.
+        # If morph_style is not recognized, it will effectively be stuck on start_art or do random_pixel if all_positions was populated.
+        # Let's ensure 'dissolve' is the default if style is unknown.
+        else: # Fallback or if morph_style == "dissolve" initially
+            num_chars_to_change = int(progress * len(self.all_positions))
+            for i in range(num_chars_to_change):
+                if i < len(self.all_positions):
+                    r, c = self.all_positions[i]
+                    self.current_art_chars[r][c] = self.end_lines[r][c]
+
+
+        return "\n".join("".join(row) for row in self.current_art_chars).replace('[',r'\[')
+
+
+class GameOfLifeEffect(BaseEffect):
+    """Simulates Conway's Game of Life."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "Evolving Systems...",
+        width: int = 40, # Grid width for GoL (actual output width might be larger for title)
+        height: int = 20, # Grid height for GoL
+        cell_alive_char: str = "█",
+        cell_dead_char: str = " ",
+        alive_style: str = "bold green",
+        dead_style: str = "black", # Effectively background
+        initial_pattern: str = "random", # "random", or specific pattern names like "glider"
+        update_interval: float = 0.2, # How often GoL updates, distinct from animation_speed
+        title_style: str = "bold white",
+        display_width: int = 80, # Total width for splash screen display
+        display_height: int = 24, # Total height for splash screen display
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.grid_width = width
+        self.grid_height = height
+        self.cell_alive_char = cell_alive_char[0]
+        self.cell_dead_char = cell_dead_char[0]
+        self.alive_style = alive_style
+        self.dead_style = dead_style # Usually background color
+        self.initial_pattern = initial_pattern
+        self.title_style = title_style
+        self.display_width = display_width
+        self.display_height = display_height
+
+        self.grid = [[(random.choice([0,1]) if initial_pattern == "random" else 0) for _ in range(self.grid_width)] for _ in range(self.grid_height)]
+
+        if self.initial_pattern == "glider":
+            # A common GoL pattern
+            if self.grid_width >= 3 and self.grid_height >= 3:
+                self.grid[0][1] = 1
+                self.grid[1][2] = 1
+                self.grid[2][0] = 1
+                self.grid[2][1] = 1
+                self.grid[2][2] = 1
+        # Can add more predefined patterns here
+
+        self._last_gol_update_time = time.time()
+        self.gol_update_interval = update_interval
+
+
+    def _count_neighbors(self, r: int, c: int) -> int:
+        count = 0
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                if i == 0 and j == 0:
+                    continue
+                nr, nc = r + i, c + j
+                # Toroidal grid (wraps around)
+                nr = nr % self.grid_height
+                nc = nc % self.grid_width
+                count += self.grid[nr][nc]
+        return count
+
+    def _update_grid(self):
+        new_grid = [[0 for _ in range(self.grid_width)] for _ in range(self.grid_height)]
+        for r in range(self.grid_height):
+            for c in range(self.grid_width):
+                neighbors = self._count_neighbors(r, c)
+                if self.grid[r][c] == 1: # Alive
+                    if neighbors < 2 or neighbors > 3:
+                        new_grid[r][c] = 0 # Dies
+                    else:
+                        new_grid[r][c] = 1 # Lives
+                else: # Dead
+                    if neighbors == 3:
+                        new_grid[r][c] = 1 # Becomes alive
+        self.grid = new_grid
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        if current_time - self._last_gol_update_time >= self.gol_update_interval:
+            self._update_grid()
+            self._last_gol_update_time = current_time
+
+        # Render the grid and title to the full display_width/height
+        output_display = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
+        styled_output_lines = [""] * self.display_height
+
+        # Center the GoL grid within the display area
+        grid_start_r = (self.display_height - self.grid_height) // 2
+        grid_start_c = (self.display_width - self.grid_width) // 2
+
+        for r_grid in range(self.grid_height):
+            for c_grid in range(self.grid_width):
+                r_disp, c_disp = grid_start_r + r_grid, grid_start_c + c_grid
+                if 0 <= r_disp < self.display_height and 0 <= c_disp < self.display_width:
+                    is_alive = self.grid[r_grid][c_grid] == 1
+                    char_to_draw = self.cell_alive_char if is_alive else self.cell_dead_char
+                    style_to_use = self.alive_style if is_alive else self.dead_style
+                    # Store as (char, style) tuple for later Rich formatting
+                    output_display[r_disp][c_disp] = (char_to_draw, style_to_use)
+
+        # Convert output_display (which has tuples or spaces) to styled lines
+        for r_idx in range(self.display_height):
+            line_segments = []
+            for c_idx in range(self.display_width):
+                cell_content = output_display[r_idx][c_idx]
+                if isinstance(cell_content, tuple):
+                    char, style = cell_content
+                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                else: # It's a space from initialization
+                    line_segments.append(f"[{self.dead_style}] {[/ {self.dead_style}]}") # Styled background space
+            styled_output_lines[r_idx] = "".join(line_segments)
+
+
+        # Overlay title (centered, typically above or below GoL grid)
+        if self.title:
+            title_y = grid_start_r - 2 if grid_start_r > 1 else self.display_height -1 # Place above or at bottom
+            title_x_start = (self.display_width - len(self.title)) // 2
+
+            if 0 <= title_y < self.display_height:
+                # Construct title line, preserving background cells not covered by title
+                title_line_segments = []
+                title_char_idx = 0
+                for c_idx in range(self.display_width):
+                    is_title_char_pos = title_x_start <= c_idx < title_x_start + len(self.title)
+                    if is_title_char_pos:
+                        char = self.title[title_char_idx].replace('[',r'\[')
+                        title_line_segments.append(f"[{self.title_style}]{char}[/{self.title_style}]")
+                        title_char_idx += 1
+                    else: # Part of the line not covered by title, use existing content
+                        cell_content = output_display[title_y][c_idx]
+                        if isinstance(cell_content, tuple):
+                            char, style = cell_content
+                            title_line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                        else:
+                             title_line_segments.append(f"[{self.dead_style}] {[/ {self.dead_style}]}")
+                styled_output_lines[title_y] = "".join(title_line_segments)
+
+        return "\n".join(styled_output_lines)
+
+
+class ScrollingCreditsEffect(BaseEffect):
+    """Simulates scrolling credits, like at the end of a movie."""
+
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "TLDW Chatbook",
+        credits_list: List[Dict[str, str]] = None, # Each dict: {"role": "Concept", "name": "The Universe"} or just {"line": "Some text"}
+        scroll_speed: float = 1.0, # Lines per second (can be fractional)
+        line_spacing: int = 1, # Number of blank lines between credit entries
+        width: int = 80,
+        height: int = 24,
+        title_style: str = "bold yellow",
+        role_style: str = "bold white",
+        name_style: str = "white",
+        line_style: str = "white", # For single line credits
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.overall_title = title # Title for the splash screen itself, displayed statically
+        self.credits_list = credits_list if credits_list else [{"line": "Loading..."}]
+        self.scroll_speed = scroll_speed # This will be used to calculate fractional line shifts
+        self.line_spacing = line_spacing
+        self.display_width = width
+        self.display_height = height
+        self.title_style = title_style
+        self.role_style = role_style
+        self.name_style = name_style
+        self.line_style = line_style
+
+        self.formatted_credit_lines: List[str] = []
+        self._format_credits()
+
+        self.current_scroll_offset = float(self.display_height) # Start with credits off-screen at the bottom
+        self.time_at_last_frame = time.time()
+
+
+    def _format_credits(self):
+        """Pre-formats credit entries into Rich-styled strings."""
+        self.formatted_credit_lines.append(f"[{self.title_style}]{self.overall_title.center(self.display_width)}[/{self.title_style}]")
+        self.formatted_credit_lines.append("") # Blank line after title
+
+        for item in self.credits_list:
+            if "line" in item:
+                # Single line entry
+                text = item["line"].replace('[', r'\[')
+                self.formatted_credit_lines.append(f"[{self.line_style}]{text.center(self.display_width)}[/{self.line_style}]")
+            elif "role" in item and "name" in item:
+                # Role: Name format
+                role_text = item["role"].replace('[', r'\[')
+                name_text = item["name"].replace('[', r'\[')
+                # Simple centered alignment for now
+                # More complex alignment (role left, name right) is harder with fixed width and Rich.
+                # For now, centered role, then centered name on next line or combined.
+                # Let's do: Role (centered), Name (centered below it)
+                self.formatted_credit_lines.append(f"[{self.role_style}]{role_text.center(self.display_width)}[/{self.role_style}]")
+                self.formatted_credit_lines.append(f"[{self.name_style}]{name_text.center(self.display_width)}[/{self.name_style}]")
+
+            for _ in range(self.line_spacing):
+                self.formatted_credit_lines.append("") # Add blank lines for spacing
+
+        # Add some padding at the end so last credit scrolls fully off
+        for _ in range(self.display_height // 2):
+            self.formatted_credit_lines.append("")
+
+
+    def update(self) -> Optional[str]:
+        current_time = time.time()
+        delta_time = current_time - self.time_at_last_frame
+        self.time_at_last_frame = current_time
+
+        self.current_scroll_offset -= delta_time * self.scroll_speed
+
+        # Determine which lines are visible
+        output_lines = []
+        start_line_index = int(self.current_scroll_offset)
+
+        for i in range(self.display_height):
+            current_line_to_fetch = start_line_index + i
+            if 0 <= current_line_to_fetch < len(self.formatted_credit_lines):
+                output_lines.append(self.formatted_credit_lines[current_line_to_fetch])
+            else:
+                output_lines.append(' ' * self.display_width) # Blank line
+
+        # Reset scroll if all credits have passed
+        # Total height of credits content: len(self.formatted_credit_lines)
+        # Resets when the top of the credits (index 0) has scrolled past the top of the screen (offset becomes negative enough)
+        if self.current_scroll_offset < -len(self.formatted_credit_lines):
+             self.current_scroll_offset = float(self.display_height) # Reset to start from bottom again
 
         return "\n".join(output_lines)
 

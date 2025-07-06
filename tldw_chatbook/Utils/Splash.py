@@ -135,6 +135,26 @@ LOADING_BAR_FRAME_ASCII = r"""
 [--------------------]
 """
 
+MORPH_ART_START_ASCII = r"""
+   #####
+  ##   ##
+      ##
+     ##
+     ##
+
+     ##
+"""
+
+MORPH_ART_END_ASCII = r"""
+     ##
+     ##
+     ##
+     ##
+     ##
+
+     ##
+"""
+
 # A few options for fill characters, card config can pick one
 LOADING_BAR_FILL_CHARS = {
     "default": "#",
@@ -174,6 +194,9 @@ def get_ascii_art(name: str = "default") -> str:
         "arcade_high_score": ARCADE_HIGH_SCORE_ASCII,
         "loading_bar_frame": LOADING_BAR_FRAME_ASCII,
         "app_logo_clear": TLDW_ASCII_COMPACT, # Using compact version as the clear logo
+        "morph_art_start": MORPH_ART_START_ASCII,
+        "morph_art_end": MORPH_ART_END_ASCII,
+        "spotlight_background": TLDW_ASCII_ART, # Using the main logo as background
     }
     
     return ascii_arts.get(name, TLDW_ASCII_ART)
