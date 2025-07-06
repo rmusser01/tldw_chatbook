@@ -15,7 +15,7 @@ splashscreen_messages = [
     "Proving P=NP...",
     "Downloading more RAM...",
     "Feeding the hamsters powering the servers...",
-    "Convincing AI not to take over the world..."
+    "Convincing AI not to take over the world...",
     "Converting caffeine to code...",
     "Generating excuses for missing deadlines...",
     "Compiling alternative facts...",

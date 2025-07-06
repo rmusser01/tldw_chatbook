@@ -2306,16 +2306,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # The Logs window is now created as a real window during compose,
         # so the RichLog widget should be available for logging setup
-
-        # Logging setup
-        logging_start = time.perf_counter()
-        self._setup_logging()
-        if self._rich_log_handler:
-            self.loguru_logger.debug("Starting RichLogHandler processor task...")
-            self._rich_log_handler.start_processor(self)
+        
+        # If splash screen is NOT active, set up logging now
+        # Otherwise, defer it until after main UI is mounted
+        if not self.splash_screen_active:
+            # Logging setup
+            logging_start = time.perf_counter()
+            self._setup_logging()
+            if self._rich_log_handler:
+                self.loguru_logger.debug("Starting RichLogHandler processor task...")
+                self._rich_log_handler.start_processor(self)
             log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - logging_start,
-             labels={"phase": "logging_setup"}, 
-             documentation="Duration of on_mount phase in seconds")
+                         labels={"phase": "logging_setup"}, 
+                         documentation="Duration of on_mount phase in seconds")
+        else:
+            self.loguru_logger.debug("Deferring logging setup until after splash screen closes")
 
             splashscreen_messages = [
                 "Hacking the Gibson real quick...",
@@ -3773,6 +3778,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Create and mount the main UI components after splash screen is closed
         main_ui_widgets = self._create_main_ui_widgets()
         await self.mount(*main_ui_widgets)
+        
+        # Now that the main UI is mounted, set up logging if it was deferred
+        if not self._rich_log_handler:
+            self.loguru_logger.debug("Setting up logging after splash screen closed")
+            logging_start = time.perf_counter()
+            self._setup_logging()
+            if self._rich_log_handler:
+                self.loguru_logger.debug("Starting RichLogHandler processor task...")
+                self._rich_log_handler.start_processor(self)
+            log_histogram("app_splash_deferred_logging_duration_seconds", time.perf_counter() - logging_start,
+                         documentation="Time to set up logging after splash screen")
         
         # Now schedule post-mount setup and hide inactive windows
         self.call_after_refresh(self._post_mount_setup)
