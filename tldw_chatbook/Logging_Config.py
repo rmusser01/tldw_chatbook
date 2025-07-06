@@ -99,28 +99,18 @@ class RichLogHandler(logging.Handler):
             # Use call_soon_threadsafe if emit might be called from non-asyncio threads (workers)
             # For workers started with thread=True, this is necessary.
             try:
-                # Check if the widget is mounted and has an app with an event loop
-                if (hasattr(self.rich_log_widget, 'is_mounted') and 
-                    self.rich_log_widget.is_mounted and 
-                    hasattr(self.rich_log_widget, 'app') and 
-                    self.rich_log_widget.app and
-                    hasattr(self.rich_log_widget.app, '_loop') and
-                    self.rich_log_widget.app._loop):
-                    self.rich_log_widget.app._loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
-                else:
-                    # During startup/shutdown, try to queue the message anyway
-                    try:
-                        # If we have an event loop running, use it
-                        loop = asyncio.get_running_loop()
-                        loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
-                    except RuntimeError:
-                        # No event loop running, fallback to direct logging for warnings and above
-                        if record.levelno >= logging.WARNING: 
-                            print(f"LOG_FALLBACK: {message}", file=sys.stderr)
+                # Try to get the current event loop
+                loop = asyncio.get_running_loop()
+                # Use call_soon_threadsafe to add to queue from any thread
+                loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
+            except RuntimeError:
+                # No event loop running, fallback to direct logging for warnings and above
+                if record.levelno >= logging.WARNING: 
+                    print(f"LOG_FALLBACK: {message}", file=sys.stderr)
             except Exception as e:
                 # Don't re-raise to avoid breaking the logging system
                 if record.levelno >= logging.WARNING:
-                    print(f"LOG_FALLBACK: {message}", file=sys.stderr)
+                    print(f"LOG_FALLBACK: {message} (Error: {e})", file=sys.stderr)
         except Exception:
             # Last resort - print to stderr to avoid losing critical messages
             print(f"!!!!!!!! ERROR within RichLogHandler.emit !!!!!!!!!!", file=sys.stderr)

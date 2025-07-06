@@ -38,6 +38,8 @@ from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Widgets.file_extraction_dialog import FileExtractionDialog
+from tldw_chatbook.Widgets.document_generation_modal import DocumentGenerationModal
+from tldw_chatbook.Chat.document_generator import DocumentGenerator
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -787,50 +789,75 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
     elif "note-button" in button_classes:
         logging.info("Action: Create Note clicked for %s message: '%s...'", message_role, message_text[:50])
         
-        # Format note title with timestamp
-        timestamp_str = action_widget.timestamp or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        note_title = f"Chat Note - {message_role} - {timestamp_str}"
+        # Get conversation context
+        conversation_context = {
+            "conversation_id": getattr(app, "current_conversation_id", None),
+            "message_role": message_role,
+            "timestamp": action_widget.timestamp or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "message_id": action_widget.message_id_internal,
+            "current_provider": getattr(app, "current_provider", None),
+            "current_model": getattr(app, "current_model", None),
+            "api_key": getattr(app, "current_api_key", None)
+        }
         
-        # Format note content with metadata
-        note_content = f"""From: {message_role}
+        # Create callback to handle document generation
+        async def handle_document_generation(document_type: str, message_content: str):
+            """Handle document generation after modal selection."""
+            if document_type == "note":
+                # Original note creation functionality
+                timestamp_str = conversation_context["timestamp"]
+                note_title = f"Chat Note - {message_role} - {timestamp_str}"
+                
+                note_content = f"""From: {message_role}
 Date: {timestamp_str}
-Message ID: {action_widget.message_id_internal or 'N/A'}
+Message ID: {conversation_context["message_id"] or 'N/A'}
 
 ---
 
-{message_text}"""
-        
-        # Create note via NotesInteropService
-        try:
-            # Use the app's existing notes service
-            note_id = app.notes_service.add_note(
-                user_id=app.notes_user_id,
-                title=note_title,
-                content=note_content
-            )
-            
-            if note_id:
-                # Update UI
-                app.notify("Note created from message", severity="success", timeout=3)
+{message_content}"""
                 
-                # Expand notes section if collapsed
                 try:
-                    # Find the notes collapsible in the chat sidebar
-                    notes_collapsible = app.query_one("#chat-notes-collapsible")
-                    if hasattr(notes_collapsible, 'collapsed'):
-                        notes_collapsible.collapsed = False
-                except QueryError:
-                    # Notes section might not be present or have different ID
-                    pass
-                
-                loguru_logger.info(f"Created note '{note_title}' with ID: {note_id}")
+                    note_id = app.notes_service.add_note(
+                        user_id=app.notes_user_id,
+                        title=note_title,
+                        content=note_content
+                    )
+                    
+                    if note_id:
+                        app.notify("Note created from message", severity="success", timeout=3)
+                        
+                        # Expand notes section if collapsed
+                        try:
+                            notes_collapsible = app.query_one("#chat-notes-collapsible")
+                            if hasattr(notes_collapsible, 'collapsed'):
+                                notes_collapsible.collapsed = False
+                        except QueryError:
+                            pass
+                        
+                        loguru_logger.info(f"Created note '{note_title}' with ID: {note_id}")
+                    else:
+                        app.notify("Failed to create note", severity="error")
+                        
+                except Exception as e:
+                    loguru_logger.error(f"Error creating note from message: {e}", exc_info=True)
+                    app.notify(f"Failed to create note: {str(e)}", severity="error")
+            
             else:
-                app.notify("Failed to create note", severity="error")
-                loguru_logger.error("Notes service returned None for note ID")
-                
-        except Exception as e:
-            loguru_logger.error(f"Error creating note from message: {e}", exc_info=True)
-            app.notify(f"Failed to create note: {str(e)}", severity="error")
+                # Generate document using LLM
+                await generate_document_with_llm(app, document_type, message_content, conversation_context)
+        
+        # Show document generation modal and wait for result
+        modal = DocumentGenerationModal(
+            message_content=message_text,
+            conversation_context=conversation_context
+        )
+        
+        # Push modal and wait for result
+        result = await app.push_screen_wait(modal)
+        
+        # Handle the result if user selected an option
+        if result:
+            await handle_document_generation(result, message_text)
 
     elif "file-extract-button" in button_classes:
         logging.info("Action: Extract Files clicked for %s message: '%s...'", message_role, message_text[:50])
@@ -3435,6 +3462,117 @@ async def populate_chat_conversation_character_filter_select(app: 'TldwCli') -> 
         logging.error(f"DB error populating char filter select (Chat Tab): {e_db}", exc_info=True)
     except Exception as e_unexp:
         logging.error(f"Unexpected error populating char filter select (Chat Tab): {e_unexp}", exc_info=True)
+
+
+async def generate_document_with_llm(app: 'TldwCli', document_type: str, 
+                                   message_content: str, conversation_context: Dict[str, Any]) -> None:
+    """
+    Generate a document using LLM based on the selected type.
+    
+    Args:
+        app: The main app instance
+        document_type: Type of document to generate (timeline, study_guide, briefing)
+        message_content: The specific message content
+        conversation_context: Additional context about the conversation
+    """
+    import asyncio
+    
+    try:
+        # Get provider info from context
+        provider = conversation_context.get("current_provider")
+        model = conversation_context.get("current_model")
+        api_key = conversation_context.get("api_key")
+        conversation_id = conversation_context.get("conversation_id")
+        
+        if not all([provider, model, api_key, conversation_id]):
+            app.notify("Missing required information for document generation", severity="error")
+            return
+        
+        # Show loading notification
+        app.notify(f"Generating {document_type.replace('_', ' ').title()}...", severity="information")
+        
+        # Initialize document generator
+        doc_generator = DocumentGenerator(
+            db_path=app.chachanotes_db_path,
+            client_id=app.client_id
+        )
+        
+        # Generate document based on type
+        if document_type == "timeline":
+            generated_content = doc_generator.generate_timeline(
+                conversation_id=conversation_id,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                specific_message=message_content,
+                stream=False
+            )
+        elif document_type == "study_guide":
+            generated_content = doc_generator.generate_study_guide(
+                conversation_id=conversation_id,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                specific_message=message_content,
+                stream=False
+            )
+        elif document_type == "briefing":
+            generated_content = doc_generator.generate_briefing(
+                conversation_id=conversation_id,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                specific_message=message_content,
+                stream=False
+            )
+        else:
+            app.notify(f"Unknown document type: {document_type}", severity="error")
+            return
+        
+        # Create note with generated content
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        # Try to get conversation name or use a default
+        conversation_name = getattr(app, 'current_conversation_name', None) or f"Chat-{conversation_id[:8]}"
+        
+        # Format title based on document type
+        if document_type == "timeline":
+            title = f"{conversation_name}-timeline-{timestamp}"
+        elif document_type == "study_guide":
+            title = f"{conversation_name}-study_guide-{timestamp}"
+        elif document_type == "briefing":
+            title = f"{conversation_name}-Briefing-Document-{timestamp}"
+        else:
+            title = f"{conversation_name}-{document_type}-{timestamp}"
+        
+        # Create note in database
+        note_id = doc_generator.create_note_with_metadata(
+            title=title,
+            content=generated_content,
+            document_type=document_type,
+            conversation_id=conversation_id
+        )
+        
+        # Copy to clipboard
+        if doc_generator.copy_to_clipboard(generated_content):
+            app.notify(f"{document_type.replace('_', ' ').title()} created and copied to clipboard", 
+                      severity="success", timeout=5)
+        else:
+            app.notify(f"{document_type.replace('_', ' ').title()} created (clipboard copy failed)", 
+                      severity="warning", timeout=5)
+        
+        # Expand notes section if collapsed
+        try:
+            notes_collapsible = app.query_one("#chat-notes-collapsible")
+            if hasattr(notes_collapsible, 'collapsed'):
+                notes_collapsible.collapsed = False
+        except QueryError:
+            pass
+        
+        loguru_logger.info(f"Generated {document_type} with note ID: {note_id}")
+        
+    except Exception as e:
+        loguru_logger.error(f"Error generating {document_type}: {e}", exc_info=True)
+        app.notify(f"Failed to generate {document_type}: {str(e)}", severity="error")
 
 
 # --- Button Handler Map ---

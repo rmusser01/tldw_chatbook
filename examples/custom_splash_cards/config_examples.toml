@@ -1,0 +1,155 @@
+# Example splash screen configurations for config.toml
+# Copy the desired configuration to your ~/.config/tldw_cli/config.toml
+
+# ============================================
+# Example 1: Quick Professional Splash
+# ============================================
+[splash_screen_professional]
+enabled = true
+duration = 1.0
+skip_on_keypress = true
+card_selection = "minimal"
+show_progress = true
+active_cards = ["minimal"]
+
+[splash_screen_professional.effects]
+fade_in_duration = 0.2
+fade_out_duration = 0.1
+animation_speed = 1.5
+
+
+# ============================================
+# Example 2: Gaming Experience
+# ============================================
+[splash_screen_gaming]
+enabled = true
+duration = 3.5
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["matrix", "glitch", "retro", "gaming_card", "cyberpunk_card"]
+
+[splash_screen_gaming.effects]
+fade_in_duration = 0.5
+fade_out_duration = 0.3
+animation_speed = 1.2
+
+# Future: Sound effects
+[splash_screen_gaming.audio]
+enabled = false
+volume = 0.7
+startup_sound = "startup_chime.wav"
+
+
+# ============================================
+# Example 3: Development/Debug Mode
+# ============================================
+[splash_screen_dev]
+enabled = true
+duration = 0.5
+skip_on_keypress = true
+card_selection = "debug"
+show_progress = true
+active_cards = ["debug"]
+debug = true  # Enable debug logging
+
+[splash_screen_dev.effects]
+fade_in_duration = 0.0
+fade_out_duration = 0.0
+animation_speed = 2.0
+
+
+# ============================================
+# Example 4: Seasonal/Holiday Themes
+# ============================================
+[splash_screen_seasonal]
+enabled = true
+duration = 2.5
+skip_on_keypress = true
+card_selection = "seasonal"  # Uses date-aware selection
+show_progress = true
+active_cards = ["winter_holiday", "halloween", "summer", "spring", "default"]
+
+[splash_screen_seasonal.effects]
+fade_in_duration = 0.4
+fade_out_duration = 0.3
+animation_speed = 1.0
+
+# Date ranges for seasonal cards (future feature)
+[splash_screen_seasonal.dates]
+winter_holiday = ["12-01", "12-31"]
+halloween = ["10-15", "11-01"]
+summer = ["06-21", "09-21"]
+spring = ["03-20", "06-20"]
+
+
+# ============================================
+# Example 5: Accessibility-Focused
+# ============================================
+[splash_screen_accessible]
+enabled = true
+duration = 2.0
+skip_on_keypress = true
+card_selection = "accessible"
+show_progress = true
+active_cards = ["simple_text"]
+
+[splash_screen_accessible.effects]
+# No animations for reduced motion preference
+fade_in_duration = 0.0
+fade_out_duration = 0.0
+animation_speed = 0.0
+
+[splash_screen_accessible.a11y]
+# Future accessibility features
+respect_reduced_motion = true
+high_contrast = true
+screen_reader_announce = true
+
+
+# ============================================
+# Example 6: Corporate Branding
+# ============================================
+[splash_screen_corporate]
+enabled = true
+duration = 2.0
+skip_on_keypress = false  # Force users to see branding
+card_selection = "company_logo"
+show_progress = true
+active_cards = ["company_logo"]
+
+[splash_screen_corporate.effects]
+fade_in_duration = 0.3
+fade_out_duration = 0.2
+animation_speed = 1.0
+
+[splash_screen_corporate.branding]
+# Company-specific settings
+company_name = "ACME Corporation"
+logo_file = "~/.config/tldw_cli/company_logo.txt"
+brand_colors = ["#003366", "#0066CC"]
+legal_text = "© 2024 ACME Corp. All rights reserved."
+
+
+# ============================================
+# Example 7: Performance Testing
+# ============================================
+[splash_screen_perf_test]
+enabled = true
+duration = 5.0
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["matrix", "glitch", "fire", "rainbow", "particle"]
+
+[splash_screen_perf_test.effects]
+fade_in_duration = 0.1
+fade_out_duration = 0.1
+animation_speed = 2.0  # Stress test animations
+
+[splash_screen_perf_test.metrics]
+# Future: Performance monitoring
+track_frame_rate = true
+track_cpu_usage = true
+track_render_time = true
+log_performance = true

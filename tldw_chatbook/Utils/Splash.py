@@ -1,9 +1,11 @@
 # Splash.py
 # Description: This file holds functions relating to the splashscreens for tldw_cli.
+# Updated to work with the new splash screen system as an additional ASCII art provider.
 #
 # Imports
 import os
 import time
+from typing import Optional, Dict, Any
 #
 # 3rd-party Libraries
 #
@@ -11,10 +13,9 @@ import time
 #
 #######################################################################################################################
 #
-# Functions:
+# Constants:
 
-def print_tldw_ascii():
-    print(r"""_____  _          ________  _    _                                 
+TLDW_ASCII_ART = r"""_____  _          ________  _    _                                 
 |_   _|| |        / /|  _  \| |  | | _                              
   | |  | |       / / | | | || |  | |(_)                             
   | |  | |      / /  | | | || |/\| |                                
@@ -36,9 +37,74 @@ def print_tldw_ascii():
  / _` || | / _` || '_ \    | __| \ \ /\ / / / _` || __| / __|| '_ \ 
 | (_| || || (_| || | | |   | |_   \ V  V / | (_| || |_ | (__ | | | |
  \__,_||_| \__,_||_| |_|    \__|   \_/\_/   \__,_| \__| \___||_| |_|
-""")
+"""
+
+# Additional ASCII art variations
+TLDW_ASCII_COMPACT = r"""
+╔══════════════════════════════════════════════════════════════════╗
+║  ████████╗██╗     ██████╗ ██╗    ██╗                           ║
+║  ╚══██╔══╝██║     ██╔══██╗██║    ██║                           ║
+║     ██║   ██║     ██║  ██║██║ █╗ ██║                           ║
+║     ██║   ██║     ██║  ██║██║███╗██║                           ║
+║     ██║   ███████╗██████╔╝╚███╔███╔╝                           ║
+║     ╚═╝   ╚══════╝╚═════╝  ╚══╝╚══╝                            ║
+║                                                                  ║
+║        Too Long; Didn't Watch aka ChatBook               ║
+╚══════════════════════════════════════════════════════════════════╝
+"""
+
+TLDW_ASCII_MINIMAL = r"""
+    ┌─┐┬  ┌┬┐┬ ┬   ┌─┐┬ ┬┌─┐┌┬┐┌┐ ┌─┐┌─┐┬┌─
+    │  │   ││││││   │  ├─┤├─┤ │ ├┴┐│ ││ │├┴┐
+    └─┘┴─┘─┴┘└┴┘   └─┘┴ ┴┴ ┴ ┴ └─┘└─┘└─┘┴ ┴
+           Too Long; Didn't Watch aka ChatBook
+"""
+
+#
+# Functions:
+
+def print_tldw_ascii():
+    """Legacy function for backwards compatibility."""
+    print(TLDW_ASCII_ART)
     time.sleep(1)
     return
+
+def get_ascii_art(name: str = "default") -> str:
+    """Get ASCII art by name for use in splash screens.
+    
+    Args:
+        name: Name of the ASCII art variant to retrieve.
+              Options: "default", "compact", "minimal"
+    
+    Returns:
+        The requested ASCII art as a string.
+    """
+    ascii_arts = {
+        "default": TLDW_ASCII_ART,
+        "compact": TLDW_ASCII_COMPACT,
+        "minimal": TLDW_ASCII_MINIMAL,
+        "classic": TLDW_ASCII_ART,  # Alias
+    }
+    
+    return ascii_arts.get(name, TLDW_ASCII_ART)
+
+def get_splash_card_config(name: str) -> Dict[str, Any]:
+    """Get a splash card configuration using ASCII art from this module.
+    
+    Args:
+        name: Name of the ASCII art variant to use.
+    
+    Returns:
+        Dictionary configuration for use with the splash screen system.
+    """
+    ascii_art = get_ascii_art(name)
+    
+    return {
+        "type": "static",
+        "content": ascii_art,
+        "style": "bold cyan on rgb(0,0,0)",
+        "effect": None
+    }
 
 
 

@@ -482,3 +482,24 @@ batch_size = 32
 # [chunking_settings]
 # default_method = "words"
 # ...
+
+# Document Generation Prompts
+[prompts]
+
+[prompts.document_generation]
+# Configuration for different document generation types
+
+[prompts.document_generation.timeline]
+prompt = "Create a detailed text-based timeline based on our conversation/materials being referenced. Include key dates, events, and their relationships in chronological order."
+temperature = 0.3
+max_tokens = 2000
+
+[prompts.document_generation.study_guide]
+prompt = "Create a detailed and well produced study guide based on the current focus of our conversation/materials in reference. Include key concepts, definitions, learning objectives, and potential exam questions."
+temperature = 0.5
+max_tokens = 3000
+
+[prompts.document_generation.briefing]
+prompt = "Create a detailed and well produced executive briefing document regarding this conversation and the subject material. Include key points, actionable insights, strategic implications, and recommendations."
+temperature = 0.4
+max_tokens = 2500

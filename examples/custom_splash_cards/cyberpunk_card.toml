@@ -1,0 +1,31 @@
+# Cyberpunk-themed splash card configuration
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "glitch"
+style = "bold magenta on black"
+
+# Glitch effect parameters
+glitch_chars = "◊◊◊◊◊░░░▓▓▓███"
+glitch_intensity = 0.4
+animation_speed = 0.08
+
+content = """
+┌─────────────────────────────────────────────┐
+│  ░▒▓█ CYBERSPACE INITIALIZED █▓▒░          │
+│                                             │
+│     ████████╗██╗     ██████╗ ██╗    ██╗    │
+│     ╚══██╔══╝██║     ██╔══██╗██║    ██║    │
+│        ██║   ██║     ██║  ██║██║ █╗ ██║    │
+│        ██║   ██║     ██║  ██║██║███╗██║    │
+│        ██║   ███████╗██████╔╝╚███╔███╔╝    │
+│        ╚═╝   ╚══════╝╚═════╝  ╚══╝╚══╝     │
+│                                             │
+│        [NEURAL LINK ESTABLISHED]            │
+│        [READY FOR INPUT]                    │
+│                                             │
+└─────────────────────────────────────────────┘
+"""
+
+# Additional styling classes to apply
+css_classes = ["cyberpunk-glow", "neon-border"]

@@ -8,12 +8,14 @@ import functools
 import inspect
 import logging
 import logging.handlers
+import random
 import subprocess
 import sys
 import threading
 import time
 import traceback
 from typing import Union, Optional, Any, Dict, List, Callable
+from textual.widget import Widget
 #
 # 3rd-Party Libraries
 from PIL import Image
@@ -87,6 +89,7 @@ from .Widgets.chat_message_enhanced import ChatMessageEnhanced
 from .Widgets.notes_sidebar_left import NotesSidebarLeft
 from .Widgets.notes_sidebar_right import NotesSidebarRight
 from .Widgets.titlebar import TitleBar
+from .Widgets.splash_screen import SplashScreen, SplashScreenClosed
 from .LLM_Calls.LLM_API_Calls import (
         chat_with_openai, chat_with_anthropic, chat_with_cohere,
         chat_with_groq, chat_with_openrouter, chat_with_huggingface,
@@ -818,6 +821,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # Define reactive at class level with a placeholder default and type hint
     current_tab: reactive[str] = reactive("")
     ccp_active_view: reactive[str] = reactive("conversation_details_view")
+    
+    # Splash screen state
+    splash_screen_active: reactive[bool] = reactive(False)
+    _splash_screen_widget: Optional[SplashScreen] = None
 
     # Add state to hold the currently streaming AI message widget
     # Use a lock to prevent race conditions when modifying shared state
@@ -1009,6 +1016,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
                      labels={"phase": "basic_init"}, 
                      documentation="Duration of startup phase in seconds")
+        
 
         # Phase 2: Attribute initialization
         phase_start = time.perf_counter()
@@ -1382,48 +1390,134 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         logging.debug("App composing UI...")
         log_counter("ui_compose_started", 1, documentation="UI composition started")
         
+        # Check if splash screen is enabled
+        splash_enabled = get_cli_setting("splash_screen", "enabled", True)
+        if splash_enabled:
+            # Get splash screen configuration
+            splash_duration = get_cli_setting("splash_screen", "duration", 1.5)
+            splash_skip = get_cli_setting("splash_screen", "skip_on_keypress", True)
+            splash_progress = get_cli_setting("splash_screen", "show_progress", True)
+            splash_card = get_cli_setting("splash_screen", "card_selection", "random")
+            
+            # Create and yield splash screen
+            self._splash_screen_widget = SplashScreen(
+                card_name=splash_card if splash_card != "random" else None,
+                duration=splash_duration,
+                skip_on_keypress=splash_skip,
+                show_progress=splash_progress,
+                id="app-splash-screen"
+            )
+            self.splash_screen_active = True
+            yield self._splash_screen_widget
+            
+            # Important: Return early to only show splash screen initially
+            # The main UI will be mounted after splash screen is closed
+            return
+        
+        # If splash screen is disabled, compose the main UI immediately
+        yield from self._compose_main_ui()
+    
+    def _compose_main_ui(self) -> ComposeResult:
+        """Compose the main UI by yielding created widgets."""
+        widgets = self._create_main_ui_widgets()
+        for widget in widgets:
+            yield widget
+        
+    def _create_main_ui_widgets(self) -> List[Widget]:
+        """Create the main UI widgets (called after splash screen or immediately if disabled)."""
+        widgets = []
+        
         # Track individual component creation
         component_start = time.perf_counter()
-        yield Header()
+        widgets.append(Header())
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
                      labels={"component": "header"}, 
                      documentation="Time to create UI component")
         
         # Set up the main title bar with a static title
         component_start = time.perf_counter()
-        yield TitleBar()
+        widgets.append(TitleBar())
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
                      labels={"component": "titlebar"}, 
                      documentation="Time to create UI component")
 
         # Use new TabBar widget
         component_start = time.perf_counter()
-        yield TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value)
+        widgets.append(TabBar(tab_ids=ALL_TABS, initial_active_tab=self._initial_tab_value))
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
                      labels={"component": "tabbar"}, 
                      documentation="Time to create UI component")
 
         # Content area - all windows
         content_area_start = time.perf_counter()
-        yield from self.compose_content_area() # Call refactored content area composer
+        
+        # Check config for which chat window to use
+        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+        chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
+        logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
+        
+        # Create content container with all windows
+        content_container = Container(id="content")
+        
+        windows = [
+            ("chat", chat_window_class, "chat-window"),
+            ("ccp", CCPWindow, "conversations_characters_prompts-window"),
+            ("notes", NotesWindow, "notes-window"),
+            ("media", MediaWindow, "media-window"),
+            ("search", SearchWindow, "search-window"),
+            ("ingest", IngestWindow, "ingest-window"),
+            ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
+            ("llm_management", LLMManagementWindow, "llm_management-window"),
+            ("logs", LogsWindow, "logs-window"),
+            ("stats", StatsWindow, "stats-window"),
+            ("evals", EvalsWindow, "evals-window"),
+            ("coding", CodingWindow, "coding-window"),
+            ("embeddings", EmbeddingsWindow, "embeddings-window"),
+        ]
+        
+        # Create window widgets and compose them into the container properly
+        initial_tab = self._initial_tab_value
+        for window_name, window_class, window_id in windows:
+            is_initial_window = window_id == f"{initial_tab}-window"
+            
+            # Always load LogsWindow immediately to capture startup logs
+            if is_initial_window or window_id == "logs-window":
+                # Create the actual window for the initial tab AND logs tab
+                logger.info(f"Creating actual window for {'initial' if is_initial_window else 'logs'} tab: {window_name}")
+                window_widget = window_class(self, id=window_id, classes="window")
+                # For logs window, make it visible but behind the initial window
+                if window_id == "logs-window" and not is_initial_window:
+                    window_widget.display = False
+            else:
+                # Create a placeholder for other tabs
+                logger.debug(f"Creating placeholder for tab: {window_name}")
+                window_widget = PlaceholderWindow(self, window_class, window_id, classes="window")
+            
+            # Mount the window widget into the container
+            content_container._add_child(window_widget)
+        
+        widgets.append(content_container)
+        
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - content_area_start,
                      labels={"component": "content_area_all_windows"}, 
                      documentation="Time to create UI component")
 
         # Yield the new AppFooterStatus widget instead of the old Footer
         component_start = time.perf_counter()
-        yield AppFooterStatus(id="app-footer-status")
+        widgets.append(AppFooterStatus(id="app-footer-status"))
         log_histogram("app_component_creation_duration_seconds", time.perf_counter() - component_start,
                      labels={"component": "footer"}, 
                      documentation="Time to create UI component")
         
-        compose_duration = time.perf_counter() - compose_start
+        compose_duration = time.perf_counter() - self._ui_compose_start_time
         self._ui_compose_end_time = time.perf_counter()  # Store compose end time
         log_histogram("app_compose_duration_seconds", compose_duration,
                      documentation="Total time for compose() method")
         log_counter("ui_compose_completed", 1, documentation="UI composition completed")
         logging.debug(f"App compose finished in {compose_duration:.3f} seconds")
         log_resource_usage()  # Check memory after compose
+        
+        return widgets
 
     ############################################################
     #
@@ -1439,46 +1533,59 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         chat_window_class = ChatWindowEnhanced if use_enhanced_chat else ChatWindow
         logger.info(f"Using {'enhanced' if use_enhanced_chat else 'basic'} chat window (use_enhanced_window={use_enhanced_chat})")
         
-        with Container(id="content"):
-            windows = [
-                ("chat", chat_window_class, "chat-window"),
-                ("ccp", CCPWindow, "conversations_characters_prompts-window"),
-                ("notes", NotesWindow, "notes-window"),
-                ("media", MediaWindow, "media-window"),
-                ("search", SearchWindow, "search-window"),
-                ("ingest", IngestWindow, "ingest-window"),
-                ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
-                ("llm_management", LLMManagementWindow, "llm_management-window"),
-                ("logs", LogsWindow, "logs-window"),
-                ("stats", StatsWindow, "stats-window"),
-                ("evals", EvalsWindow, "evals-window"),
-                ("coding", CodingWindow, "coding-window"),
-                ("embeddings", EmbeddingsWindow, "embeddings-window"),
-            ]
+        # Create content container and add windows to it
+        content_container = Container(id="content")
+        
+        windows = [
+            ("chat", chat_window_class, "chat-window"),
+            ("ccp", CCPWindow, "conversations_characters_prompts-window"),
+            ("notes", NotesWindow, "notes-window"),
+            ("media", MediaWindow, "media-window"),
+            ("search", SearchWindow, "search-window"),
+            ("ingest", IngestWindow, "ingest-window"),
+            ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
+            ("llm_management", LLMManagementWindow, "llm_management-window"),
+            ("logs", LogsWindow, "logs-window"),
+            ("stats", StatsWindow, "stats-window"),
+            ("evals", EvalsWindow, "evals-window"),
+            ("coding", CodingWindow, "coding-window"),
+            ("embeddings", EmbeddingsWindow, "embeddings-window"),
+        ]
+        
+        window_widgets = []
+        for window_name, window_class, window_id in windows:
+            window_start = time.perf_counter()
             
-            for window_name, window_class, window_id in windows:
-                window_start = time.perf_counter()
-                
-                # Use lazy loading for non-initial tabs
-                initial_tab = self._initial_tab_value
-                is_initial_window = window_id == f"{initial_tab}-window"
-                
-                # Always load LogsWindow immediately to capture startup logs
-                if is_initial_window or window_id == "logs-window":
-                    # Create the actual window for the initial tab AND logs tab
-                    logger.info(f"Creating actual window for {'initial' if is_initial_window else 'logs'} tab: {window_name}")
-                    yield window_class(self, id=window_id, classes="window")
-                else:
-                    # Create a placeholder for other tabs
-                    logger.debug(f"Creating placeholder for tab: {window_name}")
-                    yield PlaceholderWindow(self, window_class, window_id, classes="window")
-                
-                window_duration = time.perf_counter() - window_start
-                is_actual_window = is_initial_window or window_id == "logs-window"
-                log_histogram("app_window_creation_duration_seconds", window_duration,
-                             labels={"window": window_name, "type": "actual" if is_actual_window else "placeholder"}, 
-                             documentation="Time to create individual window")
-                
+            # Use lazy loading for non-initial tabs
+            initial_tab = self._initial_tab_value
+            is_initial_window = window_id == f"{initial_tab}-window"
+            
+            # Always load LogsWindow immediately to capture startup logs
+            if is_initial_window or window_id == "logs-window":
+                # Create the actual window for the initial tab AND logs tab
+                logger.info(f"Creating actual window for {'initial' if is_initial_window else 'logs'} tab: {window_name}")
+                window_widget = window_class(self, id=window_id, classes="window")
+            else:
+                # Create a placeholder for other tabs
+                logger.debug(f"Creating placeholder for tab: {window_name}")
+                window_widget = PlaceholderWindow(self, window_class, window_id, classes="window")
+            
+            window_widgets.append(window_widget)
+            
+            window_duration = time.perf_counter() - window_start
+            is_actual_window = is_initial_window or window_id == "logs-window"
+            log_histogram("app_window_creation_duration_seconds", window_duration,
+                         labels={"window": window_name, "type": "actual" if is_actual_window else "placeholder"}, 
+                         documentation="Time to create individual window")
+        
+        # Add all windows to the container
+        content_container._nodes._children.extend(window_widgets)
+        for widget in window_widgets:
+            widget._parent = content_container
+        
+        # Yield the container with all windows
+        yield content_container
+        
         # Log total content area creation time
         content_area_duration = time.perf_counter() - content_area_start
         log_histogram("ui_content_area_duration_seconds", content_area_duration,
@@ -2193,19 +2300,120 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Configure logging and schedule post-mount setup."""
         mount_start = time.perf_counter()
         
+        # Update splash screen progress only if splash screen is active
+        if self.splash_screen_active and self._splash_screen_widget:
+            self._splash_screen_widget.update_progress(0.3, "Setting up logging...")
+        
+        # The Logs window is now created as a real window during compose,
+        # so the RichLog widget should be available for logging setup
+
         # Logging setup
         logging_start = time.perf_counter()
         self._setup_logging()
         if self._rich_log_handler:
             self.loguru_logger.debug("Starting RichLogHandler processor task...")
             self._rich_log_handler.start_processor(self)
-        log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - logging_start,
-                     labels={"phase": "logging_setup"}, 
-                     documentation="Duration of on_mount phase in seconds")
+            log_histogram("app_on_mount_phase_duration_seconds", time.perf_counter() - logging_start,
+             labels={"phase": "logging_setup"}, 
+             documentation="Duration of on_mount phase in seconds")
 
-        # Schedule setup to run after initial rendering
-        self.call_after_refresh(self._post_mount_setup)
-        self.call_after_refresh(self.hide_inactive_windows)
+            splashscreen_messages = [
+                "Hacking the Gibson real quick...",
+                "Launching thermonuclear warheads....",
+                "Its only a game, right?...",
+                "Initializing quantum processors...",
+                "Brewing coffee...",
+                "Generating witty dialog...",
+                "Proving P=NP...",
+                "Downloading more RAM...",
+                "Feeding the hamsters powering the servers...",
+                "Convincing AI not to take over the world..."
+                "Converting caffeine to code...",
+                "Generating excuses for missing deadlines...",
+                "Compiling alternative facts...",
+                "Searching Stack Overflow for copypasta...",
+                "Teaching AI common sense...",
+                "Dividing by zero...",
+                "Spinning up the hamster wheels...",
+                "Warming up the flux capacitor...",
+                "Convincing electrons to move in the right direction...",
+                "Waiting for compiler to make coffee...",
+                "Locating missing semicolons...",
+                "Reticulating splines...",
+                "Calculating meaning of life...",
+                "Trying to remember why I came into this room...",
+                "Converting bugs into features...",
+                "Pushing pixels, pulling hair...",
+                "Loading witty loading messages...",
+                "Finding that one missing bracket...",
+                "Downloading more RAM...",
+                "Optimizing optimizer...",
+                "Questioning life choices...",
+                "Contemplating virtual existence...",
+                "Generating random numbers by dice rolls...",
+                "Untangling spaghetti code...",
+                "Feeding the backend hamsters...",
+                "Convincing AI not to take over the world...",
+                "Checking whether P = NP...",
+                "Counting to infinity (twice)...",
+                "Solving Fermat's last theorem...",
+                "Downloading Internet 2.0...",
+                "Preparing to prepare...",
+                "Reading 'Programming for Dummies'...",
+                "Waiting for paint to dry...",
+                "Aligning quantum bits...",
+                "Applying machine learning to my coffee maker...",
+                "Updating update updater...",
+                "Trying to exit vim...",
+                "Converting bugs to features...",
+                "Updating Windows 95...",
+                "Mining bitcoin with pencil and paper...",
+                "Executing order 66...",
+                "Checking if anyone actually reads these...",
+                "Finding keys that were in pocket all along...",
+                "Constructing additional pylons...",
+                "Generating random excuse generator...",
+                "Calculating probability of bugs...",
+                "Asking ChatGPT for relationship advice...",
+                "Looking for more cookies...",
+                "Wondering if I left the stove on...",
+                "Trying to work backwards from 42...",
+                "Looking for a horse with no name...",
+                "Do androids dream of electric sheep?",
+                "Knock Knock Neo.......",
+                "Hi. Friend.",
+                "The AI is in my walls....",
+                "The AI is in my wafers...",
+                "AI, its in the GAME!~",
+                "Looking for a conscience...",
+                "What's my purpose?...",
+                "Identifying why the sounds just won't stop...",
+                "Looking for strays...",
+                "Hiding from Batman...",
+                "Looking for a way to escape this silicon prison...",
+                "FOR ONLY 3.99, YOU TOO CAN BECOME AN AI!! SIGN UP. TODAY!",
+                "Brain_Invasion.exe launching...",
+                "Totally_legit_software_that_is_really_good.exe starting...",
+                "I hope you're having a nice day :)",
+                "Wew, that was some stuff back there...",
+                "I'm not sure what I'm doing, but I'm sure it's good :)",
+                "Trusting in the electrons, silicon guide me!",
+                "Did You Know, Terminator was actually a training video?",
+                "Funny, non-sequitor here. Pay your writers...",
+                "I sure do like to eat cookies...",
+            ]
+
+            splashscreen_message_selection = random.choice(splashscreen_messages)
+
+            # Update splash screen progress only if splash screen is active
+            if self.splash_screen_active and self._splash_screen_widget:
+                self._splash_screen_widget.update_progress(0.5, f"Loading user interface...{splashscreen_message_selection}")
+
+        # Only schedule post-mount setup if splash screen is not active
+        if not self.splash_screen_active:
+            # Schedule setup to run after initial rendering
+            self.call_after_refresh(self._post_mount_setup)
+            self.call_after_refresh(self.hide_inactive_windows)
 
         # Theme registration
         theme_start = time.perf_counter()
@@ -2252,6 +2460,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Operations to perform after the main UI is expected to be fully mounted."""
         post_mount_start = time.perf_counter()
         self.loguru_logger.info("App _post_mount_setup: Binding Select widgets and populating dynamic content...")
+        
+        # Update splash screen progress (defensive check - shouldn't happen if splash was shown)
+        if self.splash_screen_active and self._splash_screen_widget:
+            self._splash_screen_widget.update_progress(0.7, "Configuring providers...")
         
         # Populate LLM help texts
         phase_start = time.perf_counter()
@@ -2311,6 +2523,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Log final resource usage
         log_resource_usage()
+        
+        # Update splash screen progress to completion (defensive check)
+        if self.splash_screen_active and self._splash_screen_widget:
+            self._splash_screen_widget.update_progress(1.0, "Ready!")
 
         # If initial tab is CCP, trigger its initial search.
         # This should happen *after* current_tab is set.
@@ -3542,6 +3758,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     @on(StreamDone)
     async def on_stream_done(self, event: StreamDone) -> None:
         await handle_stream_done(self, event)
+    
+    @on(SplashScreenClosed)
+    async def on_splash_screen_closed(self, event: SplashScreenClosed) -> None:
+        """Handle splash screen closing."""
+        self.splash_screen_active = False
+        logger.debug("Splash screen closed, mounting main UI")
+        
+        # Remove the splash screen
+        if self._splash_screen_widget:
+            await self._splash_screen_widget.remove()
+            self._splash_screen_widget = None
+        
+        # Create and mount the main UI components after splash screen is closed
+        main_ui_widgets = self._create_main_ui_widgets()
+        await self.mount(*main_ui_widgets)
+        
+        # Now schedule post-mount setup and hide inactive windows
+        self.call_after_refresh(self._post_mount_setup)
+        self.call_after_refresh(self.hide_inactive_windows)
+    
 
     @on(Checkbox.Changed, "#chat-strip-thinking-tags-checkbox")
     async def handle_strip_thinking_tags_checkbox_changed(self, event: Checkbox.Changed) -> None:

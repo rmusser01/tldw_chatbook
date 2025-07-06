@@ -46,6 +46,7 @@ CSS_MODULES = [
     "features/_evaluation.tcss",
     "features/_metrics.tcss",
     "features/_embeddings.tcss",
+    "features/_splash.tcss",
     
     # 5. Utilities - Helpers and Overrides (can override anything)
     "utilities/_helpers.tcss",

@@ -51,6 +51,7 @@
 @import "./features/_embeddings.tcss";
 @import "./features/_evaluation.tcss";
 @import "./features/_metrics.tcss";
+@import "./features/_splash.tcss";
 
 /* ========================================
  * 5. UTILITIES - Helpers and Overrides (can override anything)

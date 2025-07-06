@@ -976,6 +976,21 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 # Default auth token can be stored here, or leave empty if user must always provide
 auth_token = "default-secret-key-for-single-user"
 
+[splash_screen]
+# Splash screen configuration for startup animations
+enabled = true  # Enable/disable splash screen
+duration = 1.5  # Duration in seconds to display splash screen
+skip_on_keypress = true  # Allow users to skip with any keypress
+card_selection = "random"  # "random", "sequential", or specific card name
+show_progress = true  # Show initialization progress bar
+active_cards = ["default", "matrix", "glitch", "retro", "classic", "compact", "minimal"]  # Available splash cards
+
+[splash_screen.effects]
+# Animation effect settings
+fade_in_duration = 0.3  # Fade in time in seconds
+fade_out_duration = 0.2  # Fade out time in seconds
+animation_speed = 1.0  # Animation playback speed multiplier
+
 [logging]
 # Log file will be placed in the same directory as the chachanotes_db_path below.
 log_filename = "tldw_cli_app.log"

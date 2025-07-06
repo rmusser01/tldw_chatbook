@@ -307,6 +307,15 @@ Located at `~/.local/share/tldw_cli/`:
 - `prompts.db`: Saved prompt templates
 - `rag_indexing.db`: RAG indexing state (if using RAG features)
 
+### Splash Screen Customization
+The application includes a customizable splash screen system inspired by Call of Duty's calling cards. Features include:
+- Multiple animation effects (Matrix rain, glitch, retro terminal)
+- Progress tracking during startup
+- Configurable duration and skip options
+- Support for custom splash cards
+
+For detailed information on creating and customizing splash screens, see the [Splash Screen Guide](SPLASH_SCREEN_GUIDE.md).
+
 ## Upgrading from requirements.txt
 
 If you previously installed using `requirements.txt`:
