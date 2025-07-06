@@ -196,8 +196,9 @@ class SplashScreen(Container):
                 "phosphor_glow": True
             }
         }
-        
-        return built_in_cards.get(card_name, built_in_cards["default"])
+
+        card_selection = random.choice(list(built_in_cards.keys()))
+        return built_in_cards.get(card_name, built_in_cards[card_selection])
     
     def compose(self) -> ComposeResult:
         """Compose the splash screen layout."""

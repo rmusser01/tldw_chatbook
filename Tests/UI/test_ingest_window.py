@@ -5,6 +5,8 @@ import pytest
 import pytest_asyncio
 from pytest_mock import MockerFixture  # For mocking
 from pathlib import Path
+import os
+from unittest.mock import patch
 #
 # Third-party Libraries
 from textual.app import App, ComposeResult
@@ -34,34 +36,61 @@ async def get_ingest_window(pilot: Pilot) -> IngestWindow:
 
 @pytest_asyncio.fixture
 async def app_pilot() -> Pilot:
-    app = TldwCli()
-    async with app.run_test() as pilot:
-        # Ensure the Ingest tab is active. Default is Chat.
-        # Switching tabs is handled by app.py's on_button_pressed for tab buttons.
-        # We need to find the Ingest tab button and click it.
-        # Assuming tab IDs are like "tab-ingest"
-        try:
-            await pilot.click("#tab-ingest")
-        except QueryError:
-            # Fallback if direct ID click isn't working as expected in test setup
-            # This might indicate an issue with tab IDs or pilot interaction timing
-            all_buttons = pilot.app.query(Button)
-            ingest_tab_button = None
-            for btn in all_buttons:
-                if btn.id == "tab-ingest":
-                    ingest_tab_button = btn
-                    break
-            assert ingest_tab_button is not None, "Ingest tab button not found"
-            await pilot.click(ingest_tab_button)
+    # Patch the config cache to disable splash screen
+    import tldw_chatbook.config as config_module
+    
+    # Save original cache
+    original_cache = config_module._CONFIG_CACHE
+    
+    # Create a test config with splash screen disabled
+    test_config = {
+        "splash_screen": {
+            "enabled": False
+        }
+    }
+    
+    # If there's existing config, merge it
+    if original_cache:
+        test_config = {**original_cache, **test_config}
+    
+    # Set the test config
+    config_module._CONFIG_CACHE = test_config
+    
+    try:
+        app = TldwCli()
+        async with app.run_test() as pilot:
+            # Wait a moment for UI to stabilize
+            await pilot.pause(0.5)
+            
+            # Ensure the Ingest tab is active. Default is Chat.
+            # Switching tabs is handled by app.py's on_button_pressed for tab buttons.
+            # We need to find the Ingest tab button and click it.
+            # Assuming tab IDs are like "tab-ingest"
+            try:
+                await pilot.click("#tab-ingest")
+            except QueryError:
+                # Fallback if direct ID click isn't working as expected in test setup
+                # This might indicate an issue with tab IDs or pilot interaction timing
+                all_buttons = pilot.app.query(Button)
+                ingest_tab_button = None
+                for btn in all_buttons:
+                    if btn.id == "tab-ingest":
+                        ingest_tab_button = btn
+                        break
+                assert ingest_tab_button is not None, "Ingest tab button not found"
+                await pilot.click(ingest_tab_button)
 
-        # Verify IngestWindow is present and active
-        ingest_window = await get_ingest_window(pilot)
-        assert ingest_window is not None
-        # IngestWindow widget itself should always have display=True
-        assert ingest_window.display is True, "IngestWindow is not visible after switching to Ingest tab"
-        # Also check the app's current_tab reactive variable
-        assert pilot.app.current_tab == "ingest", "App's current_tab is not set to 'ingest'"
-        yield pilot
+            # Verify IngestWindow is present and active
+            ingest_window = await get_ingest_window(pilot)
+            assert ingest_window is not None
+            # IngestWindow widget itself should always have display=True
+            assert ingest_window.display is True, "IngestWindow is not visible after switching to Ingest tab"
+            # Also check the app's current_tab reactive variable
+            assert pilot.app.current_tab == "ingest", "App's current_tab is not set to 'ingest'"
+            yield pilot
+    finally:
+        # Restore original cache
+        config_module._CONFIG_CACHE = original_cache
 
 
 # Test Class

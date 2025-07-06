@@ -31,11 +31,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 #
 # Import Local libraries
-from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
+from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatAuthenticationError, ChatRateLimitError, \
+    ChatBadRequestError, ChatProviderError, ChatConfigurationError
 from tldw_chatbook.config import load_settings, settings
 from tldw_chatbook.Utils.Utils import logging
-from tldw_chatbook.Chat.Chat_Functions import ChatAuthenticationError, ChatRateLimitError, \
-    ChatBadRequestError, ChatProviderError, ChatConfigurationError
 #
 #######################################################################################################################
 # Function Definitions

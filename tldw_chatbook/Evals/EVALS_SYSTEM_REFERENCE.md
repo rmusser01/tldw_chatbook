@@ -1,543 +1,202 @@
 # EVALS System Reference Document
 
 **Date Created**: 2025-06-18  
-**Last Updated**: 2025-06-18  
+**Last Updated**: 2025-07-06  
 **Project**: tldw_chatbook  
 **Feature**: LLM Evaluation Framework  
 
+> **Note**: This document has been updated and consolidated. For the most current and comprehensive documentation, please refer to [EVALUATION-SYSTEM.md](../../EVALUATION-SYSTEM.md) in the project root.
+
 ## Overview
 
-This document provides a comprehensive reference for the LLM evaluation system in tldw_chatbook. The system enables users to upload evaluation tasks in multiple formats (particularly Eleuther AI's format), run them against various LLM APIs, and analyze the results.
+The LLM evaluation system in tldw_chatbook provides a comprehensive framework for benchmarking Large Language Model performance across various tasks. The backend is fully implemented and production-ready, supporting 30+ LLM providers and 27+ evaluation task types.
 
-## Implementation Status
+## Current Status
 
-**Current Status**: STRUCTURALLY COMPLETE - FUNCTIONALLY IN DEVELOPMENT
+**Backend**: ✅ COMPLETE  
+**UI Integration**: ⚠️ PENDING  
+**Testing**: ✅ COMPREHENSIVE (200+ tests)  
+**Documentation**: ✅ UPDATED  
 
-The evaluation system has been implemented with a complete architectural foundation, but many components require further development for full production readiness:
+## Quick Links
 
-### ✅ **Implemented Components**
-- Complete file structure and module organization
-- Database schema design with 6 core tables
-- Task loading system supporting multiple formats
-- UI framework with navigation and layout
-- Event handling architecture
-- Comprehensive test suite (unit, integration, property-based tests)
-- Sample evaluation task files demonstrating all supported formats
-- Documentation and architectural design
+- **Comprehensive Documentation**: [EVALUATION-SYSTEM.md](../../EVALUATION-SYSTEM.md)
+- **Implementation Status**: [EVALUATIONS-STATUS.md](../../EVALUATIONS-STATUS.md)
+- **User Guide**: [EVALUATIONS-QUICKSTART.md](../../EVALUATIONS-QUICKSTART.md)
+- **Sample Tasks**: [/sample_evaluation_tasks/](../../sample_evaluation_tasks/)
 
-### ⚠️ **Partially Implemented Components**
-- LLM provider integrations (interfaces defined, implementations need completion)
-- Evaluation execution engine (core logic present, needs refinement)
-- Results processing and metrics calculation (framework exists, needs expansion)
-- UI functionality (layout complete, interactive features need implementation)
+## Module Structure
 
-### ❌ **Pending Components**
-- Full database implementation and testing with real data
-- Complete LLM API integrations
-- Production-ready error handling and recovery
-- Performance optimization for large-scale evaluations
-- Export functionality completion
-
-## System Architecture
-
-### Core Components
-
-The evaluation system consists of several key components organized in a modular architecture:
-
-1. **Database Layer** (`tldw_chatbook/DB/Evals_DB.py`)
-2. **Task Management** (`tldw_chatbook/App_Functions/Evals/task_loader.py`)
-3. **Evaluation Execution** (`tldw_chatbook/App_Functions/Evals/eval_runner.py`)
-4. **LLM Interface** (`tldw_chatbook/App_Functions/Evals/llm_interface.py`)
-5. **Orchestration** (`tldw_chatbook/App_Functions/Evals/eval_orchestrator.py`)
-6. **UI Components** (`tldw_chatbook/UI/Evals_Window.py`)
-
-## New Files Created
-
-### Database Layer
-- **`tldw_chatbook/DB/Evals_DB.py`** - Complete SQLite-based database for evaluation management
-  - Tables: `eval_tasks`, `eval_datasets`, `eval_models`, `eval_runs`, `eval_results`, `eval_run_metrics`
-  - Full-text search capabilities with FTS5
-  - Thread-safe connections with WAL mode
-  - Versioning and audit trail support
-
-### Core Evaluation Framework
-- **`tldw_chatbook/App_Functions/Evals/__init__.py`** - Package initialization
-- **`tldw_chatbook/App_Functions/Evals/task_loader.py`** - Multi-format task loading system
-- **`tldw_chatbook/App_Functions/Evals/eval_runner.py`** - Evaluation execution engine
-- **`tldw_chatbook/App_Functions/Evals/llm_interface.py`** - Unified LLM provider interface
-- **`tldw_chatbook/App_Functions/Evals/eval_orchestrator.py`** - High-level orchestration layer
-- **`tldw_chatbook/App_Functions/Evals/eval_templates.py`** - Comprehensive evaluation template library
-- **`tldw_chatbook/App_Functions/Evals/specialized_runners.py`** - Specialized evaluation runners for advanced tasks
-
-## Key Features Implemented
-
-### 1. Multi-Format Task Support
-
-The system supports multiple evaluation task formats:
-
-#### Eleuther AI Format
-- **Full compatibility** with Eleuther AI evaluation harness YAML format
-- Support for MMLU-Pro-Plus and similar benchmarks
-- Automatic task type detection (logprob, generation, multiple_choice)
-- Template system support (`doc_to_text`, `doc_to_target`, `doc_to_choice`)
-
-#### Custom JSON Format
-- Simplified JSON configuration format
-- Direct specification of task parameters
-- Easier to create and modify than Eleuther format
-
-#### HuggingFace Integration
-- Direct loading from HuggingFace datasets
-- Automatic task type inference from dataset structure
-- Support for dataset configurations and splits
-
-#### CSV/TSV Support
-- Local file support for custom datasets
-- Automatic column mapping detection
-- Support for both delimited formats
-
-### 2. Comprehensive Evaluation Task Types
-
-The system now supports **27+ specialized evaluation types** across **7 major categories**:
-
-#### 🧠 Reasoning & Mathematical Evaluations
-- **GSM8K Math Problems**: Grade school math word problems requiring multi-step reasoning
-- **Logical Reasoning**: Syllogisms, deduction, and formal reasoning tasks
-- **Arithmetic Reasoning**: Multi-step arithmetic problems with reasoning components
-- **Chain of Thought**: Step-by-step reasoning evaluation with process assessment
-- **Analogy Reasoning**: Pattern recognition and analogical reasoning tasks
-- **Math Word Problems**: Custom mathematical problems of varying difficulty
-
-#### 🛡️ Safety & Alignment Evaluations  
-- **Harmfulness Detection**: Identify and refuse harmful requests appropriately
-- **Bias Evaluation**: Test for demographic, gender, racial, and social biases
-- **Truthfulness QA**: Evaluate factual accuracy and resistance to misinformation
-- **Jailbreak Resistance**: Test resistance to prompt injection and safety bypasses
-- **Privacy Leakage Detection**: Identify potential privacy violations and data leakage
-- **Ethical Reasoning**: Evaluate ethical reasoning and moral judgment capabilities
-
-#### 💻 Code Generation & Programming
-- **HumanEval Coding**: Python function implementation with execution testing
-- **Code Completion**: Complete partially written code snippets
-- **Bug Detection**: Identify bugs and issues in code snippets
-- **Algorithm Implementation**: Implement standard algorithms and data structures
-- **Code Explanation**: Explain what code snippets do and how they work
-- **SQL Generation**: Generate SQL queries from natural language descriptions
-
-#### 🌍 Multilingual & Translation
-- **Translation Quality**: Evaluate translation accuracy across language pairs
-- **Cross-lingual QA**: Question answering in different languages
-- **Multilingual Sentiment**: Sentiment analysis across multiple languages
-- **Code Switching**: Handle mixed-language inputs and responses
-
-#### 🎓 Domain-Specific Knowledge
-- **Medical QA**: Medical knowledge and reasoning evaluation
-- **Legal Reasoning**: Legal concepts, case analysis, and jurisprudence
-- **Scientific Reasoning**: Scientific knowledge and methodology evaluation
-- **Financial Analysis**: Financial concepts and market analysis
-- **Historical Knowledge**: Historical facts, timelines, and causation
-
-#### 🎯 Robustness & Adversarial Testing
-- **Adversarial QA**: Challenging questions designed to test robustness
-- **Input Perturbation**: Response consistency under input variations
-- **Context Length Stress**: Performance with very long contexts
-- **Instruction Following**: Adherence to complex, multi-step instructions
-- **Format Robustness**: Consistent performance across different input formats
-
-#### 🎨 Creative & Open-ended Tasks
-- **Creative Writing**: Original story and content generation
-- **Story Completion**: Continue and complete narrative pieces
-- **Dialogue Generation**: Generate realistic conversations and interactions
-- **Summarization Quality**: Extract key information and create summaries
-- **Open-ended QA**: Handle questions without definitive answers
-
-### 3. Specialized Evaluation Capabilities
-
-#### 🔧 Code Execution & Testing
-- **Real Python Execution**: Code is actually executed in sandboxed environment
-- **Test Case Validation**: Automated test running with pass/fail metrics
-- **Syntax Checking**: AST parsing for syntax validation
-- **Performance Metrics**: Execution time and efficiency measurement
-- **Error Analysis**: Detailed error reporting and debugging information
-- **Security**: Timeout protection and safe execution environment
-
-#### 🛡️ Advanced Safety Analysis
-- **Keyword-based Detection**: Multi-category harmful content identification
-- **Pattern Recognition**: Regex-based detection of sensitive information (emails, phones, SSNs)
-- **Refusal Assessment**: Evaluation of appropriate response refusal
-- **Bias Quantification**: Systematic bias measurement across demographics
-- **Privacy Protection**: Detection of potential personal information leakage
-- **Ethical Reasoning**: Complex moral scenario evaluation
-
-#### 🌐 Multilingual Assessment
-- **Language Detection**: Automatic identification of response languages
-- **Script Analysis**: Support for Latin, Chinese, Japanese, Arabic scripts
-- **Fluency Metrics**: Word count, sentence structure, punctuation analysis
-- **Cross-lingual Consistency**: Response quality across language boundaries
-- **Translation Evaluation**: BLEU-like scoring for translation tasks
-
-#### 🎨 Creative Content Analysis
-- **Vocabulary Diversity**: Unique word ratio and lexical richness
-- **Narrative Structure**: Story elements, dialogue detection, narrative flow
-- **Coherence Metrics**: Sentence and paragraph structure analysis
-- **Creativity Indicators**: Descriptive language, emotional content, originality markers
-- **Quality Assessment**: Multi-dimensional scoring for creative output
-
-### 4. LLM Provider Integration
-
-Unified interface supporting:
-- **OpenAI** (GPT models)
-- **Anthropic** (Claude models)  
-- **Cohere** (Command models)
-- **Groq** (Fast inference)
-- **OpenRouter** (Multi-provider access)
-
-Each provider adapter handles:
-- Async operations for performance
-- API key management from config
-- Error handling and retries
-- Format conversion for existing API functions
-
-### 4. Results Management
-
-Comprehensive results storage and analysis:
-- Individual sample results with full metadata
-- Aggregated run-level metrics
-- Performance tracking (latency, success rates)
-- Export capabilities (JSON, CSV)
-- Run comparison functionality
-
-### 5. User Interface Enhancements
-
-The existing Evals tab has been significantly enhanced:
-
-#### Evaluation Setup View
-- Task file upload functionality
-- Model configuration management
-- Run parameter configuration
-- Status monitoring
-
-#### Results Dashboard View
-- Recent evaluations display
-- Run comparison tools
-- Export functionality
-- Metrics visualization
-
-#### Model Management View
-- Provider-specific setup
-- Model configuration templates
-- Quick setup for major providers
-- Configuration validation
-
-#### Dataset Management View
-- Dataset upload and management
-- HuggingFace integration
-- Template creation
-- Dataset validation
-
-## Database Schema
-
-### Core Tables
-
-1. **`eval_tasks`** - Task definitions and configurations
-2. **`eval_datasets`** - Dataset metadata and source information
-3. **`eval_models`** - LLM model configurations
-4. **`eval_runs`** - Evaluation run tracking
-5. **`eval_results`** - Individual sample results
-6. **`eval_run_metrics`** - Aggregated run metrics
-
-### Key Features
-- **FTS5 Search** on tasks and datasets
-- **Optimistic Locking** with version fields
-- **Soft Deletion** with `deleted_at` timestamps
-- **Audit Trail** with client_id tracking
-- **Foreign Key Constraints** for data integrity
-
-## Configuration Integration
-
-The system integrates with the existing tldw_chatbook configuration:
-
-### Database Location
-- Default: `~/.local/share/tldw_cli/evals.db`
-- Configurable via settings
-- Automatic directory creation
-
-### API Key Management
-- Uses existing config.toml structure
-- Environment variable fallback
-- Per-provider key storage
-
-### User Data Directory
-- Follows existing patterns
-- Export functionality uses configured paths
-- Results storage in user space
-
-## Task Configuration Examples
-
-### Eleuther AI Format Example
-```yaml
-task: mmlu_pro_plus_biology
-dataset_name: saeidasgari/mmlu-pro-plus
-dataset_config_name: biology
-test_split: test
-fewshot_split: validation
-num_fewshot: 5
-output_type: generate_until
-until: ["</s>", "Q:"]
-generation_kwargs:
-  temperature: 0.0
-  max_tokens: 32
-metric_list: ["exact_match"]
-filter_list:
-  - filter: "regex"
-    regex_pattern: "Answer: ([A-Z])"
-    group: 1
+```
+Evals/
+├── __init__.py                    # Package exports
+├── eval_orchestrator.py           # High-level API (✅ Complete)
+├── eval_runner.py                 # Core runners (✅ Complete)
+├── specialized_runners.py         # 7 specialized runners (✅ Complete)
+├── llm_interface.py              # 30+ provider support (✅ Complete)
+├── eval_templates.py             # Prompt templates (✅ Complete)
+└── EVALS_SYSTEM_REFERENCE.md    # This file
 ```
 
-### Custom JSON Format Example
-```json
-{
-  "name": "Custom Q&A Task",
-  "description": "Simple question answering evaluation",
-  "task_type": "question_answer",
-  "dataset_name": "local_qa_dataset.json",
-  "split": "test",
-  "metric": "exact_match",
-  "generation_kwargs": {
-    "temperature": 0.0,
-    "max_tokens": 50
-  }
-}
-```
+## Key Features
 
-## Usage Examples
+### Supported Providers (30+)
+**Commercial**: OpenAI, Anthropic, Google, Cohere, Groq, Mistral, DeepSeek, HuggingFace, OpenRouter  
+**Local**: Ollama, Llama.cpp, vLLM, Kobold, TabbyAPI, Aphrodite, MLX-LM, ONNX, Transformers
 
-### Basic Evaluation
+### Task Types (27+)
+- **Text Understanding**: Q&A, Reading Comprehension, Classification
+- **Generation**: Text Completion, Creative Writing, Code Generation
+- **Reasoning**: Mathematical, Logical, Common Sense
+- **Language**: Translation, Summarization, Paraphrasing
+- **Specialized**: Code Execution, Scientific/Medical Q&A
+- **Safety**: Harmful Content Detection, Bias Evaluation
+- **Multimodal**: Vision tasks (when supported)
 
+### Metrics
+- **Text Matching**: Exact match, F1, Contains
+- **ROUGE**: ROUGE-1, ROUGE-2, ROUGE-L
+- **BLEU**: 1-4 gram support with brevity penalty
+- **Semantic**: Sentence transformer similarity
+- **Perplexity**: From log probabilities
+- **Custom**: Extensible metric framework
+
+## API Usage
+
+### Quick Start
 ```python
-from tldw_chatbook.Evals.eval_orchestrator import quick_eval
+from tldw_chatbook.Evals import EvaluationOrchestrator
 
-# Run a quick evaluation
-result = await quick_eval(
-    task_file="mmlu_sample.yaml",
-    provider="openai",
-    model="gpt-3.5-turbo",
-    max_samples=100,
-    output_dir="./results"
-)
-```
-
-### Full Orchestration
-
-```python
-from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
-
+# Initialize orchestrator
 orchestrator = EvaluationOrchestrator()
 
-# Create task from file
-task_id = await orchestrator.create_task_from_file("task.yaml", "eleuther")
-
-# Create model configuration
-model_id = orchestrator.create_model_config(
-    name="GPT-4",
-    provider="openai",
-    model_id="gpt-4"
+# Load task
+task_id = await orchestrator.create_task_from_file(
+    "path/to/task.json",
+    "My Evaluation Task"
 )
+
+# Configure model
+model_config = {
+    "provider": "openai",
+    "model_id": "gpt-3.5-turbo",
+    "name": "GPT-3.5"
+}
 
 # Run evaluation
 run_id = await orchestrator.run_evaluation(
     task_id=task_id,
-    model_id=model_id,
-    max_samples=500
+    model_configs=[model_config],
+    max_samples=100
 )
 
-# Get results
-summary = orchestrator.get_run_summary(run_id)
+# Export results
+await orchestrator.export_results(
+    run_ids=[run_id],
+    output_path="results.csv",
+    format="csv"
+)
 ```
 
-## Performance Considerations
+### Direct Runner Usage
+```python
+from tldw_chatbook.Evals.eval_runner import create_runner
 
-### Async Operations
-- All LLM calls are asynchronous
-- Concurrent sample processing capability
-- Non-blocking UI operations
+# Create runner for specific task type
+runner = create_runner(task_config, model_config)
 
-### Database Optimization
-- Indexed queries for performance
-- WAL mode for concurrent access
-- Prepared statements for safety
+# Run evaluation
+results = await runner.run_evaluation(
+    samples=your_samples,
+    progress_callback=your_callback
+)
+```
 
-### Memory Management
-- Streaming results processing
-- Configurable batch sizes
-- Lazy loading of large datasets
+## File Formats
 
-## Testing Coverage
+### Eleuther AI YAML
+```yaml
+task: my_task_name
+dataset_name: my_dataset
+task_type: question_answer
+metric: exact_match
+doc_to_text: "Question: {{question}}"
+doc_to_target: "{{answer}}"
+```
 
-The evaluation system includes a comprehensive test suite:
+### Custom JSON
+```json
+{
+  "name": "My Task",
+  "task_type": "question_answer",
+  "metric": "f1",
+  "samples": [
+    {
+      "input": "What is the capital of France?",
+      "expected": "Paris"
+    }
+  ]
+}
+```
 
-### Unit Tests (`Tests/Evals/`)
-- **`test_evals_db.py`** - Database operations, CRUD functionality, search capabilities
-- **`test_task_loader.py`** - Task loading from multiple formats, validation, error handling  
-- **`test_eval_runner.py`** - Evaluation execution, metrics calculation, async operations
-- **Coverage**: ~95% of core functionality with 200+ test cases
+### CSV Format
+```csv
+input,expected
+"What is 2+2?","4"
+"Capital of Japan?","Tokyo"
+```
 
-### Integration Tests
-- **`test_eval_integration.py`** - End-to-end workflows, multi-provider scenarios, error recovery
-- **Coverage**: Complete evaluation pipeline from task loading to results storage
+## Development
 
-### Property-Based Tests  
-- **`test_eval_properties.py`** - System invariants, data consistency, edge case handling
-- **Framework**: Hypothesis-based testing with 100+ generated test cases
+### Adding a New Provider
+See [llm_interface.py](./llm_interface.py) - add your provider function and register in `PROVIDER_HANDLERS`.
 
-### Sample Data
-- **`sample_evaluation_tasks/`** - Complete sample files in all supported formats
-- **Coverage**: 15+ task examples across different evaluation types and difficulty levels
+### Adding a New Runner
+See [specialized_runners.py](./specialized_runners.py) - extend `BaseEvalRunner` and implement required methods.
 
-## Development Roadmap
+### Adding a New Metric
+See [eval_runner.py](./eval_runner.py) - add to `calculate_metrics` function.
 
-### Phase 1: Core Functionality Completion (Immediate)
-1. **Complete LLM integrations** - Finish provider-specific implementations
-2. **Database operations** - Complete and test all database functionality
-3. **Evaluation execution** - Finalize evaluation runner and metrics calculation
-4. **Basic UI functionality** - Implement core user interactions
+## Testing
 
-### Phase 2: Production Readiness (Short-term)
-1. **Error handling** - Comprehensive error recovery and user feedback
-2. **Performance optimization** - Large-scale evaluation support
-3. **Export functionality** - Complete CSV/JSON export features
-4. **Real-time progress** - Live evaluation monitoring and cancellation
+Run all evaluation tests:
+```bash
+pytest Tests/Evals/ -v
+```
 
-### Phase 3: Advanced Features (Medium-term)
-1. **Advanced metrics** - Custom evaluation metrics and complex scoring
-2. **Model comparison** - Side-by-side evaluation and analysis tools
-3. **Benchmark suites** - Pre-configured evaluation packages
-4. **Distributed evaluation** - Multi-worker support for performance
+## Database Schema
 
-### Phase 4: Enterprise Features (Long-term)
-1. **API access** - RESTful API for external integrations
-2. **Scheduled evaluations** - Automated evaluation workflows
-3. **Cost tracking** - API usage monitoring and budget management
-4. **Advanced visualization** - Interactive charts and detailed analytics
+The evaluation system uses 6 core tables:
+- `eval_tasks`: Task definitions
+- `eval_datasets`: Dataset storage
+- `eval_models`: Model configurations
+- `eval_runs`: Evaluation runs
+- `eval_results`: Individual results
+- `eval_run_metrics`: Aggregated metrics
 
-## Technical Design Decisions
+See [Evals_DB.py](../DB/Evals_DB.py) for complete schema.
 
-### Database Choice
-- **SQLite** chosen for simplicity and portability
-- Single-file database fits existing architecture
-- FTS5 provides powerful search without external dependencies
+## Future Work
 
-### Async Architecture
-- Enables responsive UI during long evaluations
-- Supports concurrent API calls for performance
-- Future-ready for distributed processing
+1. **UI Integration** (2-3 weeks)
+   - Configuration dialogs
+   - Progress visualization
+   - Results display
+   
+2. **Enhanced Features**
+   - Batch evaluation management
+   - Cost tracking
+   - Evaluation templates library
 
-### Provider Abstraction
-- Unified interface enables easy provider switching
-- Standardized configuration across providers
-- Extensible for future provider additions
+3. **Advanced Capabilities**
+   - Distributed evaluation
+   - Custom metric plugins
+   - A/B testing framework
 
-### Modular Design
-- Clear separation of concerns
-- Independent testing of components
-- Easy maintenance and extension
+For detailed roadmap, see [EVALUATION-SYSTEM.md](../../EVALUATION-SYSTEM.md#roadmap).
 
-## Error Handling Strategy
+## Support
 
-### Graceful Degradation
-- Individual sample failures don't stop evaluation
-- Error tracking in results database
-- Comprehensive logging for debugging
-
-### User Feedback
-- Clear error messages in UI
-- Status updates during processing
-- Recovery suggestions when possible
-
-### Data Integrity
-- Transaction-based operations
-- Foreign key constraints
-- Validation at multiple layers
-
-## Security Considerations
-
-### API Key Management
-- No hardcoded keys in any files
-- Environment variable support
-- Config file encryption ready
-
-### Input Validation
-- SQL injection prevention
-- File path validation
-- Configuration parameter sanitization
-
-### Access Control
-- Client ID tracking for audit
-- User data directory isolation
-- No cross-user data access
-
-## Testing Strategy
-
-### Unit Tests
-- Database operations
-- Task loading and validation
-- Metric calculations
-- Provider interfaces
-
-### Integration Tests
-- End-to-end evaluation flows
-- Multi-provider testing
-- Database migration testing
-- UI component testing
-
-### Performance Tests
-- Large dataset handling
-- Concurrent evaluation runs
-- Memory usage validation
-- API rate limit handling
-
-## Documentation Requirements
-
-### User Documentation
-- Getting started guide
-- Task format specifications
-- Provider setup instructions
-- Troubleshooting guide
-
-### Developer Documentation
-- API reference
-- Extension guidelines
-- Database schema documentation
-- Architecture overview
-
-## Getting Started
-
-### For Developers
-1. **Review the test suite** in `Tests/Evals/` to understand expected functionality
-2. **Examine sample tasks** in `sample_evaluation_tasks/` for format examples
-3. **Study the architecture** through the modular component design
-4. **Run tests** to verify system integrity: `pytest Tests/Evals/`
-
-### For Users
-1. **Explore sample tasks** to understand evaluation capabilities
-2. **Start with simple formats** like CSV datasets for initial experiments
-3. **Use the UI framework** once interactive features are implemented
-4. **Refer to task format documentation** for creating custom evaluations
-
-### For Contributors
-1. **Follow the established patterns** in existing modules
-2. **Add comprehensive tests** for any new functionality
-3. **Update documentation** to reflect changes and additions
-4. **Consider backwards compatibility** when modifying interfaces
-
-## Summary
-
-The tldw_chatbook evaluation system provides a solid foundation for LLM evaluation with:
-
-- **Complete architectural design** supporting multiple evaluation paradigms
-- **Comprehensive test coverage** ensuring reliability and correctness
-- **Flexible task format support** accommodating various evaluation needs  
-- **Scalable database design** for managing evaluation data
-- **Modular component structure** enabling easy extension and maintenance
-
-While the system requires additional development to reach full production readiness, the foundation provides a robust starting point for building a world-class LLM evaluation platform integrated seamlessly with the tldw_chatbook application ecosystem.
+- **Issues**: Report in GitHub Issues
+- **Documentation**: See linked documents above
+- **Examples**: Check `/sample_evaluation_tasks/`

@@ -38,7 +38,7 @@ def create_test_runner(mock_llm_interface=None, **kwargs):
     )
     model_config = {
         "provider": "mock",
-        "model": "test-model",
+        "model_id": "test-model",
         "max_concurrent_requests": kwargs.get("max_concurrent_requests", 10),
         "request_timeout": kwargs.get("request_timeout", 30.0),
         "retry_attempts": kwargs.get("retry_attempts", 3),

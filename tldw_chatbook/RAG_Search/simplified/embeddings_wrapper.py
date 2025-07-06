@@ -54,6 +54,9 @@ class EmbeddingsServiceWrapper:
         self.model_name = model_name
         self.device = device
         self._cache_size = cache_size
+        self._api_key = api_key
+        self._base_url = base_url
+        self._cache_dir = cache_dir
         
         # Auto-detect device if not specified
         if device is None:
@@ -402,9 +405,14 @@ class EmbeddingsServiceWrapper:
             self.factory.close()
             
             # Reinitialize with same configuration
-            config_dict = self._build_config(self.model_name, self.device, None, None)
+            config_dict = self._build_config(self.model_name, self.device, self._api_key, self._base_url, self._cache_dir)
+            
+            # Import and validate configuration
+            from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingConfigSchema
+            validated_config = EmbeddingConfigSchema(**config_dict)
+            
             self.factory = EmbeddingFactory(
-                cfg=config_dict,
+                cfg=validated_config,
                 max_cached=self._cache_size,
                 idle_seconds=900,
                 allow_dynamic_hf=True

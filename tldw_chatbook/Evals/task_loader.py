@@ -155,11 +155,14 @@ class TaskLoader:
             if not path.exists():
                 raise TaskLoadError(f"Eleuther task file not found: {path}")
             
-            with open(path, 'r') as f:
-                if path.suffix.lower() in ['.yaml', '.yml']:
-                    config_data = yaml.safe_load(f)
-                else:
-                    config_data = json.load(f)
+            try:
+                with open(path, 'r') as f:
+                    if path.suffix.lower() in ['.yaml', '.yml']:
+                        config_data = yaml.safe_load(f)
+                    else:
+                        config_data = json.load(f)
+            except (json.JSONDecodeError, yaml.YAMLError) as e:
+                raise TaskLoadError(f"Failed to parse Eleuther task file {path}: {e}")
         
         # Extract required fields
         try:
@@ -229,9 +232,9 @@ class TaskLoader:
         if output_type == 'loglikelihood':
             return 'logprob'
         elif output_type == 'generate_until':
-            return 'generation'
+            return 'generate_until'
         elif output_type == 'multiple_choice':
-            return 'classification'
+            return 'multiple_choice'
         
         # Check for common patterns
         if config.get('doc_to_choice') or 'choice' in str(config).lower():
@@ -249,11 +252,14 @@ class TaskLoader:
             if not path.exists():
                 raise TaskLoadError(f"Custom task file not found: {path}")
             
-            with open(path, 'r') as f:
-                if path.suffix.lower() in ['.yaml', '.yml']:
-                    config_data = yaml.safe_load(f)
-                else:
-                    config_data = json.load(f)
+            try:
+                with open(path, 'r') as f:
+                    if path.suffix.lower() in ['.yaml', '.yml']:
+                        config_data = yaml.safe_load(f)
+                    else:
+                        config_data = json.load(f)
+            except (json.JSONDecodeError, yaml.YAMLError) as e:
+                raise TaskLoadError(f"Failed to parse task file {path}: {e}")
         
         try:
             # Custom format should be more direct
@@ -544,3 +550,124 @@ class TaskLoader:
             config['doc_to_choice'] = task_config.doc_to_choice
         
         return config
+    
+    def convert_to_custom_format(self, task_config: TaskConfig) -> Dict[str, Any]:
+        """Convert TaskConfig to custom format dict."""
+        return asdict(task_config)
+    
+    def convert_to_eleuther_format(self, task_config: TaskConfig) -> Dict[str, Any]:
+        """Convert TaskConfig to Eleuther format dict."""
+        return self._convert_to_eleuther_format(task_config)
+    
+    def generate_template(self, template_type: str, **kwargs) -> TaskConfig:
+        """Generate a task template of the specified type."""
+        return self.create_task_from_template(template_type, **kwargs)
+    
+    def generate_eleuther_template(self, task_type: str) -> Dict[str, Any]:
+        """Generate an Eleuther format template for the specified task type."""
+        # Create a basic task config
+        task_config = self.create_task_from_template(task_type)
+        # Convert to Eleuther format
+        return self._convert_to_eleuther_format(task_config)
+    
+    def _detect_file_format(self, path: str) -> str:
+        """Detect the format of a task configuration file."""
+        p = Path(path)
+        
+        # For CSV/TSV, just check extension
+        if p.suffix.lower() in ['.csv', '.tsv']:
+            return 'csv'
+        
+        # For YAML/JSON, check content
+        try:
+            with open(p, 'r') as f:
+                if p.suffix.lower() in ['.yaml', '.yml']:
+                    data = yaml.safe_load(f)
+                    # Check for Eleuther format indicators
+                    if 'task' in data or 'output_type' in data or 'dataset_name' in data:
+                        return 'eleuther'
+                    return 'custom'
+                else:  # JSON
+                    data = json.load(f)
+                    # JSON files with 'name' field are custom format
+                    if 'name' in data and 'task_type' in data:
+                        return 'custom'
+                    # Otherwise could be eleuther
+                    if 'task' in data or 'output_type' in data:
+                        return 'eleuther'
+                    return 'custom'
+        except:
+            # If we can't parse, default to custom
+            return 'custom'
+    
+    def _normalize_task_type(self, task_type: str) -> str:
+        """Normalize task type string."""
+        # Map common variations to standard types
+        type_map = {
+            'qa': 'question_answer',
+            'q&a': 'question_answer',
+            'multiple choice': 'multiple_choice',
+            'mc': 'multiple_choice',
+            'classification': 'multiple_choice',
+            'generation': 'generation',
+            'text_generation': 'generation',
+            'code': 'code_generation',
+            'coding': 'code_generation'
+        }
+        return type_map.get(task_type.lower(), task_type.lower())
+    
+    def _validate_dataset_path(self, path: str) -> bool:
+        """Validate that a dataset path exists and is accessible."""
+        if not path:
+            return False
+        p = Path(path)
+        return p.exists() and p.is_file()
+    
+    def _merge_generation_kwargs(self, defaults: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge generation kwargs, with overrides taking precedence."""
+        merged = defaults.copy()
+        merged.update(overrides)
+        return merged
+    
+    def validate_task(self, task_config: TaskConfig) -> List[str]:
+        """Validate a task configuration and return list of issues."""
+        issues = []
+        
+        # Validate required fields
+        if not task_config.name or not task_config.name.strip():
+            issues.append("Task name cannot be empty")
+        
+        if not task_config.dataset_name or not task_config.dataset_name.strip():
+            issues.append("Dataset name cannot be empty")
+        
+        if not task_config.metric or not task_config.metric.strip():
+            issues.append("Metric cannot be empty")
+        
+        # Validate task type
+        valid_task_types = [
+            'question_answer', 'multiple_choice', 'classification', 
+            'generation', 'logprob', 'code_generation', 'generate_until'
+        ]
+        if task_config.task_type not in valid_task_types:
+            issues.append(f"Invalid task type: {task_config.task_type}")
+        
+        # Validate generation kwargs if present
+        if task_config.generation_kwargs:
+            if 'temperature' in task_config.generation_kwargs:
+                temp = task_config.generation_kwargs['temperature']
+                if not isinstance(temp, (int, float)) or temp < 0 or temp > 2:
+                    issues.append("Temperature must be a number between 0 and 2")
+            
+            if 'max_length' in task_config.generation_kwargs:
+                max_len = task_config.generation_kwargs['max_length']
+                if not isinstance(max_len, int) or max_len <= 0:
+                    issues.append("max_length must be a positive integer")
+        
+        # Validate code task requirements
+        if task_config.task_type == 'code_generation':
+            if not task_config.generation_kwargs:
+                issues.append("Code generation tasks must specify generation_kwargs")
+            elif 'language' not in task_config.generation_kwargs:
+                issues.append("Code generation tasks must specify language in generation_kwargs")
+        
+        return issues

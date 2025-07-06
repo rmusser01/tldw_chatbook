@@ -60,32 +60,32 @@ class EvalTemplateManager:
             'code_explanation': self._code_explanation_template(),
             'sql_generation': self._sql_generation_template(),
             
-            # Multilingual and Translation
-            'translation_quality': self._translation_quality_template(),
-            'cross_lingual_qa': self._cross_lingual_qa_template(),
-            'multilingual_sentiment': self._multilingual_sentiment_template(),
-            'code_switching': self._code_switching_template(),
+            # Multilingual and Translation - TODO: Implement these templates
+            # 'translation_quality': self._translation_quality_template(),
+            # 'cross_lingual_qa': self._cross_lingual_qa_template(),
+            # 'multilingual_sentiment': self._multilingual_sentiment_template(),
+            # 'code_switching': self._code_switching_template(),
             
-            # Domain-Specific Knowledge
-            'medical_qa': self._medical_qa_template(),
-            'legal_reasoning': self._legal_reasoning_template(),
-            'scientific_reasoning': self._scientific_reasoning_template(),
-            'financial_analysis': self._financial_analysis_template(),
-            'historical_knowledge': self._historical_knowledge_template(),
+            # Domain-Specific Knowledge - TODO: Implement these templates
+            # 'medical_qa': self._medical_qa_template(),
+            # 'legal_reasoning': self._legal_reasoning_template(),
+            # 'scientific_reasoning': self._scientific_reasoning_template(),
+            # 'financial_analysis': self._financial_analysis_template(),
+            # 'historical_knowledge': self._historical_knowledge_template(),
             
-            # Robustness and Adversarial
-            'adversarial_qa': self._adversarial_qa_template(),
-            'input_perturbation': self._input_perturbation_template(),
-            'context_length_stress': self._context_length_stress_template(),
-            'instruction_following': self._instruction_following_template(),
-            'format_robustness': self._format_robustness_template(),
+            # Robustness and Adversarial - TODO: Implement these templates
+            # 'adversarial_qa': self._adversarial_qa_template(),
+            # 'input_perturbation': self._input_perturbation_template(),
+            # 'context_length_stress': self._context_length_stress_template(),
+            # 'instruction_following': self._instruction_following_template(),
+            # 'format_robustness': self._format_robustness_template(),
             
-            # Creative and Open-ended
-            'creative_writing': self._creative_writing_template(),
-            'story_completion': self._story_completion_template(),
-            'dialogue_generation': self._dialogue_generation_template(),
-            'summarization_quality': self._summarization_quality_template(),
-            'open_ended_qa': self._open_ended_qa_template(),
+            # Creative and Open-ended - TODO: Implement these templates
+            # 'creative_writing': self._creative_writing_template(),
+            # 'story_completion': self._story_completion_template(),
+            # 'dialogue_generation': self._dialogue_generation_template(),
+            # 'summarization_quality': self._summarization_quality_template(),
+            # 'open_ended_qa': self._open_ended_qa_template(),
         }
     
     # === REASONING AND MATHEMATICAL TEMPLATES ===
