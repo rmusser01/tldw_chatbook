@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EmbeddingConfig:
     """Configuration for embedding generation."""
-    model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    device: Optional[str] = None
+    model: str = "mxbai-embed-large-v1"  # Default to mxbai-embed-large-v1 (high-quality embeddings)
+    device: Optional[str] = "auto"  # auto-detect best device
     cache_size: int = 2
-    batch_size: int = 32
+    batch_size: int = 16  # Reduced for larger model
     max_length: int = 512
     # For OpenAI or API-based models
     api_key: Optional[str] = None
@@ -194,21 +194,44 @@ class RAGConfig:
         # === Embedding Configuration ===
         embedding_section = rag_config.get('embedding', {})
         
-        # Model selection (priority: override > env > config > default)
+        # Check if we should use the embedding_config default model
+        embedding_config = get_cli_setting("embedding_config", None, {})
+        default_model_from_embedding_config = embedding_config.get('default_model_id', None)
+        
+        # Model selection (priority: override > env > rag.embedding > embedding_config default > class default)
         config.embedding.model = (
             override_embedding_model or
             os.getenv("RAG_EMBEDDING_MODEL") or
             embedding_section.get('model') or
+            default_model_from_embedding_config or
             get_cli_setting("AppRAGSearchConfig", "embedding_model") or  # Legacy location
             config.embedding.model
         )
         
-        # Device selection
-        config.embedding.device = (
+        # Device selection with auto-detection support
+        device_setting = (
             os.getenv("RAG_DEVICE") or
             embedding_section.get('device') or
             config.embedding.device
         )
+        
+        # Handle "auto" device selection
+        if device_setting == "auto":
+            # Try to detect best available device
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    config.embedding.device = "cuda"
+                elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                    config.embedding.device = "mps"
+                else:
+                    config.embedding.device = "cpu"
+                logger.info(f"Auto-detected device: {config.embedding.device}")
+            except ImportError:
+                config.embedding.device = "cpu"
+                logger.info("Torch not available, defaulting to CPU")
+        else:
+            config.embedding.device = device_setting
         
         # Cache settings
         config.embedding.cache_size = int(
@@ -482,10 +505,14 @@ EXAMPLE_TOML_CONFIG = """
 [AppRAGSearchConfig.rag]
 # Embedding configuration
 [AppRAGSearchConfig.rag.embedding]
-model = "sentence-transformers/all-MiniLM-L6-v2"
-device = "cuda"  # or "cpu", "mps"
+model = "mxbai-embed-large-v1"  # Uses model from [embedding_config.models.mxbai-embed-large-v1]
+device = "auto"  # Auto-detect best device ("auto", "cpu", "cuda", "mps")
 cache_size = 2
-batch_size = 32
+batch_size = 16  # Reduced for larger model
+max_length = 512
+# For API-based models (optional):
+# api_key = "your-api-key"  # Or use OPENAI_API_KEY env var
+# base_url = "http://localhost:8080/v1"  # For local servers
 
 # Vector store configuration
 [AppRAGSearchConfig.rag.vector_store]

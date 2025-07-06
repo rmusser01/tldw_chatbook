@@ -115,6 +115,25 @@ export USE_MODULAR_RAG=true
 # Or in config.toml: use_modular_service = true
 ```
 
+#### Default Embedding Configuration
+The embeddings_rag module comes with sensible defaults that work out of the box:
+- **Default Model**: `mxbai-embed-large-v1` (1024 dimensions) - high-quality embeddings
+- **Auto-device Detection**: Automatically uses GPU (CUDA/MPS) if available
+- **Zero Configuration**: Works immediately after installation
+- **Flexible Dimensions**: Supports Matryoshka - can use 512 or 256 dimensions for speed/storage
+
+Common embedding models are pre-configured:
+- **High Quality (Default)**: `mxbai-embed-large-v1` (~335MB, 1024d, supports 512d/256d)
+- **State-of-the-Art**: 
+  - `stella_en_1.5B_v5` (~1.5GB, 512-8192d, security-pinned)
+  - `qwen3-embedding-4b` (~4GB, up to 4096d, 32k context)
+- **Small/Fast**: `e5-small-v2`, `all-MiniLM-L6-v2` (~100MB, 384d)
+- **Balanced**: `e5-base-v2`, `all-mpnet-base-v2` (~400MB, 768d)
+- **Large Models**: `e5-large-v2`, `multilingual-e5-large-instruct` (~1.3GB, 1024d)
+- **API-based**: OpenAI embeddings (requires API key)
+
+See `tldw_chatbook/Config_Files/EMBEDDING_DEFAULTS_README.md` for detailed configuration options.
+
 ### Advanced Text Processing (with `chunker`)
 - **Language-aware chunking**: Sentence and paragraph detection
 - **Multi-language support**: Chinese (jieba), Japanese (fugashi)
@@ -292,6 +311,17 @@ Edit `~/.config/tldw_cli/config.toml` to:
 - Configure RAG settings
 - Enable/disable features
 - Set UI preferences
+- Configure embedding models (defaults to e5-small-v2)
+
+Example embedding configuration:
+```toml
+[embedding_config]
+default_model_id = "mxbai-embed-large-v1"  # High-quality default
+
+[rag.embedding]
+model = "mxbai-embed-large-v1"
+device = "auto"  # Auto-detects best device (cuda/mps/cpu)
+```
 
 ### Environment Variables
 API keys can also be set via environment variables:

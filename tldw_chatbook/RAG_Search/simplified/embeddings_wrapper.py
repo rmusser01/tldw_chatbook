@@ -223,11 +223,15 @@ class EmbeddingsServiceWrapper:
                 logger.debug(f"Cache miss for embedding batch")
             
             # Use the factory's embed method
+            logger.debug(f"Calling factory.embed with {len(texts)} texts")
             embeddings = self.factory.embed(texts, as_list=False)
+            logger.debug(f"Factory returned embeddings of type {type(embeddings)}, shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'N/A'}")
             
             # Ensure embeddings is a numpy array
             if not isinstance(embeddings, np.ndarray):
+                logger.debug(f"Converting embeddings from {type(embeddings)} to numpy array")
                 embeddings = np.array(embeddings)
+                logger.debug(f"After conversion: shape={embeddings.shape}")
             
             # Get memory usage after
             memory_after = process.memory_info().rss / (1024 * 1024)  # MB
@@ -303,9 +307,13 @@ class EmbeddingsServiceWrapper:
         
         Convenience method for single text embedding.
         """
+        logger.debug(f"Creating single embedding for text of length {len(text)}")
         result = self.factory.embed_one(text, as_list=False)
+        logger.debug(f"Factory returned single embedding of type {type(result)}, shape: {result.shape if hasattr(result, 'shape') else 'N/A'}")
         if not isinstance(result, np.ndarray):
+            logger.debug(f"Converting single embedding from {type(result)} to numpy array")
             result = np.array(result)
+            logger.debug(f"After conversion: shape={result.shape}")
         return result
     
     async def create_embedding_async(self, text: str) -> np.ndarray:

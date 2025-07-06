@@ -300,13 +300,27 @@ class TestDifferentTaskTypes:
             choices=["A) 3", "B) 4", "C) 5", "D) 6"]
         )
         
-        mock_llm_interface.generate.return_value = "B"
+        # Override the side_effect for this specific test
+        async def mock_generate_mc(*args, **kwargs):
+            return "B"
+        mock_llm_interface.generate.side_effect = mock_generate_mc
         
         # Mock the LLMInterface class to return our mock instance
         with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
             mock_llm_class.return_value = mock_llm_interface
             
-            runner = create_test_runner()
+            # Create runner with classification task config
+            model_config = {
+                "provider": "mock",
+                "model_id": "test-model",
+                "max_concurrent_requests": 10,
+                "request_timeout": 30.0,
+                "retry_attempts": 3
+            }
+            runner = EvalRunner(task_config=config, model_config=model_config)
+            # Ensure the runner's internal runner also uses the mocked interface
+            if hasattr(runner, 'runner') and hasattr(runner.runner, 'llm_interface'):
+                runner.runner.llm_interface = mock_llm_interface
             result = await runner.run_single_sample(config, sample)
         
         assert result.metrics["accuracy"] == 1.0
@@ -331,13 +345,27 @@ class TestDifferentTaskTypes:
             expected_output="A robot named R2 lived in a factory..."
         )
         
-        mock_llm_interface.generate.return_value = "A robot named R2 worked in a factory and dreamed of adventure."
+        # Override the side_effect for this specific test
+        async def mock_generate_gen(*args, **kwargs):
+            return "A robot named R2 worked in a factory and dreamed of adventure."
+        mock_llm_interface.generate.side_effect = mock_generate_gen
         
         # Mock the LLMInterface class to return our mock instance
         with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
             mock_llm_class.return_value = mock_llm_interface
             
-            runner = create_test_runner()
+            # Create runner with generation task config
+            model_config = {
+                "provider": "mock",
+                "model_id": "test-model",
+                "max_concurrent_requests": 10,
+                "request_timeout": 30.0,
+                "retry_attempts": 3
+            }
+            runner = EvalRunner(task_config=config, model_config=model_config)
+            # Ensure the runner's internal runner also uses the mocked interface
+            if hasattr(runner, 'runner') and hasattr(runner.runner, 'llm_interface'):
+                runner.runner.llm_interface = mock_llm_interface
             result = await runner.run_single_sample(config, sample)
         
         assert "bleu" in result.metrics
@@ -370,18 +398,33 @@ class TestDifferentTaskTypes:
             }
         )
         
-        mock_llm_interface.generate.return_value = "def add_two_numbers(a, b):\n    return a + b"
+        # Override the side_effect for this specific test
+        expected_code = "def add_two_numbers(a, b):\n    return a + b"
+        async def mock_generate_code(*args, **kwargs):
+            return expected_code
+        mock_llm_interface.generate.side_effect = mock_generate_code
         
         # Mock the LLMInterface class to return our mock instance
         with patch('tldw_chatbook.Evals.eval_runner.LLMInterface') as mock_llm_class:
             mock_llm_class.return_value = mock_llm_interface
             
-            runner = create_test_runner()
+            # Create runner with generation task config  
+            model_config = {
+                "provider": "mock",
+                "model_id": "test-model",
+                "max_concurrent_requests": 10,
+                "request_timeout": 30.0,
+                "retry_attempts": 3
+            }
+            runner = EvalRunner(task_config=config, model_config=model_config)
+            # Ensure the runner's internal runner also uses the mocked interface
+            if hasattr(runner, 'runner') and hasattr(runner.runner, 'llm_interface'):
+                runner.runner.llm_interface = mock_llm_interface
             result = await runner.run_single_sample(config, sample)
         
         # Since we're using a basic runner, it won't have code-specific metrics
         # unless we have specialized runners available
-        assert result.actual_output == mock_llm_interface.generate.return_value
+        assert result.actual_output == expected_code
 
 class TestMetricsCalculation:
     """Test various metrics calculations."""
@@ -490,7 +533,7 @@ class TestErrorHandling:
         
         assert result.error_info is not None
         assert result.actual_output is None
-        assert "error" in result.metadata
+        assert result.error_info.get('error_message') == "Mock LLM failure"
     
     @pytest.mark.asyncio
     async def test_retry_mechanism(self, sample_task_config):
@@ -532,14 +575,12 @@ class TestErrorHandling:
         # Mock that fails on specific inputs
         mock_llm = AsyncMock()
         
-        def mock_generate(prompt, **kwargs):
+        async def mock_generate(prompt, **kwargs):
             if "fail" in prompt:
                 raise Exception("Simulated failure")
             return "Success"
         
         mock_llm.generate.side_effect = mock_generate
-        
-        runner = create_test_runner(mock_llm_interface=mock_llm)
         
         from tldw_chatbook.Evals.eval_runner import EvalSample
         eval_samples = [
@@ -554,13 +595,17 @@ class TestErrorHandling:
             
             runner = create_test_runner()
             
+            # Ensure the runner's internal runner also uses the mocked interface
+            if hasattr(runner, 'runner') and hasattr(runner.runner, 'llm_interface'):
+                runner.runner.llm_interface = mock_llm
+            
             # Mock DatasetLoader to return our samples
             with patch('tldw_chatbook.Evals.eval_runner.DatasetLoader.load_dataset_samples', return_value=eval_samples):
                 results = await runner.run_evaluation(max_samples=3)
         
         assert len(results) == 3
-        success_count = sum(1 for r in results if r.error_info is None)
-        failure_count = sum(1 for r in results if r.error_info is not None)
+        success_count = sum(1 for r in results if not r.error_info)
+        failure_count = sum(1 for r in results if r.error_info)
         
         assert success_count == 2
         assert failure_count == 1

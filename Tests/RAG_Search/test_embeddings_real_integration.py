@@ -149,14 +149,14 @@ class TestRealEmbeddingsWorkflow:
         assert len(search_results) <= 3
         
         # Should find Python and data science related documents
-        returned_docs = [r.content for r in search_results]
+        returned_docs = [r.document for r in search_results]
         assert any("Python" in doc for doc in returned_docs)
         
         # Test similarity scores
         assert all(0 <= r.score <= 1 for r in search_results)
         
         # Cleanup
-        rag_service.delete_collection(collection_name)
+        rag_service.clear_index()
     
     @requires_sentence_transformers
     def test_real_embeddings_dimensions(self, real_embedding_service):
@@ -309,14 +309,13 @@ class TestRealChromaDBIntegration:
         )
         
         # Add documents
-        embeddings = service1.create_embeddings(test_docs)
+        embeddings = embeddings_service.create_embeddings(test_docs)
         doc_ids = [f"persist_{i}" for i in range(len(test_docs))]
-        service1.add_documents_to_collection(
-            collection_name,
-            test_docs,
+        vector_store.add(
+            doc_ids,
             embeddings,
-            [{"persistent": True, "index": i} for i in range(len(test_docs))],
-            doc_ids
+            test_docs,
+            [{"persistent": True, "index": i} for i in range(len(test_docs))]
         )
         
         # Close first service
@@ -378,12 +377,11 @@ class TestRealChromaDBIntegration:
         ]
         doc_ids = [f"doc_{i}" for i in range(len(docs))]
         
-        vector_store.add_documents(
-            "filtered_collection",
-            docs,
+        vector_store.add(
+            doc_ids,
             embeddings,
-            metadatas,
-            doc_ids
+            docs,
+            metadatas
         )
         
         # Search with metadata filter
@@ -520,12 +518,17 @@ class TestRealRAGIntegration:
             "Healthy eating involves consuming a balanced diet with fruits, vegetables, and whole grains.",
         ]
         
-        result = service.index_documents(
-            documents=documents,
-            collection_name="quality_test"
-        )
+        # Index documents one by one
+        results = []
+        for i, doc in enumerate(documents):
+            result = service.index_document_sync(
+                doc_id=f"doc_{i}",
+                content=doc,
+                title=f"Document {i}"
+            )
+            results.append(result)
         
-        assert result.success
+        assert all(r.success for r in results)
         
         # Test various queries
         test_queries = [
@@ -537,21 +540,20 @@ class TestRealRAGIntegration:
         
         print("\nSearch quality results:")
         for query, expected_keywords in test_queries:
-            results = service.search(
+            results = service.search_sync(
                 query=query,
-                collection_name="quality_test",
-                n_results=2
+                top_k=2
             )
             
             # Check if expected content is in top results
-            top_contents = [r.content for r in results[:2]]
+            top_contents = [r.document for r in results[:2]]
             found = any(any(keyword in content for keyword in expected_keywords) 
                        for content in top_contents)
             
             print(f"\n  Query: '{query}'")
             print(f"  Expected: {expected_keywords}")
             print(f"  Found: {found}")
-            print(f"  Top result: {results[0].content[:100]}...")
+            print(f"  Top result: {results[0].document[:100]}...")
             print(f"  Score: {results[0].score:.3f}")
             
             assert found, f"Expected keywords {expected_keywords} not found for query '{query}'"

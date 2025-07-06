@@ -11,6 +11,7 @@ from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.reactive import reactive
 from textual.widgets import Static, Button, Label, ProgressBar, TabPane, TabbedContent, Input, Select
+from ..Widgets.loading_states import WorkflowProgress
 from textual.message import Message
 #
 # Local Imports
@@ -75,6 +76,11 @@ class EvalsWindow(Container):
             self.run_id = run_id
             self.error = error
             self.error_details = error_details
+    
+    # Loading states
+    is_loading_results = reactive(False)
+    is_loading_models = reactive(False)
+    is_loading_datasets = reactive(False)
 
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
@@ -144,12 +150,17 @@ class EvalsWindow(Container):
     @work(exclusive=True)
     async def _refresh_results_dashboard(self) -> None:
         """Refresh the results dashboard with latest data."""
+        self.is_loading_results = True
+        
+        # Show loading state
+        results_list = self.query_one("#results-list")
+        results_list.update("🔄 Loading results...")
+        
         try:
             from ..Event_Handlers.eval_events import get_recent_evaluations
             recent_runs = await self.app.run_in_executor(None, get_recent_evaluations, self.app_instance)
             
             # Update results list
-            results_list = self.query_one("#results-list")
             if recent_runs:
                 results_html = "\n".join([
                     f"• {run['name']} ({run['status']}) - {run.get('metrics', {}).get('success_rate', 'N/A')}% success"
@@ -162,15 +173,20 @@ class EvalsWindow(Container):
         except Exception as e:
             logger.error(f"Error refreshing results dashboard: {e}")
             self._update_status("results-list", f"Error loading results: {e}")
+        finally:
+            self.is_loading_results = False
     
     @work(exclusive=True)
     async def _refresh_models_list(self) -> None:
         """Refresh the models list with available configurations."""
+        self.is_loading_models = True
+        models_list = self.query_one("#models-list")
+        models_list.update("🔄 Loading models...")
+        
         try:
             from ..Event_Handlers.eval_events import get_available_models
             models = await self.app.run_in_executor(None, get_available_models, self.app_instance)
             
-            models_list = self.query_one("#models-list")
             if models:
                 models_html = "\n".join([
                     f"• {model['name']} ({model['provider']}/{model['model_id']})"
@@ -183,15 +199,20 @@ class EvalsWindow(Container):
         except Exception as e:
             logger.error(f"Error refreshing models list: {e}")
             self._update_status("models-list", f"Error loading models: {e}")
+        finally:
+            self.is_loading_models = False
     
     @work(exclusive=True)
     async def _refresh_datasets_list(self) -> None:
         """Refresh the datasets list with available data."""
+        self.is_loading_datasets = True
+        datasets_list = self.query_one("#datasets-list")
+        datasets_list.update("🔄 Loading datasets...")
+        
         try:
             from ..Event_Handlers.eval_events import get_available_datasets
             datasets = await self.app.run_in_executor(None, get_available_datasets, self.app_instance)
             
-            datasets_list = self.query_one("#datasets-list")
             if datasets:
                 datasets_html = "\n".join([
                     f"• {dataset['name']} ({dataset.get('format', 'unknown')} format) - {dataset.get('sample_count', '?')} samples"
@@ -204,6 +225,8 @@ class EvalsWindow(Container):
         except Exception as e:
             logger.error(f"Error refreshing datasets list: {e}")
             self._update_status("datasets-list", f"Error loading datasets: {e}")
+        finally:
+            self.is_loading_datasets = False
 
     # --- EVENT HANDLERS LIVE HERE NOW ---
     @on(Button.Pressed, "#evals-sidebar-toggle-button")
@@ -259,6 +282,13 @@ class EvalsWindow(Container):
         logger.info("Refresh results button pressed")
         from ..Event_Handlers.eval_events import handle_refresh_results
         self.app.call_from_thread(handle_refresh_results, self.app_instance, event)
+    
+    @on(Button.Pressed, "#view-detailed-btn")
+    def handle_view_detailed_results(self, event: Button.Pressed) -> None:
+        """Handle viewing detailed results for the most recent run."""
+        logger.info("View detailed results button pressed")
+        from ..Event_Handlers.eval_events import handle_view_detailed_results
+        self.app.call_from_thread(handle_view_detailed_results, self.app_instance, event)
     
     @on(Button.Pressed, "#compare-runs-btn")
     def handle_compare_runs(self, event: Button.Pressed) -> None:
@@ -332,6 +362,48 @@ class EvalsWindow(Container):
         from ..Event_Handlers.eval_events import handle_template_button
         self.app.call_from_thread(handle_template_button, self.app_instance, event)
     
+    # --- Cost Estimation Updates ---
+    @on(Select.Changed, "#model-select")
+    def handle_model_change(self, event: Select.Changed) -> None:
+        """Update cost estimation when model changes."""
+        if event.value and event.value != "":
+            self._update_cost_estimation()
+    
+    @on(Input.Changed, "#max-samples-input")
+    def handle_samples_change(self, event: Input.Changed) -> None:
+        """Update cost estimation when sample count changes."""
+        if event.value and event.value.isdigit():
+            self._update_cost_estimation()
+    
+    def _update_cost_estimation(self) -> None:
+        """Update the cost estimation based on current selections."""
+        try:
+            model_select = self.query_one("#model-select", Select)
+            samples_input = self.query_one("#max-samples-input", Input)
+            cost_estimator = self.query_one("#cost-estimator")
+            
+            if model_select.value and samples_input.value and samples_input.value.isdigit():
+                # Get model info from the selected value
+                from ..Event_Handlers.eval_events import get_orchestrator
+                orchestrator = get_orchestrator()
+                
+                model_info = orchestrator.db.get_model(model_select.value)
+                if model_info:
+                    cost_estimator.estimate_cost(
+                        model_info['provider'],
+                        model_info['model_id'],
+                        int(samples_input.value)
+                    )
+        except Exception as e:
+            logger.warning(f"Could not update cost estimation: {e}")
+    
+    # --- Results Table Handlers ---
+    def on_results_table_refresh_requested(self, event) -> None:
+        """Handle refresh request from ResultsTable widget."""
+        logger.info("ResultsTable refresh requested")
+        from ..Event_Handlers.eval_events import handle_refresh_results
+        self.app.call_from_thread(handle_refresh_results, self.app_instance, None)
+    
     # --- Helper Methods ---
     def _update_status(self, status_id: str, message: str, add_class: str = None) -> None:
         """Update status text for a given element with optional styling."""
@@ -398,6 +470,13 @@ class EvalsWindow(Container):
         self.current_run_status = "running"
         self.active_run_id = event.run_id
         self._update_status("run-status", f"Started evaluation: {event.run_name}", "info")
+        
+        # Update workflow progress
+        try:
+            workflow = self.query_one("#workflow-progress", WorkflowProgress)
+            workflow.set_step(2, "active")  # Running evaluation
+        except Exception:
+            pass
     
     def on_evaluation_progress(self, event: EvaluationProgress) -> None:
         """Handle evaluation progress updates."""
@@ -413,6 +492,13 @@ class EvalsWindow(Container):
         self.current_run_status = "completed"
         self.active_run_id = None
         self.show_evaluation_summary(event.run_id, event.summary)
+        
+        # Update workflow progress
+        try:
+            workflow = self.query_one("#workflow-progress", WorkflowProgress)
+            workflow.set_step(3, "completed")  # All done
+        except Exception:
+            pass
     
     def on_evaluation_error(self, event: EvaluationError) -> None:
         """Handle evaluation errors."""
@@ -546,6 +632,17 @@ class EvalsWindow(Container):
                         with Horizontal(classes="config-row"):
                             yield Label("Task:", classes="config-label")
                             yield Select([("Select Task", "")], id="task-select", classes="config-select")
+                    
+                    # Cost Estimation Section
+                    from ..Widgets.cost_estimation_widget import CostEstimationWidget
+                    yield CostEstimationWidget(id="cost-estimator")
+                    
+                    # Workflow Progress Section
+                    from ..Widgets.loading_states import WorkflowProgress
+                    yield WorkflowProgress(
+                        ["Load Task", "Configure Model", "Run Evaluation", "Save Results"],
+                        id="workflow-progress"
+                    )
 
             # Create a view for Results Dashboard
             with Container(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
@@ -588,6 +685,12 @@ class EvalsWindow(Container):
                         yield Button("Export Report", id="export-report-btn", classes="action-button")
                     
                     yield Static("", id="export-status", classes="status-text")
+                
+                # Cost Summary Section
+                with Container(classes="section-container"):
+                    yield Static("Cost Analysis", classes="section-title")
+                    from ..Widgets.cost_estimation_widget import CostSummaryWidget, CostEstimator
+                    yield CostSummaryWidget(CostEstimator(), id="cost-summary")
 
             # Create a view for Model Management
             with Container(id=EVALS_VIEW_MODELS, classes="evals-view-area"):

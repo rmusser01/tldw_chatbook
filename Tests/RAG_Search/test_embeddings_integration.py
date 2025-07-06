@@ -174,16 +174,15 @@ class TestVectorStoreIntegration:
         assert collection_name in collections
         
         # Search
-        query_embeddings = [[0.15, 0.25, 0.35]]  # Similar to first document
+        query_embedding = np.array([0.15, 0.25, 0.35])  # Similar to first document
         results = store.search(
-            collection_name,
-            query_embeddings,
-            n_results=2
+            query_embedding,
+            top_k=2
         )
         
         assert results is not None
-        assert "ids" in results
-        assert len(results["ids"][0]) == 2
+        assert len(results) == 2
+        assert all(hasattr(r, 'id') for r in results)
         
         # Delete collection
         assert store.delete_collection(collection_name)
@@ -218,14 +217,15 @@ class TestVectorStoreIntegration:
         assert success
         
         # Search
+        query_embedding = np.array([0.15, 0.25])
         results = store.search(
-            collection_name,
-            [[0.15, 0.25]],
-            n_results=1
+            query_embedding,
+            top_k=1
         )
         
         assert results is not None
-        assert len(results["ids"][0]) == 1
+        assert len(results) == 1
+        assert results[0].id in ids
 
 
 @pytest.mark.integration 
@@ -246,8 +246,8 @@ class TestRAGServiceIntegration:
             
             # Create RAG service
             rag_service = create_rag_service(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",
-                vector_store_type="memory"
+                embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+                vector_store="memory"
             )
             
             # Index documents
@@ -357,17 +357,20 @@ class TestMemoryTracking:
                 
                 # Get initial memory
                 initial_memory = service.get_memory_usage()
-                assert initial_memory == 500.0  # MB
+                assert isinstance(initial_memory, dict)
+                assert initial_memory['rss_mb'] == 500.0  # MB
+                assert initial_memory['total_mb'] == 500.0  # No GPU memory
                 
                 # Simulate memory growth
                 mock_memory.memory_info.return_value.rss = 600 * 1024 * 1024  # 600MB
                 
                 # Check memory again
                 current_memory = service.get_memory_usage()
-                assert current_memory == 600.0
+                assert isinstance(current_memory, dict)
+                assert current_memory['rss_mb'] == 600.0
                 
                 # Memory increased by 100MB
-                assert current_memory - initial_memory == 100.0
+                assert current_memory['rss_mb'] - initial_memory['rss_mb'] == 100.0
                 
                 service.close()
 

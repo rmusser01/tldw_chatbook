@@ -264,10 +264,10 @@ class MetricsCalculator:
     
     @staticmethod
     def calculate_exact_match(predicted: str, expected: str) -> float:
-        """Calculate exact match accuracy."""
+        """Calculate exact match accuracy (case-sensitive)."""
         if expected is None:
             return 0.0
-        return 1.0 if predicted.strip().lower() == expected.strip().lower() else 0.0
+        return 1.0 if predicted.strip() == expected.strip() else 0.0
     
     @staticmethod
     def calculate_contains_match(predicted: str, expected: str) -> float:
@@ -844,7 +844,7 @@ class QuestionAnswerRunner(BaseEvalRunner):
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
-                actual_output=f"ERROR: {str(e)}",
+                actual_output=None,
                 metrics={'error': 1.0},
                 processing_time=processing_time,
                 error_info=error_info
@@ -900,6 +900,32 @@ class QuestionAnswerRunner(BaseEvalRunner):
 
 class ClassificationRunner(BaseEvalRunner):
     """Runner for classification/multiple-choice tasks."""
+    
+    def calculate_metrics(self, predicted: str, expected: str, choices: List[str] = None) -> Dict[str, float]:
+        """Calculate classification-specific metrics including accuracy."""
+        # Get base metrics
+        metrics = super().calculate_metrics(predicted, expected)
+        
+        # Add accuracy metric (1.0 if correct, 0.0 if incorrect)
+        metrics['accuracy'] = 1.0 if predicted == expected else 0.0
+        
+        # Add classification-specific metrics if choices are provided
+        if choices and expected in choices:
+            # Add position-based metrics
+            predicted_idx = choices.index(predicted) if predicted in choices else -1
+            expected_idx = choices.index(expected)
+            
+            # Distance metric (normalized)
+            if predicted_idx >= 0:
+                distance = abs(predicted_idx - expected_idx) / (len(choices) - 1) if len(choices) > 1 else 0
+                metrics['choice_distance'] = 1.0 - distance  # Higher is better
+            else:
+                metrics['choice_distance'] = 0.0
+            
+            # Random baseline (for comparison)
+            metrics['random_baseline'] = 1.0 / len(choices) if choices else 0.0
+        
+        return metrics
     
     async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run classification evaluation on a single sample."""
@@ -962,7 +988,7 @@ class ClassificationRunner(BaseEvalRunner):
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
-                actual_output=f"ERROR: {str(e)}",
+                actual_output=None,
                 metrics={'error': 1.0},
                 processing_time=processing_time,
                 error_info=error_info
@@ -1112,7 +1138,7 @@ class LogProbRunner(BaseEvalRunner):
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
-                actual_output=f"ERROR: {str(e)}",
+                actual_output=None,
                 metrics={'error': 1.0},
                 processing_time=processing_time,
                 error_info=error_info
@@ -1230,7 +1256,7 @@ class GenerationRunner(BaseEvalRunner):
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
-                actual_output=f"ERROR: {str(e)}",
+                actual_output=None,
                 metrics={'error': 1.0},
                 processing_time=processing_time,
                 error_info=error_info

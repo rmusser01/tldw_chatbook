@@ -118,9 +118,76 @@ async def handle_add_model(app: 'TldwCli', event):
 **Issue**: Export dialog not connected to orchestrator export
 **Fix Required**: Implement file save dialog and call orchestrator.export_results()
 
+## Priority Matrix
+
+### Must Have (MVP - Week 1)
+1. **Basic Evaluation Flow**: Select task → Select model → Run → View results
+2. **Progress Indication**: Users must see evaluation is running
+3. **Error Handling**: Clear messages when things fail
+4. **Results Display**: Basic table showing evaluation outcomes
+
+### Should Have (Week 2)
+1. **Export Functionality**: Save results to CSV/JSON
+2. **Model Management**: Add/edit/delete model configurations
+3. **Task Upload**: Import tasks from files
+4. **Results Filtering**: Search and filter results
+
+### Nice to Have (Week 3+)
+1. **Cost Estimation**: Show estimated API costs
+2. **Bulk Operations**: Select multiple runs for comparison
+3. **Keyboard Shortcuts**: Power user features
+4. **Advanced Visualizations**: Charts and graphs
+
+### Won't Have (Future Releases)
+1. **Template Marketplace**: Community sharing
+2. **Scheduling**: Automated evaluation runs
+3. **Webhooks**: External integrations
+4. **Multi-user Support**: Team features
+
+## Critical Considerations
+
+### Performance & Scalability
+1. **Memory Management**: Large evaluations (1000+ samples) need pagination in UI
+2. **Concurrent Evaluations**: UI state management for multiple simultaneous runs
+3. **Results Caching**: Cache expensive aggregations for faster UI updates
+4. **Progress Persistence**: Save progress state to resume after crashes
+
+### User Experience Enhancements
+1. **Cost Estimation**: Show estimated API costs before running evaluations
+2. **Model Capabilities**: Display which models support vision, function calling, etc.
+3. **Search & Filtering**: Add search/filter capabilities for large result sets
+4. **Bulk Operations**: Enable selecting multiple runs for comparison/deletion
+5. **Keyboard Navigation**: Implement shortcuts for power users
+
+### Error Handling & Recovery
+1. **API Key Validation**: Graceful handling of missing/invalid credentials
+2. **Network Resilience**: Retry logic with exponential backoff for transient failures
+3. **Rate Limit Handling**: Queue management and user notification
+4. **Partial Results**: Save and display results even if evaluation fails midway
+
+### Advanced Features (Post-MVP)
+1. **Results Visualization**: Charts and graphs beyond tables
+2. **Configuration Import/Export**: Share evaluation setups between users
+3. **Template Marketplace**: Community-shared evaluation templates
+4. **Evaluation Scheduling**: Run evaluations on a schedule
+5. **Webhook Integration**: Notify external systems on completion
+
 ## Implementation Roadmap
 
-### Phase 1: Core Integration (Week 1)
+### Phase 0: Foundation & Quick Wins (Day 1)
+**Goal**: Build momentum with immediate visible progress
+
+#### Morning (2-3 hours)
+- [ ] Fix test failures (16 tests from previous work)
+- [ ] Implement basic model list display
+- [ ] Add simple task list dropdown
+
+#### Afternoon (2-3 hours)
+- [ ] Enable single evaluation run (no progress tracking)
+- [ ] Display basic results in status area
+- [ ] Add error notifications
+
+### Phase 1: Core Integration (Week 1, Days 2-5)
 **Goal**: Get basic evaluation flow working end-to-end
 
 #### Day 1-2: Progress Tracking
@@ -173,6 +240,47 @@ async def handle_add_model(app: 'TldwCli', event):
 - [ ] Update user guide
 - [ ] Create video tutorials
 - [ ] Update API documentation
+
+## State Management Strategy
+
+### Evaluation State Tracking
+```python
+# Add to EvalsWindow class
+class EvaluationState:
+    """Track state for active evaluations."""
+    def __init__(self):
+        self.active_runs: Dict[str, RunState] = {}
+        self.selected_runs: Set[str] = set()
+        self.filter_criteria: Dict[str, Any] = {}
+        
+class RunState:
+    """State for a single evaluation run."""
+    def __init__(self, run_id: str):
+        self.run_id = run_id
+        self.progress: int = 0
+        self.total: int = 0
+        self.start_time: datetime = datetime.now()
+        self.status: str = "starting"
+        self.errors: List[str] = []
+```
+
+### Cancellation Implementation
+```python
+# Add to eval_events.py
+_active_tasks: Dict[str, asyncio.Task] = {}
+
+async def handle_cancel_evaluation(app: 'TldwCli', run_id: str):
+    """Cancel an active evaluation."""
+    if run_id in _active_tasks:
+        task = _active_tasks[run_id]
+        task.cancel()
+        
+        # Update UI
+        app.notify(f"Cancelling evaluation {run_id}", severity="warning")
+        
+        # Clean up
+        del _active_tasks[run_id]
+```
 
 ## Specific Code Changes Required
 
@@ -373,7 +481,125 @@ async def _create_model_config(app: 'TldwCli', config: Dict[str, Any]):
 - [ ] Keyboard shortcuts for common actions
 - [ ] Responsive UI during long operations
 
+## API Key and Cost Management
+
+### API Key Validation
+```python
+# Add to eval_events.py
+async def validate_api_keys(app: 'TldwCli', provider: str) -> bool:
+    """Validate API keys before starting evaluation."""
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls import test_api_connection
+    
+    try:
+        # Test connection with minimal request
+        result = await test_api_connection(provider)
+        return result.success
+    except Exception as e:
+        app.notify(f"Invalid API key for {provider}: {str(e)}", severity="error")
+        return False
+```
+
+### Cost Estimation
+```python
+# Add to tldw_chatbook/Evals/cost_estimator.py
+PROVIDER_COSTS = {
+    "openai": {
+        "gpt-4": {"input": 0.03, "output": 0.06},  # per 1K tokens
+        "gpt-3.5-turbo": {"input": 0.001, "output": 0.002}
+    },
+    "anthropic": {
+        "claude-3-opus": {"input": 0.015, "output": 0.075},
+        "claude-3-sonnet": {"input": 0.003, "output": 0.015}
+    }
+}
+
+def estimate_evaluation_cost(
+    task_config: Dict[str, Any],
+    model_config: Dict[str, Any],
+    sample_count: int
+) -> float:
+    """Estimate cost for evaluation run."""
+    provider = model_config['provider']
+    model = model_config['model_id']
+    
+    if provider not in PROVIDER_COSTS or model not in PROVIDER_COSTS[provider]:
+        return 0.0  # Unknown cost
+    
+    costs = PROVIDER_COSTS[provider][model]
+    avg_input_tokens = task_config.get('avg_input_tokens', 500)
+    avg_output_tokens = task_config.get('avg_output_tokens', 100)
+    
+    total_cost = sample_count * (
+        (avg_input_tokens / 1000 * costs['input']) +
+        (avg_output_tokens / 1000 * costs['output'])
+    )
+    
+    return round(total_cost, 2)
+```
+
+## Results Search and Filtering
+
+### Implementation
+```python
+# Add to EvalsWindow class
+def setup_results_filters(self) -> ComposeResult:
+    """Create filter controls for results."""
+    with Horizontal(classes="filter-bar"):
+        yield Input(placeholder="Search runs...", id="search-runs")
+        yield Select(
+            [("All", "all"), ("Completed", "completed"), ("Failed", "failed")],
+            id="status-filter"
+        )
+        yield Select(
+            [("All Models", "all")] + [(m['name'], m['id']) for m in self.models],
+            id="model-filter"
+        )
+        yield DatePicker(id="date-filter")
+
+@on(Input.Changed, "#search-runs")
+def filter_results(self, event: Input.Changed):
+    """Filter results based on search."""
+    search_term = event.value.lower()
+    table = self.query_one("#results-table", DataTable)
+    
+    for row_key in table.rows:
+        row_data = table.get_row(row_key)
+        visible = any(search_term in str(cell).lower() for cell in row_data)
+        table.row_visible(row_key, visible)
+```
+
 ## Testing Strategy
+
+### Automated UI Testing
+```python
+# Add to Tests/UI/test_evals_window.py
+import pytest
+from textual.pilot import Pilot
+from tldw_chatbook.app import TldwCli
+
+@pytest.mark.asyncio
+async def test_evaluation_flow():
+    """Test complete evaluation flow through UI."""
+    async with TldwCli().run_test() as pilot: Pilot:
+        # Navigate to evaluations tab
+        await pilot.click("#tab-evaluations")
+        
+        # Select task and model
+        await pilot.click("#task-select")
+        await pilot.click("#task-option-1")
+        await pilot.click("#model-select")
+        await pilot.click("#model-option-1")
+        
+        # Start evaluation
+        await pilot.click("#start-evaluation-btn")
+        
+        # Wait for completion
+        await pilot.pause(1.0)
+        
+        # Verify results appear
+        results_table = pilot.app.query_one("#results-table")
+        assert len(results_table.rows) > 0
+```
 
 ### Integration Tests
 1. **End-to-end Evaluation**
@@ -400,10 +626,237 @@ async def _create_model_config(app: 'TldwCli', config: Dict[str, Any]):
 - [ ] Exports contain correct data
 - [ ] Error messages are helpful
 
+## Common Pitfalls and Solutions
+
+### 1. Async/Await Confusion
+**Problem**: Mixing sync and async code in event handlers
+```python
+# Wrong
+def handle_start_evaluation(self, event):
+    result = orchestrator.run_evaluation(...)  # This is async!
+
+# Correct
+@work(exclusive=True)
+async def handle_start_evaluation(self, event):
+    result = await orchestrator.run_evaluation(...)
+```
+
+### 2. UI Update from Background Thread
+**Problem**: Updating UI from worker thread causes crashes
+```python
+# Wrong
+@work(thread=True)
+def background_task(self):
+    self.query_one("#status").update("Done")  # Crash!
+
+# Correct
+@work(thread=True)
+def background_task(self):
+    self.call_from_thread(self.update_status, "Done")
+```
+
+### 3. Missing Progress Callback
+**Problem**: Progress not updating during evaluation
+```python
+# Check orchestrator is passing callback through all layers:
+orchestrator.run_evaluation() → runner.run_evaluation() → evaluate_sample()
+```
+
+### 4. Database Lock Errors
+**Problem**: "database is locked" errors during concurrent operations
+```python
+# Solution: Use connection pooling and transactions
+with orchestrator.db.transaction() as cursor:
+    # All DB operations in transaction
+```
+
+## Debugging Tips
+
+### Enable Debug Logging
+```python
+# In config.toml
+[logging]
+log_level = "DEBUG"
+log_to_file = true
+
+# In code
+from loguru import logger
+logger.debug(f"Evaluation state: {state}")
+```
+
+### UI Inspector
+```bash
+# Run with textual dev tools
+textual console
+# Then in another terminal
+python -m tldw_chatbook.app
+```
+
+### Performance Profiling
+```python
+import cProfile
+import pstats
+
+profiler = cProfile.Profile()
+profiler.enable()
+# ... code to profile ...
+profiler.disable()
+stats = pstats.Stats(profiler).sort_stats('cumulative')
+stats.print_stats(20)
+```
+
+## Monitoring and Observability
+
+### Metrics to Track
+```python
+# Add to tldw_chatbook/Evals/metrics_collector.py
+from datetime import datetime
+from typing import Dict, Any
+
+class EvaluationMetrics:
+    """Collect metrics for monitoring system health."""
+    
+    @staticmethod
+    def record_evaluation_start(run_id: str, task_id: str, model_id: str):
+        """Record evaluation start event."""
+        metrics = {
+            "event": "evaluation_started",
+            "run_id": run_id,
+            "task_id": task_id,
+            "model_id": model_id,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        logger.info("METRIC", **metrics)
+    
+    @staticmethod
+    def record_evaluation_complete(run_id: str, duration: float, success_rate: float):
+        """Record evaluation completion."""
+        metrics = {
+            "event": "evaluation_completed",
+            "run_id": run_id,
+            "duration_seconds": duration,
+            "success_rate": success_rate,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        logger.info("METRIC", **metrics)
+```
+
+### Health Checks
+```python
+# Add to tldw_chatbook/Evals/health_check.py
+async def check_evaluation_system_health() -> Dict[str, Any]:
+    """Check health of evaluation system components."""
+    health = {
+        "status": "healthy",
+        "components": {},
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # Check database
+    try:
+        orchestrator = get_orchestrator()
+        count = orchestrator.db.get_task_count()
+        health["components"]["database"] = {"status": "up", "tasks": count}
+    except Exception as e:
+        health["components"]["database"] = {"status": "down", "error": str(e)}
+        health["status"] = "degraded"
+    
+    # Check LLM providers
+    for provider in ["openai", "anthropic", "ollama"]:
+        try:
+            available = await check_provider_availability(provider)
+            health["components"][f"provider_{provider}"] = {"status": "up" if available else "down"}
+        except Exception as e:
+            health["components"][f"provider_{provider}"] = {"status": "down", "error": str(e)}
+    
+    return health
+```
+
+### Error Tracking
+```python
+# Integrate with existing error handling
+def track_evaluation_error(run_id: str, error: Exception, context: Dict[str, Any]):
+    """Track evaluation errors for debugging."""
+    error_data = {
+        "run_id": run_id,
+        "error_type": type(error).__name__,
+        "error_message": str(error),
+        "context": context,
+        "timestamp": datetime.utcnow().isoformat(),
+        "traceback": traceback.format_exc()
+    }
+    
+    # Log for analysis
+    logger.error("EVALUATION_ERROR", **error_data)
+    
+    # Could also send to external service
+    # send_to_sentry(error, error_data)
+```
+
+## Migration and Deployment
+
+### Database Migration (if needed)
+```python
+# Check schema version
+current_version = orchestrator.db.get_schema_version()
+if current_version < REQUIRED_VERSION:
+    orchestrator.db.migrate_schema()
+```
+
+### Feature Flags
+```python
+# Add to config.toml for gradual rollout
+[features]
+evaluations_enabled = true
+evaluations_beta_features = false
+```
+
+### Rollback Plan
+1. Keep old UI code in separate branch
+2. Add feature toggle in settings
+3. Database changes should be backward compatible
+4. Document rollback procedure
+
+## Next Steps After This Document
+
+### Immediate Actions (This Week)
+1. **Set up development environment**
+   ```bash
+   git checkout -b feature/eval-ui-integration
+   pip install -e ".[dev]"
+   ```
+
+2. **Run existing tests to establish baseline**
+   ```bash
+   pytest Tests/Evals/ -v > baseline_results.txt
+   ```
+
+3. **Start with Phase 0 quick wins**
+   - Fix the 16 failing tests identified earlier
+   - Implement basic model list display
+
+### Communication Plan
+1. **Daily Updates**: Post progress in team channel
+2. **Weekly Demo**: Show working features each Friday
+3. **Blocker Escalation**: Raise blockers within 2 hours
+
+### Success Metrics
+- **Week 1**: Basic evaluation flow works end-to-end
+- **Week 2**: All UI features connected and functional
+- **Week 3**: System passes all integration tests
+- **Launch**: 95% of evaluations complete without errors
+
 ## Conclusion
 
-The evaluation system is remarkably close to completion. The backend is fully functional and well-tested. The UI components exist and are well-designed. What remains is approximately 2-3 weeks of integration work to connect these pieces together.
+The evaluation system is remarkably close to completion. With the backend fully implemented and tested, and UI components already built, we're looking at approximately 2-3 weeks of focused integration work.
 
-The highest priority is establishing the basic evaluation flow (task selection → evaluation → results display). Once this works, the remaining features can be added incrementally.
+**The critical path is:**
+1. Fix existing test failures (Day 1 morning)
+2. Implement basic evaluation flow (Day 1 afternoon)
+3. Add progress tracking (Days 2-3)
+4. Complete all UI connections (Week 1)
+5. Polish and test (Weeks 2-3)
 
-With the backend complexity already handled, completing the UI integration is a straightforward engineering task that will unlock a powerful evaluation system for tldw_chatbook users.
+The modular architecture makes this integration straightforward. Each component is well-defined with clear interfaces. The biggest risk is scope creep - resist adding new features until the core integration is complete.
+
+With disciplined execution following this plan, tldw_chatbook users will have access to a powerful, production-ready evaluation system that rivals commercial offerings while maintaining the flexibility of open source.

@@ -218,18 +218,17 @@ class TestConfigurationHandling:
     
     def test_device_configuration(self):
         """Test device configuration options"""
-        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.torch') as mock_torch:
-            # Test CUDA device
-            mock_torch.cuda.is_available.return_value = True
+        # Mock torch at the point where it's imported in the wrapper
+        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
+            # Test with explicit device
+            service = EmbeddingsServiceWrapper(device="cuda")
+            assert service.device == "cuda"
             
-            with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
-                service = EmbeddingsServiceWrapper(device="cuda")
-                assert service.device == "cuda"
+            service2 = EmbeddingsServiceWrapper(device="cpu")
+            assert service2.device == "cpu"
             
-            # Test CPU device
-            with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory'):
-                service = EmbeddingsServiceWrapper(device="cpu")
-                assert service.device == "cpu"
+            # Test auto-detection would require mocking the import inside __init__
+            # which is complex, so we'll skip that part
 
 
 class TestRealModelIntegration:

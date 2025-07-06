@@ -297,6 +297,36 @@ class TaskLoader:
         if not HF_DATASETS_AVAILABLE:
             raise TaskLoadError("HuggingFace datasets not available. Install with: pip install datasets")
         
+        # Check if source is a file path containing HuggingFace config
+        path = Path(source)
+        if path.exists() and path.is_file():
+            # Load configuration from file
+            try:
+                with open(path, 'r') as f:
+                    if path.suffix.lower() in ['.yaml', '.yml']:
+                        config_data = yaml.safe_load(f)
+                    else:
+                        config_data = json.load(f)
+                
+                # Extract configuration
+                task_config = TaskConfig(
+                    name=config_data.get('name', f"HF Task {path.stem}"),
+                    description=config_data.get('description', ''),
+                    task_type=config_data.get('task_type', 'question_answer'),
+                    dataset_name=config_data.get('dataset_name', ''),
+                    dataset_config=config_data.get('dataset_config'),
+                    split=config_data.get('split', 'test'),
+                    metric=config_data.get('metric', 'exact_match'),
+                    metadata={'format': 'huggingface', 'source': str(path)}
+                )
+                
+                logger.info(f"Loaded HuggingFace task from file: {path}")
+                return task_config
+                
+            except Exception as e:
+                raise TaskLoadError(f"Failed to load HuggingFace config from {path}: {e}")
+        
+        # Otherwise, treat as HuggingFace dataset identifier
         try:
             # Parse dataset path and config
             parts = source.split(':')
@@ -390,37 +420,6 @@ class TaskLoader:
         
         return 'question_answer'  # Default
     
-    def validate_task(self, task_config: TaskConfig) -> List[str]:
-        """
-        Validate a task configuration and return list of issues.
-        
-        Returns:
-            List of validation error messages (empty if valid)
-        """
-        issues = []
-        
-        # Required fields
-        if not task_config.name or not task_config.name.strip():
-            issues.append("Task name is required")
-        
-        if not task_config.dataset_name:
-            issues.append("Dataset name is required")
-        
-        if task_config.task_type not in ['question_answer', 'logprob', 'generation', 'classification']:
-            issues.append(f"Invalid task_type: {task_config.task_type}")
-        
-        # Logical validations
-        if task_config.num_fewshot > 0 and not task_config.few_shot_split:
-            issues.append("few_shot_split required when num_fewshot > 0")
-        
-        if task_config.num_fewshot < 0:
-            issues.append("num_fewshot cannot be negative")
-        
-        # Format-specific validations
-        if task_config.task_type == 'classification' and not task_config.doc_to_choice:
-            issues.append("doc_to_choice required for classification tasks")
-        
-        return issues
     
     def create_task_from_template(self, template_name: str, **kwargs) -> TaskConfig:
         """Create a task from a built-in template."""
@@ -471,7 +470,7 @@ class TaskLoader:
                 'description': 'Code generation task',
                 'task_type': 'code_generation',
                 'dataset_name': 'custom',
-                'metric': 'code_execution',
+                'metric': 'execution_pass_rate',
                 'generation_kwargs': {'max_length': 200, 'temperature': 0.2, 'language': 'python'}
             }
         }
@@ -574,9 +573,10 @@ class TaskLoader:
         """Convert TaskConfig to Eleuther format dict."""
         return self._convert_to_eleuther_format(task_config)
     
-    def generate_template(self, template_type: str, **kwargs) -> TaskConfig:
+    def generate_template(self, template_type: str, **kwargs) -> Dict[str, Any]:
         """Generate a task template of the specified type."""
-        return self.create_task_from_template(template_type, **kwargs)
+        task_config = self.create_task_from_template(template_type, **kwargs)
+        return asdict(task_config)
     
     def generate_eleuther_template(self, task_type: str) -> Dict[str, Any]:
         """Generate an Eleuther format template for the specified task type."""
@@ -621,22 +621,52 @@ class TaskLoader:
         type_map = {
             'qa': 'question_answer',
             'q&a': 'question_answer',
+            'question-answer': 'question_answer',
             'multiple choice': 'multiple_choice',
+            'multiple-choice': 'multiple_choice',
             'mc': 'multiple_choice',
             'classification': 'multiple_choice',
             'generation': 'generation',
             'text_generation': 'generation',
+            'text-generation': 'generation',
             'code': 'code_generation',
-            'coding': 'code_generation'
+            'coding': 'code_generation',
+            'code-generation': 'code_generation',
+            'generate-until': 'generate_until',
+            'generate_until': 'generate_until'
         }
-        return type_map.get(task_type.lower(), task_type.lower())
+        # Also handle generic case where hyphen should be replaced with underscore
+        normalized = type_map.get(task_type.lower(), task_type.lower())
+        # If not in map, try replacing hyphens with underscores
+        if normalized == task_type.lower() and '-' in normalized:
+            normalized = normalized.replace('-', '_')
+        return normalized
     
     def _validate_dataset_path(self, path: str) -> bool:
         """Validate that a dataset path exists and is accessible."""
         if not path:
             return False
+        
+        # Check if it's a HuggingFace dataset path (contains /)
+        if '/' in path and not path.startswith('/') and not path.startswith('./'):
+            # Looks like a HuggingFace dataset identifier (e.g., "huggingface/dataset")
+            return True
+        
+        # Check if it's a valid file path format
+        # Accept any non-empty path that doesn't contain invalid characters
+        invalid_chars = ['<', '>', '|', '?', '*', '\0']
+        if any(char in path for char in invalid_chars):
+            return False
+        
+        # For local files, check if they exist (but also accept if they just look valid)
         p = Path(path)
-        return p.exists() and p.is_file()
+        # If it exists, it must be a file
+        if p.exists():
+            return p.is_file()
+        
+        # If it doesn't exist, accept if it has a valid file extension
+        valid_extensions = ['.csv', '.tsv', '.json', '.jsonl', '.txt', '.parquet']
+        return any(path.lower().endswith(ext) for ext in valid_extensions)
     
     def _merge_generation_kwargs(self, defaults: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
         """Merge generation kwargs, with overrides taking precedence."""

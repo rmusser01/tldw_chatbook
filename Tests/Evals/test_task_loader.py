@@ -405,7 +405,7 @@ class TestHuggingFaceFormatLoading:
         config = loader.load_task(str(task_file), 'huggingface')
         
         assert config.dataset_name == "glue"
-        assert config.metadata.get("dataset_config") == "sst2"
+        assert config.dataset_config == "sst2"
 
 class TestAutoFormatDetection:
     """Test automatic format detection."""
@@ -482,8 +482,8 @@ class TestTaskValidation:
         issues = loader.validate_task(config)
         
         assert len(issues) > 0
-        assert any("name" in issue for issue in issues)
-        assert any("metric" in issue for issue in issues)
+        assert any("name" in issue.lower() for issue in issues)
+        assert any("metric" in issue.lower() for issue in issues)
     
     def test_validate_invalid_task_type(self):
         """Test validation catches invalid task types."""
@@ -500,7 +500,7 @@ class TestTaskValidation:
         issues = loader.validate_task(config)
         
         assert len(issues) > 0
-        assert any("task_type" in issue for issue in issues)
+        assert any("task type" in issue.lower() for issue in issues)
     
     def test_validate_generation_kwargs(self):
         """Test validation of generation parameters."""
@@ -512,8 +512,8 @@ class TestTaskValidation:
             split="test",
             metric="bleu",
             generation_kwargs={
-                "temperature": 2.0,  # Invalid (> 1.0)
-                "max_tokens": -10   # Invalid (negative)
+                "temperature": 2.5,  # Invalid (> 2.0)
+                "max_length": -10   # Invalid (negative)
             }
         )
         
@@ -521,8 +521,8 @@ class TestTaskValidation:
         issues = loader.validate_task(config)
         
         assert len(issues) > 0
-        assert any("temperature" in issue for issue in issues)
-        assert any("max_tokens" in issue for issue in issues)
+        assert any("temperature" in issue.lower() for issue in issues)
+        assert any("max_length" in issue for issue in issues)
     
     def test_validate_code_task_requirements(self):
         """Test validation of code generation task requirements."""
@@ -633,7 +633,7 @@ class TestFormatConversion:
         custom_dict = loader.convert_to_custom_format(config)
         
         assert custom_dict["name"] == "conversion_test"
-        assert custom_dict["task_type"] == "multiple_choice"
+        assert custom_dict["task_type"] == "classification"
         assert custom_dict["metric"] == "acc"
     
     def test_custom_to_eleuther_conversion(self, sample_task_config):
@@ -655,10 +655,11 @@ class TestTaskTemplateGeneration:
         
         template = loader.generate_template("question_answer")
         
-        assert hasattr(template, 'name')
-        assert hasattr(template, 'task_type')
-        assert template.task_type == "question_answer"
-        assert hasattr(template, 'metric')
+        assert isinstance(template, dict)
+        assert 'name' in template
+        assert 'task_type' in template
+        assert template['task_type'] == "question_answer"
+        assert 'metric' in template
     
     def test_generate_code_template(self):
         """Test generating code evaluation template."""

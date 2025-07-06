@@ -413,7 +413,11 @@ class EmbeddingsWindow(Container):
         try:
             # Load embedding configuration
             from ..config import load_settings, load_cli_config_and_ensure_existence
-            from ..Embeddings.Embeddings_Lib import EmbeddingConfigSchema
+            from ..Embeddings.Embeddings_Lib import (
+                EmbeddingConfigSchema, 
+                get_default_embedding_config,
+                create_embedding_factory_with_defaults
+            )
             
             # Get the full config for ChromaDB manager
             full_config = load_cli_config_and_ensure_existence()
@@ -424,16 +428,12 @@ class EmbeddingsWindow(Container):
                 # Get models configuration from TOML
                 models_config = embedding_config.get('models', {})
                 
-                # If models_config exists but is empty or invalid, provide a default
+                # If models_config exists but is empty or invalid, use defaults
                 if not models_config:
                     logger.warning("No models configured, using default configuration")
-                    models_config = {
-                        'e5-small-v2': {
-                            'provider': 'huggingface',
-                            'model_name_or_path': 'intfloat/e5-small-v2',
-                            'dimension': 384
-                        }
-                    }
+                    # Get the default configuration and use its models
+                    default_config = get_default_embedding_config()
+                    models_config = {k: v.model_dump() for k, v in default_config.models.items()}
                 
                 # Prepare the configuration for validation
                 factory_config = {
@@ -453,38 +453,16 @@ class EmbeddingsWindow(Container):
                     logger.info("Initialized embedding factory with validated configuration")
                 except Exception as config_error:
                     logger.error(f"Configuration validation failed: {config_error}")
-                    # Try with a minimal default configuration
-                    default_config = EmbeddingConfigSchema(
-                        default_model_id='e5-small-v2',
-                        models={
-                            'e5-small-v2': {
-                                'provider': 'huggingface',
-                                'model_name_or_path': 'intfloat/e5-small-v2',
-                                'dimension': 384
-                            }
-                        }
-                    )
-                    self.embedding_factory = EmbeddingFactory(
-                        default_config,
+                    # Use the default configuration helper
+                    self.embedding_factory = create_embedding_factory_with_defaults(
                         max_cached=2,
                         idle_seconds=900
                     )
                     logger.info("Initialized embedding factory with default configuration")
             else:
                 logger.warning("No embedding configuration found, using defaults")
-                # Create a default configuration
-                default_config = EmbeddingConfigSchema(
-                    default_model_id='e5-small-v2',
-                    models={
-                        'e5-small-v2': {
-                            'provider': 'huggingface',
-                            'model_name_or_path': 'intfloat/e5-small-v2',
-                            'dimension': 384
-                        }
-                    }
-                )
-                self.embedding_factory = EmbeddingFactory(
-                    default_config,
+                # Use the default configuration helper
+                self.embedding_factory = create_embedding_factory_with_defaults(
                     max_cached=2,
                     idle_seconds=900
                 )
@@ -494,16 +472,14 @@ class EmbeddingsWindow(Container):
             user_id = settings.get('USERS_NAME', 'default_user')
             # Make sure the config has the expected structure for ChromaDBManager
             if 'embedding_config' not in full_config:
-                full_config['embedding_config'] = embedding_config if embedding_config else {
-                    'default_model_id': 'e5-small-v2',
-                    'models': {
-                        'e5-small-v2': {
-                            'provider': 'huggingface',
-                            'model_name_or_path': 'intfloat/e5-small-v2',
-                            'dimension': 384
-                        }
+                # Use the default configuration if no embedding config exists
+                if not embedding_config:
+                    default_config = get_default_embedding_config()
+                    embedding_config = {
+                        'default_model_id': default_config.default_model_id,
+                        'models': {k: v.model_dump() for k, v in default_config.models.items()}
                     }
-                }
+                full_config['embedding_config'] = embedding_config
             if 'USER_DB_BASE_DIR' not in full_config and 'database' in full_config:
                 full_config['USER_DB_BASE_DIR'] = full_config['database'].get('USER_DB_BASE_DIR', '~/.local/share/tldw_cli')
             self.chroma_manager = ChromaDBManager(user_id, full_config)

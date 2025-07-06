@@ -276,7 +276,7 @@ class TestVectorStorePerformance:
                 results = store.search(
                     collection_name,
                     query_embedding,
-                    n_results=10
+                    top_k=10
                 )
                 elapsed = time.time() - start_time
                 times.append(elapsed)
@@ -365,7 +365,7 @@ class TestConcurrencyPerformance:
                 with lock:
                     call_count += 1
                 time.sleep(0.001 * len(texts))  # Simulate work
-                return [[0.1] * 384 for _ in texts]
+                return np.array([[0.1] * 384 for _ in texts])
             
             mock_instance = MagicMock()
             mock_instance.embed.side_effect = thread_safe_embed
@@ -592,7 +592,7 @@ class TestPerformanceOptimizations:
             def track_embed_calls(texts, as_list=True):
                 embed_calls.append(len(texts))
                 time.sleep(0.0001 * len(texts))  # Simulate processing time
-                return [[0.1] * 384 for _ in texts]
+                return np.array([[0.1] * 384 for _ in texts])
             
             mock_instance = MagicMock()
             mock_instance.embed.side_effect = track_embed_calls
@@ -636,7 +636,7 @@ class TestPerformanceOptimizations:
                     max_concurrent = max(max_concurrent, concurrent_calls)
                 
                 time.sleep(0.01)  # Simulate processing
-                result = [[0.1] * 384 for _ in texts]
+                result = np.array([[0.1] * 384 for _ in texts])
                 
                 with lock:
                     concurrent_calls -= 1

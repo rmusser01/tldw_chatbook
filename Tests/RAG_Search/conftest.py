@@ -10,6 +10,24 @@ from unittest.mock import MagicMock, Mock, patch
 import threading
 import time
 import numpy as np
+import os
+import sys
+
+# Force dependency initialization for tests
+# This must happen before importing any modules that use optional_deps
+os.environ.pop('PYTEST_CURRENT_TEST', None)  # Remove pytest env var temporarily
+
+# Add the project root to the path
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Initialize dependencies before imports
+from tldw_chatbook.Utils.optional_deps import initialize_dependency_checks, DEPENDENCIES_AVAILABLE
+initialize_dependency_checks()
+
+# Log the dependency status for debugging
+print(f"[conftest.py] Dependencies available after initialization: {DEPENDENCIES_AVAILABLE}")
 
 # Try to import from the new simplified structure first
 try:
@@ -83,7 +101,6 @@ except ImportError:
     InMemoryVectorStore = None
     InMemoryStore = None
     create_embeddings_service = None
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 
 # ===========================================
@@ -587,3 +604,60 @@ requires_numpy = pytest.mark.skipif(
     not DEPENDENCIES_AVAILABLE.get('numpy', False),
     reason="NumPy not available"
 )
+
+
+# ===========================================
+# Session-scoped fixture to ensure dependencies are initialized
+# ===========================================
+
+@pytest.fixture(scope="session", autouse=True)
+def initialize_test_dependencies():
+    """Ensure dependencies are initialized before any tests run."""
+    # Dependencies should already be initialized at module import time
+    # This fixture just ensures they stay initialized
+    print(f"[Session Start] Dependencies available: {DEPENDENCIES_AVAILABLE}")
+    yield
+    print(f"[Session End] Tests completed")
+
+
+# ===========================================
+# Mock Factory Creation Helper
+# ===========================================
+
+def create_mock_embedding_factory(dimension=384, return_numpy=True):
+    """Create a properly configured mock embedding factory."""
+    mock_factory = Mock()
+    mock_instance = MagicMock()
+    
+    def mock_embed(texts, as_list=False):
+        """Mock embed method that returns numpy arrays."""
+        embeddings = [[0.1 + i * 0.01 for i in range(dimension)] for _ in texts]
+        if return_numpy and not as_list:
+            return np.array(embeddings)
+        return embeddings
+    
+    def mock_embed_one(text, as_list=False):
+        """Mock embed_one method for single text."""
+        embedding = [0.1 + i * 0.01 for i in range(dimension)]
+        if return_numpy and not as_list:
+            # Return 1D numpy array for single embedding
+            return np.array(embedding)
+        return embedding
+    
+    async def mock_async_embed(texts, as_list=False):
+        """Mock async_embed method."""
+        return mock_embed(texts, as_list)
+    
+    async def mock_async_embed_one(text, as_list=False):
+        """Mock async_embed_one method."""
+        return mock_embed_one(text, as_list)
+    
+    # Set up all the methods
+    mock_instance.embed = mock_embed
+    mock_instance.embed_one = mock_embed_one
+    mock_instance.async_embed = mock_async_embed
+    mock_instance.async_embed_one = mock_async_embed_one
+    mock_instance.close = Mock()
+    
+    mock_factory.return_value = mock_instance
+    return mock_factory, mock_instance

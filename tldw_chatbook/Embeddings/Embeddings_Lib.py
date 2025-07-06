@@ -82,7 +82,13 @@ else:
 #
 ########################################################################################################################
 #
-__all__ = ["EmbeddingFactory", "EmbeddingConfigSchema"]
+__all__ = [
+    "EmbeddingFactory", 
+    "EmbeddingConfigSchema",
+    "get_default_embedding_config",
+    "get_common_embedding_models",
+    "create_embedding_factory_with_defaults"
+]
 #
 # Configure logger with context
 logger = logger.bind(module="Embeddings_Lib")
@@ -127,6 +133,7 @@ class HFModelCfg(BaseModel):
     pooling: Optional[PoolingFn] = None  # default: masked mean
     dimension: Optional[int] = None
     cache_dir: Optional[str] = None  # Custom cache directory for model downloads
+    revision: Optional[str] = None  # Git revision (commit/tag) for security pinning
 
 
 class OpenAICfg(BaseModel):
@@ -202,17 +209,23 @@ class _HuggingFaceEmbedder:
                 cache_dir = os.path.expanduser(cache_dir)
                 logger.info(f"Using custom cache directory: {cache_dir}")
             
+            # Log if we're using a pinned revision for security
+            if cfg.revision:
+                logger.info(f"Loading model {cfg.model_name_or_path} at revision {cfg.revision} for security")
+            
             self._tok = AutoTokenizer.from_pretrained(
                 cfg.model_name_or_path, 
                 trust_remote_code=cfg.trust_remote_code,
-                cache_dir=cache_dir
+                cache_dir=cache_dir,
+                revision=cfg.revision  # Pin to specific revision if provided
             )
             dtype = torch.float16 if torch.cuda.is_available() else torch.float32
             self._model = AutoModel.from_pretrained(
                 cfg.model_name_or_path,
                 torch_dtype=dtype,
                 trust_remote_code=cfg.trust_remote_code,
-                cache_dir=cache_dir
+                cache_dir=cache_dir,
+                revision=cfg.revision  # Pin to specific revision if provided
             )
         # --- [FIX] Added robust error handling for model loading ---
         except (OSError, requests.exceptions.RequestException) as e:
@@ -221,9 +234,21 @@ class _HuggingFaceEmbedder:
                 "Check the model name and your network connection."
             ) from e
 
-        self._device = torch.device(
-            cfg.device if cfg.device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        # Handle device selection including "auto" option
+        if cfg.device == "auto" or cfg.device is None:
+            # Auto-detect best available device
+            if torch.cuda.is_available():
+                self._device = torch.device("cuda")
+                logger.info("Auto-selected CUDA device for embeddings")
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                self._device = torch.device("mps")
+                logger.info("Auto-selected MPS device for embeddings")
+            else:
+                self._device = torch.device("cpu")
+                logger.info("Auto-selected CPU device for embeddings")
+        else:
+            # Use explicitly specified device
+            self._device = torch.device(cfg.device)
         self._model.to(self._device).eval()
         self._max_len = cfg.max_length
         self._batch_size = cfg.batch_size
@@ -532,6 +557,165 @@ class EmbeddingFactory:
 
     def __exit__(self, exc_type, exc, tb):
         self.close()
+
+###############################################################################
+# Default configuration helpers
+###############################################################################
+
+def get_default_embedding_config() -> EmbeddingConfigSchema:
+    """
+    Get a minimal default embedding configuration.
+    
+    This provides a working configuration with the mxbai-embed-large-v1 model,
+    which offers high-quality embeddings with flexible dimension support.
+    
+    Returns:
+        EmbeddingConfigSchema with default settings
+    """
+    return EmbeddingConfigSchema(
+        default_model_id='mxbai-embed-large-v1',
+        models={
+            'mxbai-embed-large-v1': HFModelCfg(
+                provider='huggingface',
+                model_name_or_path='mixedbread-ai/mxbai-embed-large-v1',
+                dimension=1024,  # Supports Matryoshka - can use 512 for speed/storage
+                trust_remote_code=False,
+                max_length=512,
+                device=None,  # Will auto-detect best device
+                batch_size=16  # Reduced for larger model
+            )
+        }
+    )
+
+
+def get_common_embedding_models() -> Dict[str, ModelCfg]:
+    """
+    Get a dictionary of commonly used embedding models.
+    
+    Returns:
+        Dictionary mapping model IDs to their configurations
+    """
+    return {
+        # High-quality models with flexible dimensions
+        'mxbai-embed-large-v1': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='mixedbread-ai/mxbai-embed-large-v1',
+            dimension=1024,  # Supports 512, 256 via Matryoshka
+            max_length=512,
+            batch_size=16
+        ),
+        
+        # Small, fast models (good for development/testing)
+        'e5-small-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='intfloat/e5-small-v2',
+            dimension=384,
+            max_length=512
+        ),
+        'all-MiniLM-L6-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='sentence-transformers/all-MiniLM-L6-v2',
+            dimension=384,
+            max_length=256
+        ),
+        'bge-small-en-v1.5': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='BAAI/bge-small-en-v1.5',
+            dimension=384,
+            max_length=512
+        ),
+        
+        # Medium models (good balance)
+        'e5-base-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='intfloat/e5-base-v2',
+            dimension=768,
+            max_length=512
+        ),
+        'all-mpnet-base-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='sentence-transformers/all-mpnet-base-v2',
+            dimension=768,
+            max_length=384
+        ),
+        'bge-base-en-v1.5': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='BAAI/bge-base-en-v1.5',
+            dimension=768,
+            max_length=512
+        ),
+        
+        # Large models (best quality)
+        'e5-large-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='intfloat/e5-large-v2',
+            dimension=1024,
+            max_length=512
+        ),
+        'multilingual-e5-large-instruct': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='intfloat/multilingual-e5-large-instruct',
+            dimension=1024,
+            max_length=512
+        ),
+        
+        # OpenAI models (require API key)
+        'openai-ada-002': OpenAICfg(
+            provider='openai',
+            model_name_or_path='text-embedding-ada-002',
+            dimension=1536
+        ),
+        'openai-3-small': OpenAICfg(
+            provider='openai',
+            model_name_or_path='text-embedding-3-small',
+            dimension=1536
+        ),
+        'openai-3-large': OpenAICfg(
+            provider='openai',
+            model_name_or_path='text-embedding-3-large',
+            dimension=3072
+        ),
+        
+        # State-of-the-art models (require trust_remote_code)
+        'stella_en_1.5B_v5': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='NovaSearch/stella_en_1.5B_v5',
+            dimension=1024,  # Supports 512-8192 via Matryoshka
+            trust_remote_code=True,
+            revision='4bbc0f1e9df5b9563d418e9b5663e98070713eb8',  # Pinned for security
+            max_length=512,
+            batch_size=8
+        ),
+        'qwen3-embedding-4b': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='Qwen/Qwen3-Embedding-4B',
+            dimension=4096,  # Flexible up to 4096
+            trust_remote_code=True,
+            max_length=32768,  # 32k context
+            batch_size=4
+        )
+    }
+
+
+def create_embedding_factory_with_defaults(
+    config: Optional[Union[Dict[str, Any], EmbeddingConfigSchema]] = None,
+    **kwargs
+) -> EmbeddingFactory:
+    """
+    Create an EmbeddingFactory with sensible defaults if no config provided.
+    
+    Args:
+        config: Optional configuration dict or EmbeddingConfigSchema
+        **kwargs: Additional arguments passed to EmbeddingFactory constructor
+        
+    Returns:
+        Configured EmbeddingFactory instance
+    """
+    if config is None:
+        logger.info("No embedding configuration provided, using defaults")
+        config = get_default_embedding_config()
+    
+    return EmbeddingFactory(config, **kwargs)
 
 #
 # End of Embeddings_Lib.py

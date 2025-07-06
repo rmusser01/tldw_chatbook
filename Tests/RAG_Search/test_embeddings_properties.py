@@ -331,7 +331,7 @@ class TestVectorStoreProperties:
         assert success
         
         # Verify all documents are stored
-        collection = store.collections["test_collection"]
+        collection = store._collections["test_collection"]
         assert len(collection["ids"]) == len(doc_ids)
         assert len(set(collection["ids"])) == len(doc_ids)  # All unique
 
@@ -356,7 +356,7 @@ class TestThreadSafetyProperties:
                     call_count += 1
                     # Small delay to increase chance of race conditions
                     time.sleep(0.001)
-                return [[float(call_count) + i * 0.01 for i in range(384)] for _ in texts]
+                return np.array([[float(call_count) + i * 0.01 for i in range(384)] for _ in texts])
             
             mock_instance = MagicMock()
             mock_instance.embed.side_effect = thread_safe_embed

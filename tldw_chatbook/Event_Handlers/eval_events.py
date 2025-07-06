@@ -253,45 +253,117 @@ async def _execute_evaluation(app: 'TldwCli', config: Dict[str, Any]):
         
         # Update progress tracker if available
         progress_tracker = None
+        cost_estimator = None
         try:
-            # Try to find progress tracker in current evals view
+            # Try to find progress tracker and cost estimator in current evals view
             evals_window = app.query_one("EvalsWindow")
             progress_tracker = evals_window.query_one("#progress-tracker")
+            cost_estimator = evals_window.query_one("#cost-estimator")
         except:
             pass
         
         def progress_callback(completed: int, total: int, result):
             """Progress callback for real-time updates."""
-            if progress_tracker:
-                progress_tracker.current_progress = completed
-                progress_tracker.total_samples = total
+            # Try to update via EvalsWindow method for more detailed updates
+            try:
+                def update_ui():
+                    # Convert result to dict format if needed
+                    result_dict = None
+                    if hasattr(result, '__dict__'):
+                        result_dict = {
+                            'error_info': getattr(result, 'error_info', None),
+                            'sample_id': getattr(result, 'sample_id', None),
+                            'metrics': getattr(result, 'metrics', {})
+                        }
+                    
+                    # Use EvalsWindow's update method if available
+                    if hasattr(evals_window, 'update_evaluation_progress'):
+                        evals_window.update_evaluation_progress(
+                            run_id=config.get('run_id', 'current'),
+                            completed=completed,
+                            total=total,
+                            current_result=result_dict
+                        )
+                    elif progress_tracker:
+                        # Fallback to direct progress tracker update
+                        progress_tracker.current_progress = completed
+                        progress_tracker.total_samples = total
+                        
+                        # Update status message
+                        if completed == total:
+                            progress_tracker.complete_evaluation()
+                        else:
+                            progress_tracker.status_message = f"Processing sample {completed}/{total}"
                 
-                # Update status message
-                if completed == total:
-                    progress_tracker.complete_evaluation()
-                else:
-                    progress_tracker.status_message = f"Processing sample {completed}/{total}"
+                app.call_from_thread(update_ui)
+            except Exception as e:
+                logger.error(f"Error updating progress: {e}")
+        
+        # Get model details for cost estimation
+        model_info = orchestrator.db.get_model(config['model_id'])
+        if cost_estimator and model_info:
+            # Show cost estimation
+            app.call_from_thread(
+                cost_estimator.estimate_cost,
+                model_info['provider'],
+                model_info['model_id'],
+                config.get('max_samples', 100)
+            )
         
         # Start evaluation
         if progress_tracker:
-            progress_tracker.start_evaluation(config.get('max_samples', 100))
+            app.call_from_thread(progress_tracker.start_evaluation, config.get('max_samples', 100))
         
-        run_id = await orchestrator.run_evaluation(
+        # Generate run ID for tracking
+        from uuid import uuid4
+        run_id = str(uuid4())
+        
+        # Start cost tracking
+        if cost_estimator:
+            app.call_from_thread(cost_estimator.start_tracking, run_id)
+        
+        # Modified progress callback to include cost tracking
+        def enhanced_progress_callback(completed: int, total: int, result):
+            # Call original progress callback
+            progress_callback(completed, total, result)
+            
+            # Update cost if we have token counts
+            if cost_estimator and hasattr(result, 'token_usage'):
+                app.call_from_thread(
+                    cost_estimator.update_sample_cost,
+                    result.token_usage.get('input_tokens', 0),
+                    result.token_usage.get('output_tokens', 0),
+                    completed - 1  # 0-based index
+                )
+        
+        actual_run_id = await orchestrator.run_evaluation(
             task_id=config['task_id'],
             model_id=config['model_id'],
             run_name=config['name'],
             max_samples=config.get('max_samples'),
-            progress_callback=progress_callback
+            progress_callback=enhanced_progress_callback if cost_estimator else progress_callback
         )
         
         app.notify(f"Evaluation completed: {config['name']}", severity="information")
         
+        # Finalize cost tracking
+        if cost_estimator:
+            cost_result = app.call_from_thread(cost_estimator.finalize_tracking)
+            if cost_result:
+                app.notify(
+                    f"Total cost: {cost_estimator.cost_estimator.format_cost_display(cost_result['total_cost'])}", 
+                    severity="information"
+                )
+        
         # Update UI
         await refresh_results_list(app)
         
+        # Update the results table with the completed run
+        await update_results_table(app, actual_run_id)
+        
         # Auto-export if requested
         if config.get('auto_export'):
-            await _auto_export_results(app, run_id)
+            await _auto_export_results(app, actual_run_id)
         
     except Exception as e:
         logger.error(f"Error executing evaluation: {e}")
@@ -299,7 +371,7 @@ async def _execute_evaluation(app: 'TldwCli', config: Dict[str, Any]):
         
         # Update progress tracker with error
         if progress_tracker:
-            progress_tracker.error_evaluation(str(e))
+            app.call_from_thread(progress_tracker.error_evaluation, str(e))
 
 # === RESULTS MANAGEMENT EVENTS ===
 
@@ -329,6 +401,10 @@ async def refresh_results_list(app: 'TldwCli'):
                     content += f"    Samples: {run.get('completed_samples', 0)}\n\n"
                 
                 results_list.update(content)
+                
+                # Also update the ResultsTable if we have a completed run
+                if runs and runs[0]['status'] == 'completed':
+                    await update_results_table(app, runs[0]['id'])
             else:
                 results_list.update("No evaluation runs found")
                 
@@ -337,7 +413,55 @@ async def refresh_results_list(app: 'TldwCli'):
         
     except Exception as e:
         logger.error(f"Error refreshing results: {e}")
+
+async def update_results_table(app: 'TldwCli', run_id: str):
+    """Update the ResultsTable widget with detailed results from a run."""
+    try:
+        orchestrator = get_orchestrator()
+        
+        # Get detailed results for the run
+        results = orchestrator.get_run_results(run_id)
+        
+        if results:
+            # Try to find and update the ResultsTable widget
+            try:
+                evals_window = app.query_one("EvalsWindow")
+                from ..Widgets.eval_results_widgets import ResultsTable
+                results_table = evals_window.query_one(ResultsTable)
+                
+                # Update the table on the main thread
+                def update_table():
+                    results_table.update_results(results)
+                
+                app.call_from_thread(update_table)
+                
+            except Exception as e:
+                logger.error(f"Error finding or updating ResultsTable: {e}")
+        
+    except Exception as e:
+        logger.error(f"Error loading run results: {e}")
         app.notify(f"Error refreshing results: {str(e)}", severity="error")
+
+async def handle_view_detailed_results(app: 'TldwCli', event) -> None:
+    """Handle viewing detailed results for the most recent run."""
+    logger.info("Viewing detailed results")
+    
+    try:
+        orchestrator = get_orchestrator()
+        
+        # Get the most recent completed run
+        runs = orchestrator.list_runs(status='completed', limit=1)
+        
+        if runs:
+            run_id = runs[0]['id']
+            await update_results_table(app, run_id)
+            app.notify(f"Loaded results for: {runs[0]['name']}", severity="information")
+        else:
+            app.notify("No completed evaluation runs found", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error viewing detailed results: {e}")
+        app.notify(f"Error loading results: {str(e)}", severity="error")
 
 async def handle_export_results(app: 'TldwCli', format_type: str) -> None:
     """Handle exporting results."""

@@ -557,13 +557,21 @@ max_tokens = 2500
 # Embedding Configuration
 # ==========================================================
 [embedding_config]
-default_model_id = "e5-small-v2"
+default_model_id = "mxbai-embed-large-v1"
 default_llm_for_contextualization = "gpt-3.5-turbo"
 model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
 auto_download = true
 cache_size_limit_gb = 10.0
 
     # --- HuggingFace Models ---
+    # Default model - MixedBread AI's high-quality embedding model
+    [embedding_config.models.mxbai-embed-large-v1]
+    provider = "huggingface"
+    model_name_or_path = "mixedbread-ai/mxbai-embed-large-v1"
+    dimension = 1024  # Supports Matryoshka: can use 512, 256 for speed/storage
+    trust_remote_code = false
+    max_length = 512
+    
     [embedding_config.models.e5-small-v2]
     provider = "huggingface"
     model_name_or_path = "intfloat/e5-small-v2"
@@ -646,6 +654,27 @@ cache_size_limit_gb = 10.0
     dimension = 1536 # Or 512, 1536 depending on how you use it
     api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
 
+    # --- Large State-of-the-Art Models (Require trust_remote_code) ---
+    # Stella - Very high quality, supports multiple dimensions via Matryoshka
+    # SECURITY: Pinned to specific revision to prevent malicious code injection
+    [embedding_config.models.stella_en_1.5B_v5]
+    provider = "huggingface"
+    model_name_or_path = "NovaSearch/stella_en_1.5B_v5"
+    dimension = 1024  # Supports 512, 768, 1024, 2048, 4096, 6144, 8192
+    trust_remote_code = true  # Required for custom architecture
+    revision = "4bbc0f1e9df5b9563d418e9b5663e98070713eb8"  # Pinned for security
+    max_length = 512
+    batch_size = 8
+    
+    # Qwen3 Embedding - 4B parameters, 32k context, 100+ languages
+    [embedding_config.models.qwen3-embedding-4b]
+    provider = "huggingface"
+    model_name_or_path = "Qwen/Qwen3-Embedding-4B"
+    dimension = 4096  # Flexible up to 4096
+    trust_remote_code = true  # Required for Qwen3 architecture
+    max_length = 32768  # 32k context length
+    batch_size = 4  # Reduced due to model size
+    
     # --- Placeholder for a Local OpenAI-Compatible Server ---
     # The user needs to edit this section for their specific local setup.
     # The 'key' (e.g., "my-local-nomic-model") is what will appear in the UI's model dropdown
@@ -676,6 +705,18 @@ cache_size_limit_gb = 10.0
 [rag]
 # Comprehensive configuration for the RAG system
 
+    # --- Embedding Settings ---
+    [rag.embedding]
+    # Default embedding model (uses model definitions from [embedding_config] section)
+    model = "mxbai-embed-large-v1"    # Model ID from embedding_config.models
+    device = "auto"                    # Device: "auto", "cpu", "cuda", "mps"
+    cache_size = 2                     # Number of models to keep in memory
+    batch_size = 32                    # Batch size for embedding generation
+    max_length = 512                   # Maximum sequence length
+    # API settings for OpenAI-compatible models (optional)
+    # api_key = ""                     # Will use OPENAI_API_KEY env var if not set
+    # base_url = ""                    # Custom endpoint for local servers
+    
     # --- Retrieval Settings ---
     [rag.retriever]
     fts_top_k = 10              # Number of results from full-text search
