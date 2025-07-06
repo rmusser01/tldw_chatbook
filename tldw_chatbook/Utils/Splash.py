@@ -170,7 +170,7 @@ LOADING_BAR_FILL_CHARS = {
 def print_tldw_ascii():
     """Legacy function for backwards compatibility."""
     print(TLDW_ASCII_ART)
-    time.sleep(1)
+    time.sleep(2)
     return
 
 def get_ascii_art(name: str = "default") -> str:
