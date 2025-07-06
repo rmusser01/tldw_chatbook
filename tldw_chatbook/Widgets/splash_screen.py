@@ -43,7 +43,12 @@ from ..Utils.splash_animations import (
     GameOfLifeEffect,
     ScrollingCreditsEffect,
     SpotlightEffect,
-    SoundBarsEffect
+    SoundBarsEffect,
+    RaindropsEffect,
+    PixelZoomEffect,
+    TextExplosionEffect,
+    OldFilmEffect,
+    MazeGeneratorEffect
 )
 
 class SplashScreen(Container):
@@ -135,7 +140,8 @@ class SplashScreen(Container):
                 "default", "matrix", "glitch", "retro", # Original
                 "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score", # Batch 1
                 "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal", # Batch 2
-                "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars" # Batch 3
+                "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars", # Batch 3
+                "raindrops_pond", "pixel_zoom", "text_explosion", "old_film", "maze_generator" # Batch 4 ("Crazy")
             ]
         }
 
@@ -434,6 +440,73 @@ class SplashScreen(Container):
                 "bar_styles": ["bold blue", "bold magenta", "bold cyan", "bold green", "bold yellow", "bold red", "bold white"],
                 "title_style": "bold white",
                 "update_speed": 0.05 # How fast bars change their heights
+            },
+            "raindrops_pond": {
+                "type": "animated",
+                "effect": "raindrops", # Effect name needs to be consistent
+                "title": "TLDW Reflections",
+                "style": "dim blue on rgb(10,20,40)", # Base water color
+                "animation_speed": 0.05,
+                "spawn_rate": 2.0, # Drops per second
+                "ripple_chars": ["·", "o", "O", "()"],
+                "ripple_styles": ["blue", "cyan", "bold cyan", "dim blue"],
+                "max_concurrent_ripples": 20,
+                "base_water_char": "~",
+                "water_style": "dim blue",
+                "title_style": "italic bold white on rgb(20,40,80)"
+            },
+            "pixel_zoom": {
+                "type": "animated",
+                "effect": "pixel_zoom",
+                "target_art_name": "pixel_art_target", # Key for get_ascii_art
+                "style": "bold white on black", # Style for the final resolved art
+                "animation_speed": 0.05,
+                "duration": 3.0, # Duration of the zoom/pixelation effect
+                "max_pixel_size": 10,
+                "effect_type": "resolve" # "resolve" or "pixelate"
+            },
+            "text_explosion": {
+                "type": "animated",
+                "effect": "text_explosion",
+                "text_to_animate": "T . L . D . W", # Text for the effect
+                "style": "black on black", # Background, chars provide color
+                "animation_speed": 0.03,
+                "duration": 2.0, # Duration of explosion/implosion
+                "effect_direction": "implode", # "explode" or "implode"
+                "char_style": "bold orange",
+                "particle_spread": 40.0
+            },
+            "old_film": {
+                "type": "animated",
+                "effect": "old_film",
+                 # Frames can be provided as a list of strings (each a full ASCII art)
+                 # or list of names to be fetched by get_ascii_art.
+                 # For simplicity, using one generic frame by name here.
+                "frames_art_names": ["film_generic_frame"], # Could be ["frame1_name", "frame2_name"]
+                "style": "white on black", # This is the Textual widget style, effect applies its own base_style
+                "animation_speed": 0.1, # How often effect updates
+                "frame_duration": 0.8, # How long each film frame shows
+                "shake_intensity": 1,
+                "grain_density": 0.07,
+                "grain_chars": ".:·'",
+                "film_base_style": "sandy_brown on black" # Style applied by the effect to content
+            },
+            "maze_generator": {
+                "type": "animated",
+                "effect": "maze_generator",
+                "title": "Constructing Reality Tunnels...",
+                "style": "black on black", # Background, maze provides visuals
+                "animation_speed": 0.01, # Timer for effect's update (can be fast)
+                "maze_width": 79, # Odd number for character grid
+                "maze_height": 21, # Odd number
+                "wall_char": "▓", # Alternatives: █ ░ ▒ ▓ ╬ ═ ║ ╔ ╗ ╚ ╝
+                "path_char": " ",
+                "cursor_char": "❖",
+                "wall_style": "bold dim blue",
+                "path_style": "on rgb(10,10,10)", # Dark background for path
+                "cursor_style": "bold yellow",
+                "title_style": "bold white",
+                "generation_speed": 0.005 # Delay between maze generation steps (fast)
             }
         }
 
@@ -760,6 +833,103 @@ class SplashScreen(Container):
             )
             self.animation_timer = self.set_interval(
                 self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "raindrops": # Matches card_data effect name
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+            self.effect_handler = RaindropsEffect(
+                self,
+                title=self.card_data.get("title", "Rainy Day"),
+                width=display_width if display_width > 0 else 80,
+                height=display_height if display_height > 0 else 24,
+                spawn_rate=self.card_data.get("spawn_rate", 1.0),
+                ripple_chars=self.card_data.get("ripple_chars", ["."]),
+                ripple_styles=self.card_data.get("ripple_styles", ["blue"]),
+                max_concurrent_ripples=self.card_data.get("max_concurrent_ripples", 10),
+                base_water_char=self.card_data.get("base_water_char","~"),
+                water_style=self.card_data.get("water_style", "dim blue"),
+                title_style=self.card_data.get("title_style", "bold white")
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "pixel_zoom":
+            target_art = get_ascii_art(self.card_data.get("target_art_name", "default"))
+            self.effect_handler = PixelZoomEffect(
+                self,
+                target_content=target_art,
+                duration=self.card_data.get("duration", 2.5),
+                max_pixel_size=self.card_data.get("max_pixel_size", 8),
+                effect_type=self.card_data.get("effect_type", "resolve")
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "text_explosion":
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+            self.effect_handler = TextExplosionEffect(
+                self,
+                text=self.card_data.get("text_to_animate", "BOOM!"),
+                effect_type=self.card_data.get("effect_direction", "explode"),
+                duration=self.card_data.get("duration", 1.5),
+                width=display_width if display_width > 0 else 80,
+                height=display_height if display_height > 0 else 24,
+                char_style=self.card_data.get("char_style", "bold red"),
+                particle_spread=self.card_data.get("particle_spread", 30.0)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.03),
+                self._update_animation
+            )
+        elif effect_type == "old_film":
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+
+            frame_names = self.card_data.get("frames_art_names", ["film_generic_frame"])
+            frames_content_list = [get_ascii_art(name) for name in frame_names]
+            if not frames_content_list: # Fallback if names don't resolve
+                frames_content_list = [get_ascii_art("film_generic_frame")]
+
+            self.effect_handler = OldFilmEffect(
+                self,
+                frames_content=frames_content_list,
+                frame_duration=self.card_data.get("frame_duration", 0.5),
+                shake_intensity=self.card_data.get("shake_intensity", 1),
+                grain_density=self.card_data.get("grain_density", 0.05),
+                grain_chars=self.card_data.get("grain_chars", ".:'"),
+                base_style=self.card_data.get("film_base_style", "white on black"),
+                width=display_width if display_width > 0 else 80,
+                height=display_height if display_height > 0 else 24
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "maze_generator":
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+            self.effect_handler = MazeGeneratorEffect(
+                self,
+                title=self.card_data.get("title", "Generating..."),
+                maze_width=self.card_data.get("maze_width", 39),
+                maze_height=self.card_data.get("maze_height", 19),
+                wall_char=self.card_data.get("wall_char", "█"),
+                path_char=self.card_data.get("path_char", " "),
+                cursor_char=self.card_data.get("cursor_char", "░"),
+                wall_style=self.card_data.get("wall_style", "bold blue"),
+                path_style=self.card_data.get("path_style", "on black"),
+                cursor_style=self.card_data.get("cursor_style", "bold yellow"),
+                title_style=self.card_data.get("title_style", "bold white"),
+                generation_speed=self.card_data.get("generation_speed", 0.01),
+                display_width=display_width if display_width > 0 else 80,
+                display_height=display_height if display_height > 0 else 24
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.01), # Fast updates for smooth generation
                 self._update_animation
             )
 
