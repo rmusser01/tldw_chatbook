@@ -653,10 +653,10 @@ class TestTaskTemplateGeneration:
         
         template = loader.generate_template("question_answer")
         
-        assert "name" in template
-        assert "task_type" in template
-        assert template["task_type"] == "question_answer"
-        assert "metric" in template
+        assert hasattr(template, 'name')
+        assert hasattr(template, 'task_type')
+        assert template.task_type == "question_answer"
+        assert hasattr(template, 'metric')
     
     def test_generate_code_template(self):
         """Test generating code evaluation template."""

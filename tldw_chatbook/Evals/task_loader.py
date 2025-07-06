@@ -444,6 +444,13 @@ class TaskLoader:
                 'dataset_name': 'custom',
                 'metric': 'exact_match'
             },
+            'question_answer': {  # Alias for simple_qa
+                'name': 'Question Answering',
+                'description': 'Question answering task',
+                'task_type': 'question_answer',
+                'dataset_name': 'custom',
+                'metric': 'exact_match'
+            },
             'multiple_choice': {
                 'name': 'Multiple Choice',
                 'description': 'Multiple choice classification task',
@@ -458,6 +465,14 @@ class TaskLoader:
                 'dataset_name': 'custom',
                 'metric': 'bleu',
                 'generation_kwargs': {'max_length': 100, 'temperature': 0.7}
+            },
+            'code_generation': {
+                'name': 'Code Generation',
+                'description': 'Code generation task',
+                'task_type': 'code_generation',
+                'dataset_name': 'custom',
+                'metric': 'code_execution',
+                'generation_kwargs': {'max_length': 200, 'temperature': 0.2, 'language': 'python'}
             }
         }
         

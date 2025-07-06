@@ -33,17 +33,6 @@ This guide helps you navigate the evaluation system documentation for tldw_chatb
    - Quick API examples
    - Located within the Evals module
 
-### 🗄️ Historical Documents
-
-5. **[EVAL-IMPLEMENTATION-SUMMARY.md](EVAL-IMPLEMENTATION-SUMMARY.md)**
-   - Summary of recent improvements
-   - Now incorporated into EVALUATION-SYSTEM.md
-   - Kept for historical reference
-
-6. **[EVAL-PLAN-3.md](EVAL-PLAN-3.md)**
-   - Original implementation plan
-   - Historical planning document
-   - Shows evolution of the system
 
 ## Quick Navigation
 
@@ -56,7 +45,7 @@ This guide helps you navigate the evaluation system documentation for tldw_chatb
 
 - ✅ **Backend is complete** - All evaluation functionality is implemented
 - ⚠️ **UI needs work** - Textual interface integration is pending
-- 📊 **30+ providers** supported with 27+ task types
+- 📊 **15+ providers** supported with 27+ task types
 - 🧪 **200+ tests** ensure reliability
 - 🚀 **Ready for programmatic use** via Python API
 
