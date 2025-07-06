@@ -29,6 +29,7 @@ from tldw_chatbook.Utils.Emoji_Handling import (
     EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_EDIT, FALLBACK_EDIT
 )
 from tldw_chatbook.Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
 
 # Import our comprehensive mock fixture
 from Tests.fixtures.event_handler_mocks import mock_app
@@ -43,15 +44,18 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 # Mock external dependencies used in chat_events.py
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.os')
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
-async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mock_os, mock_ccl, mock_app):
+async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mock_chat_message_enhanced_class, mock_os, mock_ccl, mock_app):
     """Test a basic message send operation."""
     mock_os.environ.get.return_value = "fake-key"
     
     # Mock ChatMessage instances to track mount calls
     mock_user_msg = MagicMock()
     mock_ai_msg = MagicMock()
+    # Could be either ChatMessage or ChatMessageEnhanced depending on config
     mock_chat_message_class.side_effect = [mock_user_msg, mock_ai_msg]
+    mock_chat_message_enhanced_class.side_effect = [mock_user_msg, mock_ai_msg]
 
     await handle_chat_send_button_pressed(mock_app, MagicMock())
 
@@ -86,8 +90,9 @@ async def test_handle_chat_send_button_pressed_basic(mock_chat_message_class, mo
 
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.os')
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced')
 @patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage')
-async def test_handle_chat_send_with_active_character(mock_chat_message_class, mock_os, mock_ccl, mock_app):
+async def test_handle_chat_send_with_active_character(mock_chat_message_class, mock_chat_message_enhanced_class, mock_os, mock_ccl, mock_app):
     """Test that an active character's system prompt overrides the UI."""
     mock_os.environ.get.return_value = "fake-key"
     
@@ -95,6 +100,7 @@ async def test_handle_chat_send_with_active_character(mock_chat_message_class, m
     mock_user_msg = MagicMock()
     mock_ai_msg = MagicMock()
     mock_chat_message_class.side_effect = [mock_user_msg, mock_ai_msg]
+    mock_chat_message_enhanced_class.side_effect = [mock_user_msg, mock_ai_msg]
     mock_app.current_chat_active_character_data = {
         'name': 'TestChar',
         'system_prompt': 'You are TestChar.'

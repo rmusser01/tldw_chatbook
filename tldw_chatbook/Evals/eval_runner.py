@@ -315,10 +315,16 @@ class MetricsCalculator:
         return 2 * (precision * recall) / (precision + recall)
     
     @staticmethod
-    def calculate_bleu_score(predicted: str, expected: str) -> float:
-        """Simple BLEU-like score based on n-gram overlap."""
+    def calculate_bleu_score(predicted: str, expected: str, n: int = 1) -> float:
+        """Calculate BLEU score with n-gram support."""
         if expected is None:
             return 0.0
+        
+        def get_ngrams(tokens: List[str], n: int) -> List[Tuple[str, ...]]:
+            """Get n-grams from token list."""
+            if n <= 0 or n > len(tokens):
+                return []
+            return [tuple(tokens[i:i+n]) for i in range(len(tokens) - n + 1)]
         
         pred_tokens = predicted.lower().split()
         expected_tokens = expected.lower().split()
@@ -326,13 +332,224 @@ class MetricsCalculator:
         if not expected_tokens:
             return 1.0 if not pred_tokens else 0.0
         
-        # Simple unigram overlap (BLEU-1 approximation)
-        matches = 0
-        for token in pred_tokens:
-            if token in expected_tokens:
-                matches += 1
+        if not pred_tokens:
+            return 0.0
         
-        return matches / len(expected_tokens) if expected_tokens else 0.0
+        # Calculate n-gram precision
+        total_precision = 0.0
+        for i in range(1, min(n + 1, len(expected_tokens) + 1)):
+            pred_ngrams = get_ngrams(pred_tokens, i)
+            expected_ngrams = get_ngrams(expected_tokens, i)
+            
+            if not pred_ngrams:
+                continue
+                
+            matches = 0
+            expected_ngram_counts = {}
+            for ngram in expected_ngrams:
+                expected_ngram_counts[ngram] = expected_ngram_counts.get(ngram, 0) + 1
+            
+            for ngram in pred_ngrams:
+                if ngram in expected_ngram_counts and expected_ngram_counts[ngram] > 0:
+                    matches += 1
+                    expected_ngram_counts[ngram] -= 1
+            
+            precision = matches / len(pred_ngrams) if pred_ngrams else 0.0
+            total_precision += precision
+        
+        # Average precision across n-grams
+        avg_precision = total_precision / min(n, len(expected_tokens))
+        
+        # Brevity penalty
+        bp = 1.0
+        if len(pred_tokens) < len(expected_tokens):
+            bp = min(1.0, (len(pred_tokens) / len(expected_tokens)) ** 0.5)
+        
+        return bp * avg_precision
+    
+    @staticmethod
+    def calculate_rouge_1(predicted: str, expected: str) -> float:
+        """Calculate ROUGE-1 (unigram) F1 score."""
+        if expected is None:
+            return 0.0
+        
+        pred_tokens = set(predicted.lower().split())
+        expected_tokens = set(expected.lower().split())
+        
+        if not expected_tokens:
+            return 1.0 if not pred_tokens else 0.0
+        
+        if not pred_tokens:
+            return 0.0
+        
+        # Calculate overlap
+        overlap = pred_tokens & expected_tokens
+        
+        if not overlap:
+            return 0.0
+        
+        # Calculate precision and recall
+        precision = len(overlap) / len(pred_tokens)
+        recall = len(overlap) / len(expected_tokens)
+        
+        # Calculate F1 score
+        if precision + recall == 0:
+            return 0.0
+        
+        f1 = 2 * (precision * recall) / (precision + recall)
+        return f1
+    
+    @staticmethod
+    def calculate_rouge_2(predicted: str, expected: str) -> float:
+        """Calculate ROUGE-2 (bigram) F1 score."""
+        if expected is None:
+            return 0.0
+        
+        def get_bigrams(tokens: List[str]) -> List[Tuple[str, str]]:
+            """Get bigrams from token list."""
+            if len(tokens) < 2:
+                return []
+            return [(tokens[i], tokens[i+1]) for i in range(len(tokens) - 1)]
+        
+        pred_tokens = predicted.lower().split()
+        expected_tokens = expected.lower().split()
+        
+        if len(expected_tokens) < 2:
+            return 1.0 if len(pred_tokens) < 2 else 0.0
+        
+        if len(pred_tokens) < 2:
+            return 0.0
+        
+        # Get bigrams
+        pred_bigrams = set(get_bigrams(pred_tokens))
+        expected_bigrams = set(get_bigrams(expected_tokens))
+        
+        if not expected_bigrams:
+            return 1.0 if not pred_bigrams else 0.0
+        
+        # Calculate overlap
+        overlap = pred_bigrams & expected_bigrams
+        
+        if not overlap:
+            return 0.0
+        
+        # Calculate precision and recall
+        precision = len(overlap) / len(pred_bigrams)
+        recall = len(overlap) / len(expected_bigrams)
+        
+        # Calculate F1 score
+        if precision + recall == 0:
+            return 0.0
+        
+        f1 = 2 * (precision * recall) / (precision + recall)
+        return f1
+    
+    @staticmethod
+    def calculate_rouge_l(predicted: str, expected: str) -> float:
+        """Calculate ROUGE-L (Longest Common Subsequence) F1 score."""
+        if expected is None:
+            return 0.0
+        
+        def lcs_length(x: List[str], y: List[str]) -> int:
+            """Calculate length of longest common subsequence."""
+            m, n = len(x), len(y)
+            if m == 0 or n == 0:
+                return 0
+            
+            # Create DP table
+            dp = [[0] * (n + 1) for _ in range(m + 1)]
+            
+            # Fill DP table
+            for i in range(1, m + 1):
+                for j in range(1, n + 1):
+                    if x[i-1] == y[j-1]:
+                        dp[i][j] = dp[i-1][j-1] + 1
+                    else:
+                        dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+            
+            return dp[m][n]
+        
+        pred_tokens = predicted.lower().split()
+        expected_tokens = expected.lower().split()
+        
+        if not expected_tokens:
+            return 1.0 if not pred_tokens else 0.0
+        
+        if not pred_tokens:
+            return 0.0
+        
+        # Calculate LCS
+        lcs_len = lcs_length(pred_tokens, expected_tokens)
+        
+        if lcs_len == 0:
+            return 0.0
+        
+        # Calculate precision and recall
+        precision = lcs_len / len(pred_tokens)
+        recall = lcs_len / len(expected_tokens)
+        
+        # Calculate F1 score
+        if precision + recall == 0:
+            return 0.0
+        
+        f1 = 2 * (precision * recall) / (precision + recall)
+        return f1
+    
+    @staticmethod
+    def calculate_semantic_similarity(predicted: str, expected: str, embedding_model=None) -> float:
+        """Calculate semantic similarity using embeddings if available."""
+        if expected is None:
+            return 0.0
+        
+        if not predicted and not expected:
+            return 1.0
+        
+        if not predicted or not expected:
+            return 0.0
+        
+        # Try to use sentence transformers if available
+        try:
+            if embedding_model is None:
+                from sentence_transformers import SentenceTransformer
+                # Use a small, fast model by default
+                embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+            
+            # Get embeddings
+            embeddings = embedding_model.encode([predicted, expected])
+            pred_embedding = embeddings[0]
+            exp_embedding = embeddings[1]
+            
+            # Calculate cosine similarity
+            from numpy import dot
+            from numpy.linalg import norm
+            
+            cosine_sim = dot(pred_embedding, exp_embedding) / (norm(pred_embedding) * norm(exp_embedding))
+            
+            # Normalize to 0-1 range
+            return max(0.0, min(1.0, float(cosine_sim)))
+            
+        except ImportError:
+            # Fallback to token overlap if embeddings not available
+            logger.debug("Sentence transformers not available, using token overlap for semantic similarity")
+            return MetricsCalculator.calculate_f1_score(predicted, expected)
+        except Exception as e:
+            logger.warning(f"Error calculating semantic similarity: {e}")
+            return MetricsCalculator.calculate_f1_score(predicted, expected)
+    
+    @staticmethod
+    def calculate_perplexity(logprobs: List[float]) -> float:
+        """Calculate perplexity from log probabilities."""
+        if not logprobs:
+            return float('inf')
+        
+        try:
+            import math
+            # Perplexity = exp(average negative log probability)
+            avg_neg_logprob = -sum(logprobs) / len(logprobs)
+            perplexity = math.exp(avg_neg_logprob)
+            return perplexity
+        except (ValueError, OverflowError):
+            return float('inf')
 
 class ErrorHandler:
     """Handles retries and error classification for evaluation runs."""
@@ -501,6 +718,30 @@ class BaseEvalRunner(ABC):
             metrics['f1'] = MetricsCalculator.calculate_f1_score(predicted, expected)
         elif self.task_config.metric == 'bleu':
             metrics['bleu'] = MetricsCalculator.calculate_bleu_score(predicted, expected)
+        elif self.task_config.metric == 'bleu-1':
+            metrics['bleu-1'] = MetricsCalculator.calculate_bleu_score(predicted, expected, n=1)
+        elif self.task_config.metric == 'bleu-2':
+            metrics['bleu-2'] = MetricsCalculator.calculate_bleu_score(predicted, expected, n=2)
+        elif self.task_config.metric == 'bleu-3':
+            metrics['bleu-3'] = MetricsCalculator.calculate_bleu_score(predicted, expected, n=3)
+        elif self.task_config.metric == 'bleu-4':
+            metrics['bleu-4'] = MetricsCalculator.calculate_bleu_score(predicted, expected, n=4)
+        elif self.task_config.metric == 'rouge-1':
+            metrics['rouge-1'] = MetricsCalculator.calculate_rouge_1(predicted, expected)
+        elif self.task_config.metric == 'rouge-2':
+            metrics['rouge-2'] = MetricsCalculator.calculate_rouge_2(predicted, expected)
+        elif self.task_config.metric == 'rouge-l':
+            metrics['rouge-l'] = MetricsCalculator.calculate_rouge_l(predicted, expected)
+        elif self.task_config.metric == 'rouge':
+            # Calculate all ROUGE metrics
+            metrics['rouge-1'] = MetricsCalculator.calculate_rouge_1(predicted, expected)
+            metrics['rouge-2'] = MetricsCalculator.calculate_rouge_2(predicted, expected)
+            metrics['rouge-l'] = MetricsCalculator.calculate_rouge_l(predicted, expected)
+        elif self.task_config.metric == 'semantic_similarity':
+            metrics['semantic_similarity'] = MetricsCalculator.calculate_semantic_similarity(predicted, expected)
+        elif self.task_config.metric == 'bertscore':
+            # Alias for semantic similarity
+            metrics['bertscore'] = MetricsCalculator.calculate_semantic_similarity(predicted, expected)
         elif self.task_config.metric == 'accuracy' and choices:
             # For multiple choice
             metrics['accuracy'] = MetricsCalculator.calculate_exact_match(predicted, expected)
@@ -894,13 +1135,37 @@ class LogProbRunner(BaseEvalRunner):
     async def _get_text_logprob(self, text: str) -> float:
         """Get log probability of text from LLM."""
         try:
-            # This would need to be implemented based on the LLM provider's API
-            # For now, return a placeholder
-            logger.warning("Log probability calculation not yet implemented for this provider")
-            return 0.0
+            # Use the LLM interface to get logprobs
+            result = await self.llm_interface.get_logprobs(text)
+            
+            if result and 'logprobs' in result and result['logprobs']:
+                # Sum the log probabilities
+                total_logprob = sum(result['logprobs'])
+                return total_logprob
+            else:
+                logger.warning("No logprobs returned from LLM provider")
+                return float('-inf')
             
         except Exception as e:
             logger.error(f"Failed to get logprob: {e}")
+            return float('-inf')
+    
+    async def _get_continuation_logprob(self, prompt: str, continuation: str) -> float:
+        """Get log probability of a continuation given prompt."""
+        try:
+            # Use the LLM interface to get completion logprobs
+            result = await self.llm_interface.get_completion_logprobs(prompt, continuation)
+            
+            if result and 'logprobs' in result and result['logprobs']:
+                # Sum the log probabilities for the continuation
+                total_logprob = sum(result['logprobs'])
+                return total_logprob
+            else:
+                # Fallback to full text logprob
+                return await self._get_text_logprob(prompt + continuation)
+            
+        except Exception as e:
+            logger.error(f"Failed to get continuation logprob: {e}")
             return float('-inf')
 
 class GenerationRunner(BaseEvalRunner):

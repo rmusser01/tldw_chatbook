@@ -311,15 +311,24 @@ class ChatWindowEnhanced(Container):
             )
             
             with Horizontal(id="chat-input-area"):
-                yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), id="toggle-chat-left-sidebar",
-                             classes="sidebar-toggle")
+                yield Button(
+                    get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
+                    id="toggle-chat-left-sidebar",
+                    classes="sidebar-toggle",
+                    tooltip="Toggle left sidebar (Ctrl+[)"
+                )
                 yield TextArea(id="chat-input", classes="chat-input")
                 
                 # Check config to see if attach button should be shown
                 from ..config import get_cli_setting
                 show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
                 if show_attach_button:
-                    yield Button("📎", id="attach-image", classes="action-button attach-button")
+                    yield Button(
+                        "📎", 
+                        id="attach-image", 
+                        classes="action-button attach-button",
+                        tooltip="Attach file"
+                    )
                 
                 yield Button(
                     get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
@@ -328,10 +337,19 @@ class ChatWindowEnhanced(Container):
                     classes="send-button",
                     tooltip="Send message" if self.is_send_button else "Stop generation"
                 )
-                yield Button("💡", id="respond-for-me-button", classes="action-button suggest-button")
+                yield Button(
+                    "💡", 
+                    id="respond-for-me-button", 
+                    classes="action-button suggest-button",
+                    tooltip="Suggest a response"
+                )
                 logger.debug("'respond-for-me-button' composed.")
-                yield Button(get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), id="toggle-chat-right-sidebar",
-                             classes="sidebar-toggle")
+                yield Button(
+                    get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
+                    id="toggle-chat-right-sidebar",
+                    classes="sidebar-toggle",
+                    tooltip="Toggle right sidebar (Ctrl+])"
+                )
 
         # Character Details Sidebar (Right)
         yield from create_chat_right_sidebar(
@@ -361,7 +379,12 @@ class ChatWindowEnhanced(Container):
                 chat_input = self.query_one("#chat-input", TextArea)
                 
                 # Create and mount the button after the chat input
-                attach_button = Button("📎", id="attach-image", classes="action-button attach-button")
+                attach_button = Button(
+                    "📎", 
+                    id="attach-image", 
+                    classes="action-button attach-button",
+                    tooltip="Attach file"
+                )
                 await input_area.mount(attach_button, after=chat_input)
                 
                 # Re-arrange the buttons to maintain order
