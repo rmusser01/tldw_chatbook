@@ -34,6 +34,16 @@ def _get_llm_functions():
         'chat_with_deepseek': chat_with_deepseek
     }
 
+def _get_local_llm_functions():
+    """Import local LLM functions at runtime to avoid circular imports."""
+    from ...LLM_Calls.LLM_API_Calls_Local import (
+        chat_with_ollama, chat_with_vllm
+    )
+    return {
+        'chat_with_ollama': chat_with_ollama,
+        'chat_with_vllm': chat_with_vllm
+    }
+
 # Define our own error classes to avoid circular imports
 class EvalProviderError(Exception):
     """Base error for evaluation provider issues."""
@@ -649,6 +659,299 @@ class OpenRouterProvider(LLMProvider):
         logger.warning("Log probabilities not yet implemented for OpenRouter provider")
         return {'logprobs': [], 'tokens': []}
 
+class OllamaProvider(LLMProvider):
+    """Ollama provider for evaluations."""
+    
+    def __init__(self, model_id: str, config: Dict[str, Any]):
+        super().__init__(model_id, config)
+        settings = load_settings()
+        api_settings = settings.get('api_settings', {})
+        ollama_config = api_settings.get('ollama', {})
+        
+        # Get API URL from config
+        self.api_url = config.get('api_url') or ollama_config.get('api_url', 'http://localhost:11434/v1')
+        self.model = model_id or ollama_config.get('model')
+        if not self.model:
+            raise ValueError("Ollama model name not found in config or settings")
+    
+    async def generate_async(self, prompt: str, **kwargs) -> str:
+        """Generate text using Ollama API."""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            result = await loop.run_in_executor(
+                None,
+                self._call_ollama_sync,
+                prompt,
+                kwargs
+            )
+            
+            return result
+            
+        except Exception as e:
+            # Handle known API errors
+            if 'connection' in str(e).lower() or 'refused' in str(e).lower():
+                logger.error(f"Ollama connection error: {e}")
+                raise EvalProviderError(f"Ollama connection failed - is the server running?: {e}", provider="ollama")
+            elif 'model' in str(e).lower() and 'not found' in str(e).lower():
+                logger.error(f"Ollama model error: {e}")
+                raise EvalProviderError(f"Ollama model '{self.model}' not found: {e}", provider="ollama")
+            else:
+                logger.error(f"Ollama generation failed: {e}")
+                raise EvalProviderError(f"Ollama generation failed: {e}", provider="ollama")
+    
+    def _call_ollama_sync(self, prompt: str, kwargs: Dict[str, Any]) -> str:
+        """Call Ollama API synchronously."""
+        # Get functions at runtime to avoid circular imports
+        local_llm_functions = _get_local_llm_functions()
+        chat_with_ollama = local_llm_functions['chat_with_ollama']
+        
+        # Prepare message format expected by Ollama API
+        messages = [{"role": "user", "content": prompt}]
+        
+        result = chat_with_ollama(
+            input_data=messages,
+            api_url=self.api_url,
+            model=self.model,
+            system_message=kwargs.get('system_prompt'),
+            temperature=kwargs.get('temperature', 0.0),
+            num_predict=kwargs.get('max_tokens', 100),
+            streaming=False
+        )
+        
+        # Extract text from response
+        if isinstance(result, dict):
+            if 'choices' in result and result['choices']:
+                return result['choices'][0].get('message', {}).get('content', '')
+            elif 'content' in result:
+                return result['content']
+            elif 'text' in result:
+                return result['text']
+        return str(result)
+    
+    async def generate_with_system_async(self, prompt: str, system_prompt: str = None, **kwargs) -> str:
+        """Generate text with optional system prompt."""
+        if system_prompt:
+            kwargs['system_prompt'] = system_prompt
+        return await self.generate_async(prompt, **kwargs)
+    
+    async def get_logprobs_async(self, text: str, **kwargs) -> Dict[str, Any]:
+        """Get log probabilities from Ollama API."""
+        # Note: Ollama may not support logprobs in the same way as OpenAI
+        logger.warning("Log probabilities not fully supported by Ollama API")
+        return {'logprobs': [], 'tokens': [], 'note': 'Ollama does not provide detailed logprobs'}
+
+class VllmProvider(LLMProvider):
+    """vLLM provider for evaluations."""
+    
+    def __init__(self, model_id: str, config: Dict[str, Any]):
+        super().__init__(model_id, config)
+        settings = load_settings()
+        api_settings = settings.get('api_settings', {})
+        vllm_config = api_settings.get('vllm_api', {})
+        
+        # Get API URL from config
+        self.api_url = config.get('api_url') or vllm_config.get('api_url')
+        if not self.api_url:
+            raise ValueError("vLLM API URL not found in config or settings")
+        
+        self.api_key = config.get('api_key') or vllm_config.get('api_key')
+        self.model = model_id or vllm_config.get('model')
+        if not self.model:
+            raise ValueError("vLLM model name not found in config or settings")
+    
+    async def generate_async(self, prompt: str, **kwargs) -> str:
+        """Generate text using vLLM API."""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            result = await loop.run_in_executor(
+                None,
+                self._call_vllm_sync,
+                prompt,
+                kwargs
+            )
+            
+            return result
+            
+        except Exception as e:
+            # Handle known API errors
+            if 'connection' in str(e).lower() or 'refused' in str(e).lower():
+                logger.error(f"vLLM connection error: {e}")
+                raise EvalProviderError(f"vLLM connection failed - is the server running?: {e}", provider="vllm")
+            elif 'authentication' in str(e).lower() or 'api key' in str(e).lower():
+                logger.error(f"vLLM authentication error: {e}")
+                raise EvalAuthenticationError(f"vLLM authentication failed: {e}", provider="vllm")
+            else:
+                logger.error(f"vLLM generation failed: {e}")
+                raise EvalProviderError(f"vLLM generation failed: {e}", provider="vllm")
+    
+    def _call_vllm_sync(self, prompt: str, kwargs: Dict[str, Any]) -> str:
+        """Call vLLM API synchronously."""
+        # Get functions at runtime to avoid circular imports
+        local_llm_functions = _get_local_llm_functions()
+        chat_with_vllm = local_llm_functions['chat_with_vllm']
+        
+        # Prepare message format expected by vLLM API
+        messages = [{"role": "user", "content": prompt}]
+        
+        result = chat_with_vllm(
+            input_data=messages,
+            api_key=self.api_key,
+            model=self.model,
+            system_prompt=kwargs.get('system_prompt'),
+            temperature=kwargs.get('temperature', 0.0),
+            max_tokens=kwargs.get('max_tokens', 100),
+            streaming=False
+        )
+        
+        # Extract text from response
+        if isinstance(result, dict):
+            if 'choices' in result and result['choices']:
+                return result['choices'][0].get('message', {}).get('content', '')
+            elif 'content' in result:
+                return result['content']
+            elif 'text' in result:
+                return result['text']
+        return str(result)
+    
+    async def generate_with_system_async(self, prompt: str, system_prompt: str = None, **kwargs) -> str:
+        """Generate text with optional system prompt."""
+        if system_prompt:
+            kwargs['system_prompt'] = system_prompt
+        return await self.generate_async(prompt, **kwargs)
+    
+    async def get_logprobs_async(self, text: str, **kwargs) -> Dict[str, Any]:
+        """Get log probabilities from vLLM API."""
+        # vLLM supports OpenAI-compatible logprobs
+        try:
+            loop = asyncio.get_event_loop()
+            
+            result = await loop.run_in_executor(
+                None,
+                self._get_vllm_logprobs_sync,
+                text,
+                kwargs
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"vLLM logprobs failed: {e}")
+            return {'logprobs': [], 'tokens': [], 'error': str(e)}
+    
+    def _get_vllm_logprobs_sync(self, text: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Get log probabilities from vLLM synchronously."""
+        # Get functions at runtime to avoid circular imports
+        local_llm_functions = _get_local_llm_functions()
+        chat_with_vllm = local_llm_functions['chat_with_vllm']
+        
+        messages = [{"role": "user", "content": text}]
+        
+        try:
+            result = chat_with_vllm(
+                input_data=messages,
+                api_key=self.api_key,
+                model=self.model,
+                temperature=0.0,
+                max_tokens=1,
+                logprobs=True,
+                streaming=False
+            )
+            
+            # vLLM should return OpenAI-compatible response with logprobs
+            if isinstance(result, dict) and 'choices' in result:
+                return self._extract_openai_logprobs(result)
+            else:
+                return {
+                    'logprobs': [],
+                    'tokens': [],
+                    'raw_response': result,
+                    'note': 'vLLM response format not recognized'
+                }
+        except Exception as e:
+            logger.error(f"Failed to get vLLM logprobs: {e}")
+            return {'logprobs': [], 'tokens': [], 'error': str(e)}
+    
+    def _extract_openai_logprobs(self, response_data: Any) -> Dict[str, Any]:
+        """Extract logprobs from OpenAI-compatible API response (same as OpenAIProvider)."""
+        try:
+            # Handle both string responses (text only) and dict responses (full API response)
+            if isinstance(response_data, str):
+                # If we just get text back, logprobs weren't available
+                return {
+                    'logprobs': [],
+                    'tokens': [],
+                    'content': response_data,
+                    'note': 'Response was text-only, no logprobs structure available'
+                }
+            
+            if not isinstance(response_data, dict):
+                return {
+                    'logprobs': [],
+                    'tokens': [],
+                    'error': f'Unexpected response type: {type(response_data)}'
+                }
+            
+            # Extract from OpenAI response structure
+            choices = response_data.get('choices', [])
+            if not choices:
+                return {
+                    'logprobs': [],
+                    'tokens': [],
+                    'error': 'No choices in response'
+                }
+            
+            choice = choices[0]  # Get first choice
+            logprobs_data = choice.get('logprobs')
+            
+            if not logprobs_data:
+                return {
+                    'logprobs': [],
+                    'tokens': [],
+                    'content': choice.get('message', {}).get('content', ''),
+                    'note': 'No logprobs data in response'
+                }
+            
+            # Extract tokens and their probabilities
+            content_tokens = logprobs_data.get('content', [])
+            tokens = []
+            logprobs = []
+            top_logprobs = []
+            
+            for token_data in content_tokens:
+                if isinstance(token_data, dict):
+                    tokens.append(token_data.get('token', ''))
+                    logprobs.append(token_data.get('logprob', 0.0))
+                    
+                    # Extract top alternatives if available
+                    top_alternatives = token_data.get('top_logprobs', [])
+                    top_logprobs.append([
+                        {
+                            'token': alt.get('token', ''),
+                            'logprob': alt.get('logprob', 0.0)
+                        }
+                        for alt in top_alternatives if isinstance(alt, dict)
+                    ])
+            
+            return {
+                'tokens': tokens,
+                'logprobs': logprobs,
+                'top_logprobs': top_logprobs,
+                'content': choice.get('message', {}).get('content', ''),
+                'model': response_data.get('model', ''),
+                'usage': response_data.get('usage', {})
+            }
+            
+        except Exception as e:
+            logger.error(f"Error extracting vLLM logprobs: {e}")
+            return {
+                'logprobs': [],
+                'tokens': [],
+                'error': f'Extraction failed: {str(e)}',
+                'raw_response': response_data
+            }
+
 def get_llm_provider(provider_name: str, model_id: str, config: Dict[str, Any]) -> LLMProvider:
     """Get an LLM provider instance based on provider name."""
     provider_classes = {
@@ -657,6 +960,8 @@ def get_llm_provider(provider_name: str, model_id: str, config: Dict[str, Any]) 
         'cohere': CohereProvider,
         'groq': GroqProvider,
         'openrouter': OpenRouterProvider,
+        'ollama': OllamaProvider,
+        'vllm': VllmProvider,
     }
     
     if provider_name.lower() not in provider_classes:
