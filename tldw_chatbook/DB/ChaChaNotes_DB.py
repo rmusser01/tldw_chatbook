@@ -4161,6 +4161,27 @@ UPDATE db_schema_version
         except CharactersRAGDBError as e:
             logger.error(f"Error fetching latest sync log change_id: {e}")
             raise
+    
+    def close(self) -> None:
+        """Alias for close_connection() to maintain consistency with BaseDB."""
+        self.close_connection()
+    
+    def vacuum(self) -> None:
+        """Vacuum the database to reclaim unused space and optimize performance."""
+        if self.is_memory_db:
+            logger.debug("Skipping vacuum for in-memory database")
+            return
+            
+        try:
+            conn = self.get_connection()
+            # Vacuum must be run outside of a transaction
+            conn.isolation_level = None
+            conn.execute("VACUUM")
+            conn.isolation_level = ""  # Restore default
+            logger.info(f"Successfully vacuumed database: {self.db_path_str}")
+        except Exception as e:
+            logger.error(f"Failed to vacuum database: {e}")
+            raise CharactersRAGDBError(f"Vacuum failed: {e}") from e
 
 
 # --- Transaction Context Manager Class (Helper for `with db.transaction():`) ---

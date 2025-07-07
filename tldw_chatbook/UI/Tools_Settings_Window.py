@@ -605,6 +605,7 @@ class ToolsSettingsWindow(Container):
             Container(
                 Button("Save Database Config", id="save-database-config-form", variant="primary"),
                 Button("Reset Section", id="reset-database-config-form"),
+                Button("Vacuum All Databases", id="vacuum-all-databases", variant="warning"),
                 classes="form-actions"
             ),
             classes="config-form"
@@ -1635,6 +1636,8 @@ class ToolsSettingsWindow(Container):
             await self._save_database_config_form()
         elif button_id == "reset-database-config-form":
             await self._reset_database_config_form()
+        elif button_id == "vacuum-all-databases":
+            await self._vacuum_databases()
         elif button_id == "save-rag-config-form":
             await self._save_rag_config_form()
         elif button_id == "reset-rag-config-form":
