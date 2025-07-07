@@ -335,22 +335,23 @@ def chat_with_llama(
         # api_url is tricky. Your notes say "positional argument".
         # If chat_api_call is the sole entry, this needs to be passed via kwargs if mapped,
         # or loaded from config if not passed. Let's assume it's primarily from config for now.
-        api_url: Optional[str] = None # This is specific to this function's call from API_CALL_HANDLERS if special handling exists
+        api_url: Optional[str] = None, # This is specific to this function's call from API_CALL_HANDLERS if special handling exists
+        provider_name: Optional[str] = None  # Added to support dynamic configuration loading
 ):
     if model and (model.lower() == "none" or model.strip() == ""): model = None
 
     # --- Settings Load ---
-    llama_cpp_config_key_in_api_settings = 'llama_cpp'
+    # Use provider_name if provided, otherwise default to 'llama_cpp'
+    llama_cpp_config_key_in_api_settings = provider_name if provider_name else 'llama_cpp'
     provider_display_name = "Llama.cpp"
 
     api_settings_table = settings.get('api_settings', {})  # Safely get the api_settings table
     llama_config = api_settings_table.get(llama_cpp_config_key_in_api_settings, {})  # Safely get the llama_cpp config
     api_base_url = llama_config.get('api_url')
     if not api_base_url:
-        # Using the original provider string "llama_api" from your snippet for the error.
-        # If you want it to be dynamic or match "llama_cpp", you can change "llama_api".
+        # Using the provider name for the error message
         raise ChatConfigurationError(
-            provider="llama_api",
+            provider=llama_cpp_config_key_in_api_settings,
             message=f"{provider_display_name} API URL (api_url) is required and could not be determined from configuration."
         )
     current_api_key = api_key or llama_config.get('api_key')
@@ -771,20 +772,22 @@ def chat_with_vllm(
     frequency_penalty: Optional[float] = None, # from map
     logprobs: Optional[bool] = None,     # from map
     user_identifier: Optional[str] = None, # from map
-    vllm_api_url: Optional[str] = None # Specific config, not from generic map typically
+    vllm_api_url: Optional[str] = None, # Specific config, not from generic map typically
                                        # Could be loaded from cfg or passed if chat_api_call handles it
+    provider_name: Optional[str] = None  # Added to support dynamic configuration loading
 ):
     if model and (model.lower() == "none" or model.strip() == ""): model = None
 
     # --- Settings Load ---
+    # Use provider_name if provided, otherwise default to 'vllm_api'
+    vllm_config_key = provider_name if provider_name else 'vllm_api'
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
-    # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
-    cfg = cli_api_settings.get('vllm_api', {})
+    cfg = cli_api_settings.get(vllm_config_key, {})
 
     vllm_api_url = cfg.get('api_url')  # api_url passed via chat_api_call or from config
     if not vllm_api_url:
         raise ChatConfigurationError(
-            provider="vllm",
+            provider=vllm_config_key,
             message="vLLM API URL (api_url) is required and could not be determined from arguments or configuration."
         )
     current_api_key = api_key or cfg.get('api_key')
@@ -975,19 +978,22 @@ def chat_with_ollama(
     # Missing from Ollama PROVIDER_PARAM_MAP that _openai_compatible_server handles:
     # logit_bias, n (num_choices), user_identifier, logprobs, top_logprobs, tools, tool_choice, min_p
     # Add to signature and pass if Ollama supports them.
+    provider_name: Optional[str] = None  # Added to support dynamic configuration loading
 ):
     if model and (model.lower() == "none" or model.strip() == ""): model = None
 
     # --- Settings Load for CLI config structure ---
+    # Use provider_name if provided, otherwise default to 'ollama'
+    ollama_config_key = provider_name if provider_name else 'ollama'
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
-    cfg = cli_api_settings.get('ollama', {})             # Get the [api_settings.ollama] sub-table
+    cfg = cli_api_settings.get(ollama_config_key, {})   # Get the config for the specific provider
 
     # API URL: function argument 'api_url' takes precedence, then config.
     # The config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.ollama].api_url
     current_api_base_url = api_url or cfg.get('api_url')
     if not current_api_base_url:
         raise ChatConfigurationError(
-            provider="ollama", # Matches the key 'ollama' used for cfg
+            provider=ollama_config_key, # Use the dynamic provider name
             message="Ollama API URL (api_url) is required and could not be determined from arguments or configuration."
         )
 
@@ -1347,22 +1353,25 @@ def chat_with_mlx_lm(
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
     api_url: Optional[str] = None, # If passed, overrides config for base URL
+    provider_name: Optional[str] = None,  # Added to support dynamic configuration loading
     **kwargs: Any # To catch any other params from API_CALL_HANDLERS
 ) -> Union[Dict[str, Any], Generator[str, None, None]]:
     """
     Sends a chat request to a running MLX-LM server (assumed OpenAI compatible).
     """
-    provider_name = "MLX-LM"
-    logging.debug(f"{provider_name}: Chat request initiated.")
+    provider_display_name = "MLX-LM"
+    logging.debug(f"{provider_display_name}: Chat request initiated.")
 
     # --- Settings Load ---
+    # Use provider_name if provided, otherwise default to 'mlx_lm'
+    mlx_config_key = provider_name if provider_name else 'mlx_lm'
     api_settings_table = settings.get('api_settings', {})
-    mlx_cfg = api_settings_table.get('mlx_lm', {})
+    mlx_cfg = api_settings_table.get(mlx_config_key, {})
 
     current_model_path = model or mlx_cfg.get('model_path') or mlx_cfg.get('model')
     if not current_model_path:
         raise ChatConfigurationError(
-            provider=provider_name,
+            provider=mlx_config_key,
             message="MLX-LM model path (model_path or model in config) is required and could not be determined."
         )
 

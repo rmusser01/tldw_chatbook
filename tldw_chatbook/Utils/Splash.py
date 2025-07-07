@@ -121,9 +121,13 @@ ARCADE_HIGH_SCORE_ASCII = r"""
 |                                        |
 |  1ST  tldw_chatbook       31,687,490   |
 |  2ND  DABEST              445,893      |
-|  3RD  8008SNA55           800,085      |
+|  3RD  YANDER3             800,085      |
 |  4TH  OH!                 233,333      |
-|  5TH  ABRMS               40,000       |
+|  5TH  ABRMS               134,870      |
+|  6TH  MICHUL              79,420       |
+|  7TH  SKY                 63,420       |
+|  8TH  DEREK               61,220       |
+|  9TH  URMOM               60,520       |
 |                                        |
 |                                        |
 |       PRESS ANY KEY TO START!          |
