@@ -3,14 +3,26 @@
 #
 # Imports
 from typing import TYPE_CHECKING
+import os
+import shutil
+import json
+from datetime import datetime
+from pathlib import Path
 #
 # 3rd-Party Imports
 import toml
+from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
+from textual.css.query import QueryError
 from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible
+from textual.worker import Worker
 # Local Imports
 from tldw_chatbook.config import load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, API_MODELS_BY_PROVIDER
+from ..DB.ChaChaNotes_DB import CharactersRAGDB
+from ..DB.Client_Media_DB_v2 import MediaDatabase
+from ..DB.Prompts_DB import PromptsDatabase
+from ..Utils.path_validation import validate_path
 #
 # Local Imports
 #
@@ -1663,6 +1675,28 @@ class ToolsSettingsWindow(Container):
             await self._save_embedding_config_form()
         elif button_id == "reset-embedding-config-form":
             await self._reset_embedding_config_form()
+            
+        # Database Tools handlers
+        elif button_id == "db-vacuum-all":
+            await self._vacuum_databases()
+        elif button_id == "db-backup-all":
+            await self._backup_databases()
+        elif button_id == "db-check-integrity":
+            await self._check_database_integrity()
+        elif button_id == "db-export-conversations":
+            await self._export_conversations()
+        elif button_id == "db-export-notes":
+            await self._export_notes()
+        elif button_id == "db-export-characters":
+            await self._export_characters()
+        elif button_id == "db-import-data":
+            await self._import_data()
+        elif button_id == "db-clear-conversations":
+            await self._clear_conversations()
+        elif button_id == "db-clear-notes":
+            await self._clear_notes()
+        elif button_id == "db-reset-all":
+            await self._reset_databases()
 
     async def _save_general_settings(self) -> None:
         """Save General Settings to the configuration file."""
@@ -2409,10 +2443,434 @@ class ToolsSettingsWindow(Container):
             except Exception:
                 pass
     
+    # Database Tools Methods
+    async def _vacuum_databases(self) -> None:
+        """Vacuum all databases to reclaim unused space and optimize performance."""
+        try:
+            self.app_instance.notify("Starting database vacuum operation...", severity="information")
+            
+            # Get database paths from config
+            db_config = self.config_data.get("database", {})
+            
+            # Run vacuum in a worker to avoid blocking UI
+            self.run_worker(self._vacuum_worker, name="vacuum_worker")
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error starting vacuum operation: {e}", severity="error")
+    
+    @work(thread=True)
+    def _vacuum_worker(self) -> None:
+        """Worker to vacuum databases in background."""
+        try:
+            db_config = self.config_data.get("database", {})
+            vacuumed = []
+            
+            # Vacuum ChaChaNotes database
+            chachanotes_path = Path(db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser()
+            if chachanotes_path.exists():
+                db = CharactersRAGDB(str(chachanotes_path), "vacuum_operation")
+                db.vacuum()
+                db.close()
+                vacuumed.append("ChaChaNotes")
+            
+            # Vacuum Prompts database
+            prompts_path = Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db")).expanduser()
+            if prompts_path.exists():
+                db = PromptsDatabase(str(prompts_path), "vacuum_operation")
+                db.vacuum()
+                db.close()
+                vacuumed.append("Prompts")
+            
+            # Vacuum Media database
+            media_path = Path(db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")).expanduser()
+            if media_path.exists():
+                db = MediaDatabase(str(media_path), "vacuum_operation")
+                db.vacuum()
+                db.close()
+                vacuumed.append("Media")
+            
+            # Update UI from worker thread
+            self.call_from_thread(
+                self.app_instance.notify, 
+                f"Successfully vacuumed databases: {', '.join(vacuumed)}",
+                severity="success"
+            )
+            
+            # Update database sizes
+            self.call_from_thread(self._update_database_sizes)
+            
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error during vacuum operation: {e}",
+                severity="error"
+            )
+    
+    async def _backup_databases(self) -> None:
+        """Create timestamped backups of all databases."""
+        try:
+            self.app_instance.notify("Starting database backup...", severity="information")
+            
+            # Run backup in a worker
+            self.run_worker(self._backup_worker, name="backup_worker")
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error starting backup: {e}", severity="error")
+    
+    @work(thread=True)
+    def _backup_worker(self) -> None:
+        """Worker to backup databases in background."""
+        try:
+            db_config = self.config_data.get("database", {})
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Create backup directory
+            backup_dir = Path.home() / ".local" / "share" / "tldw_cli" / "backups" / timestamp
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            backed_up = []
+            
+            # Backup ChaChaNotes database
+            chachanotes_path = Path(db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser()
+            if chachanotes_path.exists():
+                backup_path = backup_dir / f"tldw_chatbook_ChaChaNotes_{timestamp}.db"
+                shutil.copy2(chachanotes_path, backup_path)
+                backed_up.append(("ChaChaNotes", backup_path))
+            
+            # Backup Prompts database
+            prompts_path = Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db")).expanduser()
+            if prompts_path.exists():
+                backup_path = backup_dir / f"tldw_cli_prompts_{timestamp}.db"
+                shutil.copy2(prompts_path, backup_path)
+                backed_up.append(("Prompts", backup_path))
+            
+            # Backup Media database
+            media_path = Path(db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")).expanduser()
+            if media_path.exists():
+                backup_path = backup_dir / f"tldw_cli_media_v2_{timestamp}.db"
+                shutil.copy2(media_path, backup_path)
+                backed_up.append(("Media", backup_path))
+            
+            # Create backup info file
+            info_path = backup_dir / "backup_info.json"
+            backup_info = {
+                "timestamp": timestamp,
+                "databases": [{"name": name, "path": str(path)} for name, path in backed_up]
+            }
+            with open(info_path, 'w') as f:
+                json.dump(backup_info, f, indent=2)
+            
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Backup completed! Saved to: {backup_dir}",
+                severity="success"
+            )
+            
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error during backup: {e}",
+                severity="error"
+            )
+    
+    async def _check_database_integrity(self) -> None:
+        """Check integrity of all databases."""
+        try:
+            self.app_instance.notify("Checking database integrity...", severity="information")
+            
+            # Run integrity check in a worker
+            self.run_worker(self._integrity_worker, name="integrity_worker")
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error starting integrity check: {e}", severity="error")
+    
+    @work(thread=True)
+    def _integrity_worker(self) -> None:
+        """Worker to check database integrity in background."""
+        try:
+            db_config = self.config_data.get("database", {})
+            results = []
+            
+            # Check ChaChaNotes database
+            chachanotes_path = Path(db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser()
+            if chachanotes_path.exists():
+                db = CharactersRAGDB(str(chachanotes_path), "integrity_check")
+                result = db.check_integrity()
+                db.close()
+                results.append(f"ChaChaNotes: {'OK' if result else 'FAILED'}")
+            
+            # Check Prompts database
+            prompts_path = Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db")).expanduser()
+            if prompts_path.exists():
+                db = PromptsDatabase(str(prompts_path), "integrity_check")
+                result = db.check_integrity()
+                db.close()
+                results.append(f"Prompts: {'OK' if result else 'FAILED'}")
+            
+            # Check Media database
+            media_path = Path(db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")).expanduser()
+            if media_path.exists():
+                db = MediaDatabase(str(media_path), "integrity_check")
+                result = db.check_integrity()
+                db.close()
+                results.append(f"Media: {'OK' if result else 'FAILED'}")
+            
+            # Report results
+            all_ok = all("OK" in r for r in results)
+            severity = "success" if all_ok else "error"
+            message = "Integrity check results:\n" + "\n".join(results)
+            
+            self.call_from_thread(
+                self.app_instance.notify,
+                message,
+                severity=severity
+            )
+            
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error during integrity check: {e}",
+                severity="error"
+            )
+    
+    async def _export_conversations(self) -> None:
+        """Export all conversations to JSON."""
+        try:
+            self.app_instance.notify("Exporting conversations...", severity="information")
+            
+            # Run export in a worker
+            self.run_worker(self._export_conversations_worker, thread=True, name="export_conv_worker")
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error exporting conversations: {e}", severity="error")
+    
+    def _export_conversations_worker(self) -> None:
+        """Worker to export conversations in background."""
+        try:
+            db_config = self.config_data.get("database", {})
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Create export directory
+            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Export from ChaChaNotes database
+            chachanotes_path = Path(db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser()
+            if chachanotes_path.exists():
+                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
+                conversations = db.list_all_active_conversations(limit=10000)
+                
+                export_path = export_dir / f"conversations_{timestamp}.json"
+                with open(export_path, 'w', encoding='utf-8') as f:
+                    json.dump(conversations, f, indent=2, ensure_ascii=False)
+                
+                db.close()
+                
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    f"Exported {len(conversations)} conversations to: {export_path}",
+                    severity="success"
+                )
+            else:
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    "No conversations database found",
+                    severity="warning"
+                )
+                
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error exporting conversations: {e}",
+                severity="error"
+            )
+    
+    async def _export_notes(self) -> None:
+        """Export all notes to markdown files."""
+        try:
+            self.app_instance.notify("Exporting notes...", severity="information")
+            
+            # Run export in a worker
+            self.run_worker(self._export_notes_worker, thread=True, name="export_notes_worker")
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error exporting notes: {e}", severity="error")
+    
+    def _export_notes_worker(self) -> None:
+        """Worker to export notes in background."""
+        try:
+            db_config = self.config_data.get("database", {})
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Create export directory
+            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports" / f"notes_{timestamp}"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Export from ChaChaNotes database
+            chachanotes_path = Path(db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser()
+            if chachanotes_path.exists():
+                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
+                notes = db.list_notes(limit=10000)
+                
+                for note in notes:
+                    # Create safe filename
+                    safe_title = "".join(c for c in note['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                    filename = f"{safe_title}_{note['id']}.md"
+                    
+                    note_path = export_dir / filename
+                    with open(note_path, 'w', encoding='utf-8') as f:
+                        f.write(f"# {note['title']}\n\n")
+                        f.write(f"Created: {note['created_at']}\n")
+                        f.write(f"Modified: {note['updated_at']}\n\n")
+                        f.write(note['content'])
+                
+                db.close()
+                
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    f"Exported {len(notes)} notes to: {export_dir}",
+                    severity="success"
+                )
+            else:
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    "No notes database found",
+                    severity="warning"
+                )
+                
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error exporting notes: {e}",
+                severity="error"
+            )
+    
+    async def _export_characters(self) -> None:
+        """Export all characters to JSON."""
+        try:
+            self.app_instance.notify("Exporting characters...", severity="information")
+            
+            # Run export in a worker
+            self.run_worker(self._export_characters_worker, thread=True, name="export_chars_worker")
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error exporting characters: {e}", severity="error")
+    
+    def _export_characters_worker(self) -> None:
+        """Worker to export characters in background."""
+        try:
+            db_config = self.config_data.get("database", {})
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Create export directory
+            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Export from ChaChaNotes database
+            chachanotes_path = Path(db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser()
+            if chachanotes_path.exists():
+                db = CharactersRAGDB(str(chachanotes_path), "export_operation")
+                characters = db.list_character_cards(limit=10000)
+                
+                export_path = export_dir / f"characters_{timestamp}.json"
+                with open(export_path, 'w', encoding='utf-8') as f:
+                    json.dump(characters, f, indent=2, ensure_ascii=False)
+                
+                db.close()
+                
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    f"Exported {len(characters)} characters to: {export_path}",
+                    severity="success"
+                )
+            else:
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    "No characters database found",
+                    severity="warning"
+                )
+                
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error exporting characters: {e}",
+                severity="error"
+            )
+    
+    async def _import_data(self) -> None:
+        """Import data from exported files."""
+        # TODO: Implement file picker dialog
+        self.app_instance.notify("Import functionality coming soon!", severity="information")
+    
+    async def _clear_conversations(self) -> None:
+        """Clear all conversations (with confirmation)."""
+        # TODO: Implement confirmation dialog
+        self.app_instance.notify("Clear conversations requires confirmation dialog (coming soon)", severity="warning")
+    
+    async def _clear_notes(self) -> None:
+        """Clear all notes (with confirmation)."""
+        # TODO: Implement confirmation dialog
+        self.app_instance.notify("Clear notes requires confirmation dialog (coming soon)", severity="warning")
+    
+    async def _reset_databases(self) -> None:
+        """Reset all databases (with double confirmation)."""
+        # TODO: Implement double confirmation dialog
+        self.app_instance.notify("Database reset requires double confirmation (coming soon)", severity="warning")
+    
+    def _update_database_sizes(self) -> None:
+        """Update the displayed database sizes."""
+        try:
+            db_config = self.config_data.get("database", {})
+            
+            # Update ChaChaNotes size
+            chachanotes_path = Path(db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser()
+            if chachanotes_path.exists():
+                size = self._format_file_size(chachanotes_path.stat().st_size)
+                try:
+                    size_widget = self.query_one("#db-size-chachanotes")
+                    size_widget.update(f"Size: {size}")
+                except Exception:
+                    pass
+            
+            # Update Prompts size
+            prompts_path = Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db")).expanduser()
+            if prompts_path.exists():
+                size = self._format_file_size(prompts_path.stat().st_size)
+                try:
+                    size_widget = self.query_one("#db-size-prompts")
+                    size_widget.update(f"Size: {size}")
+                except Exception:
+                    pass
+            
+            # Update Media size
+            media_path = Path(db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")).expanduser()
+            if media_path.exists():
+                size = self._format_file_size(media_path.stat().st_size)
+                try:
+                    size_widget = self.query_one("#db-size-media")
+                    size_widget.update(f"Size: {size}")
+                except Exception:
+                    pass
+                    
+        except Exception as e:
+            # Silently fail - this is non-critical
+            pass
+    
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} TB"
+    
     async def on_mount(self) -> None:
         """Called when the widget is mounted. Set initial view."""
         # Ensure only the general settings view is active on mount
         await self._show_view("ts-view-general-settings")
+        
+        # Update database sizes
+        self._update_database_sizes()
 
 #
 # End of Tools_Settings_Window.py

@@ -120,9 +120,7 @@ from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
     SEARCH_NAV_RAG_CHAT,
-    SEARCH_NAV_EMBEDDINGS_CREATION,
     SEARCH_NAV_RAG_MANAGEMENT,
-    SEARCH_NAV_EMBEDDINGS_MANAGEMENT,
     SEARCH_NAV_WEB_SEARCH
 )
 API_IMPORTS_SUCCESSFUL = True
@@ -1281,12 +1279,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         search_handlers = {
             SEARCH_NAV_RAG_QA: functools.partial(_handle_nav, prefix="search", reactive_attr="search_active_sub_tab"),
             SEARCH_NAV_RAG_CHAT: functools.partial(_handle_nav, prefix="search", reactive_attr="search_active_sub_tab"),
-            SEARCH_NAV_EMBEDDINGS_CREATION: functools.partial(_handle_nav, prefix="search",
-                                                              reactive_attr="search_active_sub_tab"),
             SEARCH_NAV_RAG_MANAGEMENT: functools.partial(_handle_nav, prefix="search",
                                                          reactive_attr="search_active_sub_tab"),
-            SEARCH_NAV_EMBEDDINGS_MANAGEMENT: functools.partial(_handle_nav, prefix="search",
-                                                                reactive_attr="search_active_sub_tab"),
             SEARCH_NAV_WEB_SEARCH: functools.partial(_handle_nav, prefix="search",
                                                      reactive_attr="search_active_sub_tab"),
             **search_events.SEARCH_BUTTON_HANDLERS,

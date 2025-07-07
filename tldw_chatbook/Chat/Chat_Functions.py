@@ -98,6 +98,12 @@ API_CALL_HANDLERS = {
     'custom-openai-api': chat_with_custom_openai,
     'custom-openai-api-2': chat_with_custom_openai_2,
     'mlx_lm': chat_with_mlx_lm,
+    # Map local_* provider names to their handler functions
+    'local_llamacpp': chat_with_llama,
+    'local_llamafile': chat_with_llama,
+    'local_ollama': chat_with_ollama,
+    'local_vllm': chat_with_vllm,
+    'local_mlx_lm': chat_with_mlx_lm,
 }
 """
 A dispatch table mapping API endpoint names (e.g., 'openai') to their

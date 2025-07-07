@@ -40,6 +40,9 @@ from ..Widgets.IngestTldwApiMediaWikiWindow import IngestTldwApiMediaWikiWindow
 from ..Widgets.IngestTldwApiPlaintextWindow import IngestTldwApiPlaintextWindow
 from ..Widgets.IngestLocalPlaintextWindow import IngestLocalPlaintextWindow
 from ..Widgets.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
+from ..Widgets.IngestLocalDocumentWindow import IngestLocalDocumentWindow
+from ..Widgets.IngestLocalEbookWindow import IngestLocalEbookWindow
+from ..Widgets.IngestLocalPdfWindow import IngestLocalPdfWindow
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -251,7 +254,11 @@ class IngestWindow(Container):
             )
         elif media_type == "document":
             return Filters(
-                ("Document Files", lambda p: p.suffix.lower() in (".docx", ".doc", ".odt", ".rtf", ".txt")),
+                ("Document Files", lambda p: p.suffix.lower() in (".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".xlsx", ".xls", ".ods", ".odp")),
+                ("Microsoft Word", lambda p: p.suffix.lower() in (".docx", ".doc")),
+                ("OpenDocument", lambda p: p.suffix.lower() in (".odt", ".ods", ".odp")),
+                ("Microsoft Office", lambda p: p.suffix.lower() in (".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls")),
+                ("Rich Text", lambda p: p.suffix.lower() == ".rtf"),
                 ("All Files", lambda _: True)
             )
         elif media_type == "pdf":
@@ -415,7 +422,8 @@ class IngestWindow(Container):
                 yield from self.compose_local_audio_tab()
                 
             with VerticalScroll(id="ingest-view-local-document", classes="ingest-view-area"):
-                yield from self.compose_local_document_tab()
+                window = IngestLocalDocumentWindow(self.app_instance)
+                yield from window.compose()
                 
             with VerticalScroll(id="ingest-view-local-pdf", classes="ingest-view-area"):
                 from ..Widgets.IngestLocalPdfWindow import IngestLocalPdfWindow
@@ -590,6 +598,21 @@ class IngestWindow(Container):
         elif button_id == "ingest-local-web-remove-duplicates":
             event.stop()
             await self._handle_remove_duplicate_urls()
+        
+        # Handle local PDF process button
+        elif button_id == "local-submit-pdf":
+            event.stop()
+            await self.handle_local_pdf_process()
+        
+        # Handle local ebook process button
+        elif button_id == "local-submit-ebook":
+            event.stop()
+            await self.handle_local_ebook_process()
+        
+        # Handle local document process button
+        elif button_id == "local-process-button-document":
+            event.stop()
+            await self.handle_local_document_process()
         
         # Handle local plaintext process button
         elif button_id == "ingest-local-plaintext-process":
@@ -2519,6 +2542,204 @@ class IngestWindow(Container):
                 
         except Exception as e:
             logger.error(f"Error in ebook processing: {e}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+            status_area.load_text(status_area.text + f"\n\nError: {str(e)}")
+        finally:
+            # Reset UI state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+    
+    async def handle_local_document_process(self) -> None:
+        """Handle processing of local document files."""
+        logger.info("Processing local document files")
+        
+        # Get UI elements
+        try:
+            loading_indicator = self.query_one("#local-loading-indicator-document", LoadingIndicator)
+            status_area = self.query_one("#local-status-area-document", TextArea)
+            process_button = self.query_one("#local-process-button-document", Button)
+        except Exception as e:
+            logger.error(f"Error finding UI elements: {e}")
+            self.app_instance.notify("Error: UI elements not found", severity="error")
+            return
+        
+        # Show loading state
+        loading_indicator.display = True
+        loading_indicator.classes = loading_indicator.classes - {"hidden"}
+        status_area.clear()
+        status_area.load_text("Processing document files locally...")
+        status_area.display = True
+        status_area.classes = status_area.classes - {"hidden"}
+        process_button.disabled = True
+        
+        try:
+            # Get selected files
+            local_key = "local_document"
+            selected_files = self.selected_local_files.get(local_key, [])
+            
+            if not selected_files:
+                self.app_instance.notify("Please select at least one document file", severity="warning")
+                return
+            
+            # Get processing method
+            processing_method_select = self.query_one("#local-processing-method-document", Select)
+            processing_method = str(processing_method_select.value)
+            
+            # Get metadata
+            title_override = self.query_one("#local-title-document", Input).value.strip()
+            author = self.query_one("#local-author-document", Input).value.strip()
+            keywords_text = self.query_one("#local-keywords-document", TextArea).text.strip()
+            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
+            
+            # Get processing options
+            perform_analysis = self.query_one("#local-perform-analysis-document", Checkbox).value
+            custom_prompt = self.query_one("#local-custom-prompt-document", TextArea).text.strip()
+            system_prompt = self.query_one("#local-system-prompt-document", TextArea).text.strip()
+            
+            # Get API options for analysis
+            api_name = None
+            api_key = None
+            if perform_analysis:
+                api_name_select = self.query_one("#local-analysis-api-name-document", Select)
+                if api_name_select.value != Select.BLANK:
+                    api_name = str(api_name_select.value)
+                    api_key_input = self.query_one("#local-analysis-api-key-document", Input)
+                    api_key = api_key_input.value.strip() if api_key_input.value else None
+                    
+                    # If no API key provided in UI, try to get from config
+                    if not api_key and api_name:
+                        from ..config import get_api_key
+                        api_key = get_api_key(api_name)
+            
+            # Get chunking options
+            perform_chunking = self.query_one("#local-perform-chunking-document", Checkbox).value
+            chunk_method = self.query_one("#local-chunk-method-document", Select).value
+            chunk_size = int(self.query_one("#local-chunk-size-document", Input).value or "1500")
+            chunk_overlap = int(self.query_one("#local-chunk-overlap-document", Input).value or "100")
+            
+            # Get document-specific options
+            extract_tables = self.query_one("#local-extract-tables-document", Checkbox).value
+            preserve_formatting = self.query_one("#local-preserve-formatting-document", Checkbox).value
+            include_metadata = self.query_one("#local-include-metadata-document", Checkbox).value
+            
+            # Check if media DB is available
+            if not self.app_instance.media_db:
+                logger.error("Media database not initialized")
+                self.app_instance.notify("Error: Media database not available", severity="error")
+                status_area.load_text("Error: Media database not available")
+                return
+            
+            # Import the local document processing function
+            try:
+                from ..Local_Ingestion.Document_Processing_Lib import process_document
+            except ImportError as e:
+                logger.error(f"Failed to import document processing library: {e}")
+                self.app_instance.notify("Error: Document processing library not available. Please install with: pip install tldw-cli[documents]", severity="error")
+                status_area.load_text("Error: Document processing library not available.\nPlease install with: pip install tldw-cli[documents]")
+                return
+            
+            # Process files
+            processed_count = 0
+            error_count = 0
+            status_messages = []
+            
+            # Build chunk options dict
+            chunk_options = {
+                'method': chunk_method,
+                'max_size': chunk_size,
+                'overlap': chunk_overlap
+            } if perform_chunking else None
+            
+            # Process local files
+            for file_path in selected_files:
+                try:
+                    status_area.load_text(status_area.text + f"\nProcessing: {file_path.name}...")
+                    
+                    # Process document using local library
+                    def process_single_document():
+                        return process_document(
+                            file_path=str(file_path),
+                            title_override=title_override,
+                            author_override=author,
+                            keywords=keywords,
+                            custom_prompt=custom_prompt if custom_prompt else None,
+                            system_prompt=system_prompt if system_prompt else None,
+                            auto_summarize=perform_analysis,
+                            api_name=api_name,
+                            api_key=api_key,
+                            chunk_options=chunk_options,
+                            processing_method=processing_method
+                        )
+                    
+                    # Run in worker thread
+                    worker = self.app_instance.run_worker(
+                        process_single_document,
+                        thread=True,
+                        name=f"document_process_{file_path.name}",
+                        description=f"Processing {file_path.name}"
+                    )
+                    
+                    # Wait for the worker to complete
+                    result = await worker.wait()
+                    
+                    if result and result.get('extraction_successful'):
+                        # Extract content and metadata
+                        content = result.get('content', '')
+                        title = title_override or result.get('title', file_path.stem)
+                        summary = result.get('summary', '')
+                        metadata = result.get('metadata', {})
+                        
+                        # Add to media database
+                        media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
+                            url=str(file_path),
+                            title=title,
+                            media_type="document",
+                            content=content,
+                            keywords=keywords,
+                            author=author,
+                            analysis_content=summary,
+                            chunks=None,  # Chunking will be handled by the database
+                            chunk_options=chunk_options,
+                            prompt=custom_prompt if custom_prompt else None,
+                            metadata=metadata
+                        )
+                        
+                        if media_id:
+                            processed_count += 1
+                            status_messages.append(f"✅ {title} - ID: {media_id}")
+                            status_area.load_text(status_area.text + f"\n✅ Successfully processed: {title}")
+                        else:
+                            error_count += 1
+                            status_messages.append(f"❌ {file_path.name} - Database error: {msg}")
+                            status_area.load_text(status_area.text + f"\n❌ Database error for {file_path.name}: {msg}")
+                    else:
+                        error_count += 1
+                        error_msg = result.get('metadata', {}).get('error', 'Unknown error') if result else 'Processing failed'
+                        status_messages.append(f"❌ {file_path.name} - {error_msg}")
+                        status_area.load_text(status_area.text + f"\n❌ Failed to process {file_path.name}: {error_msg}")
+                        
+                except Exception as e:
+                    error_count += 1
+                    error_msg = str(e)
+                    status_messages.append(f"❌ {file_path.name} - {error_msg}")
+                    status_area.load_text(status_area.text + f"\n❌ Error processing {file_path.name}: {error_msg}")
+                    logger.error(f"Error processing document {file_path}: {e}", exc_info=True)
+            
+            # Final summary
+            status_area.load_text(status_area.text + f"\n\n## Processing Complete\n")
+            status_area.load_text(status_area.text + f"✅ Successfully processed: {processed_count} files\n")
+            if error_count > 0:
+                status_area.load_text(status_area.text + f"❌ Errors: {error_count} files\n")
+            
+            # Notifications
+            if processed_count > 0:
+                self.app_instance.notify(f"Successfully processed {processed_count} document files", severity="information")
+            if error_count > 0:
+                self.app_instance.notify(f"Failed to process {error_count} document files", severity="warning")
+                
+        except Exception as e:
+            logger.error(f"Error in document processing: {e}", exc_info=True)
             self.app_instance.notify(f"Error: {str(e)}", severity="error")
             status_area.load_text(status_area.text + f"\n\nError: {str(e)}")
         finally:
