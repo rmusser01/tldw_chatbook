@@ -36,6 +36,10 @@ CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"
 # --- Path to the CLI's configuration file ---
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tldw_cli" / "config.toml"
 
+# --- Encryption support ---
+_ENCRYPTION_PASSWORD = None  # Cached password for the session
+_ENCRYPTION_MODULE = None    # Lazily loaded encryption module
+
 # --- Chunking Settings (Default, can be overridden by TOML) ---
 global_default_chunk_language = "en"
 
@@ -170,6 +174,116 @@ def deep_merge_dicts(base: Dict, update: Dict) -> Dict:
         else:
             merged[key] = value
     return merged
+
+
+def get_encryption_module():
+    """Lazily load and return the encryption module."""
+    global _ENCRYPTION_MODULE
+    if _ENCRYPTION_MODULE is None:
+        from tldw_chatbook.Utils.config_encryption import config_encryption
+        _ENCRYPTION_MODULE = config_encryption
+    return _ENCRYPTION_MODULE
+
+
+def set_encryption_password(password: str):
+    """Set the encryption password for the current session."""
+    global _ENCRYPTION_PASSWORD
+    _ENCRYPTION_PASSWORD = password
+    logger.info("Encryption password set for current session")
+
+
+def get_encryption_password() -> Optional[str]:
+    """Get the encryption password for the current session."""
+    return _ENCRYPTION_PASSWORD
+
+
+def clear_encryption_password():
+    """Clear the encryption password from memory."""
+    global _ENCRYPTION_PASSWORD
+    _ENCRYPTION_PASSWORD = None
+    logger.info("Encryption password cleared from memory")
+
+
+def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Decrypt encrypted values in the config if encryption is enabled.
+    
+    Args:
+        config_data: The config dictionary potentially containing encrypted values
+        
+    Returns:
+        Config dictionary with decrypted values
+    """
+    # Check if encryption is enabled
+    encryption_config = config_data.get("encryption", {})
+    if not encryption_config.get("enabled", False):
+        return config_data
+    
+    password = get_encryption_password()
+    if not password:
+        logger.warning("Encryption is enabled but no password is set. Cannot decrypt config.")
+        return config_data
+    
+    salt_b64 = encryption_config.get("salt")
+    if not salt_b64:
+        logger.error("Encryption is enabled but no salt found in config.")
+        return config_data
+    
+    try:
+        import base64
+        salt = base64.b64decode(salt_b64)
+        enc_module = get_encryption_module()
+        
+        # Decrypt api_settings sections
+        decrypted_config = copy.deepcopy(config_data)
+        for section_name, section_value in config_data.items():
+            if section_name.startswith('api_settings.') and isinstance(section_value, dict):
+                decrypted_section = enc_module.decrypt_config_section(section_value, password, salt)
+                decrypted_config[section_name] = decrypted_section
+        
+        return decrypted_config
+    except Exception as e:
+        logger.error(f"Failed to decrypt config: {e}")
+        return config_data
+
+
+def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Dict[str, Any]:
+    """
+    Encrypt API keys in the config data.
+    
+    Args:
+        config_data: The config dictionary
+        password: The password to use for encryption
+        
+    Returns:
+        Config dictionary with encrypted API keys
+    """
+    enc_module = get_encryption_module()
+    encrypted_config = copy.deepcopy(config_data)
+    
+    # Generate salt if not present
+    encryption_config = encrypted_config.get("encryption", {})
+    if not encryption_config.get("salt"):
+        salt = enc_module.generate_salt()
+        import base64
+        encryption_config["salt"] = base64.b64encode(salt).decode('utf-8')
+    else:
+        import base64
+        salt = base64.b64decode(encryption_config["salt"])
+    
+    # Set encryption metadata
+    encryption_config["enabled"] = True
+    encryption_config["method"] = "AES-256-CBC"
+    encryption_config["password_hash"] = enc_module.hash_password(password)
+    encrypted_config["encryption"] = encryption_config
+    
+    # Encrypt api_settings sections
+    for section_name, section_value in config_data.items():
+        if section_name.startswith('api_settings.') and isinstance(section_value, dict):
+            encrypted_section, _ = enc_module.encrypt_config_section(section_value, password, salt)
+            encrypted_config[section_name] = encrypted_section
+    
+    return encrypted_config
 
 
 def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type = str) -> Any:
@@ -1837,6 +1951,9 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
             # Merge user's file settings on top of the programmatic defaults
             loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
             logger.info(f"Successfully loaded and merged CLI config from {DEFAULT_CONFIG_PATH}")
+            
+            # Decrypt config if encryption is enabled
+            loaded_config = decrypt_config_section(loaded_config)
         except tomllib.TOMLDecodeError as e:
             logger.error(f"Error decoding CLI TOML config file {DEFAULT_CONFIG_PATH}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
             # `loaded_config` remains the programmatic defaults in this case.
@@ -1916,7 +2033,32 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
         )
         return False
 
-    # Step 3: Write the updated configuration back to the TOML file.
+    # Step 3: Check if we need to encrypt the value
+    # If we're saving to an api_settings section and encryption is enabled, encrypt the value
+    encryption_config = config_data.get("encryption", {})
+    if (encryption_config.get("enabled", False) and 
+        section.startswith("api_settings.") and 
+        key == "api_key" and 
+        isinstance(value, str) and 
+        value and 
+        not value.startswith("enc:")):
+        
+        password = get_encryption_password()
+        if password:
+            try:
+                enc_module = get_encryption_module()
+                salt_b64 = encryption_config.get("salt")
+                if salt_b64:
+                    import base64
+                    salt = base64.b64decode(salt_b64)
+                    encrypted_value, _ = enc_module.encrypt_value(value, password, salt)
+                    current_level[key] = encrypted_value
+                    logger.info(f"Encrypted API key for {section}")
+            except Exception as e:
+                logger.error(f"Failed to encrypt value: {e}")
+                # Continue with unencrypted value
+    
+    # Step 4: Write the updated configuration back to the TOML file.
     try:
         with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
             toml.dump(config_data, f)
@@ -1962,6 +2104,200 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
     else:
         logger.error(f"CLI Config 'providers' section is not a dictionary. Found: {type(providers_data)}. No provider/model data available.")
     return valid_providers
+
+
+def check_encryption_needed() -> bool:
+    """
+    Check if the config has API keys that should be encrypted.
+    
+    Returns:
+        True if API keys are detected and encryption is not enabled
+    """
+    config = load_cli_config_and_ensure_existence()
+    
+    # Check if encryption is already enabled
+    if config.get("encryption", {}).get("enabled", False):
+        return False
+    
+    # Check for API keys
+    enc_module = get_encryption_module()
+    return enc_module.detect_api_keys(config)
+
+
+def get_detected_api_providers() -> List[str]:
+    """
+    Get list of providers with detected API keys.
+    
+    Returns:
+        List of provider names with API keys
+    """
+    config = load_cli_config_and_ensure_existence()
+    providers = []
+    
+    for section_name, section_value in config.items():
+        if section_name.startswith('api_settings.') and isinstance(section_value, dict):
+            api_key = section_value.get('api_key', '')
+            # Check if API key exists and is not a placeholder
+            if api_key and not api_key.startswith('<') and not api_key.endswith('>'):
+                provider_name = section_name.replace('api_settings.', '')
+                providers.append(provider_name)
+    
+    return providers
+
+
+def enable_config_encryption(password: str) -> bool:
+    """
+    Enable encryption for the config file and encrypt existing API keys.
+    
+    Args:
+        password: The master password to use for encryption
+        
+    Returns:
+        True if encryption was enabled successfully
+    """
+    try:
+        # Load current config
+        config_data = {}
+        if DEFAULT_CONFIG_PATH.exists():
+            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+                config_data = tomllib.load(f)
+        
+        # Encrypt the config
+        encrypted_config = encrypt_api_keys_in_config(config_data, password)
+        
+        # Save the encrypted config
+        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
+            toml.dump(encrypted_config, f)
+        
+        # Set the password for the current session
+        set_encryption_password(password)
+        
+        # Clear and reload caches
+        global _CONFIG_CACHE, _SETTINGS_CACHE
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
+        
+        logger.success("Config encryption enabled successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to enable config encryption: {e}")
+        return False
+
+
+def disable_config_encryption(password: str) -> bool:
+    """
+    Disable encryption for the config file and decrypt all values.
+    
+    Args:
+        password: The master password to verify before disabling
+        
+    Returns:
+        True if encryption was disabled successfully
+    """
+    try:
+        # Load current config
+        config_data = {}
+        if DEFAULT_CONFIG_PATH.exists():
+            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+                config_data = tomllib.load(f)
+        
+        # Verify password
+        encryption_config = config_data.get("encryption", {})
+        if encryption_config.get("enabled", False):
+            enc_module = get_encryption_module()
+            stored_hash = encryption_config.get("password_hash", "")
+            if not enc_module.verify_password(password, stored_hash):
+                logger.error("Invalid password provided")
+                return False
+        
+        # Set password temporarily for decryption
+        set_encryption_password(password)
+        
+        # Decrypt the config
+        decrypted_config = decrypt_config_section(config_data)
+        
+        # Remove encryption metadata
+        if "encryption" in decrypted_config:
+            del decrypted_config["encryption"]
+        
+        # Save the decrypted config
+        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
+            toml.dump(decrypted_config, f)
+        
+        # Clear password
+        clear_encryption_password()
+        
+        # Clear and reload caches
+        global _CONFIG_CACHE, _SETTINGS_CACHE
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
+        
+        logger.success("Config encryption disabled successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to disable config encryption: {e}")
+        return False
+
+
+def change_encryption_password(old_password: str, new_password: str) -> bool:
+    """
+    Change the encryption password.
+    
+    Args:
+        old_password: The current password
+        new_password: The new password to set
+        
+    Returns:
+        True if password was changed successfully
+    """
+    try:
+        # Load current config
+        config_data = {}
+        if DEFAULT_CONFIG_PATH.exists():
+            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+                config_data = tomllib.load(f)
+        
+        # Verify old password
+        encryption_config = config_data.get("encryption", {})
+        if encryption_config.get("enabled", False):
+            enc_module = get_encryption_module()
+            stored_hash = encryption_config.get("password_hash", "")
+            if not enc_module.verify_password(old_password, stored_hash):
+                logger.error("Invalid current password provided")
+                return False
+        else:
+            logger.error("Encryption is not enabled")
+            return False
+        
+        # Set old password temporarily for decryption
+        set_encryption_password(old_password)
+        
+        # Decrypt the config
+        decrypted_config = decrypt_config_section(config_data)
+        
+        # Re-encrypt with new password
+        encrypted_config = encrypt_api_keys_in_config(decrypted_config, new_password)
+        
+        # Save the re-encrypted config
+        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
+            toml.dump(encrypted_config, f)
+        
+        # Set the new password for the current session
+        set_encryption_password(new_password)
+        
+        # Clear and reload caches
+        global _CONFIG_CACHE, _SETTINGS_CACHE
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
+        
+        logger.success("Encryption password changed successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to change encryption password: {e}")
+        return False
 
 
 # --- CLI Database and Log File Path Getters ---

@@ -37,6 +37,24 @@ from tldw_chatbook.config import load_settings, settings
 from tldw_chatbook.Utils.Utils import logging
 #
 #######################################################################################################################
+# Provider Parameter Support Documentation
+#
+# IMPORTANT: None of the commercial providers in this file accept a 'provider_name' parameter.
+# The provider_name parameter is only used by some local providers in LLM_API_Calls_Local.py
+# for dynamic configuration loading.
+#
+# Commercial providers that DO NOT accept provider_name:
+# - chat_with_openai
+# - chat_with_anthropic
+# - chat_with_cohere
+# - chat_with_deepseek
+# - chat_with_groq
+# - chat_with_google
+# - chat_with_huggingface
+# - chat_with_mistral
+# - chat_with_openrouter
+#
+#######################################################################################################################
 # Function Definitions
 #
 

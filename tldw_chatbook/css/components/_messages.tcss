@@ -20,6 +20,14 @@ ChatMessage.-user > Vertical {
     background: $boost; /* Different background for user */
     border: round $accent;
 }
+ChatMessage.-tool-call > Vertical {
+    background: $surface-lighten-1;
+    border: round $warning;
+}
+ChatMessage.-tool-result > Vertical {
+    background: $surface-lighten-1;
+    border: round $success;
+}
 .message-header {
     width: 100%;
     padding: 0 1;

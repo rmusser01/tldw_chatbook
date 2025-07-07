@@ -18,7 +18,12 @@ from textual.css.query import QueryError
 from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible
 from textual.worker import Worker
 # Local Imports
-from tldw_chatbook.config import load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, API_MODELS_BY_PROVIDER
+from tldw_chatbook.config import (
+    load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, 
+    API_MODELS_BY_PROVIDER, check_encryption_needed, get_detected_api_providers,
+    enable_config_encryption, disable_config_encryption, change_encryption_password,
+    get_encryption_password, get_cli_setting
+)
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
@@ -186,6 +191,12 @@ class ToolsSettingsWindow(Container):
         margin-bottom: 1;
     }
     
+    .form-separator {
+        height: 1;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+    
     .danger {
         color: $error;
     }
@@ -203,6 +214,40 @@ class ToolsSettingsWindow(Container):
     
     Collapsible > Contents {
         padding: 1;
+    }
+    
+    .encryption-status-enabled {
+        color: $success;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    
+    .encryption-status-disabled {
+        color: $warning;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    
+    .encryption-warning {
+        color: $error;
+        margin-bottom: 1;
+        padding: 1;
+        background: $error 10%;
+        border: solid $error;
+    }
+    
+    .encryption-controls {
+        margin: 2 0;
+    }
+    
+    .encryption-button-group {
+        layout: horizontal;
+        height: auto;
+        margin-top: 1;
+    }
+    
+    .encryption-button-group Button {
+        margin-right: 1;
     }
     """
     
@@ -287,6 +332,17 @@ class ToolsSettingsWindow(Container):
                 id="general-log-level",
                 classes="settings-select"
             )
+            
+            # Splash Screen Setting
+            splash_screen_config = self.config_data.get("splash_screen", {})
+            yield Static("", classes="settings-separator")
+            yield Checkbox(
+                "Enable Splash Screen on Startup",
+                value=splash_screen_config.get("enabled", True),
+                id="general-splash-enabled",
+                classes="settings-checkbox"
+            )
+            yield Static("Shows an animated splash screen with app information when starting tldw-cli", classes="help-text")
             
             with Container(classes="settings-button-container"):
                 yield Button("Save General Settings", id="save-general-settings", variant="primary")
@@ -386,6 +442,12 @@ class ToolsSettingsWindow(Container):
                 yield Static("Advanced Configuration Options", classes="tab-description")
                 with VerticalScroll():
                     yield from self._compose_advanced_config_form()
+            
+            # Encryption Tab
+            with TabPane("Encryption", id="tab-encryption-config"):
+                yield Static("Config File Encryption", classes="tab-description")
+                with VerticalScroll():
+                    yield from self._compose_encryption_config_form()
     
     def _compose_general_config_form(self) -> ComposeResult:
         """Form for general configuration section."""
@@ -435,6 +497,17 @@ class ToolsSettingsWindow(Container):
                 placeholder="default_user",
                 id="config-general-users-name"
             ),
+            
+            # Splash Screen Settings
+            Static("", classes="form-separator"),
+            Static("Startup Options", classes="form-subsection-title"),
+            
+            Checkbox(
+                "Enable Splash Screen on Startup",
+                value=get_cli_setting("splash_screen", "enabled", True),
+                id="config-general-splash-enabled"
+            ),
+            Static("Shows an animated splash screen with app information when starting tldw-cli", classes="help-text"),
             
             Container(
                 Button("Save General Config", id="save-general-config-form", variant="primary"),
@@ -1564,6 +1637,50 @@ class ToolsSettingsWindow(Container):
             with Container(classes="settings-button-container"):
                 yield Button("Save Appearance Settings", id="save-appearance-settings", variant="primary")
                 yield Button("Reset to Defaults", id="reset-appearance-settings")
+    
+    def _compose_encryption_config_form(self) -> ComposeResult:
+        """Form for encryption configuration section."""
+        encryption_config = self.config_data.get("encryption", {})
+        encryption_enabled = encryption_config.get("enabled", False)
+        
+        # Check if API keys are detected
+        has_api_keys = check_encryption_needed()
+        detected_providers = get_detected_api_providers() if has_api_keys else []
+        
+        # Status section
+        yield Label("Encryption Status", classes="settings-label")
+        if encryption_enabled:
+            yield Static("🔐 Encryption is ENABLED", classes="encryption-status-enabled")
+            yield Static("Your API keys are encrypted and protected.", classes="section-description")
+        else:
+            yield Static("🔓 Encryption is DISABLED", classes="encryption-status-disabled")
+            if has_api_keys:
+                yield Static(f"⚠️ Detected unencrypted API keys for: {', '.join(detected_providers)}", classes="encryption-warning")
+            else:
+                yield Static("No API keys detected in configuration.", classes="section-description")
+        
+        # Encryption controls
+        with Container(classes="encryption-controls"):
+            if not encryption_enabled:
+                if has_api_keys:
+                    yield Label("Enable Encryption", classes="settings-label")
+                    yield Static("Protect your API keys with a master password.", classes="section-description")
+                    yield Button("Setup Encryption", id="setup-encryption-button", variant="primary", classes="settings-button")
+            else:
+                # Encryption is enabled - show management options
+                yield Label("Encryption Management", classes="settings-label")
+                
+                with Container(classes="encryption-button-group"):
+                    yield Button("Change Password", id="change-encryption-password-button", variant="default", classes="settings-button")
+                    yield Button("Disable Encryption", id="disable-encryption-button", variant="warning", classes="settings-button")
+        
+        # Information section
+        yield Label("About Config Encryption", classes="settings-label")
+        yield Static(
+            "Config encryption uses AES-256 to protect your API keys and sensitive data. "
+            "When enabled, you'll need to enter your master password each time you start the application.",
+            classes="section-description"
+        )
 
     def compose(self) -> ComposeResult:
         with Container(id="tools-settings-nav-pane", classes="tools-nav-pane"):
@@ -1651,6 +1768,14 @@ class ToolsSettingsWindow(Container):
         elif button_id == "reset-advanced-config-form":
             await self._reset_advanced_config_form()
             
+        # Encryption handlers
+        elif button_id == "setup-encryption-button":
+            await self._setup_encryption()
+        elif button_id == "change-encryption-password-button":
+            await self._change_encryption_password()
+        elif button_id == "disable-encryption-button":
+            await self._disable_encryption()
+            
         # Import/Export handlers
         elif button_id == "export-config-button":
             await self._export_configuration()
@@ -1723,6 +1848,11 @@ class ToolsSettingsWindow(Container):
             if save_setting_to_cli_config("general", "log_level", self.query_one("#general-log-level", Select).value):
                 saved_count += 1
             
+            # Splash Screen
+            splash_enabled = self.query_one("#general-splash-enabled", Checkbox).value
+            if save_setting_to_cli_config("splash_screen", "enabled", splash_enabled):
+                saved_count += 1
+            
             # Update internal config
             self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
             
@@ -1742,6 +1872,7 @@ class ToolsSettingsWindow(Container):
             self.query_one("#general-theme", Select).value = "textual-dark"
             self.query_one("#general-username", Input).value = "default_user"
             self.query_one("#general-log-level", Select).value = "INFO"
+            self.query_one("#general-splash-enabled", Checkbox).value = True  # Default is enabled
             
             self.app_instance.notify("General Settings reset to defaults!")
             
@@ -1768,7 +1899,7 @@ class ToolsSettingsWindow(Container):
             # Also reload the main settings cache
             load_settings(force_reload=True)
             
-            self.app_instance.notify("Configuration saved successfully!", severity="success")
+            self.app_instance.notify("Configuration saved successfully!", severity="successful")
             
         except toml.TomlDecodeError as e:
             self.app_instance.notify(f"Error: Invalid TOML format: {e}", severity="error")
@@ -1804,6 +1935,11 @@ class ToolsSettingsWindow(Container):
             save_setting_to_cli_config("general", "palette_theme_limit", int(self.query_one("#config-general-palette-limit", Input).value))
             save_setting_to_cli_config("general", "log_level", self.query_one("#config-general-log-level", Input).value)
             save_setting_to_cli_config("general", "users_name", self.query_one("#config-general-users-name", Input).value)
+            
+            # Save splash screen setting
+            splash_enabled = self.query_one("#config-general-splash-enabled", Checkbox).value
+            save_setting_to_cli_config("splash_screen", "enabled", splash_enabled)
+            
             self.app_instance.notify("General configuration saved!")
         except Exception as e:
             self.app_instance.notify(f"Error saving general config: {e}", severity="error")
@@ -1816,6 +1952,7 @@ class ToolsSettingsWindow(Container):
             self.query_one("#config-general-palette-limit", Input).value = "1"
             self.query_one("#config-general-log-level", Input).value = "INFO"
             self.query_one("#config-general-users-name", Input).value = "default_user"
+            self.query_one("#config-general-splash-enabled", Checkbox).value = True  # Default is enabled
             self.app_instance.notify("General configuration reset to defaults!")
         except Exception as e:
             self.app_instance.notify(f"Error resetting general config: {e}", severity="error")
@@ -2473,7 +2610,7 @@ class ToolsSettingsWindow(Container):
             if chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "vacuum_operation")
                 db.vacuum()
-                db.close()
+                db.close_connection()
                 vacuumed.append("ChaChaNotes")
             
             # Vacuum Prompts database
@@ -2481,7 +2618,7 @@ class ToolsSettingsWindow(Container):
             if prompts_path.exists():
                 db = PromptsDatabase(str(prompts_path), "vacuum_operation")
                 db.vacuum()
-                db.close()
+                db.close_connection()
                 vacuumed.append("Prompts")
             
             # Vacuum Media database
@@ -2489,21 +2626,21 @@ class ToolsSettingsWindow(Container):
             if media_path.exists():
                 db = MediaDatabase(str(media_path), "vacuum_operation")
                 db.vacuum()
-                db.close()
+                db.close_connection()
                 vacuumed.append("Media")
             
             # Update UI from worker thread
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify, 
                 f"Successfully vacuumed databases: {', '.join(vacuumed)}",
                 severity="success"
             )
             
             # Update database sizes
-            self.call_from_thread(self._update_database_sizes)
+            self.app.call_from_thread(self._update_database_sizes)
             
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error during vacuum operation: {e}",
                 severity="error"
@@ -2563,14 +2700,14 @@ class ToolsSettingsWindow(Container):
             with open(info_path, 'w') as f:
                 json.dump(backup_info, f, indent=2)
             
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Backup completed! Saved to: {backup_dir}",
                 severity="success"
             )
             
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error during backup: {e}",
                 severity="error"
@@ -2599,7 +2736,7 @@ class ToolsSettingsWindow(Container):
             if chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "integrity_check")
                 result = db.check_integrity()
-                db.close()
+                db.close_connection()
                 results.append(f"ChaChaNotes: {'OK' if result else 'FAILED'}")
             
             # Check Prompts database
@@ -2607,7 +2744,7 @@ class ToolsSettingsWindow(Container):
             if prompts_path.exists():
                 db = PromptsDatabase(str(prompts_path), "integrity_check")
                 result = db.check_integrity()
-                db.close()
+                db.close_connection()
                 results.append(f"Prompts: {'OK' if result else 'FAILED'}")
             
             # Check Media database
@@ -2615,7 +2752,7 @@ class ToolsSettingsWindow(Container):
             if media_path.exists():
                 db = MediaDatabase(str(media_path), "integrity_check")
                 result = db.check_integrity()
-                db.close()
+                db.close_connection()
                 results.append(f"Media: {'OK' if result else 'FAILED'}")
             
             # Report results
@@ -2623,14 +2760,14 @@ class ToolsSettingsWindow(Container):
             severity = "success" if all_ok else "error"
             message = "Integrity check results:\n" + "\n".join(results)
             
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 message,
                 severity=severity
             )
             
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error during integrity check: {e}",
                 severity="error"
@@ -2667,22 +2804,22 @@ class ToolsSettingsWindow(Container):
                 with open(export_path, 'w', encoding='utf-8') as f:
                     json.dump(conversations, f, indent=2, ensure_ascii=False)
                 
-                db.close()
+                db.close_connection()
                 
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify,
                     f"Exported {len(conversations)} conversations to: {export_path}",
                     severity="success"
                 )
             else:
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify,
                     "No conversations database found",
                     severity="warning"
                 )
                 
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error exporting conversations: {e}",
                 severity="error"
@@ -2727,22 +2864,22 @@ class ToolsSettingsWindow(Container):
                         f.write(f"Modified: {note['updated_at']}\n\n")
                         f.write(note['content'])
                 
-                db.close()
+                db.close_connection()
                 
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify,
                     f"Exported {len(notes)} notes to: {export_dir}",
                     severity="success"
                 )
             else:
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify,
                     "No notes database found",
                     severity="warning"
                 )
                 
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error exporting notes: {e}",
                 severity="error"
@@ -2779,22 +2916,22 @@ class ToolsSettingsWindow(Container):
                 with open(export_path, 'w', encoding='utf-8') as f:
                     json.dump(characters, f, indent=2, ensure_ascii=False)
                 
-                db.close()
+                db.close_connection()
                 
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify,
                     f"Exported {len(characters)} characters to: {export_path}",
                     severity="success"
                 )
             else:
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify,
                     "No characters database found",
                     severity="warning"
                 )
                 
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error exporting characters: {e}",
                 severity="error"
@@ -2874,6 +3011,200 @@ class ToolsSettingsWindow(Container):
         
         # Update database sizes
         self._update_database_sizes()
+    
+    async def _setup_encryption(self) -> None:
+        """Setup encryption for the config file."""
+        from ..Widgets.password_dialog import PasswordDialog, EncryptionSetupDialog
+        
+        try:
+            # First check if API keys are detected
+            detected_providers = get_detected_api_providers()
+            if not detected_providers:
+                self.app_instance.notify("No API keys detected to encrypt.", severity="warning")
+                return
+            
+            # Show setup dialog
+            setup_result = await self.app_instance.push_screen(
+                EncryptionSetupDialog(
+                    detected_providers=detected_providers,
+                    on_proceed=lambda: None,
+                    on_cancel=lambda: None
+                ),
+                wait_for_dismiss=True
+            )
+            
+            if not setup_result:
+                return
+            
+            # Show password dialog
+            password = await self.app_instance.push_screen(
+                PasswordDialog(
+                    mode="setup",
+                    on_submit=lambda p: None,
+                    on_cancel=lambda: None
+                ),
+                wait_for_dismiss=True
+            )
+            
+            if password:
+                # Enable encryption
+                if enable_config_encryption(password):
+                    self.app_instance.notify("✅ Config encryption enabled successfully!", severity="information")
+                    # Refresh the UI
+                    await self._refresh_encryption_ui()
+                else:
+                    self.app_instance.notify("❌ Failed to enable encryption", severity="error")
+        
+        except Exception as e:
+            self.app_instance.notify(f"Error setting up encryption: {e}", severity="error")
+    
+    async def _change_encryption_password(self) -> None:
+        """Change the encryption password."""
+        from ..Widgets.password_dialog import PasswordDialog
+        
+        try:
+            # Get current password
+            current_password = await self.app_instance.push_screen(
+                PasswordDialog(
+                    mode="unlock",
+                    title="Current Password",
+                    message="Enter your current master password",
+                    on_submit=lambda p: None,
+                    on_cancel=lambda: None
+                ),
+                wait_for_dismiss=True
+            )
+            
+            if not current_password:
+                return
+            
+            # Get new password
+            new_password = await self.app_instance.push_screen(
+                PasswordDialog(
+                    mode="setup",
+                    title="New Password",
+                    message="Enter your new master password",
+                    on_submit=lambda p: None,
+                    on_cancel=lambda: None
+                ),
+                wait_for_dismiss=True
+            )
+            
+            if new_password:
+                # Change password
+                if change_encryption_password(current_password, new_password):
+                    self.app_instance.notify("✅ Password changed successfully!", severity="information")
+                else:
+                    self.app_instance.notify("❌ Failed to change password. Check current password.", severity="error")
+        
+        except Exception as e:
+            self.app_instance.notify(f"Error changing password: {e}", severity="error")
+    
+    async def _disable_encryption(self) -> None:
+        """Disable encryption for the config file."""
+        from ..Widgets.password_dialog import PasswordDialog
+        
+        try:
+            # Confirm with user
+            from textual.widgets import Button
+            from textual.screen import ModalScreen
+            from textual.app import ComposeResult
+            from textual.containers import Container, Vertical
+            from textual.widgets import Label, Static
+            
+            class ConfirmDisableDialog(ModalScreen):
+                DEFAULT_CSS = """
+                ConfirmDisableDialog {
+                    align: center middle;
+                }
+                
+                ConfirmDisableDialog > Container {
+                    background: $surface;
+                    border: thick $error;
+                    padding: 2;
+                    width: 60;
+                    height: auto;
+                }
+                
+                .dialog-title {
+                    text-align: center;
+                    text-style: bold;
+                    margin-bottom: 1;
+                    color: $error;
+                }
+                
+                .button-container {
+                    align: center middle;
+                    margin-top: 2;
+                }
+                
+                .button-container Button {
+                    margin: 0 1;
+                }
+                """
+                
+                def compose(self) -> ComposeResult:
+                    with Container():
+                        with Vertical():
+                            yield Label("⚠️ Disable Encryption", classes="dialog-title")
+                            yield Static("This will decrypt all API keys and save them in plain text.")
+                            yield Static("Are you sure you want to disable encryption?")
+                            
+                            with Container(classes="button-container"):
+                                yield Button("Cancel", id="cancel", variant="primary")
+                                yield Button("Disable Encryption", id="confirm", variant="error")
+                
+                async def on_button_pressed(self, event: Button.Pressed) -> None:
+                    self.dismiss(event.button.id == "confirm")
+            
+            # Show confirmation dialog
+            confirm = await self.app_instance.push_screen(ConfirmDisableDialog(), wait_for_dismiss=True)
+            
+            if not confirm:
+                return
+            
+            # Get password to decrypt
+            password = await self.app_instance.push_screen(
+                PasswordDialog(
+                    mode="unlock",
+                    title="Disable Encryption",
+                    message="Enter your master password to disable encryption",
+                    on_submit=lambda p: None,
+                    on_cancel=lambda: None
+                ),
+                wait_for_dismiss=True
+            )
+            
+            if password:
+                # Disable encryption
+                if disable_config_encryption(password):
+                    self.app_instance.notify("✅ Encryption disabled. API keys are now in plain text.", severity="warning")
+                    # Refresh the UI
+                    await self._refresh_encryption_ui()
+                else:
+                    self.app_instance.notify("❌ Failed to disable encryption. Check password.", severity="error")
+        
+        except Exception as e:
+            self.app_instance.notify(f"Error disabling encryption: {e}", severity="error")
+    
+    async def _refresh_encryption_ui(self) -> None:
+        """Refresh the encryption UI after changes."""
+        try:
+            # Reload config
+            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
+            
+            # Find and refresh the encryption tab content
+            content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
+            encryption_view = content_switcher.query_one("#tab-encryption-config")
+            
+            if encryption_view:
+                # Clear and rebuild the encryption form
+                await encryption_view.remove_children()
+                for widget in self._compose_encryption_config_form():
+                    await encryption_view.mount(widget)
+        
+        except Exception as e:
+            self.app_instance.notify(f"Error refreshing UI: {e}", severity="error")
 
 #
 # End of Tools_Settings_Window.py

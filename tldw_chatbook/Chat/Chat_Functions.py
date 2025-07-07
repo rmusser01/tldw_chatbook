@@ -737,8 +737,12 @@ def chat_api_call(
     if call_kwargs.get(params_map.get('api_key', 'api_key')) and isinstance(call_kwargs.get(params_map.get('api_key', 'api_key')), str) and len(call_kwargs.get(params_map.get('api_key', 'api_key'))) > 8:
          logger.info(f"Debug - Chat API Call - API Key: {call_kwargs[params_map.get('api_key', 'api_key')][:4]}...{call_kwargs[params_map.get('api_key', 'api_key')][-4:]}")
 
-    # Add provider_name to kwargs so handlers can use it for configuration loading
-    call_kwargs['provider_name'] = endpoint_lower
+    # Add provider_name to kwargs only for handlers that support it
+    # Some local providers use this for dynamic configuration loading
+    PROVIDERS_WITH_PROVIDER_NAME = {'llama_cpp', 'vllm', 'ollama', 'mlx_lm', 'vllm_api', 'mlx'}
+    
+    if endpoint_lower in PROVIDERS_WITH_PROVIDER_NAME:
+        call_kwargs['provider_name'] = endpoint_lower
 
     try:
         logger.debug(f"Calling handler {handler.__name__} with kwargs: { {k: (type(v) if k != params_map.get('api_key') else 'key_hidden') for k,v in call_kwargs.items()} }")
@@ -1207,6 +1211,90 @@ def chat(
         logging.error(f"Error in multimodal chat function: {str(e)}", exc_info=True)
         # Consider if the error format should change from just a string
         return f"An error occurred in the chat function: {str(e)}"
+
+
+def parse_tool_calls_from_response(response: Union[str, Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    """
+    Extract tool calls from LLM response, handling various provider formats.
+    
+    Args:
+        response: The LLM response, either as a string or dict
+        
+    Returns:
+        List of tool calls in OpenAI format, or None if no tool calls found
+        
+    Example tool call format:
+    [{
+        "id": "call_function_name_timestamp",
+        "type": "function",
+        "function": {
+            "name": "function_name",
+            "arguments": "json_string_of_arguments"
+        }
+    }]
+    """
+    # Handle string responses by attempting to parse as JSON
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except json.JSONDecodeError:
+            logging.debug("Response is not valid JSON, no tool calls to extract")
+            return None
+    
+    if not isinstance(response, dict):
+        return None
+    
+    # Check for tool calls in various locations
+    tool_calls = None
+    
+    # OpenAI format: response.message.tool_calls
+    if isinstance(response.get("message"), dict):
+        tool_calls = response["message"].get("tool_calls")
+    
+    # Alternative: tool_calls at root level
+    if not tool_calls:
+        tool_calls = response.get("tool_calls")
+    
+    # Legacy format: single function_call
+    if not tool_calls and "function_call" in response.get("message", {}):
+        func_call = response["message"]["function_call"]
+        tool_calls = [{
+            "id": f"call_{func_call.get('name', 'unknown')}_{int(time.time())}",
+            "type": "function",
+            "function": func_call
+        }]
+    
+    # Anthropic format: check for tool_use in stop_reason
+    if not tool_calls and response.get("stop_reason") == "tool_use":
+        # Tool calls might be in content blocks
+        content = response.get("content", [])
+        if isinstance(content, list):
+            tool_calls = []
+            for block in content:
+                if block.get("type") == "tool_use":
+                    tool_calls.append({
+                        "id": block.get("id", f"call_{int(time.time())}"),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name"),
+                            "arguments": json.dumps(block.get("input", {}))
+                        }
+                    })
+    
+    # Validate tool calls format
+    if tool_calls and isinstance(tool_calls, list):
+        valid_calls = []
+        for call in tool_calls:
+            if isinstance(call, dict) and "function" in call:
+                # Ensure required fields exist
+                if not call.get("id"):
+                    call["id"] = f"call_{int(time.time())}"
+                if not call.get("type"):
+                    call["type"] = "function"
+                valid_calls.append(call)
+        return valid_calls if valid_calls else None
+    
+    return None
 
 
 def save_chat_history_to_db_wrapper(

@@ -264,8 +264,11 @@ class ChatMessageEnhanced(Widget):
                 self._render_regular()
         except Exception as e:
             logging.error(f"Error rendering image: {e}")
-            self._image_widget.mount(
-                Static(f"[red]Error rendering image: {e}[/red]")
+            # Use call_after_refresh for error mounting too
+            self.call_after_refresh(
+                lambda: self._image_widget.mount(
+                    Static(f"[red]Error rendering image: {e}[/red]")
+                ) if self._image_widget else None
             )
     
     def _render_pixelated(self) -> None:
@@ -305,12 +308,23 @@ class ChatMessageEnhanced(Widget):
                 # TextualImage expects a PIL image, not raw bytes
                 pil_image = PILImage.open(BytesIO(self.image_data))
                 image = TextualImage(pil_image)
-                self._image_widget.mount(image)
+                # Defer the mounting to ensure proper widget tree attachment
+                self.call_after_refresh(lambda: self._mount_textual_image(image))
             except Exception as e:
                 logging.error(f"Error with textual-image rendering: {e}")
                 self._render_fallback()
         else:
             self._render_fallback()
+    
+    def _mount_textual_image(self, image: TextualImage) -> None:
+        """Mount the TextualImage widget after the widget tree is stable."""
+        try:
+            if self._image_widget and not image.parent:
+                self._image_widget.mount(image)
+        except Exception as e:
+            logging.error(f"Error mounting textual-image: {e}")
+            if self._image_widget:
+                self._render_fallback()
     
     def _render_fallback(self) -> None:
         """Fallback rendering for unsupported terminals."""

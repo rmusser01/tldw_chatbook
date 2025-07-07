@@ -1,6 +1,7 @@
 # chat_streaming_events.py
 #
 # Imports
+import json
 import logging
 import re
 import threading
@@ -17,6 +18,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import InputError, CharactersRAGDBError
 from tldw_chatbook.Constants import TAB_CHAT, TAB_CCP
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
+from tldw_chatbook.Chat.Chat_Functions import parse_tool_calls_from_response
 #
 ########################################################################################################################
 #
@@ -142,6 +144,19 @@ async def handle_stream_done(self, event: StreamDone) -> None:
 
             ai_widget.message_text = event.full_text  # Ensure internal state has the final, complete text
             static_text_widget.update(event.full_text)  # Update display with final text
+
+            # Check for tool calls in the response
+            tool_calls = None
+            if hasattr(event, 'response_data') and event.response_data:
+                logger.debug(f"Checking for tool calls in response data: {type(event.response_data)}")
+                tool_calls = parse_tool_calls_from_response(event.response_data)
+                if tool_calls:
+                    logger.info(f"Detected {len(tool_calls)} tool call(s) in streaming response")
+                    # TODO: Handle tool calls here
+                    # For now, just append a notice to the message
+                    tool_notice = f"\n\n[Tool Calls Detected: {len(tool_calls)} function(s) to execute]"
+                    ai_widget.message_text += tool_notice
+                    static_text_widget.update(ai_widget.message_text)
 
             # Determine sender name for DB (already set on widget by handle_api_call_worker_state_changed)
             # This is just to ensure the correct name is used for DB saving if needed.

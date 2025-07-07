@@ -72,7 +72,9 @@ from .config import (
     get_cli_setting,
     get_cli_providers_and_models,
     API_MODELS_BY_PROVIDER,
-    LOCAL_PROVIDERS, )
+    LOCAL_PROVIDERS,
+    load_cli_config_and_ensure_existence,
+    set_encryption_password, )
 from .Event_Handlers import (
     conv_char_events as ccp_handlers,
     notes_events as notes_handlers,
@@ -3746,6 +3748,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif select_id == "chat-conversation-search-character-filter-select" and current_active_tab == TAB_CHAT:
             self.loguru_logger.debug("Character filter changed in chat tab, triggering conversation search")
             await chat_handlers.perform_chat_conversation_search(self)
+        elif select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT:
+            # Handle query expansion method change - show/hide appropriate fields
+            await self.handle_query_expansion_method_changed(event)
 
     ##################################################################
     # --- Event Handlers for Streaming and Worker State Changes ---
@@ -3875,6 +3880,43 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e:
             self.loguru_logger.error(f"Error applying RAG preset: {e}")
             self.notify("Error applying RAG preset", severity="error")
+    
+    async def handle_query_expansion_method_changed(self, event: Select.Changed) -> None:
+        """Handles query expansion method selection - shows/hides appropriate fields."""
+        try:
+            method = event.value
+            
+            # Get the relevant widgets
+            llm_model_label = self.query_one(".rag-expansion-llm-label", Static)
+            llm_model_select = self.query_one("#chat-rag-expansion-llm-model", Select)
+            local_model_label = self.query_one(".rag-expansion-local-label", Static)
+            local_model_input = self.query_one("#chat-rag-expansion-local-model", Input)
+            
+            # Show/hide based on method
+            if method == "llm":
+                # Show LLM model selection, hide local model
+                llm_model_label.remove_class("hidden")
+                llm_model_select.remove_class("hidden")
+                local_model_label.add_class("hidden")
+                local_model_input.add_class("hidden")
+            elif method == "local_llm":
+                # Show local model input, hide LLM model selection
+                llm_model_label.add_class("hidden")
+                llm_model_select.add_class("hidden")
+                local_model_label.remove_class("hidden")
+                local_model_input.remove_class("hidden")
+            elif method == "keywords":
+                # Hide both LLM and local model fields
+                llm_model_label.add_class("hidden")
+                llm_model_select.add_class("hidden")
+                local_model_label.add_class("hidden")
+                local_model_input.add_class("hidden")
+            
+            self.loguru_logger.info(f"Query expansion method changed to: {method}")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error handling query expansion method change: {e}")
+            self.notify("Error updating query expansion settings", severity="error")
 
     async def handle_settings_search(self, query: str) -> None:
         """Handles search in settings sidebar."""
@@ -4781,6 +4823,71 @@ if __name__ == "__main__":
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
+    # --- Check for encrypted config ---
+    try:
+        config_data = load_cli_config_and_ensure_existence()
+        encryption_config = config_data.get("encryption", {})
+        
+        if encryption_config.get("enabled", False):
+            loguru_logger.info("Config file encryption is enabled. Password required.")
+            
+            # Import password dialog dependencies here to avoid circular imports
+            import asyncio
+            from textual.app import App
+            from tldw_chatbook.Widgets.password_dialog import PasswordDialog
+            
+            class PasswordPromptApp(App):
+                """Minimal app to prompt for password."""
+                def __init__(self):
+                    super().__init__()
+                    self.password = None
+                
+                async def on_mount(self) -> None:
+                    """Show password dialog immediately on mount."""
+                    password = await self.push_screen(
+                        PasswordDialog(
+                            mode="unlock",
+                            title="Unlock Configuration",
+                            message="Enter your master password to decrypt the configuration file.",
+                            on_submit=lambda p: None,
+                            on_cancel=lambda: None
+                        ),
+                        wait_for_dismiss=True
+                    )
+                    
+                    if password:
+                        # Verify password
+                        from tldw_chatbook.Utils.config_encryption import config_encryption
+                        stored_hash = encryption_config.get("password_hash", "")
+                        if config_encryption.verify_password(password, stored_hash):
+                            self.password = password
+                            self.exit()
+                        else:
+                            self.notify("Invalid password. Please try again.", severity="error")
+                            # Re-show the dialog
+                            await self.on_mount()
+                    else:
+                        # User cancelled
+                        loguru_logger.error("Password required but not provided. Exiting.")
+                        self.exit()
+            
+            # Run the password prompt app
+            password_app = PasswordPromptApp()
+            password_app.run()
+            
+            if password_app.password:
+                # Set the password for the session
+                set_encryption_password(password_app.password)
+                loguru_logger.info("Configuration decrypted successfully.")
+            else:
+                # Exit if no password provided
+                loguru_logger.error("Cannot proceed without decryption password.")
+                sys.exit(1)
+                
+    except Exception as e:
+        loguru_logger.error(f"Error checking config encryption: {e}")
+        # Continue without encryption if there's an error
+
     # Create instance with early logging flag
     app_instance = TldwCli()
     # Set the early logging flag so _setup_logging knows logging was already initialized
@@ -4871,6 +4978,71 @@ def main_cli_runner():
         
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
+
+    # --- Check for encrypted config ---
+    try:
+        config_data = load_cli_config_and_ensure_existence()
+        encryption_config = config_data.get("encryption", {})
+        
+        if encryption_config.get("enabled", False):
+            loguru_logger.info("Config file encryption is enabled. Password required.")
+            
+            # Import password dialog dependencies here to avoid circular imports
+            import asyncio
+            from textual.app import App
+            from tldw_chatbook.Widgets.password_dialog import PasswordDialog
+            
+            class PasswordPromptApp(App):
+                """Minimal app to prompt for password."""
+                def __init__(self):
+                    super().__init__()
+                    self.password = None
+                
+                async def on_mount(self) -> None:
+                    """Show password dialog immediately on mount."""
+                    password = await self.push_screen(
+                        PasswordDialog(
+                            mode="unlock",
+                            title="Unlock Configuration",
+                            message="Enter your master password to decrypt the configuration file.",
+                            on_submit=lambda p: None,
+                            on_cancel=lambda: None
+                        ),
+                        wait_for_dismiss=True
+                    )
+                    
+                    if password:
+                        # Verify password
+                        from tldw_chatbook.Utils.config_encryption import config_encryption
+                        stored_hash = encryption_config.get("password_hash", "")
+                        if config_encryption.verify_password(password, stored_hash):
+                            self.password = password
+                            self.exit()
+                        else:
+                            self.notify("Invalid password. Please try again.", severity="error")
+                            # Re-show the dialog
+                            await self.on_mount()
+                    else:
+                        # User cancelled
+                        loguru_logger.error("Password required but not provided. Exiting.")
+                        self.exit()
+            
+            # Run the password prompt app
+            password_app = PasswordPromptApp()
+            password_app.run()
+            
+            if password_app.password:
+                # Set the password for the session
+                set_encryption_password(password_app.password)
+                loguru_logger.info("Configuration decrypted successfully.")
+            else:
+                # Exit if no password provided
+                loguru_logger.error("Cannot proceed without decryption password.")
+                sys.exit(1)
+                
+    except Exception as e:
+        loguru_logger.error(f"Error checking config encryption: {e}")
+        # Continue without encryption if there's an error
 
     # Create instance with early logging flag
     app_instance = TldwCli()

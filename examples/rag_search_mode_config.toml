@@ -1,0 +1,22 @@
+# Example RAG search mode configuration for tldw_chatbook
+
+# This example shows how to configure the default RAG search mode
+# Place this configuration in your config.toml file
+
+[AppRAGSearchConfig.rag.search]
+# Default search mode for RAG queries
+# Options: "plain" (BM25/keyword), "semantic" (embeddings), "hybrid" (both)
+default_search_mode = "semantic"
+
+# Other search settings
+default_top_k = 10
+score_threshold = 0.0
+include_citations = true
+
+# Hybrid search weight (0.0 = keyword only, 1.0 = semantic only)
+hybrid_alpha = 0.5
+
+# Re-ranking settings
+enable_reranking = true
+reranker_model = "flashrank"  # or "cohere" if you have API key
+reranker_top_k = 5

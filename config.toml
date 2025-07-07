@@ -740,6 +740,18 @@ cache_size_limit_gb = 10.0
     max_context_length = 4096      # Maximum context length for LLM
     combination_method = "weighted" # "weighted", "round_robin", "score_based"
     
+    # --- Query Expansion Settings ---
+    [rag.query_expansion]
+    enabled = false                     # Enable query expansion/rewriting
+    method = "llm"                      # Method: "llm", "local_llm", "keywords"
+    max_sub_queries = 3                 # Maximum number of sub-queries to generate
+    llm_provider = "openai"             # LLM provider for expansion (when method="llm")
+    llm_model = "gpt-3.5-turbo"         # Model for query expansion (fast and cheap)
+    local_model = "qwen2.5:0.5b"        # Local model for expansion (when method="local_llm")
+    expansion_prompt_template = "default" # Prompt template or custom prompt
+    combine_results = true              # Combine results from all sub-queries
+    cache_expansions = true             # Cache expanded queries for reuse
+    
     # --- Generation Settings ---
     [rag.generator]
     default_model = ""             # Default LLM model (empty = use chat defaults)

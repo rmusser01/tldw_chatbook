@@ -126,7 +126,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 6 # Incremented schema version for message feedback support
+    _CURRENT_SCHEMA_VERSION = 7 # Incremented schema version for message role field support
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
 
     _FULL_SCHEMA_SQL_V4 = """
@@ -968,6 +968,34 @@ UPDATE db_schema_version
    AND version = 5;
 """
 
+    _MIGRATE_V6_TO_V7_SQL = """
+/*───────────────────────────────────────────────────────────────
+  Migration from V6 to V7: Add role field for OpenAI-compatible message types
+───────────────────────────────────────────────────────────────*/
+-- Add role column to messages table
+ALTER TABLE messages ADD COLUMN role TEXT DEFAULT 'assistant';
+
+-- Create index for role-based queries
+CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+
+-- Migrate existing data from sender to role with proper mapping
+UPDATE messages
+SET role = CASE
+    WHEN LOWER(sender) = 'user' THEN 'user'
+    WHEN LOWER(sender) = 'system' THEN 'system'
+    WHEN LOWER(sender) IN ('assistant', 'ai', 'bot') THEN 'assistant'
+    WHEN LOWER(sender) = 'tool' THEN 'tool'
+    ELSE 'assistant'  -- Default for character names and other senders
+END
+WHERE role = 'assistant';  -- Only update default values
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 7
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 6;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str):
         """
         Initializes the CharactersRAGDB instance.
@@ -1426,6 +1454,41 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V5 to V6 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v6_to_v7(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 6 to version 7.
+
+        This migration adds a role column to the messages table to support
+        OpenAI-compatible message types (user, assistant, system, tool).
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 7 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V6 to V7 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V6_TO_V7_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V6→V7] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 7:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V6→V7] Migration version check failed. Expected 7, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V6→V7] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V6→V7] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V6 to V7 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V6 to V7 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _initialize_schema(self):
         """
         Initializes or migrates the database schema to `_CURRENT_SCHEMA_VERSION`.
@@ -1470,13 +1533,24 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 5 and target_version > 5:
                         self._migrate_from_v5_to_v6(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 6 and target_version > 6:
+                        self._migrate_from_v6_to_v7(conn)
                 elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 5 and target_version > 5:
                         self._migrate_from_v5_to_v6(conn)
-                elif current_db_version == 5 and target_version == 6:
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 6 and target_version > 6:
+                        self._migrate_from_v6_to_v7(conn)
+                elif current_db_version == 5 and target_version >= 6:
                     self._migrate_from_v5_to_v6(conn)
+                    current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 6 and target_version > 6:
+                        self._migrate_from_v6_to_v7(conn)
+                elif current_db_version == 6 and target_version == 7:
+                    self._migrate_from_v6_to_v7(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(
@@ -2643,7 +2717,8 @@ UPDATE db_schema_version
                       Required: 'conversation_id', 'sender'. At least one of 'content' or 'image_data'.
                       Optional: 'id', 'parent_message_id', 'content' (str),
                                 'image_data' (bytes), 'image_mime_type' (str, required if image_data present),
-                                'timestamp', 'ranking', 'client_id'.
+                                'timestamp', 'ranking', 'client_id', 'role' (str).
+                      If 'role' is not provided, it will be auto-determined from 'sender'.
 
         Returns:
             The string UUID of the newly added message.
@@ -2673,17 +2748,33 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         timestamp = msg_data.get('timestamp') or now
 
+        # Determine role from sender or use provided role
+        role = msg_data.get('role')
+        if not role:
+            # Auto-determine role from sender
+            sender_lower = msg_data['sender'].lower()
+            if sender_lower == 'user':
+                role = 'user'
+            elif sender_lower == 'system':
+                role = 'system'
+            elif sender_lower in ('assistant', 'ai', 'bot'):
+                role = 'assistant'
+            elif sender_lower == 'tool':
+                role = 'tool'
+            else:
+                role = 'assistant'  # Default for character names
+
         query = """
                 INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
                                       image_data, image_mime_type,
-                                      timestamp, ranking, last_modified, client_id, version, deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+                                      timestamp, ranking, last_modified, client_id, version, deleted, role)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
                 """
         params = (
             msg_id, msg_data['conversation_id'], msg_data.get('parent_message_id'),
             msg_data['sender'], msg_data.get('content', ''),  # Default to empty string if no text content
             msg_data.get('image_data'), msg_data.get('image_mime_type'),
-            timestamp, msg_data.get('ranking'), now, client_id
+            timestamp, msg_data.get('ranking'), now, client_id, role
         )
         try:
             with self.transaction():
@@ -2746,7 +2837,7 @@ UPDATE db_schema_version
         query = f"""
             SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
-                   m.last_modified, m.version, m.client_id, m.deleted, m.feedback 
+                   m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role 
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ? 
@@ -2787,7 +2878,7 @@ UPDATE db_schema_version
             WITH ranked_messages AS (
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                        m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
-                       m.last_modified, m.version, m.client_id, m.deleted, m.feedback,
+                       m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                        ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
                 FROM messages m
                 JOIN conversations c ON m.conversation_id = c.id

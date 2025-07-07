@@ -1,0 +1,41 @@
+# Example RAG query expansion configuration for tldw_chatbook
+
+# This example shows how to configure query expansion for improved RAG search
+# Query expansion generates alternative phrasings and sub-queries to improve retrieval accuracy
+
+[AppRAGSearchConfig.rag.query_expansion]
+# Enable query expansion
+enabled = true
+
+# Expansion method
+# - "llm": Use a remote LLM API (OpenAI, Anthropic, etc.)
+# - "local_llm": Use a local model via Ollama
+# - "keywords": Extract keywords and variations (no LLM needed)
+method = "llm"
+
+# Maximum number of sub-queries to generate (1-5 recommended)
+max_sub_queries = 3
+
+# LLM settings for method="llm"
+llm_provider = "openai"         # Provider from your API settings
+llm_model = "gpt-3.5-turbo"     # Fast and cost-effective model
+
+# Local model settings for method="local_llm"
+local_model = "qwen2.5:0.5b"    # Small, fast model for Ollama
+
+# Prompt template for query expansion
+# Options: "default", "contextual", "synonyms", or a custom template name
+expansion_prompt_template = "default"
+
+# Result combination strategy
+# If true: Search with all queries and combine results
+# If false: Use sub-queries to enhance the main query
+combine_results = true
+
+# Cache expanded queries to avoid redundant LLM calls
+cache_expansions = true
+
+# Example custom prompt templates (add to your prompts database)
+# Default template: "Generate {max_sub_queries} alternative search queries for: {query}"
+# Contextual template: "Break down this query into {max_sub_queries} specific sub-topics: {query}"
+# Synonyms template: "Find {max_sub_queries} queries using related terms for: {query}"

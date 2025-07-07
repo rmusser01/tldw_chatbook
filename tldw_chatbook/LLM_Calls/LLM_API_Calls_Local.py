@@ -36,6 +36,30 @@ from tldw_chatbook.Local_Inference.mlx_lm_inference_local import start_mlx_lm_se
 # Import Local
 #
 #######################################################################################################################
+# Provider Parameter Support Documentation
+#
+# IMPORTANT: Only some local providers accept a 'provider_name' parameter for dynamic configuration loading.
+# This parameter allows these providers to load configuration from different sections in the settings.
+#
+# Local providers that ACCEPT provider_name (as an optional parameter):
+# - chat_with_llama (uses it to select config section, defaults to 'llama_cpp')
+# - chat_with_vllm (uses it to select config section, defaults to 'vllm_api')
+# - chat_with_ollama (uses it to select config section, defaults to 'ollama')
+# - chat_with_mlx_lm (uses it to select config section, defaults to 'mlx_lm')
+#
+# Local providers that DO NOT accept provider_name:
+# - chat_with_local_llm
+# - chat_with_kobold
+# - chat_with_oobabooga
+# - chat_with_tabbyapi
+# - chat_with_aphrodite
+# - chat_with_custom_openai
+# - chat_with_custom_openai_2
+#
+# Internal helper that uses provider_name:
+# - _chat_with_openai_compatible_local_server (used by llama, vllm, ollama, mlx_lm)
+#
+#######################################################################################################################
 # Function Definitions
 #
 

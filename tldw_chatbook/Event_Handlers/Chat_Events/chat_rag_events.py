@@ -37,6 +37,7 @@ try:
         RAGService, create_config_for_collection, RAGConfig,
         SearchResult, SearchResultWithCitations, EmbeddingsService
     )
+    from tldw_chatbook.RAG_Search.query_expansion import QueryExpander
     RAG_SERVICES_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Simplified RAG services not available: {e}")
@@ -60,6 +61,9 @@ except ImportError as e:
         pass
     
     class EmbeddingsService:
+        pass
+    
+    class QueryExpander:
         pass
 
 if TYPE_CHECKING:
@@ -1031,6 +1035,17 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         logger.debug("RAG is disabled")
         return None
     
+    # Get search mode from the new dropdown (if it exists)
+    search_mode = None
+    try:
+        search_mode_widget = app.query_one("#chat-rag-search-mode")
+        search_mode = search_mode_widget.value
+        logger.info(f"RAG search mode from dropdown: {search_mode}")
+    except:
+        # Fallback to checkbox-based detection for backward compatibility
+        logger.debug("Search mode dropdown not found, using checkbox-based detection")
+        search_mode = "plain" if plain_rag_enabled else "semantic"
+    
     # Get RAG settings
     try:
         sources = {
@@ -1049,6 +1064,13 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         chunk_overlap = int(app.query_one("#chat-rag-chunk-overlap").value or "100")
         include_metadata = app.query_one("#chat-rag-include-metadata-checkbox").value
         
+        # Query expansion settings
+        query_expansion_enabled = app.query_one("#chat-rag-query-expansion-checkbox").value
+        query_expansion_method = app.query_one("#chat-rag-expansion-method").value or "llm"
+        query_expansion_llm_model = app.query_one("#chat-rag-expansion-llm-model").value or "gpt-3.5-turbo"
+        query_expansion_local_model = app.query_one("#chat-rag-expansion-local-model").value or "qwen2.5:0.5b"
+        query_expansion_max_queries = int(app.query_one("#chat-rag-expansion-max-queries").value or "3")
+        
     except Exception as e:
         logger.error(f"Error reading RAG settings: {e}")
         return None
@@ -1059,20 +1081,200 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         app.notify("Please select at least one RAG source", severity="warning")
         return None
     
-    # Perform RAG search
+    # Expand query if enabled
+    expanded_queries = []
+    if query_expansion_enabled and RAG_SERVICES_AVAILABLE:
+        try:
+            # Create query expansion config
+            from tldw_chatbook.RAG_Search.simplified.config import QueryExpansionConfig
+            
+            # Get the current provider more reliably
+            if query_expansion_method == "llm":
+                try:
+                    current_provider = str(app.query_one("#provider-select").value).lower()
+                except Exception as e:
+                    logger.warning(f"Could not get provider from UI, using default: {e}")
+                    current_provider = "openai"
+            else:
+                # For local_llm or keywords, provider doesn't matter
+                current_provider = "openai"
+            
+            expansion_config = QueryExpansionConfig(
+                enabled=True,
+                method=query_expansion_method,
+                max_sub_queries=query_expansion_max_queries,
+                llm_provider=current_provider,
+                llm_model=query_expansion_llm_model,
+                local_model=query_expansion_local_model,
+                expansion_prompt_template="default",
+                combine_results=True,
+                cache_expansions=True
+            )
+            
+            # Create expander and expand query
+            expander = QueryExpander(app, expansion_config)
+            expanded_queries = await expander.expand_query(user_message)
+            
+            if expanded_queries:
+                logger.info(f"Query expanded to {len(expanded_queries)} sub-queries")
+                app.notify(f"Generated {len(expanded_queries)} query variations", severity="information")
+            
+        except Exception as e:
+            logger.error(f"Error during query expansion: {e}")
+            app.notify("Query expansion failed, using original query", severity="warning")
+    
+    # Perform RAG search based on selected mode
     try:
-        if plain_rag_enabled:
-            logger.info("Performing plain RAG search")
-            results, context = await perform_plain_rag_search(
-                app, user_message, sources, top_k, max_context_length,
-                enable_rerank, reranker_model
-            )
+        # If we have expanded queries and combine_results is true, search with all queries
+        if expanded_queries and query_expansion_enabled:
+            all_results = []
+            all_queries = [user_message] + expanded_queries
+            
+            for query in all_queries:
+                if search_mode == "plain":
+                    logger.info(f"Performing plain RAG search (BM25) for query: '{query}'")
+                    results, _ = await perform_plain_rag_search(
+                        app, query, sources, top_k, max_context_length,
+                        enable_rerank=False, reranker_model=reranker_model
+                    )
+                    all_results.extend(results)
+                elif search_mode == "semantic":
+                    logger.info(f"Performing semantic RAG search for query: '{query}'")
+                    results, _ = await perform_full_rag_pipeline(
+                        app, query, sources, top_k, max_context_length,
+                        chunk_size, chunk_overlap, include_metadata,
+                        enable_rerank=False, reranker_model=reranker_model
+                    )
+                    all_results.extend(results)
+                elif search_mode == "hybrid":
+                    logger.info(f"Performing hybrid RAG search for query: '{query}'")
+                    results, _ = await perform_hybrid_rag_search(
+                        app, query, sources, top_k, max_context_length,
+                        enable_rerank=False, reranker_model=reranker_model,
+                        chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+                        bm25_weight=0.5, vector_weight=0.5
+                    )
+                    all_results.extend(results)
+            
+            # Combine and deduplicate results
+            if 'expander' in locals():
+                all_results = expander.combine_search_results([all_results])
+            
+            # Apply re-ranking if enabled
+            if enable_rerank and all_results:
+                # Use the same re-ranking logic from perform_plain_rag_search
+                if reranker_model == "flashrank" and RERANK_AVAILABLE:
+                    logger.debug("Applying FlashRank re-ranking to combined results...")
+                    try:
+                        from flashrank import Ranker, RerankRequest
+                        ranker = Ranker()
+                        
+                        passages = []
+                        for result in all_results:
+                            text = f"{result['title']}\n{result['content'][:1000]}"
+                            passages.append({"text": text})
+                        
+                        if passages:
+                            rerank_req = RerankRequest(query=user_message, passages=passages)
+                            ranked_results = ranker.rerank(rerank_req)
+                            
+                            for i, ranked in enumerate(ranked_results):
+                                if i < len(all_results):
+                                    all_results[ranked['index']]['score'] = ranked['score']
+                            
+                            all_results.sort(key=lambda x: x['score'], reverse=True)
+                    except Exception as e:
+                        logger.error(f"Error during FlashRank re-ranking: {e}")
+                
+                elif reranker_model == "cohere" and COHERE_AVAILABLE:
+                    logger.debug("Applying Cohere re-ranking to combined results...")
+                    try:
+                        import cohere
+                        api_key = app.config_dict.get('API', {}).get('cohere_api_key')
+                        co = cohere.Client(api_key) if api_key else None
+                        
+                        if co:
+                            documents = []
+                            for result in all_results:
+                                text = f"{result['title']}\n{result['content'][:1000]}"
+                                documents.append(text)
+                            
+                            if documents:
+                                response = co.rerank(
+                                    query=user_message,
+                                    documents=documents,
+                                    top_n=min(len(documents), top_k * 2),
+                                    model='rerank-english-v2.0'
+                                )
+                                
+                                reranked_results = []
+                                for hit in response:
+                                    idx = hit.index
+                                    if idx < len(all_results):
+                                        result = all_results[idx].copy()
+                                        result['score'] = hit.relevance_score
+                                        reranked_results.append(result)
+                                
+                                all_results = reranked_results
+                    except Exception as e:
+                        logger.error(f"Error during Cohere re-ranking: {e}")
+            
+            # Limit to top_k results
+            all_results = all_results[:top_k]
+            
+            # Build context string (same format as perform_plain_rag_search)
+            context_parts = []
+            total_chars = 0
+            
+            for i, result in enumerate(all_results):
+                result_text = f"[{result['source'].upper()} - {result['title']}]\n"
+                
+                remaining_chars = max_context_length - total_chars - len(result_text)
+                if remaining_chars <= 0:
+                    break
+                
+                content_preview = result['content'][:remaining_chars]
+                result_text += content_preview
+                
+                if i < len(all_results) - 1:
+                    result_text += "\n\n---\n\n"
+                
+                context_parts.append(result_text)
+                total_chars += len(result_text)
+            
+            context = "".join(context_parts)
+            results = all_results
+            
         else:
-            logger.info("Performing full RAG pipeline")
-            results, context = await perform_full_rag_pipeline(
-                app, user_message, sources, top_k, max_context_length,
-                chunk_size, chunk_overlap, include_metadata
-            )
+            # Original single query search
+            if search_mode == "plain":
+                logger.info("Performing plain RAG search (BM25)")
+                results, context = await perform_plain_rag_search(
+                    app, user_message, sources, top_k, max_context_length,
+                    enable_rerank, reranker_model
+                )
+            elif search_mode == "semantic":
+                logger.info("Performing semantic RAG search (embeddings)")
+                results, context = await perform_full_rag_pipeline(
+                    app, user_message, sources, top_k, max_context_length,
+                    chunk_size, chunk_overlap, include_metadata,
+                    enable_rerank, reranker_model
+                )
+            elif search_mode == "hybrid":
+                logger.info("Performing hybrid RAG search (BM25 + embeddings)")
+                results, context = await perform_hybrid_rag_search(
+                    app, user_message, sources, top_k, max_context_length,
+                    enable_rerank, reranker_model, chunk_size, chunk_overlap,
+                    0.5, 0.5  # Default weights for BM25 and vector search
+                )
+            else:
+                # Default to semantic if mode is unrecognized
+                logger.warning(f"Unknown search mode '{search_mode}', defaulting to semantic")
+                results, context = await perform_full_rag_pipeline(
+                    app, user_message, sources, top_k, max_context_length,
+                    chunk_size, chunk_overlap, include_metadata,
+                    enable_rerank, reranker_model
+                )
         
         if context:
             # Format context for inclusion in chat

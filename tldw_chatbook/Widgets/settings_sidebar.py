@@ -180,6 +180,61 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 placeholder="Number of results",
                 classes="sidebar-input"
             )
+            
+            # Query Expansion Settings
+            yield Static("", classes="sidebar-separator")
+            yield Static("Query Expansion", classes="sidebar-label")
+            yield Checkbox(
+                "Enable Query Expansion",
+                id=f"{id_prefix}-rag-query-expansion-checkbox",
+                value=False,
+                classes="rag-query-expansion-toggle"
+            )
+            
+            yield Static("Expansion Method", classes="sidebar-label")
+            yield Select(
+                options=[
+                    ("Remote LLM", "llm"),
+                    ("Local LLM", "local_llm"),
+                    ("Keywords", "keywords")
+                ],
+                value="llm",
+                id=f"{id_prefix}-rag-expansion-method",
+                prompt="Select method...",
+                classes="rag-expansion-select sidebar-select"
+            )
+            
+            # LLM Model selection (shown when Remote LLM is selected)
+            yield Static("Expansion Model", classes="sidebar-label rag-expansion-llm-label")
+            yield Select(
+                options=[
+                    ("GPT-3.5 Turbo", "gpt-3.5-turbo"),
+                    ("GPT-4o Mini", "gpt-4o-mini"),
+                    ("Claude 3 Haiku", "claude-3-haiku"),
+                    ("Custom", "custom")
+                ],
+                value="gpt-3.5-turbo",
+                id=f"{id_prefix}-rag-expansion-llm-model",
+                prompt="Select model...",
+                classes="rag-expansion-llm-model sidebar-select"
+            )
+            
+            # Local model input (shown when Local LLM is selected)
+            yield Static("Local Model", classes="sidebar-label rag-expansion-local-label hidden")
+            yield Input(
+                placeholder="e.g., qwen2.5:0.5b",
+                value="qwen2.5:0.5b",
+                id=f"{id_prefix}-rag-expansion-local-model",
+                classes="sidebar-input rag-expansion-local-model hidden"
+            )
+            
+            yield Static("Max Sub-queries", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-expansion-max-queries",
+                value="3",
+                placeholder="1-5",
+                classes="sidebar-input"
+            )
 
         # -------------------------------------------------------------------
         # Advanced Model Parameters (Hidden in Basic Mode)
@@ -233,6 +288,21 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         # Advanced RAG Settings (Hidden in Basic Mode)
         # -------------------------------------------------------------------
         with Collapsible(title="Advanced RAG", collapsed=True, id=f"{id_prefix}-advanced-rag", classes="settings-collapsible advanced-mode advanced-only"):
+            # Search Mode Selection
+            yield Static("Search Mode", classes="sidebar-label")
+            yield Select(
+                [
+                    ("Keyword (BM25)", "plain"),
+                    ("Semantic (Embeddings)", "semantic"),
+                    ("Hybrid (BM25 + Semantic)", "hybrid")
+                ],
+                id=f"{id_prefix}-rag-search-mode",
+                value="semantic",
+                prompt="Select Search Mode...",
+                allow_blank=False,
+                classes="sidebar-select"
+            )
+            
             yield Checkbox(
                 "Plain RAG (BM25 only)",
                 id=f"{id_prefix}-rag-plain-enable-checkbox",

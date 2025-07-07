@@ -61,6 +61,8 @@ class SearchConfig:
     default_top_k: int = 10
     score_threshold: float = 0.0
     include_citations: bool = True
+    # Search mode
+    default_search_mode: str = "semantic"  # "plain", "semantic", or "hybrid"
     # Search-specific settings
     fts_top_k: int = 10  # For keyword search
     vector_top_k: int = 10  # For semantic search
@@ -76,6 +78,20 @@ class SearchConfig:
 
 
 @dataclass
+class QueryExpansionConfig:
+    """Configuration for query expansion/rewriting."""
+    enabled: bool = False
+    method: str = "llm"  # "llm", "local_llm", "keywords"
+    max_sub_queries: int = 3
+    llm_provider: str = "openai"  # Which LLM provider to use
+    llm_model: str = "gpt-3.5-turbo"  # Model for query expansion
+    local_model: str = "qwen2.5:0.5b"  # For Ollama/local models
+    expansion_prompt_template: str = "default"  # Template name or custom prompt
+    combine_results: bool = True  # Combine results from all sub-queries
+    cache_expansions: bool = True  # Cache expanded queries
+
+
+@dataclass
 class RAGConfig:
     """Complete RAG configuration."""
     # Component configurations
@@ -83,6 +99,7 @@ class RAGConfig:
     vector_store: VectorStoreConfig = field(default_factory=VectorStoreConfig)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    query_expansion: QueryExpansionConfig = field(default_factory=QueryExpansionConfig)
     
     # Convenience shortcuts for common settings
     @property
@@ -149,6 +166,7 @@ class RAGConfig:
         vector_store_data = data.get('vector_store', {})
         chunking_data = data.get('chunking', {})
         search_data = data.get('search', {})
+        query_expansion_data = data.get('query_expansion', {})
         
         # Handle path conversion for persist_directory
         if 'persist_directory' in vector_store_data and vector_store_data['persist_directory']:
@@ -158,7 +176,8 @@ class RAGConfig:
             embedding=EmbeddingConfig(**embedding_data),
             vector_store=VectorStoreConfig(**vector_store_data),
             chunking=ChunkingConfig(**chunking_data),
-            search=SearchConfig(**search_data)
+            search=SearchConfig(**search_data),
+            query_expansion=QueryExpansionConfig(**query_expansion_data)
         )
     
     @classmethod
@@ -345,6 +364,12 @@ class RAGConfig:
             search_section.get('include_citations', config.search.include_citations)
         )
         
+        # Search mode configuration
+        config.search.default_search_mode = (
+            os.getenv("RAG_SEARCH_MODE") or
+            search_section.get('default_search_mode', config.search.default_search_mode)
+        )
+        
         # Search type specific settings
         config.search.fts_top_k = int(
             retriever_section.get('fts_top_k', config.search.fts_top_k)
@@ -369,6 +394,45 @@ class RAGConfig:
         
         config.search.reranker_top_k = int(
             processor_section.get('reranker_top_k', config.search.reranker_top_k)
+        )
+        
+        # === Query Expansion Configuration ===
+        query_expansion_section = rag_config.get('query_expansion', {})
+        
+        config.query_expansion.enabled = (
+            query_expansion_section.get('enabled', config.query_expansion.enabled)
+        )
+        
+        config.query_expansion.method = (
+            query_expansion_section.get('method', config.query_expansion.method)
+        )
+        
+        config.query_expansion.max_sub_queries = int(
+            query_expansion_section.get('max_sub_queries', config.query_expansion.max_sub_queries)
+        )
+        
+        config.query_expansion.llm_provider = (
+            query_expansion_section.get('llm_provider', config.query_expansion.llm_provider)
+        )
+        
+        config.query_expansion.llm_model = (
+            query_expansion_section.get('llm_model', config.query_expansion.llm_model)
+        )
+        
+        config.query_expansion.local_model = (
+            query_expansion_section.get('local_model', config.query_expansion.local_model)
+        )
+        
+        config.query_expansion.expansion_prompt_template = (
+            query_expansion_section.get('expansion_prompt_template', config.query_expansion.expansion_prompt_template)
+        )
+        
+        config.query_expansion.combine_results = (
+            query_expansion_section.get('combine_results', config.query_expansion.combine_results)
+        )
+        
+        config.query_expansion.cache_expansions = (
+            query_expansion_section.get('cache_expansions', config.query_expansion.cache_expansions)
         )
         
         # Log the loaded configuration
@@ -532,6 +596,7 @@ method = "words"  # or "sentences", "paragraphs"
 default_top_k = 10
 score_threshold = 0.0
 include_citations = true
+default_search_mode = "semantic"  # "plain", "semantic", or "hybrid"
 fts_top_k = 10
 vector_top_k = 10
 hybrid_alpha = 0.5
@@ -547,4 +612,16 @@ character_collection = "character_embeddings"
 enable_reranking = false
 reranker_model = null
 reranker_top_k = 5
+
+# Query expansion configuration
+[AppRAGSearchConfig.rag.query_expansion]
+enabled = false
+method = "llm"  # "llm", "local_llm", "keywords"
+max_sub_queries = 3
+llm_provider = "openai"
+llm_model = "gpt-3.5-turbo"
+local_model = "qwen2.5:0.5b"
+expansion_prompt_template = "default"
+combine_results = true
+cache_expansions = true
 """
