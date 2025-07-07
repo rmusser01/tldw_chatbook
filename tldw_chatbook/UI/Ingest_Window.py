@@ -47,6 +47,16 @@ if TYPE_CHECKING:
 #
 # Functions:
 
+def append_to_text_area(text_area: TextArea, new_text: str) -> None:
+    """Helper function to append text to a TextArea widget.
+    
+    Args:
+        text_area: The TextArea widget to update
+        new_text: The text to append
+    """
+    current_text = text_area.text
+    text_area.text = current_text + new_text
+
 MEDIA_TYPES = ['video', 'audio', 'document', 'pdf', 'ebook', 'xml', 'mediawiki_dump', 'plaintext']
 
 INGEST_VIEW_IDS = [
@@ -1438,13 +1448,13 @@ class IngestWindow(Container):
                 if len(result['results']) > 10:
                     summary += f"\n... and {len(result['results']) - 10} more"
                 
-                status_area.append(summary)
+                status_area.load_text(status_area.text + summary)
                 
                 # Show failed URLs section if any
                 if failed_urls:
-                    status_area.append("\n\n### Failed URLs for retry:\n")
+                    status_area.load_text(status_area.text + "\n\n### Failed URLs for retry:\n")
                     for fail in failed_urls:
-                        status_area.append(f"- {fail['url']} ({fail.get('error', 'Unknown error')})\n")
+                        status_area.load_text(status_area.text + f"- {fail['url']} ({fail.get('error', 'Unknown error')})\n")
                     
                     # Store failed URLs for retry
                     self._failed_urls_for_retry = failed_urls
@@ -1790,7 +1800,7 @@ class IngestWindow(Container):
         """Update the status area with progress message."""
         try:
             status_area = self.query_one("#ingest-local-web-status", TextArea)
-            status_area.append(f"\n{message}")
+            status_area.load_text(status_area.text + f"\n{message}")
             
             # Also update counters if we have results info
             if hasattr(self, '_current_progress'):
@@ -1811,7 +1821,7 @@ class IngestWindow(Container):
                 
                 # Update status
                 status_area = self.query_one("#ingest-local-web-status", TextArea)
-                status_area.append("\n\n⚠️ Processing stopped by user")
+                status_area.load_text(status_area.text + "\n\n⚠️ Processing stopped by user")
                 
                 # Clean up UI
                 self._cleanup_after_processing()
@@ -1869,7 +1879,7 @@ class IngestWindow(Container):
         # Show loading state
         loading_indicator.display = True
         loading_indicator.classes = loading_indicator.classes - {"hidden"}
-        status_area.append("\n\n## Retrying Failed URLs...\n")
+        status_area.load_text(status_area.text + "\n\n## Retrying Failed URLs...\n")
         process_button.disabled = True
         retry_button.disabled = True
         
@@ -1972,13 +1982,13 @@ class IngestWindow(Container):
                 if len(result['results']) > 10:
                     summary += f"\n... and {len(result['results']) - 10} more"
                 
-                status_area.append(summary)
+                status_area.load_text(status_area.text + summary)
                 
                 # Show failed URLs section if any still remain
                 if failed_urls:
-                    status_area.append("\n\n### Still Failed URLs:\n")
+                    status_area.load_text(status_area.text + "\n\n### Still Failed URLs:\n")
                     for fail in failed_urls:
-                        status_area.append(f"- {fail['url']} ({fail.get('error', 'Unknown error')}) - Retry attempts: {fail.get('retry_count', 0)}\n")
+                        status_area.load_text(status_area.text + f"- {fail['url']} ({fail.get('error', 'Unknown error')}) - Retry attempts: {fail.get('retry_count', 0)}\n")
                     
                     # Store failed URLs for potential future retry
                     self._failed_urls_for_retry = failed_urls
@@ -2007,7 +2017,7 @@ class IngestWindow(Container):
         except Exception as e:
             logger.error(f"Error in retry processing: {e}", exc_info=True)
             self.app_instance.notify(f"Error: {str(e)}", severity="error")
-            status_area.append(f"\nError during retry: {str(e)}")
+            status_area.load_text(status_area.text + f"\nError during retry: {str(e)}")
             # Reset UI state
             loading_indicator.display = False
             loading_indicator.classes = loading_indicator.classes | {"hidden"}
@@ -2121,6 +2131,21 @@ class IngestWindow(Container):
             custom_prompt = self.query_one("#local-custom-prompt-pdf", TextArea).text.strip()
             system_prompt = self.query_one("#local-system-prompt-pdf", TextArea).text.strip()
             
+            # Get API options for analysis
+            api_name = None
+            api_key = None
+            if perform_analysis:
+                api_name_select = self.query_one("#local-analysis-api-name-pdf", Select)
+                if api_name_select.value != Select.BLANK:
+                    api_name = str(api_name_select.value)
+                    api_key_input = self.query_one("#local-analysis-api-key-pdf", Input)
+                    api_key = api_key_input.value.strip() if api_key_input.value else None
+                    
+                    # If no API key provided in UI, try to get from config
+                    if not api_key and api_name:
+                        from ..config import get_api_key
+                        api_key = get_api_key(api_name)
+            
             # Get chunking options
             perform_chunking = self.query_one("#local-perform-chunking-pdf", Checkbox).value
             chunk_method = self.query_one("#local-chunk-method-pdf", Select).value
@@ -2151,23 +2176,46 @@ class IngestWindow(Container):
             # Process local files
             for file_path in selected_files:
                 try:
-                    status_area.append(f"\nProcessing: {file_path.name}...")
+                    status_area.load_text(status_area.text + f"\nProcessing: {file_path.name}...")
                     
                     # Process PDF using local library
-                    result = await self.app_instance.run_worker(
-                        lambda: process_pdf(
-                            file_path=str(file_path),
-                            output_dir=None,  # We'll handle storage ourselves
+                    def process_single_pdf():
+                        # Build chunk options dict
+                        chunk_options = {
+                            'method': chunk_method if chunk_method != Select.BLANK else 'recursive',
+                            'max_size': chunk_size,
+                            'overlap': chunk_overlap
+                        } if perform_chunking else None
+                        
+                        return process_pdf(
+                            file_input=str(file_path),
+                            filename=file_path.name,
                             parser=pdf_engine,
-                            chunk_method=chunk_method if perform_chunking else None,
-                            chunk_size=chunk_size,
-                            chunk_overlap=chunk_overlap,
-                            summarize=perform_analysis,
-                            custom_prompt=custom_prompt if custom_prompt else None
+                            title_override=title_override,
+                            author_override=author,
+                            keywords=keywords,
+                            perform_chunking=perform_chunking,
+                            chunk_options=chunk_options,
+                            perform_analysis=perform_analysis,
+                            api_name=api_name,
+                            api_key=api_key,
+                            custom_prompt=custom_prompt if custom_prompt else None,
+                            system_prompt=system_prompt if system_prompt else None,
+                            summarize_recursively=False  # TODO: Add to UI
                         )
+                    
+                    # Run in worker thread
+                    worker = self.app_instance.run_worker(
+                        process_single_pdf,
+                        thread=True,
+                        name=f"pdf_process_{file_path.name}",
+                        description=f"Processing {file_path.name}"
                     )
                     
-                    if result and result.get('status') == 'success':
+                    # Wait for the worker to complete
+                    result = await worker.wait()
+                    
+                    if result and result.get('status') in ['Success', 'Warning']:
                         # Extract content and metadata
                         content = result.get('content', '')
                         title = title_override or result.get('metadata', {}).get('title', file_path.stem)
@@ -2189,35 +2237,35 @@ class IngestWindow(Container):
                         if media_id:
                             processed_count += 1
                             status_messages.append(f"✅ {title} - ID: {media_id}")
-                            status_area.append(f"\n✅ Successfully processed: {title}")
+                            status_area.load_text(status_area.text + f"\n✅ Successfully processed: {title}")
                         else:
                             error_count += 1
                             status_messages.append(f"❌ {file_path.name} - Database error: {msg}")
-                            status_area.append(f"\n❌ Database error for {file_path.name}: {msg}")
+                            status_area.load_text(status_area.text + f"\n❌ Database error for {file_path.name}: {msg}")
                     else:
                         error_count += 1
                         error_msg = result.get('error', 'Unknown error') if result else 'Processing failed'
                         status_messages.append(f"❌ {file_path.name} - {error_msg}")
-                        status_area.append(f"\n❌ Failed to process {file_path.name}: {error_msg}")
+                        status_area.load_text(status_area.text + f"\n❌ Failed to process {file_path.name}: {error_msg}")
                         
                 except Exception as e:
                     error_count += 1
                     error_msg = str(e)
                     status_messages.append(f"❌ {file_path.name} - {error_msg}")
-                    status_area.append(f"\n❌ Error processing {file_path.name}: {error_msg}")
+                    status_area.load_text(status_area.text + f"\n❌ Error processing {file_path.name}: {error_msg}")
                     logger.error(f"Error processing PDF {file_path}: {e}", exc_info=True)
             
             # Process URLs if any
             if urls:
-                status_area.append(f"\n\nProcessing {len(urls)} URLs...")
+                status_area.load_text(status_area.text + f"\n\nProcessing {len(urls)} URLs...")
                 # URLs would need web scraping support - for now just notify
-                status_area.append("\n⚠️ URL processing for PDFs requires web scraping support")
+                status_area.load_text(status_area.text + "\n⚠️ URL processing for PDFs requires web scraping support")
             
             # Final summary
-            status_area.append(f"\n\n## Processing Complete\n")
-            status_area.append(f"✅ Successfully processed: {processed_count} files\n")
+            status_area.load_text(status_area.text + f"\n\n## Processing Complete\n")
+            status_area.load_text(status_area.text + f"✅ Successfully processed: {processed_count} files\n")
             if error_count > 0:
-                status_area.append(f"❌ Errors: {error_count} files\n")
+                status_area.load_text(status_area.text + f"❌ Errors: {error_count} files\n")
             
             # Notifications
             if processed_count > 0:
@@ -2228,7 +2276,7 @@ class IngestWindow(Container):
         except Exception as e:
             logger.error(f"Error in PDF processing: {e}", exc_info=True)
             self.app_instance.notify(f"Error: {str(e)}", severity="error")
-            status_area.append(f"\n\nError: {str(e)}")
+            status_area.load_text(status_area.text + f"\n\nError: {str(e)}")
         finally:
             # Reset UI state
             loading_indicator.display = False
@@ -2332,7 +2380,7 @@ class IngestWindow(Container):
             # Process local files
             for file_path in selected_files:
                 try:
-                    status_area.append(f"\nProcessing: {file_path.name}...")
+                    status_area.load_text(status_area.text + f"\nProcessing: {file_path.name}...")
                     
                     # Process ebook using local library
                     # Build chunk options dict
@@ -2342,8 +2390,9 @@ class IngestWindow(Container):
                         'overlap': chunk_overlap
                     } if perform_chunking else None
                     
-                    result = await self.app_instance.run_worker(
-                        lambda: process_ebook(
+                    # Define the processing function
+                    def process_single_ebook():
+                        return process_ebook(
                             file_path=str(file_path),
                             title_override=title_override,
                             author_override=author,
@@ -2358,7 +2407,17 @@ class IngestWindow(Container):
                             summarize_recursively=False,  # TODO: Add to UI
                             extraction_method=extraction_method
                         )
+                    
+                    # Run in worker thread
+                    worker = self.app_instance.run_worker(
+                        process_single_ebook,
+                        thread=True,
+                        name=f"ebook_process_{file_path.name}",
+                        description=f"Processing {file_path.name}"
                     )
+                    
+                    # Wait for the worker to complete
+                    result = await worker.wait()
                     
                     if result and result.get('status') in ['Success', 'Warning']:
                         # Extract content and metadata
@@ -2383,35 +2442,35 @@ class IngestWindow(Container):
                         if media_id:
                             processed_count += 1
                             status_messages.append(f"✅ {title} - ID: {media_id}")
-                            status_area.append(f"\n✅ Successfully processed: {title}")
+                            status_area.load_text(status_area.text + f"\n✅ Successfully processed: {title}")
                         else:
                             error_count += 1
                             status_messages.append(f"❌ {file_path.name} - Database error: {msg}")
-                            status_area.append(f"\n❌ Database error for {file_path.name}: {msg}")
+                            status_area.load_text(status_area.text + f"\n❌ Database error for {file_path.name}: {msg}")
                     else:
                         error_count += 1
                         error_msg = result.get('error', 'Unknown error') if result else 'Processing failed'
                         status_messages.append(f"❌ {file_path.name} - {error_msg}")
-                        status_area.append(f"\n❌ Failed to process {file_path.name}: {error_msg}")
+                        status_area.load_text(status_area.text + f"\n❌ Failed to process {file_path.name}: {error_msg}")
                         
                 except Exception as e:
                     error_count += 1
                     error_msg = str(e)
                     status_messages.append(f"❌ {file_path.name} - {error_msg}")
-                    status_area.append(f"\n❌ Error processing {file_path.name}: {error_msg}")
+                    status_area.load_text(status_area.text + f"\n❌ Error processing {file_path.name}: {error_msg}")
                     logger.error(f"Error processing ebook {file_path}: {e}", exc_info=True)
             
             # Process URLs if any
             if urls:
-                status_area.append(f"\n\nProcessing {len(urls)} URLs...")
+                status_area.load_text(status_area.text + f"\n\nProcessing {len(urls)} URLs...")
                 # URLs would need web scraping support - for now just notify
-                status_area.append("\n⚠️ URL processing for ebooks requires web scraping support")
+                status_area.load_text(status_area.text + "\n⚠️ URL processing for ebooks requires web scraping support")
             
             # Final summary
-            status_area.append(f"\n\n## Processing Complete\n")
-            status_area.append(f"✅ Successfully processed: {processed_count} files\n")
+            status_area.load_text(status_area.text + f"\n\n## Processing Complete\n")
+            status_area.load_text(status_area.text + f"✅ Successfully processed: {processed_count} files\n")
             if error_count > 0:
-                status_area.append(f"❌ Errors: {error_count} files\n")
+                status_area.load_text(status_area.text + f"❌ Errors: {error_count} files\n")
             
             # Notifications
             if processed_count > 0:
@@ -2422,7 +2481,7 @@ class IngestWindow(Container):
         except Exception as e:
             logger.error(f"Error in ebook processing: {e}", exc_info=True)
             self.app_instance.notify(f"Error: {str(e)}", severity="error")
-            status_area.append(f"\n\nError: {str(e)}")
+            status_area.load_text(status_area.text + f"\n\nError: {str(e)}")
         finally:
             # Reset UI state
             loading_indicator.display = False
