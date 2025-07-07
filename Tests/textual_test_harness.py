@@ -9,6 +9,7 @@ including fixtures, helpers, and patterns for common testing scenarios.
 import asyncio
 import pytest
 import pytest_asyncio
+import logging
 from typing import Type, TypeVar, Optional, Any, Callable, List, Dict
 from contextlib import asynccontextmanager
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -132,6 +133,15 @@ async def isolated_widget_pilot():
     
     # Cleanup
     for app in created_apps:
+        # Clean up RichLogHandler if present
+        if hasattr(app, '_rich_log_handler') and app._rich_log_handler:
+            try:
+                await app._rich_log_handler.stop_processor()
+                logging.getLogger().removeHandler(app._rich_log_handler)
+                app._rich_log_handler.close()
+            except Exception:
+                pass
+                
         if hasattr(app, '_driver') and app._driver:
             try:
                 await app._driver.stop()
@@ -164,6 +174,15 @@ async def enhanced_app_pilot():
     
     # Cleanup
     for app in created_apps:
+        # Clean up RichLogHandler if present
+        if hasattr(app, '_rich_log_handler') and app._rich_log_handler:
+            try:
+                await app._rich_log_handler.stop_processor()
+                logging.getLogger().removeHandler(app._rich_log_handler)
+                app._rich_log_handler.close()
+            except Exception:
+                pass
+                
         if hasattr(app, '_driver') and app._driver:
             try:
                 await app._driver.stop()

@@ -4,8 +4,11 @@ This file provides common fixtures used across the test suite.
 """
 
 import pytest
+import pytest_asyncio
 import tempfile
 import shutil
+import logging
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 import sqlite3
@@ -129,9 +132,17 @@ def cleanup_async_tasks():
         except RuntimeError:
             return
     
-    # Cancel and cleanup tasks
+    # Cancel and cleanup tasks, specifically looking for RichLogProcessor
     for task in tasks:
-        task.cancel()
+        # Special handling for RichLogProcessor tasks
+        if task.get_name() == "RichLogProcessor":
+            task.cancel()
+            try:
+                loop.run_until_complete(task)
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+        else:
+            task.cancel()
     
     # Don't wait for cancellation as it might cause issues
     # The event loop will handle cleanup when it shuts down
@@ -171,7 +182,15 @@ def _cancel_all_tasks(loop):
         return
     
     for task in tasks:
-        task.cancel()
+        # Special handling for RichLogProcessor to ensure clean shutdown
+        if hasattr(task, 'get_name') and task.get_name() == "RichLogProcessor":
+            task.cancel()
+            try:
+                loop.run_until_complete(task)
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+        else:
+            task.cancel()
     
     # Give tasks a chance to cleanup
     try:
@@ -270,6 +289,42 @@ def sample_json_data():
             "tags": ["test", "sample"]
         }
     }
+
+
+# ========== App Cleanup Fixtures ==========
+
+@pytest_asyncio.fixture
+async def app_with_cleanup():
+    """Create a TldwCli app instance with proper cleanup.
+    
+    This fixture ensures the RichLogHandler is properly stopped
+    before the event loop closes, preventing the "Task was destroyed
+    but it is pending!" error.
+    """
+    from tldw_chatbook.app import TldwCli
+    
+    app = TldwCli()
+    
+    yield app
+    
+    # Ensure proper cleanup
+    try:
+        # Stop RichLogHandler if it exists
+        if hasattr(app, '_rich_log_handler') and app._rich_log_handler:
+            await app._rich_log_handler.stop_processor()
+            logging.getLogger().removeHandler(app._rich_log_handler)
+            app._rich_log_handler.close()
+            
+        # Call shutdown methods
+        if hasattr(app, 'on_shutdown_request'):
+            await app.on_shutdown_request()
+            
+        if hasattr(app, 'on_unmount'):
+            await app.on_unmount()
+            
+    except Exception as e:
+        # Log but don't fail the test
+        logging.debug(f"Error during app cleanup: {e}")
 
 
 # ========== Performance and Timing Fixtures ==========

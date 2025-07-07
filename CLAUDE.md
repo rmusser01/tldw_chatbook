@@ -171,7 +171,12 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `splash_screen.py` - Main splash screen widget with animation support
   - `settings_sidebar.py` - Settings sidebar widget
   - `file_picker_dialog.py` - Advanced file picker dialog
-  - Custom list items, dialogs, and specialized widgets
+  - `custom_list_items.py` - Custom list item implementations
+  - `IngestLocalEbookWindow.py` - Local e-book file ingestion
+  - `IngestLocalPdfWindow.py` - Local PDF file ingestion
+  - `IngestLocalPlaintextWindow.py` - Local plain text file ingestion
+  - `IngestLocalWebArticleWindow.py` - Local web article ingestion
+  - `document_generation_modal.py` - Document generation UI modal
 
 #### Business Logic Layer
 - **`Event_Handlers/`** - Decoupled event handling with clear responsibilities
@@ -294,15 +299,24 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `input_validation.py` - Input sanitization
   - `optional_deps.py` - Dynamic feature detection
   - `secure_temp_files.py` - Safe temporary file handling
-  - `terminal_utils.py` - Terminal capability detection (sixel, TGP support)
-  - `Splash.py` / `Splash_Strings.py` / `splash_animations.py` - Splash screen functionality
+  - `terminal_utils.py` - Terminal capability detection (sixel, iTerm2 graphics protocol support)
+  - `text.py` - Text processing utilities
+  - `Emoji_Handling.py` - Emoji processing and display utilities
+  - **Splash Screen System** - Application startup visuals
+    - `Splash.py` - Core splash screen functionality
+    - `Splash_Strings.py` - Splash screen text content
+    - `splash_animations.py` - Animation effects (MatrixRain, Glitch, Typewriter, etc.)
 - **`Metrics/`** - Application telemetry
   - `metrics.py` - Core metrics collection
   - `Otel_Metrics.py` - OpenTelemetry integration
   - `metrics_logger.py` - Metrics logging functionality
-  - `metrics_wrapper.py` - Metrics wrapper utilities
+  - `logger_config.py` - Logger configuration settings
   - Performance monitoring
   - Usage analytics (local only)
+- **`Tools/`** - Additional utility tools
+  - `Mind_Map/` - Mind mapping functionality
+    - `anytree-demo.py` - Demonstration of tree structures
+  - `repo2txt/` - Repository to text conversion tools
 - **`Web_Scraping/`** - Content extraction
   - `WebSearch_APIs.py` - Comprehensive web search integration
     - Google, Bing, DuckDuckGo, Brave
@@ -862,6 +876,20 @@ The evaluation system provides comprehensive LLM benchmarking:
 - **Build Process**: `build_css.py` compiles modular CSS
 - **Theme System**: Multiple themes with testing utilities
 - **Hot Reload**: Development mode with live updates
+
+### Splash Screen System
+
+#### Architecture
+- **Animation Effects**: 20+ built-in effects (MatrixRain, Glitch, Typewriter, Fireworks, etc.)
+- **Customization**: Custom splash cards via `examples/custom_splash_cards/`
+- **Configuration**: Controlled via `[splash_screen]` section in config.toml
+- **Performance**: Async animation rendering with configurable duration
+
+#### Custom Splash Cards
+1. Create a new Python file in `examples/custom_splash_cards/`
+2. Implement the animation effect class
+3. Register in splash configuration
+4. Set `card_selection` to use your custom card
 
 ### Common Patterns
 

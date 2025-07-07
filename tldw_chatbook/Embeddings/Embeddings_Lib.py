@@ -116,17 +116,30 @@ def protect_file_descriptors():
     # Save original environment
     env_backup = os.environ.copy()
     
+    # Save original subprocess.Popen to restore later
+    original_popen = subprocess.Popen
+    
     try:
         # Ensure we have real file descriptors, not wrapped objects
         # This is crucial for subprocess operations
-        if hasattr(sys.stdout, 'fileno'):
+        try:
+            # Test if stdout/stderr are real files with valid file descriptors
+            stdout_fd = sys.stdout.fileno()
+            stderr_fd = sys.stderr.fileno()
+            # Verify they're valid by attempting to use them
+            os.fstat(stdout_fd)
+            os.fstat(stderr_fd)
+        except (AttributeError, ValueError, OSError):
+            # stdout/stderr are wrapped/captured or invalid, create new ones
+            # Use the original file descriptors 1 and 2 directly
             try:
-                # Test if stdout is a real file
-                sys.stdout.fileno()
-            except:
-                # stdout is wrapped/captured, create a new one
-                sys.stdout = open(os.devnull, 'w')
-                sys.stderr = open(os.devnull, 'w')
+                sys.stdout = os.fdopen(1, 'w')
+                sys.stderr = os.fdopen(2, 'w')
+            except OSError:
+                # If that fails, use devnull as a fallback
+                devnull = open(os.devnull, 'w')
+                sys.stdout = devnull
+                sys.stderr = devnull
         
         # Set environment to prevent subprocess issues
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -137,6 +150,8 @@ def protect_file_descriptors():
             os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
             # Ensure subprocess doesn't inherit bad file descriptors
             os.environ['PYTHONNOUSERSITE'] = '1'
+            # Force subprocess to close all file descriptors except 0,1,2
+            os.environ['PYTHON_SUBPROCESS_CLOSE_FDS'] = '1'
         
         yield
         

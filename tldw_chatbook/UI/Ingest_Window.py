@@ -2259,6 +2259,21 @@ class IngestWindow(Container):
             custom_prompt = self.query_one("#local-custom-prompt-ebook", TextArea).text.strip()
             system_prompt = self.query_one("#local-system-prompt-ebook", TextArea).text.strip()
             
+            # Get API options for analysis
+            api_name = None
+            api_key = None
+            if perform_analysis:
+                api_name_select = self.query_one("#local-analysis-api-name-ebook", Select)
+                if api_name_select.value != Select.BLANK:
+                    api_name = str(api_name_select.value)
+                    api_key_input = self.query_one("#local-analysis-api-key-ebook", Input)
+                    api_key = api_key_input.value.strip() if api_key_input.value else None
+                    
+                    # If no API key provided in UI, try to get from config
+                    if not api_key and api_name:
+                        from ..config import get_api_key
+                        api_key = get_api_key(api_name)
+            
             # Get chunking options
             perform_chunking = self.query_one("#local-perform-chunking-ebook", Checkbox).value
             chunk_method = self.query_one("#local-chunk-method-ebook", Select).value
@@ -2274,7 +2289,7 @@ class IngestWindow(Container):
             
             # Import the local ebook processing function
             try:
-                from ..Local_Ingestion.Book_Ingestion_Lib import process_epub
+                from ..Local_Ingestion.Book_Ingestion_Lib import process_ebook
             except ImportError as e:
                 logger.error(f"Failed to import ebook processing library: {e}")
                 self.app_instance.notify("Error: Ebook processing library not available. Please install with: pip install tldw-cli[ebook]", severity="error")
@@ -2292,20 +2307,32 @@ class IngestWindow(Container):
                     status_area.append(f"\nProcessing: {file_path.name}...")
                     
                     # Process ebook using local library
+                    # Build chunk options dict
+                    chunk_options = {
+                        'method': chunk_method if chunk_method != Select.BLANK else 'ebook_chapters',
+                        'max_size': chunk_size,
+                        'overlap': chunk_overlap
+                    } if perform_chunking else None
+                    
                     result = await self.app_instance.run_worker(
-                        lambda: process_epub(
+                        lambda: process_ebook(
                             file_path=str(file_path),
-                            output_dir=None,  # We'll handle storage ourselves
-                            extraction_method=extraction_method,
-                            chunk_method=chunk_method if perform_chunking else None,
-                            chunk_size=chunk_size,
-                            chunk_overlap=chunk_overlap,
-                            summarize=perform_analysis,
-                            custom_prompt=custom_prompt if custom_prompt else None
+                            title_override=title_override,
+                            author_override=author,
+                            keywords=keywords,
+                            custom_prompt=custom_prompt if custom_prompt else None,
+                            system_prompt=system_prompt if system_prompt else None,
+                            perform_chunking=perform_chunking,
+                            chunk_options=chunk_options,
+                            perform_analysis=perform_analysis,
+                            api_name=api_name,
+                            api_key=api_key,
+                            summarize_recursively=False,  # TODO: Add to UI
+                            extraction_method=extraction_method
                         )
                     )
                     
-                    if result and result.get('status') == 'success':
+                    if result and result.get('status') in ['Success', 'Warning']:
                         # Extract content and metadata
                         content = result.get('content', '')
                         title = title_override or result.get('metadata', {}).get('title', file_path.stem)
