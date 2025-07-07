@@ -1411,7 +1411,13 @@ class IngestWindow(Container):
                 action_section.mount(stop_button, after=process_button)
             
             # Start worker
-            self._web_scraping_worker = self._process_urls_worker(worker_data)
+            self._web_scraping_worker = self.app_instance.run_worker(
+                self._process_urls_worker,
+                worker_data,
+                thread=True,
+                name="web_scraping_worker",
+                description="Processing web articles"
+            )
             
             # Handle worker completion
             def on_worker_done(worker: Worker) -> None:
@@ -1646,8 +1652,35 @@ class IngestWindow(Container):
             self.app_instance.notify(f"Error: {str(e)}", severity="error")
     
     @work(thread=True)
-    async def _process_urls_worker(self, data: dict) -> dict:
+    def _process_urls_worker(self, data: dict) -> dict:
         """Worker to process URLs concurrently."""
+        urls = data['urls']
+        custom_cookies = data['custom_cookies']
+        title_override = data['title_override']
+        author_override = data['author_override']
+        keywords = data['keywords']
+        js_render = data['js_render']
+        css_selector = data['css_selector']
+        is_retry = data.get('is_retry', False)
+        max_retries = data.get('max_retries', 2)
+        
+        # Import scraping function
+        from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
+        
+        # Create event loop for async operations
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Run the async scraping logic
+            result = loop.run_until_complete(self._process_urls_async(data))
+            return result
+        finally:
+            loop.close()
+    
+    async def _process_urls_async(self, data: dict) -> dict:
+        """Async implementation of URL processing."""
         urls = data['urls']
         custom_cookies = data['custom_cookies']
         title_override = data['title_override']
@@ -1945,7 +1978,13 @@ class IngestWindow(Container):
                 await action_section.mount(stop_button, after=retry_button)
             
             # Start worker
-            self._web_scraping_worker = self._process_urls_worker(worker_data)
+            self._web_scraping_worker = self.app_instance.run_worker(
+                self._process_urls_worker,
+                worker_data,
+                thread=True,
+                name="web_scraping_retry_worker",
+                description="Retrying failed web articles"
+            )
             
             # Handle worker completion
             def on_worker_done(worker: Worker) -> None:
