@@ -92,6 +92,7 @@ class EmbeddingsWindow(Container):
     selected_db_mode: reactive[str] = reactive("search")  # "all", "specific", "keywords", "search"
     specific_item_ids: reactive[str] = reactive("")  # Comma-separated IDs
     keyword_filter: reactive[str] = reactive("")  # Comma-separated keywords
+    embeddings_active_view: reactive[str] = reactive("embeddings-view-create")  # Track active view
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
@@ -360,8 +361,21 @@ class EmbeddingsWindow(Container):
         # Small delay to ensure DOM is fully ready
         await asyncio.sleep(0.1)
         
-        # ContentSwitcher handles initial visibility automatically
-        logger.debug("ContentSwitcher handles initial container visibility")
+        # Set initial view visibility
+        logger.debug("Setting initial view visibility")
+        for view_id in EMBEDDINGS_VIEW_IDS:
+            try:
+                view = self.query_one(f"#{view_id}")
+                view.styles.display = "none"
+            except Exception:
+                pass
+        
+        # Show the initial view
+        try:
+            initial_view = self.query_one(f"#{self.embeddings_active_view}")
+            initial_view.styles.display = "block"
+        except Exception as e:
+            logger.error(f"Failed to show initial view: {e}")
         
         # Check initial Select value
         try:
@@ -407,7 +421,7 @@ class EmbeddingsWindow(Container):
     async def _initialize_embeddings(self) -> None:
         """Initialize embedding factory and ChromaDB manager."""
         if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-            self._update_status("Embeddings dependencies not installed. Install with: pip install tldw_chatbook[embeddings_rag]")
+            self.notify("Embeddings dependencies not installed. Install with: pip install tldw_chatbook[embeddings_rag]", severity="error")
             return
         
         try:
@@ -466,7 +480,7 @@ class EmbeddingsWindow(Container):
                     max_cached=2,
                     idle_seconds=900
                 )
-                self._update_status("Warning: No embedding configuration found, using defaults")
+                self.notify("Warning: No embedding configuration found, using defaults", severity="warning")
                 
             # Initialize ChromaDB manager with full config  
             user_id = settings.get('USERS_NAME', 'default_user')
@@ -485,9 +499,19 @@ class EmbeddingsWindow(Container):
             self.chroma_manager = ChromaDBManager(user_id, full_config)
             logger.info("Initialized ChromaDB manager")
             
+            # Update the model select widget with available models
+            model_select = self.query_one("#embeddings-model-select", Select)
+            available_models = self._get_available_models()
+            if available_models and available_models != ["No models available"]:
+                model_select.set_options([(model, model) for model in available_models])
+                # Select the first model by default
+                if available_models:
+                    model_select.value = available_models[0]
+                    self.selected_model = available_models[0]
+            
         except Exception as e:
             logger.error(f"(ECW) Failed to initialize embeddings: {e}")
-            self._update_status(f"(ECW) Error: Failed to initialize embeddings: {str(e)}")
+            self.notify(f"Error: Failed to initialize embeddings: {str(e)}", severity="error")
     
     def _get_available_models(self) -> List[str]:
         """Get list of available embedding models."""
@@ -563,7 +587,26 @@ class EmbeddingsWindow(Container):
                     
                     self.notify(" | ".join(info_parts), severity="information")
             
-            self._update_status(f"Selected model: {self.selected_model}")
+            self.notify(f"Selected model: {self.selected_model}", severity="information")
+    
+    def watch_embeddings_active_view(self, old: str, new: str) -> None:
+        """React to view changes by showing/hiding containers."""
+        logger.debug(f"Switching from view {old} to {new}")
+        
+        # Hide all views first
+        for view_id in EMBEDDINGS_VIEW_IDS:
+            try:
+                view = self.query_one(f"#{view_id}")
+                view.styles.display = "none"
+            except Exception:
+                pass
+        
+        # Show the selected view
+        try:
+            active_view = self.query_one(f"#{new}")
+            active_view.styles.display = "block"
+        except Exception as e:
+            logger.error(f"Failed to show view {new}: {e}")
     
     @on(Button.Pressed, "#embeddings-select-files")
     async def on_select_files(self) -> None:
@@ -677,7 +720,7 @@ class EmbeddingsWindow(Container):
                 ])
                 # Don't set value - Select will auto-select first option when allow_blank=False
             
-            self._update_status(f"Selected {event.value} database")
+            self.notify(f"Selected {event.value} database", severity="information")
     
     @on(Button.Pressed, "#embeddings-search-db")
     async def on_search_database(self) -> None:

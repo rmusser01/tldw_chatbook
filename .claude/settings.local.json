@@ -87,7 +87,8 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "WebFetch(domain:textual.textualize.io)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(/usr/bin/grep -n \"on_button_pressed\\|nav_handlers\\|button_handlers\\|Unhandled button press\" tldw_chatbook/app.py)"
     ],
     "deny": []
   }

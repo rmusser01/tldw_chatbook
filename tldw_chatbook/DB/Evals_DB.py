@@ -318,6 +318,11 @@ class EvalsDB:
     def create_task(self, name: str, task_type: str, config_format: str, config_data: Dict[str, Any], 
                    description: str = None, dataset_id: str = None) -> str:
         """Create a new evaluation task."""
+        # Clean control characters from name and description
+        name = ''.join(c for c in name if c.isprintable() and ord(c) != 0)
+        if description:
+            description = ''.join(c for c in description if c.isprintable() and ord(c) != 0)
+        
         if not name or not name.strip():
             raise InputError("Task name cannot be empty")
         
@@ -453,6 +458,9 @@ class EvalsDB:
         """Search tasks using FTS5."""
         conn = self._get_connection()
         
+        # Remove null bytes and other control characters
+        query = ''.join(c for c in query if c.isprintable() and ord(c) != 0)
+        
         # For special characters or very short queries, use LIKE instead of FTS
         if len(query) <= 2 or any(c in query for c in ':*"\'[]()'):
             cursor = conn.execute("""
@@ -462,7 +470,9 @@ class EvalsDB:
             """, (f'%{query}%', f'%{query}%', limit))
         else:
             # For normal queries, use FTS5 with proper escaping
-            safe_query = f'"{query}"' if query else '""'
+            # Escape double quotes in the query
+            escaped_query = query.replace('"', '""')
+            safe_query = f'"{escaped_query}"' if escaped_query else '""'
             cursor = conn.execute("""
                 SELECT t.* FROM eval_tasks t
                 JOIN eval_tasks_fts fts ON t.id = fts.id

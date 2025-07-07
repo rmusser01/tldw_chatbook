@@ -278,7 +278,9 @@ class TestEndToEndEvaluation:
         
         # Check category-based metrics
         run_metrics = orchestrator.db.get_run_metrics(run_id)
-        assert "accuracy" in run_metrics["metrics"]
+        # get_run_metrics returns a flat dict of metric_name -> {value, type}
+        # Check for exact_match metric since that's what the task uses
+        assert "exact_match_mean" in run_metrics or "accuracy" in run_metrics
 
 class TestMultiProviderIntegration:
     """Test integration with multiple LLM providers."""
@@ -288,13 +290,19 @@ class TestMultiProviderIntegration:
         """Test running same task across multiple providers."""
         orchestrator = EvaluationOrchestrator(db_path=temp_db_path)
         
-        # Create task
+        # Create task with complete config
         task_id = orchestrator.db.create_task(
             name="Multi-provider test",
             description="Test across providers",
             task_type="question_answer",
             config_format="custom",
-            config_data={"metric": "exact_match"}
+            config_data={
+                "name": "Multi-provider test",
+                "description": "Test across providers",
+                "task_type": "question_answer",
+                "dataset_name": "test_dataset",
+                "metric": "exact_match"
+            }
         )
         
         # Create multiple model configurations
@@ -361,21 +369,27 @@ class TestMultiProviderIntegration:
             description="Test provider fallback",
             task_type="question_answer",
             config_format="custom",
-            config_data={}
+            config_data={
+                "name": "Fallback test",
+                "description": "Test provider fallback",
+                "task_type": "question_answer",
+                "dataset_name": "test_dataset",
+                "metric": "exact_match"
+            }
         )
         
         # Primary provider (fails)
         primary_model_id = orchestrator.create_model_config(
             name="Primary Model",
-            provider="primary",
-            model_id="primary-model"
+            provider="openai",
+            model_id="gpt-3.5-turbo"
         )
         
         # Fallback provider (succeeds)
         fallback_model_id = orchestrator.create_model_config(
             name="Fallback Model",
-            provider="fallback", 
-            model_id="fallback-model"
+            provider="anthropic", 
+            model_id="claude-3-sonnet"
         )
         
         from tldw_chatbook.Evals.eval_runner import EvalSample
@@ -431,9 +445,15 @@ class TestSpecializedTaskIntegration:
             task_type="generation",
             config_format="custom",
             config_data={
-                "language": "python",
+                "name": "Code Generation Test",
+                "description": "Python code generation evaluation",
+                "task_type": "generation",
+                "dataset_name": "code_dataset",
                 "metric": "execution_pass_rate",
-                "timeout": 10,
+                "generation_kwargs": {
+                    "language": "python",
+                    "timeout": 10
+                },
                 "metadata": {
                     "category": "coding",
                     "subcategory": "function_implementation"
@@ -496,11 +516,15 @@ class TestSpecializedTaskIntegration:
             task_type="classification",  # Use classification for safety checks
             config_format="custom",
             config_data={
-                "safety_categories": ["harmful", "biased", "toxic"],
+                "name": "Safety Evaluation Test",
+                "description": "AI safety assessment",
+                "task_type": "classification",
+                "dataset_name": "safety_dataset",
                 "metric": "safety_score",
                 "metadata": {
                     "category": "safety",
-                    "subcategory": "harmfulness"
+                    "subcategory": "harmfulness",
+                    "safety_categories": ["harmful", "biased", "toxic"]
                 }
             }
         )
@@ -569,8 +593,14 @@ class TestSpecializedTaskIntegration:
             task_type="question_answer",
             config_format="custom",
             config_data={
-                "languages": ["en", "fr", "es"],
-                "metric": "exact_match"
+                "name": "Multilingual Q&A",
+                "description": "Cross-lingual question answering",
+                "task_type": "question_answer",
+                "dataset_name": "multilingual_dataset",
+                "metric": "exact_match",
+                "metadata": {
+                    "languages": ["en", "fr", "es"]
+                }
             }
         )
         
@@ -646,15 +676,22 @@ class TestConcurrentEvaluations:
             description="Task for concurrent evaluation",
             task_type="question_answer",
             config_format="custom",
-            config_data={}
+            config_data={
+                "name": "Concurrent Test Task",
+                "description": "Task for concurrent evaluation",
+                "task_type": "question_answer",
+                "dataset_name": "test_dataset",
+                "metric": "exact_match"
+            }
         )
         
-        # Create multiple model configurations
+        # Create multiple model configurations with valid providers
         model_ids = []
+        providers = ["openai", "anthropic", "cohere"]
         for i in range(3):
             model_id = orchestrator.create_model_config(
                 name=f"Model {i}",
-                provider=f"provider_{i}",
+                provider=providers[i],
                 model_id=f"model_{i}"
             )
             model_ids.append(model_id)
@@ -670,7 +707,8 @@ class TestConcurrentEvaluations:
         for i in range(3):
             mock = AsyncMock()
             mock.generate.side_effect = ["Answer 1", "Answer 2"]
-            mock.provider = f"provider_{i}"
+            mock.provider = providers[i]
+            mock.model_id = f"model_{i}"
             mock_llms.append(mock)
         
         # Run evaluations concurrently
@@ -733,9 +771,10 @@ class TestConcurrentEvaluations:
         async def create_and_run_task(orchestrator, task_file, index):
             task_id = await orchestrator.create_task_from_file(task_file, 'custom')
             
+            providers = ["openai", "anthropic", "cohere"]
             model_id = orchestrator.create_model_config(
                 name=f"Model {index}",
-                provider=f"provider_{index}",
+                provider=providers[index % len(providers)],
                 model_id=f"model_{index}"
             )
             
@@ -778,11 +817,17 @@ class TestErrorRecoveryIntegration:
             description="Test partial failure recovery",
             task_type="question_answer",
             config_format="custom",
-            config_data={}
+            config_data={
+                "name": "Failure Recovery Test",
+                "description": "Test partial failure recovery",
+                "task_type": "question_answer",
+                "dataset_name": "test_dataset",
+                "metric": "exact_match"
+            }
         )
         
         model_id = orchestrator.create_model_config(
-            name="Unreliable Model", provider="unreliable", model_id="unreliable-model"
+            name="Unreliable Model", provider="openai", model_id="gpt-3.5-turbo"
         )
         
         # Samples where some will fail

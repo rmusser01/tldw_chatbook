@@ -489,7 +489,9 @@ class TestTaskConfigurationProperties:
         
         # If all parameters are within valid ranges, should have no issues
         temp_valid = generation_kwargs.get('temperature') is None or 0 <= generation_kwargs['temperature'] <= 2
-        length_valid = generation_kwargs.get('max_length') is None or generation_kwargs['max_length'] > 0
+        length_valid = generation_kwargs.get('max_length') is None or (
+            isinstance(generation_kwargs['max_length'], int) and generation_kwargs['max_length'] > 0
+        )
         if temp_valid and length_valid:
             assert len(issues) == 0
 
@@ -580,6 +582,20 @@ class TestConcurrencyProperties:
         import threading
         import tempfile
         import os
+        
+        # Filter out names that would be empty after cleaning
+        cleaned_names = []
+        for name in task_names:
+            cleaned_name = ''.join(c for c in name if c.isprintable() and ord(c) != 0).strip()
+            if cleaned_name:
+                cleaned_names.append(cleaned_name)
+        
+        # Skip if we don't have enough valid names
+        if len(cleaned_names) < 2:
+            return
+        
+        # Use unique names to avoid duplicates after cleaning
+        task_names = list(set(cleaned_names))
         
         # Use a temporary file database for thread safety
         from tldw_chatbook.DB.Evals_DB import EvalsDB

@@ -19,7 +19,6 @@ from textual.reactive import reactive
 from textual.widgets import Static, LoadingIndicator, ProgressBar
 from textual.containers import Container, Center
 from textual.timer import Timer
-from textual.css.transition import Transition
 from loguru import logger
 
 class LoadingOverlay(Container):
@@ -63,10 +62,11 @@ class SkeletonLoader(Container):
 class StateTransition(Container):
     """Smooth state transition container."""
     
+    # Note: Transitions are now defined in CSS or using the correct constructor
     TRANSITIONS = {
-        "fade": {"opacity": Transition("opacity", duration=0.3)},
-        "slide": {"offset": Transition("offset", duration=0.3)},
-        "scale": {"scale": Transition("scale", duration=0.2)}
+        "fade": {"opacity": 0.3},  # Duration in seconds
+        "slide": {"offset": 0.3},
+        "scale": {"scale": 0.2}
     }
     
     current_state = reactive("idle")

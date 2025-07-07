@@ -150,7 +150,17 @@ class EvaluationOrchestrator:
             raise ValueError(f"Model not found: {model_id}")
         
         # Create TaskConfig from database data
-        task_config_dict = task_data['config_data'].copy()
+        # Merge database fields with config_data to ensure all required fields are present
+        task_config_dict = {
+            'name': task_data['name'],
+            'description': task_data.get('description', ''),
+            'task_type': task_data.get('task_type', 'question_answer'),
+            'dataset_name': task_data.get('dataset_name', 'custom'),
+        }
+        # Update with any additional config from config_data
+        if task_data.get('config_data'):
+            task_config_dict.update(task_data['config_data'])
+        
         if config_overrides:
             task_config_dict.update(config_overrides)
         

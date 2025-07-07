@@ -17,7 +17,7 @@ This file provides comprehensive guidance to Claude Code (claude.ai/code) when w
 **Python Version**: ≥3.11  
 **Main Framework**: Textual (≥3.3.0)  
 **Database**: SQLite with FTS5 for full-text search  
-**Key Dependencies**: httpx, loguru, rich, pydantic, toml
+**Key Dependencies**: httpx, loguru, rich, pydantic, toml, prometheus_client, keyring, markdownify, aiofiles, jinja2, pycryptodomex
 
 ## Common Development Commands
 
@@ -46,6 +46,8 @@ pip install -e ".[dev]"
 pip install -e ".[embeddings_rag]"  # For RAG functionality
 pip install -e ".[websearch]"       # For web search
 pip install -e ".[local_vllm]"      # For vLLM support
+pip install -e ".[ebook]"            # For e-book processing (includes defusedxml)
+pip install -e ".[pdf]"              # For PDF processing
 ```
 
 ### Testing
@@ -157,6 +159,16 @@ The codebase follows a sophisticated modular architecture with clear separation 
     - `IngestTldwApiMediawikiWindow.py` - MediaWiki import
     - `IngestTldwApiPlaintextWindow.py` - Plain text ingestion
     - `IngestTldwApiTabbedWindow.py` - Tabbed container for all ingestion types
+  - `IngestLocal*Window.py` - Local file ingestion windows:
+    - `IngestLocalEbookWindow.py` - Local e-book ingestion
+    - `IngestLocalPdfWindow.py` - Local PDF ingestion
+    - `IngestLocalPlaintextWindow.py` - Local plaintext ingestion
+    - `IngestLocalWebArticleWindow.py` - Local web article ingestion
+  - `document_generation_modal.py` - Modal dialog for document generation
+  - `cost_estimation_widget.py` - UI widget for cost estimation display
+  - `eval_error_dialog.py` - Error dialog for evaluation system
+  - `loading_states.py` - Unified loading state components
+  - `splash_screen.py` - Main splash screen widget with animation support
   - `settings_sidebar.py` - Settings sidebar widget
   - `file_picker_dialog.py` - Advanced file picker dialog
   - Custom list items, dialogs, and specialized widgets
@@ -183,6 +195,7 @@ The codebase follows a sophisticated modular architecture with clear separation 
 - **`Chat/`** - Core chat engine
   - `Chat_Functions.py` - Conversation management and persistence
   - `prompt_template_manager.py` - Dynamic prompt template system
+  - `document_generator.py` - Document generation from conversations (timeline, study guide, briefing)
   - Image handling and multimodal support
 - **`Coding/`** - Code assistance functionality
   - `code_mapper.py` - Code mapping and analysis utilities
@@ -196,11 +209,15 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - Template system for structured note creation
 - **`Evals/`** - Comprehensive LLM evaluation system
   - `eval_orchestrator.py` - Evaluation orchestration and management
+  - `eval_orchestrator_enhanced.py` - Enhanced orchestration with advanced features
   - `eval_runner.py` - Core evaluation execution engine
+  - `eval_runner_enhanced.py` - Enhanced runner with improved error handling
   - `specialized_runners.py` - Task-specific evaluation runners
   - `llm_interface.py` - LLM interaction for evaluations
   - `task_loader.py` - Evaluation task loading and management
   - `eval_templates.py` - Evaluation prompt templates
+  - `eval_errors.py` - Comprehensive error handling for evaluations
+  - `cost_estimator.py` - Cost estimation for LLM usage during evaluations
 
 #### Data Layer
 - **`DB/`** - Database abstraction with specialized implementations
@@ -259,6 +276,7 @@ The codebase follows a sophisticated modular architecture with clear separation 
 - **`css/`** - Modular CSS architecture
   - `core/` - Base styles and variables
   - `components/` - Component-specific styles
+    - `loading_states.css` - Loading state animations and styles
   - `features/` - Feature-specific styles
   - `layout/` - Layout and grid systems
   - `utilities/` - Utility classes
@@ -276,6 +294,8 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `input_validation.py` - Input sanitization
   - `optional_deps.py` - Dynamic feature detection
   - `secure_temp_files.py` - Safe temporary file handling
+  - `terminal_utils.py` - Terminal capability detection (sixel, TGP support)
+  - `Splash.py` / `Splash_Strings.py` / `splash_animations.py` - Splash screen functionality
 - **`Metrics/`** - Application telemetry
   - `metrics.py` - Core metrics collection
   - `Otel_Metrics.py` - OpenTelemetry integration
@@ -295,6 +315,34 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `cookie_scraping/` - Cookie cloning for authenticated access
   - Confluence integration
   - Cookie-based authentication support
+
+### Splash Screen System
+
+#### Architecture
+The application includes a sophisticated splash screen system with customizable animations:
+- **Core Components**:
+  - `Widgets/splash_screen.py` - Main splash screen widget with animation support
+  - `Utils/Splash.py` - Core splash functionality and configuration
+  - `Utils/Splash_Strings.py` - Splash screen message content
+  - `Utils/splash_animations.py` - 20+ animation effects including:
+    - MatrixRainEffect, GlitchEffect, TypewriterEffect
+    - FadeEffect, RetroTerminalEffect, PulseEffect
+    - CodeScrollEffect, StarfieldEffect, GameOfLifeEffect
+    - And many more creative visual effects
+
+#### Configuration
+- Configured via `[splash_screen]` section in config.toml:
+  - `enabled` - Enable/disable splash screen
+  - `duration` - Display duration in seconds
+  - `card_selection` - Selection mode (random, sequential, or specific card)
+  - `active_cards` - List of enabled splash cards
+  - `animation_speed` - Animation playback speed multiplier
+
+#### Custom Splash Cards
+- Support for custom splash card definitions
+- Example cards in `examples/custom_splash_cards/`:
+  - `cyberpunk_card.toml`, `gaming_card.toml`, `minimalist_card.toml`
+  - `custom_animation_effect.py` - Template for custom animations
 
 ### Database Design
 
@@ -687,6 +735,11 @@ feature/
   - NEVER in code or version control
   - Use `PROVIDER_API_KEY` env vars
   - Or `[API]` section in config.toml
+- **Splash Screen**: Configure via `[splash_screen]` section:
+  - `enabled` - Enable/disable splash screen
+  - `duration` - Display time in seconds
+  - `card_selection` - random, sequential, or specific card name
+  - `active_cards` - List of enabled splash card names
 
 ### Database Guidelines
 - **Schema Changes**:

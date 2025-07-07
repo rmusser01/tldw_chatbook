@@ -74,8 +74,8 @@ class SplashScreen(Container):
 ║     ██║   ███████╗██████╔╝╚███╔███╔╝                             ║
 ║     ╚═╝   ╚══════╝╚═════╝  ╚══╝╚══╝                              ║
 ║                                                                  ║
-║           Too Long; Didn't Watch aka chatbook                    ║
-║                                                                  ║
+║           too long; didn't watch                                 ║
+║                  chatbook                                        ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
     

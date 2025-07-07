@@ -22,11 +22,12 @@ from ..config import get_cli_setting
 
 # Import embeddings components if available
 if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-    from ..Embeddings.Embeddings_Lib import EmbeddingFactory
+    from ..Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
     from ..Embeddings.Chroma_Lib import ChromaDBManager
     from ..Chunking.Chunk_Lib import chunk_for_embedding
 else:
     EmbeddingFactory = None
+    EmbeddingConfigSchema = None
     ChromaDBManager = None
     chunk_for_embedding = None
 

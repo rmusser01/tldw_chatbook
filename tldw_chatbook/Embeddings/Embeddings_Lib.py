@@ -30,9 +30,13 @@ import asyncio
 import random
 import threading
 import time
+import os
+import sys
+import subprocess
 from collections import OrderedDict
 from typing import (Any, Annotated, Callable, Dict, List, Literal, Optional,
                     Protocol, TypedDict, Union)
+from contextlib import contextmanager
 #
 # Third-Party Libraries
 import requests
@@ -93,6 +97,71 @@ __all__ = [
 # Configure logger with context
 logger = logger.bind(module="Embeddings_Lib")
 #
+###############################################################################
+# File Descriptor Protection for macOS subprocess issues
+###############################################################################
+
+@contextmanager
+def protect_file_descriptors():
+    """Context manager to protect file descriptors during subprocess operations.
+    
+    This fixes the "bad value(s) in fds_to_keep" error on macOS when the 
+    transformers library spawns subprocesses for model downloads.
+    """
+    # Save original file descriptors
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    original_stdin = sys.stdin
+    
+    # Save original environment
+    env_backup = os.environ.copy()
+    
+    try:
+        # Ensure we have real file descriptors, not wrapped objects
+        # This is crucial for subprocess operations
+        if hasattr(sys.stdout, 'fileno'):
+            try:
+                # Test if stdout is a real file
+                sys.stdout.fileno()
+            except:
+                # stdout is wrapped/captured, create a new one
+                sys.stdout = open(os.devnull, 'w')
+                sys.stderr = open(os.devnull, 'w')
+        
+        # Set environment to prevent subprocess issues
+        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+        os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+        
+        # For macOS specifically
+        if sys.platform == 'darwin':
+            os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
+            # Ensure subprocess doesn't inherit bad file descriptors
+            os.environ['PYTHONNOUSERSITE'] = '1'
+        
+        yield
+        
+    finally:
+        # Restore original file descriptors
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        sys.stdin = original_stdin
+        
+        # Close any temporary files we created
+        if sys.stdout != original_stdout and hasattr(sys.stdout, 'close'):
+            try:
+                sys.stdout.close()
+            except:
+                pass
+        if sys.stderr != original_stderr and hasattr(sys.stderr, 'close'):
+            try:
+                sys.stderr.close()
+            except:
+                pass
+        
+        # Restore original environment
+        os.environ.clear()
+        os.environ.update(env_backup)
+
 ###############################################################################
 # Configuration schema (with Discriminated Union)
 ###############################################################################
@@ -213,20 +282,22 @@ class _HuggingFaceEmbedder:
             if cfg.revision:
                 logger.info(f"Loading model {cfg.model_name_or_path} at revision {cfg.revision} for security")
             
-            self._tok = AutoTokenizer.from_pretrained(
-                cfg.model_name_or_path, 
-                trust_remote_code=cfg.trust_remote_code,
-                cache_dir=cache_dir,
-                revision=cfg.revision  # Pin to specific revision if provided
-            )
-            dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-            self._model = AutoModel.from_pretrained(
-                cfg.model_name_or_path,
-                torch_dtype=dtype,
-                trust_remote_code=cfg.trust_remote_code,
-                cache_dir=cache_dir,
-                revision=cfg.revision  # Pin to specific revision if provided
-            )
+            # Use context manager to protect file descriptors during model loading
+            with protect_file_descriptors():
+                self._tok = AutoTokenizer.from_pretrained(
+                    cfg.model_name_or_path, 
+                    trust_remote_code=cfg.trust_remote_code,
+                    cache_dir=cache_dir,
+                    revision=cfg.revision  # Pin to specific revision if provided
+                )
+                dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+                self._model = AutoModel.from_pretrained(
+                    cfg.model_name_or_path,
+                    torch_dtype=dtype,
+                    trust_remote_code=cfg.trust_remote_code,
+                    cache_dir=cache_dir,
+                    revision=cfg.revision  # Pin to specific revision if provided
+                )
         # --- [FIX] Added robust error handling for model loading ---
         except (OSError, requests.exceptions.RequestException) as e:
             raise IOError(

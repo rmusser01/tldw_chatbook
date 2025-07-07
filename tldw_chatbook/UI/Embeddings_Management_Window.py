@@ -9,8 +9,9 @@ from loguru import logger
 import os
 
 # Third-party imports
-from textual import events, on
+from textual import events, on, work
 from textual.app import ComposeResult
+from textual.message import Message
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -38,6 +39,18 @@ logger = logger.bind(name="Embeddings_Management_Window")
 # Embeddings Management Window
 #
 ########################################################################################################################
+
+class DownloadStatusMessage(Message):
+    """Message to update download status."""
+    def __init__(self, status: str) -> None:
+        self.status = status
+        super().__init__()
+
+class SetLoadingMessage(Message):
+    """Message to set loading state."""
+    def __init__(self, loading: bool) -> None:
+        self.loading = loading
+        super().__init__()
 
 class EmbeddingsManagementWindow(Widget):
     """Embeddings Management window with dual-pane layout."""
@@ -330,8 +343,9 @@ class EmbeddingsManagementWindow(Widget):
             await self._update_collection_info(collection_name)
     
     @on(Button.Pressed, "#toggle-embeddings-pane")
-    def on_toggle_pane(self) -> None:
+    def on_toggle_pane(self, event: Button.Pressed) -> None:
         """Toggle the left pane visibility."""
+        event.stop()  # Stop event propagation
         self.left_pane_collapsed = not self.left_pane_collapsed
         left_pane = self.query_one("#embeddings-left-pane")
         if self.left_pane_collapsed:
@@ -340,15 +354,18 @@ class EmbeddingsManagementWindow(Widget):
             left_pane.remove_class("collapsed")
     
     @on(Button.Pressed, "#embeddings-refresh-lists")
-    async def on_refresh_lists(self) -> None:
+    async def on_refresh_lists(self, event: Button.Pressed) -> None:
         """Refresh both models and collections lists."""
+        event.stop()  # Stop event propagation
         await self._load_models_list()
         await self._load_collections_list()
         self.notify("Lists refreshed", severity="information")
     
     @on(Button.Pressed, "#embeddings-load-model")
-    async def on_load_model(self) -> None:
+    async def on_load_model(self, event: Button.Pressed) -> None:
         """Load the selected model."""
+        event.stop()  # Stop event propagation
+        
         if not self.selected_model:
             self.notify("Please select a model first", severity="warning")
             return
@@ -370,8 +387,10 @@ class EmbeddingsManagementWindow(Widget):
             self.is_loading = False
     
     @on(Button.Pressed, "#embeddings-test-generate")
-    async def on_test_generate(self) -> None:
+    async def on_test_generate(self, event: Button.Pressed) -> None:
         """Generate test embeddings."""
+        event.stop()  # Stop event propagation
+        
         if not self.selected_model:
             self.notify("Please select a model first", severity="warning")
             return
@@ -412,8 +431,10 @@ class EmbeddingsManagementWindow(Widget):
             self.is_loading = False
     
     @on(Button.Pressed, "#embeddings-download-model")
-    async def on_download_model(self) -> None:
+    async def on_download_model(self, event: Button.Pressed) -> None:
         """Download the selected model from HuggingFace."""
+        event.stop()  # Stop event propagation to prevent app-level warning
+        
         if not self.selected_model:
             self.notify("Please select a model first", severity="warning")
             return
@@ -442,11 +463,10 @@ class EmbeddingsManagementWindow(Widget):
             download_status = self.query_one("#embeddings-model-download-status", Static)
             download_status.update("Downloading...")
             
-            # Use a worker to download the model
-            self.app_instance.run_worker(
+            # Just use the worker thread directly
+            self.run_worker(
                 self._download_model_worker,
-                model_id=self.selected_model,
-                model_spec=model_spec,
+                thread=True,
                 name=f"download_{self.selected_model}"
             )
             
@@ -456,8 +476,10 @@ class EmbeddingsManagementWindow(Widget):
             self.is_loading = False
     
     @on(Button.Pressed, "#embeddings-unload-model")
-    async def on_unload_model(self) -> None:
+    async def on_unload_model(self, event: Button.Pressed) -> None:
         """Unload the selected model from memory."""
+        event.stop()  # Stop event propagation
+        
         if not self.selected_model:
             self.notify("Please select a model first", severity="warning")
             return
@@ -484,8 +506,10 @@ class EmbeddingsManagementWindow(Widget):
             self.notify(f"Failed to unload model: {str(e)}", severity="error")
     
     @on(Button.Pressed, "#embeddings-delete-model")
-    async def on_delete_model(self) -> None:
+    async def on_delete_model(self, event: Button.Pressed) -> None:
         """Delete the downloaded model files."""
+        event.stop()  # Stop event propagation
+        
         if not self.selected_model:
             self.notify("Please select a model first", severity="warning")
             return
@@ -493,63 +517,6 @@ class EmbeddingsManagementWindow(Widget):
         # TODO: Implement model deletion from cache directory
         self.notify("Model deletion not yet implemented", severity="information")
     
-    async def _download_model_worker(self, model_id: str, model_spec: Any) -> None:
-        """Worker function to download a model."""
-        try:
-            from huggingface_hub import snapshot_download
-            import os
-            
-            # Get cache directory from model spec or use default
-            cache_dir = getattr(model_spec, 'cache_dir', None)
-            if cache_dir:
-                cache_dir = os.path.expanduser(cache_dir)
-            
-            model_path = model_spec.model_name_or_path
-            
-            # Download the model
-            logger.info(f"Starting download of model: {model_path}")
-            local_dir = snapshot_download(
-                repo_id=model_path,
-                cache_dir=cache_dir,
-                ignore_patterns=["*.bin", "*.safetensors"],  # Skip large files for initial download
-                resume_download=True
-            )
-            
-            # Now download the model files
-            local_dir = snapshot_download(
-                repo_id=model_path,
-                cache_dir=cache_dir,
-                resume_download=True
-            )
-            
-            logger.info(f"Model downloaded to: {local_dir}")
-            
-            # Update UI from main thread
-            self.app_instance.call_from_thread(self._download_complete, model_id, local_dir)
-            
-        except Exception as e:
-            logger.error(f"Failed to download model: {e}")
-            self.app_instance.call_from_thread(self._download_failed, model_id, str(e))
-    
-    def _download_complete(self, model_id: str, local_dir: str) -> None:
-        """Handle download completion."""
-        self.is_loading = False
-        download_status = self.query_one("#embeddings-model-download-status", Static)
-        download_status.update("Downloaded")
-        
-        # Update cache location
-        cache_location = self.query_one("#embeddings-model-cache-location", Static)
-        cache_location.update(local_dir)
-        
-        self.notify(f"Model {model_id} downloaded successfully", severity="information")
-    
-    def _download_failed(self, model_id: str, error: str) -> None:
-        """Handle download failure."""
-        self.is_loading = False
-        download_status = self.query_one("#embeddings-model-download-status", Static)
-        download_status.update("Download Failed")
-        
-        self.notify(f"Failed to download model {model_id}: {error}", severity="error")
     
     async def _update_model_info(self, model_id: str) -> None:
         """Update the model information display."""
@@ -622,6 +589,94 @@ class EmbeddingsManagementWindow(Widget):
         """Show an error message in the UI."""
         # This could be implemented as a modal or notification
         self.notify(message, severity="error")
+    
+    async def _async_download_model(self) -> None:
+        """Async method to download model."""
+        import asyncio
+        import os
+        
+        try:
+            # Set environment variables to help with HuggingFace downloads
+            os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
+            os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+            os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+            
+            # Run the prefetch in a thread to avoid blocking
+            # This will trigger HuggingFace's automatic download if needed
+            await asyncio.to_thread(
+                self.embedding_factory.prefetch, 
+                [self.selected_model]
+            )
+            
+            # Update UI on success
+            download_status = self.query_one("#embeddings-model-download-status", Static)
+            download_status.update("Download Complete")
+            self.notify(f"Model {self.selected_model} downloaded successfully", severity="success")
+            
+            # Update model info
+            await self._update_model_info(self.selected_model)
+            
+        except Exception as e:
+            logger.error(f"Async download failed: {e}", exc_info=True)
+            download_status = self.query_one("#embeddings-model-download-status", Static)
+            download_status.update(f"Download Failed: {str(e)}")
+            self.notify(f"Download failed: {str(e)}", severity="error")
+            raise
+        finally:
+            self.is_loading = False
+    
+    def _download_model_worker(self) -> None:
+        """Worker to download the selected model."""
+        try:
+            if not self.selected_model or not self.embedding_factory:
+                return
+            
+            model_spec = self.embedding_factory.config.models.get(self.selected_model)
+            if not model_spec or model_spec.provider != "huggingface":
+                return
+            
+            # Update status before starting
+            self.post_message(DownloadStatusMessage("Downloading..."))
+            
+            # Just call prefetch - the file descriptor protection is now handled
+            # inside the EmbeddingFactory when it loads models
+            logger.info(f"Downloading model: {self.selected_model}")
+            self.embedding_factory.prefetch([self.selected_model])
+            
+            # Post message to update UI
+            self.post_message(DownloadStatusMessage("Download Complete"))
+            
+            logger.info(f"Model {self.selected_model} downloaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to download model: {e}", exc_info=True)
+            # Post message to update UI
+            self.post_message(DownloadStatusMessage(f"Download Failed: {str(e)}"))
+        finally:
+            # Post message to set loading state
+            self.post_message(SetLoadingMessage(False))
+    
+    def _update_download_status(self, status: str) -> None:
+        """Update the download status in the UI."""
+        try:
+            download_status = self.query_one("#embeddings-model-download-status", Static)
+            download_status.update(status)
+        except Exception as e:
+            logger.error(f"Failed to update download status: {e}")
+    
+    def _set_loading(self, loading: bool) -> None:
+        """Set the loading state."""
+        self.is_loading = loading
+    
+    @on(DownloadStatusMessage)
+    def handle_download_status(self, message: DownloadStatusMessage) -> None:
+        """Handle download status message from worker."""
+        self._update_download_status(message.status)
+    
+    @on(SetLoadingMessage)
+    def handle_set_loading(self, message: SetLoadingMessage) -> None:
+        """Handle set loading message from worker."""
+        self._set_loading(message.loading)
 
 # End of Embeddings_Management_Window.py
 ########################################################################################################################
