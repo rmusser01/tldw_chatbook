@@ -2178,15 +2178,15 @@ class IngestWindow(Container):
                 try:
                     status_area.load_text(status_area.text + f"\nProcessing: {file_path.name}...")
                     
+                    # Build chunk options dict
+                    chunk_options = {
+                        'method': chunk_method if chunk_method != Select.BLANK else 'recursive',
+                        'max_size': chunk_size,
+                        'overlap': chunk_overlap
+                    } if perform_chunking else None
+                    
                     # Process PDF using local library
                     def process_single_pdf():
-                        # Build chunk options dict
-                        chunk_options = {
-                            'method': chunk_method if chunk_method != Select.BLANK else 'recursive',
-                            'max_size': chunk_size,
-                            'overlap': chunk_overlap
-                        } if perform_chunking else None
-                        
                         return process_pdf(
                             file_input=str(file_path),
                             filename=file_path.name,
