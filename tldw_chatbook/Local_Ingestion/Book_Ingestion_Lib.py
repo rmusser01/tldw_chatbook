@@ -55,7 +55,7 @@ from ..LLM_Calls.Summarization_General_Lib import analyze
 from ..RAG_Search.chunking_service import improved_chunking_process, ChunkingError, InvalidChunkingMethodError
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from loguru import logger
-from ..Utils.optional_deps import import_optional_dependency
+from ..Utils.optional_deps import get_safe_import
 #
 #######################################################################################################################
 # Function Definitions
@@ -1622,7 +1622,7 @@ def process_mobi(
     
     try:
         # Try to import mobi library
-        mobi = import_optional_dependency("mobi", "mobi ebook support")
+        mobi = get_safe_import("mobi", "mobi")
         
         if mobi:
             # Use mobi library to extract content

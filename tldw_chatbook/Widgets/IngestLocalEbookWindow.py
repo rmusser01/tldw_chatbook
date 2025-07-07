@@ -39,6 +39,7 @@ class IngestLocalEbookWindow(Vertical):
             yield Label("Media URLs (one per line):")
             yield TextArea(id="local-urls-ebook", classes="ingest-textarea-small")
             yield Button("Browse Local Files...", id="local-browse-local-files-button-ebook")
+            yield Button("Clear Selection", id="local-clear-files-ebook", variant="warning")
             yield Label("Selected Local Files:", classes="ingest-label")
             yield ListView(id="local-selected-local-files-list-ebook", classes="ingest-selected-files-list")
             

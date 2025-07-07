@@ -596,6 +596,12 @@ class IngestWindow(Container):
             event.stop()
             await self._handle_stop_web_scraping()
         
+        # Handle local clear files buttons
+        elif button_id.startswith("local-clear-files-"):
+            event.stop()
+            media_type = button_id.replace("local-clear-files-", "")
+            await self._handle_clear_local_files(f"local_{media_type}")
+        
         # Handle local PDF/Ebook browse buttons
         elif button_id.startswith("local-browse-local-files-button-"):
             event.stop()
@@ -621,6 +627,30 @@ class IngestWindow(Container):
         # If IngestWindow has a superclass that also defines on_button_pressed, consider calling it:
         # else:
         #     await super().on_button_pressed(event) # Example if there's a relevant superclass method
+
+    async def _handle_clear_local_files(self, media_type: str) -> None:
+        """Clear selected files for a specific media type."""
+        try:
+            # Clear the stored file list
+            if media_type in self.selected_local_files:
+                self.selected_local_files[media_type].clear()
+                logger.info(f"Cleared selected files for {media_type}")
+            
+            # Update the ListView
+            actual_media_type = media_type.replace("local_", "")
+            list_view_id = f"#local-selected-local-files-list-{actual_media_type}"
+            
+            try:
+                list_view = self.query_one(list_view_id, ListView)
+                await list_view.clear()
+                logger.debug(f"Cleared ListView {list_view_id}")
+                self.app_instance.notify(f"Cleared selected {actual_media_type} files")
+            except Exception as e:
+                logger.error(f"Error clearing ListView {list_view_id}: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error in _handle_clear_local_files: {e}", exc_info=True)
+            self.app_instance.notify("Error clearing files", severity="error")
 
     async def handle_file_picker_dismissed(self, selected_file_path: Path | None) -> None:
         logger.debug(f"File picker dismissed, selected path: {selected_file_path}")
@@ -654,7 +684,7 @@ class IngestWindow(Container):
         if media_type.startswith("local_"):
             # For local media ingestion, extract the actual media type
             actual_media_type = media_type.replace("local_", "")
-            list_view_id = f"#ingest-local-{actual_media_type}-files-list"
+            list_view_id = f"#local-selected-local-files-list-{actual_media_type}"
         else:
             # For tldw API ingestion
             list_view_id = f"#tldw-api-selected-local-files-list-{media_type}"
@@ -2150,12 +2180,10 @@ class IngestWindow(Container):
                             content=content,
                             keywords=keywords,
                             author=author,
-                            metadata={
-                                'pdf_engine': pdf_engine,
-                                'chunks': result.get('chunks', []),
-                                'analysis': result.get('analysis', ''),
-                                'processing_time': result.get('processing_time', 0)
-                            }
+                            analysis_content=result.get('analysis', ''),
+                            chunks=result.get('chunks', []),
+                            chunk_options=chunk_options,
+                            prompt=custom_prompt if custom_prompt else None
                         )
                         
                         if media_id:
@@ -2346,13 +2374,10 @@ class IngestWindow(Container):
                             content=content,
                             keywords=keywords,
                             author=author or book_author,
-                            metadata={
-                                'extraction_method': extraction_method,
-                                'chunks': result.get('chunks', []),
-                                'analysis': result.get('analysis', ''),
-                                'chapters': result.get('chapters', []),
-                                'processing_time': result.get('processing_time', 0)
-                            }
+                            analysis_content=result.get('analysis', ''),
+                            chunks=result.get('chunks', []),
+                            chunk_options=chunk_options,
+                            prompt=custom_prompt if custom_prompt else None
                         )
                         
                         if media_id:
