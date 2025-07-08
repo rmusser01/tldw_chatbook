@@ -48,7 +48,8 @@ from ..Utils.splash_animations import (
     PixelZoomEffect,
     TextExplosionEffect,
     OldFilmEffect,
-    MazeGeneratorEffect
+    MazeGeneratorEffect,
+    MiningEffect
 )
 
 class SplashScreen(Container):
@@ -507,6 +508,14 @@ class SplashScreen(Container):
                 "cursor_style": "bold yellow",
                 "title_style": "bold white",
                 "generation_speed": 0.005 # Delay between maze generation steps (fast)
+            },
+            "dwarf_fortress": {
+                "type": "animated",
+                "effect": "mining",
+                "content": get_ascii_art("dwarf_fortress"),
+                "style": "rgb(139,69,19) on black", # Brown stone color
+                "animation_speed": 0.08,
+                "dig_speed": 0.6, # How fast the mining progresses
             }
         }
 
@@ -930,6 +939,20 @@ class SplashScreen(Container):
             )
             self.animation_timer = self.set_interval(
                 self.card_data.get("animation_speed", 0.01), # Fast updates for smooth generation
+                self._update_animation
+            )
+        elif effect_type == "mining":
+            main_widget = self.query_one("#splash-main", Static)
+            display_width, display_height = main_widget.content_size
+            self.effect_handler = MiningEffect(
+                self,
+                content=self.card_data.get("content", self.DEFAULT_SPLASH),
+                width=display_width if display_width > 0 else 80,
+                height=display_height if display_height > 0 else 24,
+                dig_speed=self.card_data.get("dig_speed", 0.8)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.08),
                 self._update_animation
             )
 

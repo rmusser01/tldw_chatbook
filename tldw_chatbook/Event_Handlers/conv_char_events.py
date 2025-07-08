@@ -2809,6 +2809,651 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
         app.notify(f"Error exporting character: {type(e).__name__}", severity="error")
 
 
+########################################################################################################################
+#
+# Chat Dictionary Event Handlers
+#
+########################################################################################################################
+
+async def populate_ccp_dictionary_select(app: 'TldwCli') -> None:
+    """Populates the dictionary selection dropdown in the CCP tab."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Attempting to populate #ccp-dictionary-select dropdown.")
+    
+    if not app.notes_service:
+        logger.error("Notes service not available, cannot populate dictionary select for CCP tab.")
+        try:
+            dict_select_widget = app.query_one("#ccp-dictionary-select", Select)
+            dict_select_widget.set_options([("Service Unavailable", Select.BLANK)])
+            dict_select_widget.value = Select.BLANK
+            dict_select_widget.prompt = "Service Unavailable"
+        except QueryError:
+            logger.error("Failed to find #ccp-dictionary-select to show service error.")
+        return
+
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        dictionaries = cdl.list_chat_dictionaries(db, limit=1000)
+
+        options = []
+        if dictionaries:
+            options = [(d['name'], d['id']) for d in dictionaries if d.get('name') and d.get('id') is not None]
+
+        dict_select_widget = app.query_one("#ccp-dictionary-select", Select)
+
+        if options:
+            dict_select_widget.set_options(options)
+            dict_select_widget.prompt = "Select Dictionary..."
+            logger.info(f"Populated #ccp-dictionary-select with {len(options)} dictionaries.")
+        else:
+            dict_select_widget.set_options([("No dictionaries found", Select.BLANK)])
+            dict_select_widget.value = Select.BLANK
+            dict_select_widget.prompt = "No dictionaries available"
+            logger.info("No dictionaries found to populate #ccp-dictionary-select.")
+
+    except QueryError as e_query:
+        logger.error(f"Failed to find #ccp-dictionary-select widget: {e_query}", exc_info=True)
+    except CharactersRAGDBError as e_db:
+        logger.error(f"Database error populating #ccp-dictionary-select: {e_db}", exc_info=True)
+        try:
+            dict_select_widget_err = app.query_one("#ccp-dictionary-select", Select)
+            dict_select_widget_err.set_options([("Error Loading Dictionaries", Select.BLANK)])
+            dict_select_widget_err.prompt = "Error Loading"
+        except QueryError:
+            pass
+    except Exception as e_unexp:
+        logger.error(f"Unexpected error populating #ccp-dictionary-select: {e_unexp}", exc_info=True)
+        try:
+            dict_select_widget_unexp = app.query_one("#ccp-dictionary-select", Select)
+            dict_select_widget_unexp.set_options([("Error Loading (Unexpected)", Select.BLANK)])
+            dict_select_widget_unexp.prompt = "Error Loading"
+        except QueryError:
+            pass
+
+
+async def _dictionary_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    if selected_path:
+        logger.info(f"Dictionary import selected: {selected_path}")
+        if not app.notes_service:
+            app.notify("Database service not available.", severity="error")
+            logger.error("Notes service not available for dictionary import.")
+            return
+
+        db = app.notes_service._get_db(app.notes_user_id)
+        try:
+            dict_id = cdl.import_dictionary_from_file(db, str(selected_path))
+            if dict_id is not None:
+                app.notify(f"Dictionary imported successfully (ID: {dict_id}).", severity="information")
+                await populate_ccp_dictionary_select(app)  # Refresh dictionary dropdown
+            else:
+                app.notify("Failed to import dictionary. Check logs.", severity="error")
+        except ConflictError as ce:
+            app.notify(f"Import conflict: {ce}", severity="warning", timeout=6)
+            logger.warning(f"Conflict importing dictionary '{selected_path}': {ce}")
+            await populate_ccp_dictionary_select(app)  # Refresh in case it was a duplicate name
+        except Exception as e:
+            app.notify(f"Error importing dictionary: {type(e).__name__}", severity="error", timeout=6)
+            logger.error(f"Error importing dictionary '{selected_path}': {e}", exc_info=True)
+    else:
+        logger.info("Dictionary import cancelled.")
+
+
+async def handle_ccp_import_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Import Dictionary button pressed.")
+
+    defined_filters = Filters(
+        ("Dictionary files (MD, YAML)", lambda p: p.suffix.lower() in (".md", ".yaml", ".yml")),
+        ("Markdown files (*.md)", lambda p: p.suffix.lower() == ".md"),
+        ("YAML files (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
+        ("All files (*.*)", lambda p: True)
+    )
+    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Dictionary File", filters=defined_filters),
+                          callback=lambda path: _dictionary_import_callback(app, path))
+
+
+async def handle_ccp_create_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Create Dictionary button pressed.")
+    
+    # Switch to dictionary editor view
+    app.switch_ccp_center_view("dictionary_editor")
+    
+    # Clear all fields for new dictionary
+    try:
+        app.query_one("#ccp-editor-dict-name-input", Input).value = ""
+        app.query_one("#ccp-editor-dict-description-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-dict-strategy-select", Select).value = "sorted_evenly"
+        app.query_one("#ccp-editor-dict-max-tokens-input", Input).value = "1000"
+        
+        # Clear entries list
+        entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+        await entries_list.clear()
+        
+        # Clear entry fields
+        app.query_one("#ccp-dict-entry-key-input", Input).value = ""
+        app.query_one("#ccp-dict-entry-value-textarea", TextArea).text = ""
+        app.query_one("#ccp-dict-entry-group-input", Input).value = ""
+        app.query_one("#ccp-dict-entry-probability-input", Input).value = "100"
+        
+        app.notify("Ready to create new dictionary", severity="information")
+    except QueryError as e:
+        logger.error(f"Failed to clear dictionary editor fields: {e}")
+        app.notify("Error preparing dictionary editor", severity="error")
+
+
+async def handle_ccp_load_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Load Dictionary button pressed.")
+    
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        dict_select = app.query_one("#ccp-dictionary-select", Select)
+        selected_dict_id = dict_select.value
+        
+        if selected_dict_id == Select.BLANK or selected_dict_id is None:
+            app.notify("Please select a dictionary to load.", severity="warning")
+            return
+            
+        db = app.notes_service._get_db(app.notes_user_id)
+        dict_data = cdl.load_chat_dictionary(db, int(selected_dict_id))
+        
+        if dict_data:
+            # Switch to dictionary view
+            app.switch_ccp_center_view("dictionary")
+            
+            # Display dictionary details
+            app.query_one("#ccp-dict-name-display", Static).update(dict_data['name'])
+            app.query_one("#ccp-dict-description-display", TextArea).text = dict_data.get('description', '')
+            app.query_one("#ccp-dict-strategy-display", Static).update(dict_data.get('strategy', 'sorted_evenly'))
+            app.query_one("#ccp-dict-max-tokens-display", Static).update(str(dict_data.get('max_tokens', 1000)))
+            
+            # Display entries
+            entries_list = app.query_one("#ccp-dict-entries-list", ListView)
+            await entries_list.clear()
+            
+            for entry in dict_data.get('entries', []):
+                entry_text = f"{entry.raw_key} → {entry.content[:50]}..." if len(entry.content) > 50 else f"{entry.raw_key} → {entry.content}"
+                item = ListItem(Label(entry_text))
+                item.entry_data = entry  # Store the entry data
+                await entries_list.append(item)
+                
+            app.notify(f"Loaded dictionary: {dict_data['name']}", severity="information")
+            
+            # Store loaded dictionary ID for later use
+            app.loaded_dictionary_id = selected_dict_id
+        else:
+            app.notify("Failed to load dictionary.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error loading dictionary: {e}", exc_info=True)
+        app.notify("Error loading dictionary", severity="error")
+
+
+async def handle_ccp_refresh_dictionary_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Refresh Dictionary List button pressed.")
+    await populate_ccp_dictionary_select(app)
+    app.notify("Dictionary list refreshed", severity="information")
+
+
+async def handle_ccp_dict_edit_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Edit button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to edit.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        dict_data = cdl.load_chat_dictionary(db, int(app.loaded_dictionary_id))
+        
+        if dict_data:
+            # Switch to editor view
+            app.switch_ccp_center_view("dictionary_editor")
+            
+            # Populate editor fields
+            app.query_one("#ccp-editor-dict-name-input", Input).value = dict_data['name']
+            app.query_one("#ccp-editor-dict-description-textarea", TextArea).text = dict_data.get('description', '')
+            app.query_one("#ccp-editor-dict-strategy-select", Select).value = dict_data.get('strategy', 'sorted_evenly')
+            app.query_one("#ccp-editor-dict-max-tokens-input", Input).value = str(dict_data.get('max_tokens', 1000))
+            
+            # Populate entries list
+            entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+            await entries_list.clear()
+            
+            for entry in dict_data.get('entries', []):
+                entry_text = f"{entry.raw_key} → {entry.content[:50]}..." if len(entry.content) > 50 else f"{entry.raw_key} → {entry.content}"
+                item = ListItem(Label(entry_text))
+                item.entry_data = entry  # Store the entry data
+                await entries_list.append(item)
+                
+            app.editing_dictionary_id = app.loaded_dictionary_id
+            app.notify(f"Editing dictionary: {dict_data['name']}", severity="information")
+        else:
+            app.notify("Failed to load dictionary for editing.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error loading dictionary for edit: {e}", exc_info=True)
+        app.notify("Error loading dictionary for edit", severity="error")
+
+
+async def handle_ccp_editor_dict_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Save button pressed.")
+    
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        # Get form values
+        name = app.query_one("#ccp-editor-dict-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-dict-description-textarea", TextArea).text.strip()
+        strategy = app.query_one("#ccp-editor-dict-strategy-select", Select).value
+        max_tokens = int(app.query_one("#ccp-editor-dict-max-tokens-input", Input).value or "1000")
+        
+        if not name:
+            app.notify("Dictionary name is required.", severity="error")
+            return
+            
+        # Collect entries from the list
+        entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+        entries = []
+        for item in entries_list.children:
+            if hasattr(item, 'entry_data'):
+                entries.append(item.entry_data)
+                
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        if hasattr(app, 'editing_dictionary_id') and app.editing_dictionary_id:
+            # Update existing dictionary
+            success = cdl.update_chat_dictionary(
+                db, int(app.editing_dictionary_id),
+                name=name, description=description,
+                entries=entries, strategy=strategy,
+                max_tokens=max_tokens
+            )
+            if success:
+                app.notify(f"Dictionary '{name}' updated successfully.", severity="information")
+                app.loaded_dictionary_id = app.editing_dictionary_id
+                app.editing_dictionary_id = None
+                # Switch back to view mode
+                app.switch_ccp_center_view("dictionary")
+                await handle_ccp_load_dictionary_button_pressed(app, event)  # Reload the dictionary
+            else:
+                app.notify("Failed to update dictionary.", severity="error")
+        else:
+            # Create new dictionary
+            dict_id = cdl.save_chat_dictionary(
+                db, name=name, description=description,
+                entries=entries, strategy=strategy,
+                max_tokens=max_tokens
+            )
+            if dict_id:
+                app.notify(f"Dictionary '{name}' created successfully.", severity="information")
+                await populate_ccp_dictionary_select(app)  # Refresh dropdown
+                # Clear editor
+                app.switch_ccp_center_view("conversations")
+            else:
+                app.notify("Failed to create dictionary.", severity="error")
+                
+    except ValueError as ve:
+        app.notify(f"Invalid input: {ve}", severity="error")
+    except Exception as e:
+        logger.error(f"Error saving dictionary: {e}", exc_info=True)
+        app.notify("Error saving dictionary", severity="error")
+
+
+async def handle_ccp_dict_export_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Export button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        export_path = cdl.export_dictionary_to_file(db, int(app.loaded_dictionary_id))
+        
+        if export_path:
+            app.notify(f"Dictionary exported to: {export_path}", severity="information", timeout=8)
+        else:
+            app.notify("Failed to export dictionary.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error exporting dictionary: {e}", exc_info=True)
+        app.notify("Error exporting dictionary", severity="error")
+
+
+async def handle_ccp_dict_delete_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Delete button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to delete.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        success = cdl.delete_chat_dictionary(db, int(app.loaded_dictionary_id))
+        
+        if success:
+            app.notify("Dictionary deleted successfully.", severity="information")
+            app.loaded_dictionary_id = None
+            await populate_ccp_dictionary_select(app)  # Refresh dropdown
+            app.switch_ccp_center_view("conversations")  # Switch to default view
+        else:
+            app.notify("Failed to delete dictionary.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error deleting dictionary: {e}", exc_info=True)
+        app.notify("Error deleting dictionary", severity="error")
+
+
+async def handle_ccp_dict_add_entry_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Add Dictionary Entry button pressed.")
+    
+    try:
+        # Get entry values
+        key = app.query_one("#ccp-dict-entry-key-input", Input).value.strip()
+        value = app.query_one("#ccp-dict-entry-value-textarea", TextArea).text.strip()
+        group = app.query_one("#ccp-dict-entry-group-input", Input).value.strip() or None
+        probability = int(app.query_one("#ccp-dict-entry-probability-input", Input).value or "100")
+        
+        if not key:
+            app.notify("Entry key is required.", severity="error")
+            return
+        if not value:
+            app.notify("Entry value is required.", severity="error")
+            return
+            
+        # Create ChatDictionary entry
+        entry = cdl.ChatDictionary(
+            key=key,
+            content=value,
+            probability=probability,
+            group=group
+        )
+        
+        # Add to entries list
+        entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+        entry_text = f"{entry.raw_key} → {entry.content[:50]}..." if len(entry.content) > 50 else f"{entry.raw_key} → {entry.content}"
+        item = ListItem(Label(entry_text))
+        item.entry_data = entry  # Store the entry data
+        await entries_list.append(item)
+        
+        # Clear entry fields
+        app.query_one("#ccp-dict-entry-key-input", Input).value = ""
+        app.query_one("#ccp-dict-entry-value-textarea", TextArea).text = ""
+        app.query_one("#ccp-dict-entry-group-input", Input).value = ""
+        app.query_one("#ccp-dict-entry-probability-input", Input).value = "100"
+        
+        app.notify("Entry added", severity="information")
+        
+    except ValueError as ve:
+        app.notify(f"Invalid input: {ve}", severity="error")
+    except Exception as e:
+        logger.error(f"Error adding entry: {e}", exc_info=True)
+        app.notify("Error adding entry", severity="error")
+
+
+async def handle_ccp_dict_remove_entry_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Remove Dictionary Entry button pressed.")
+    
+    try:
+        entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+        
+        if entries_list.index is not None:
+            selected_item = entries_list.highlighted_child
+            if selected_item:
+                await entries_list.remove(selected_item)
+                app.notify("Entry removed", severity="information")
+            else:
+                app.notify("No entry selected to remove.", severity="warning")
+        else:
+            app.notify("No entry selected to remove.", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error removing entry: {e}", exc_info=True)
+        app.notify("Error removing entry", severity="error")
+
+
+async def handle_ccp_editor_dict_cancel_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Cancel Edit button pressed.")
+    
+    app.editing_dictionary_id = None
+    if hasattr(app, 'loaded_dictionary_id') and app.loaded_dictionary_id:
+        # Switch back to dictionary view
+        app.switch_ccp_center_view("dictionary")
+        await handle_ccp_load_dictionary_button_pressed(app, event)  # Reload the dictionary
+    else:
+        # Switch to default view
+        app.switch_ccp_center_view("conversations")
+    
+    app.notify("Edit cancelled", severity="information")
+
+
+async def handle_ccp_dict_apply_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Apply the current dictionary to the active conversation."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Apply button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to apply.", severity="warning")
+        return
+        
+    if not app.current_ccp_conversation_id:
+        app.notify("No active conversation to apply dictionary to.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Apply dictionary to conversation (store in conversation metadata)
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        if conv_details:
+            # Get current active dictionaries from metadata
+            metadata = json.loads(conv_details.get('metadata', '{}'))
+            active_dicts = metadata.get('active_dictionaries', [])
+            
+            # Add this dictionary if not already present
+            dict_id = int(app.loaded_dictionary_id)
+            if dict_id not in active_dicts:
+                active_dicts.append(dict_id)
+                metadata['active_dictionaries'] = active_dicts
+                
+                # Update conversation metadata
+                db.update_conversation(
+                    app.current_ccp_conversation_id,
+                    metadata=json.dumps(metadata)
+                )
+                
+                app.notify("Dictionary applied to conversation.", severity="information")
+                
+                # Update the active dictionaries list in right pane if visible
+                try:
+                    await populate_active_dictionaries_list(app)
+                except:
+                    pass
+            else:
+                app.notify("Dictionary is already applied to this conversation.", severity="information")
+        else:
+            app.notify("Failed to load conversation details.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error applying dictionary: {e}", exc_info=True)
+        app.notify("Error applying dictionary", severity="error")
+
+
+async def handle_ccp_dict_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Clone the current dictionary."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Clone button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to clone.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        dict_data = cdl.load_chat_dictionary(db, int(app.loaded_dictionary_id))
+        
+        if dict_data:
+            # Create a clone with modified name
+            clone_name = f"{dict_data['name']} (Clone)"
+            dict_id = cdl.save_chat_dictionary(
+                db,
+                name=clone_name,
+                description=dict_data.get('description', ''),
+                entries=dict_data.get('entries', []),
+                strategy=dict_data.get('strategy', 'sorted_evenly'),
+                max_tokens=dict_data.get('max_tokens', 1000)
+            )
+            
+            if dict_id:
+                app.notify(f"Dictionary cloned as '{clone_name}'.", severity="information")
+                await populate_ccp_dictionary_select(app)  # Refresh dropdown
+                
+                # Optionally load the cloned dictionary
+                dict_select = app.query_one("#ccp-dictionary-select", Select)
+                dict_select.value = dict_id
+                app.loaded_dictionary_id = dict_id
+                await handle_ccp_load_dictionary_button_pressed(app, event)
+            else:
+                app.notify("Failed to clone dictionary.", severity="error")
+        else:
+            app.notify("Failed to load dictionary for cloning.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error cloning dictionary: {e}", exc_info=True)
+        app.notify("Error cloning dictionary", severity="error")
+
+
+async def handle_ccp_dict_remove_from_conv_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Remove selected dictionary from the active conversation."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Remove from Conversation button pressed.")
+    
+    if not app.current_ccp_conversation_id:
+        app.notify("No active conversation.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        # Get selected dictionary from active list
+        active_list = app.query_one("#ccp-active-dictionaries-list", ListView)
+        if active_list.index is not None:
+            selected_item = active_list.highlighted_child
+            if selected_item and hasattr(selected_item, 'dict_id'):
+                dict_id = selected_item.dict_id
+                
+                db = app.notes_service._get_db(app.notes_user_id)
+                conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+                
+                if conv_details:
+                    # Remove from active dictionaries
+                    metadata = json.loads(conv_details.get('metadata', '{}'))
+                    active_dicts = metadata.get('active_dictionaries', [])
+                    
+                    if dict_id in active_dicts:
+                        active_dicts.remove(dict_id)
+                        metadata['active_dictionaries'] = active_dicts
+                        
+                        # Update conversation metadata
+                        db.update_conversation(
+                            app.current_ccp_conversation_id,
+                            metadata=json.dumps(metadata)
+                        )
+                        
+                        app.notify("Dictionary removed from conversation.", severity="information")
+                        await populate_active_dictionaries_list(app)
+                    else:
+                        app.notify("Dictionary not found in conversation.", severity="warning")
+                else:
+                    app.notify("Failed to load conversation details.", severity="error")
+            else:
+                app.notify("No dictionary selected.", severity="warning")
+        else:
+            app.notify("No dictionary selected.", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error removing dictionary from conversation: {e}", exc_info=True)
+        app.notify("Error removing dictionary", severity="error")
+
+
+async def handle_ccp_dict_update_priority_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Update the priority of dictionaries in the conversation."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Update Priority button pressed.")
+    
+    # This is a placeholder for future priority ordering functionality
+    app.notify("Dictionary priority ordering not yet implemented.", severity="information")
+
+
+async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
+    """Populate the active dictionaries list for the current conversation."""
+    logger = getattr(app, 'loguru_logger', logging)
+    
+    if not app.current_ccp_conversation_id or not app.notes_service:
+        return
+        
+    try:
+        active_list = app.query_one("#ccp-active-dictionaries-list", ListView)
+        await active_list.clear()
+        
+        db = app.notes_service._get_db(app.notes_user_id)
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        
+        if conv_details:
+            metadata = json.loads(conv_details.get('metadata', '{}'))
+            active_dict_ids = metadata.get('active_dictionaries', [])
+            
+            for dict_id in active_dict_ids:
+                dict_data = cdl.load_chat_dictionary(db, dict_id)
+                if dict_data:
+                    item = ListItem(Label(dict_data['name']))
+                    item.dict_id = dict_id  # Store dict ID for removal
+                    await active_list.append(item)
+                    
+            logger.info(f"Populated active dictionaries list with {len(active_dict_ids)} items.")
+            
+    except Exception as e:
+        logger.error(f"Error populating active dictionaries: {e}", exc_info=True)
+
+
 CCP_BUTTON_HANDLERS = {
     # Left Pane
     "ccp-import-character-button": handle_ccp_import_character_button_pressed,
@@ -2821,6 +3466,23 @@ CCP_BUTTON_HANDLERS = {
     "ccp-prompt-create-new-button": handle_ccp_center_pane_new_prompt_button_pressed,
     "ccp-prompt-load-selected-button": handle_ccp_prompt_load_selected_button_pressed,
     "ccp-right-pane-load-character-button": handle_ccp_left_load_character_button_pressed,
+    
+    # Dictionary buttons
+    "ccp-import-dictionary-button": handle_ccp_import_dictionary_button_pressed,
+    "ccp-create-dictionary-button": handle_ccp_create_dictionary_button_pressed,
+    "ccp-load-dictionary-button": handle_ccp_load_dictionary_button_pressed,
+    "ccp-refresh-dictionary-list-button": handle_ccp_refresh_dictionary_list_button_pressed,
+    "ccp-dict-edit-button": handle_ccp_dict_edit_button_pressed,
+    "ccp-dict-export-button": handle_ccp_dict_export_button_pressed,
+    "ccp-dict-apply-button": handle_ccp_dict_apply_button_pressed,
+    "ccp-editor-dict-save-button": handle_ccp_editor_dict_save_button_pressed,
+    "ccp-editor-dict-cancel-button": handle_ccp_editor_dict_cancel_button_pressed,
+    "ccp-dict-add-entry-button": handle_ccp_dict_add_entry_button_pressed,
+    "ccp-dict-remove-entry-button": handle_ccp_dict_remove_entry_button_pressed,
+    "ccp-dict-delete-button": handle_ccp_dict_delete_button_pressed,
+    "ccp-dict-clone-button": handle_ccp_dict_clone_button_pressed,
+    "ccp-dict-remove-from-conv-button": handle_ccp_dict_remove_from_conv_button_pressed,
+    "ccp-dict-update-priority-button": handle_ccp_dict_update_priority_button_pressed,
 
     # Center Pane
     "ccp-card-edit-button": handle_ccp_card_edit_button_pressed,

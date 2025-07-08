@@ -638,7 +638,35 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     except Exception as e:
         loguru_logger.error(f"Error getting RAG context: {e}", exc_info=True)
     
-    # --- 10.6. Apply World Info if enabled ---
+    # --- 10.6. Apply Chat Dictionaries if enabled ---
+    # Get active dictionaries for the current conversation
+    chatdict_entries = []
+    if app.current_chat_conversation_id and db:
+        try:
+            from ...Character_Chat import Chat_Dictionary_Lib as cdl
+            
+            # Get conversation metadata to find active dictionaries
+            conv_details = db.get_conversation_by_id(app.current_chat_conversation_id)
+            if conv_details:
+                metadata = json.loads(conv_details.get('metadata', '{}'))
+                active_dict_ids = metadata.get('active_dictionaries', [])
+                
+                # Load each active dictionary
+                for dict_id in active_dict_ids:
+                    dict_data = cdl.load_chat_dictionary(db, dict_id)
+                    if dict_data and dict_data.get('enabled', True):
+                        # Convert entries to expected format
+                        chatdict_entries.extend(dict_data.get('entries', []))
+                        loguru_logger.info(f"Loaded dictionary '{dict_data['name']}' with {len(dict_data.get('entries', []))} entries")
+                
+                if chatdict_entries:
+                    loguru_logger.info(f"Total chat dictionary entries loaded: {len(chatdict_entries)}")
+            
+        except Exception as e:
+            loguru_logger.error(f"Error loading chat dictionaries: {e}", exc_info=True)
+            # Continue without dictionaries on error
+    
+    # --- 10.7. Apply World Info if enabled ---
     message_text_with_world_info = message_text_with_rag
     world_info_injections = {}
     
@@ -781,7 +809,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value, # Added new parameter
         current_image_input=media_content_for_api, # Include image data if present
         selected_parts=[], # Placeholder for now
-        chatdict_entries=None, # Placeholder for now
+        chatdict_entries=chatdict_entries, # Pass loaded dictionary entries
         max_tokens=500, # This is the existing chatdict max_tokens, distinct from llm_max_tokens
         strategy="sorted_evenly", # Default or get from config/UI
         strip_thinking_tags=strip_thinking_tags_value # Pass the new setting

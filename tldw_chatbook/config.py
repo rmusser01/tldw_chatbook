@@ -1070,6 +1070,13 @@ def load_settings(force_reload: bool = False) -> Dict:
     chat_dicts_folder = get_user_data_dir() / "chat_dicts"
     config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
     
+    # Create the chat dictionaries folder if it doesn't exist
+    try:
+        chat_dicts_folder.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Ensured chat dictionaries folder exists: {chat_dicts_folder}")
+    except Exception as e:
+        logger.error(f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}")
+    
     # Cache the configuration before returning
     with _SETTINGS_CACHE_LOCK:
         _SETTINGS_CACHE = config_dict

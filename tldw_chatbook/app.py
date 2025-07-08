@@ -1620,6 +1620,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self, event.button, event.message_widget
         )
 
+    def switch_ccp_center_view(self, view_name: str) -> None:
+        """Switch the center pane view in the CCP tab."""
+        valid_views = {
+            "conversations": "conversation_messages_view",
+            "character": "character_card_view", 
+            "character_editor": "character_editor_view",
+            "prompt_editor": "prompt_editor_view",
+            "dictionary": "dictionary_view",
+            "dictionary_editor": "dictionary_editor_view"
+        }
+        
+        if view_name not in valid_views:
+            self.loguru_logger.warning(f"Invalid CCP view name: {view_name}")
+            return
+            
+        # Map to the actual view name used by the watcher
+        actual_view = valid_views[view_name]
+        
+        # Update the reactive which will trigger the watcher
+        self.ccp_active_view = actual_view
+        self.loguru_logger.info(f"Switched CCP center view to: {view_name}")
+
     # --- Watcher for CCP Active View ---
     def watch_ccp_active_view(self, old_view: Optional[str], new_view: str) -> None:
         loguru_logger.debug(f"CCP active view changing from '{old_view}' to: '{new_view}'")
@@ -1631,12 +1653,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             prompt_editor_view = self.query_one("#ccp-prompt-editor-view")
             character_card_view = self.query_one("#ccp-character-card-view")
             character_editor_view = self.query_one("#ccp-character-editor-view")
+            dictionary_view = self.query_one("#ccp-dictionary-view")
+            dictionary_editor_view = self.query_one("#ccp-dictionary-editor-view")
 
             # Default all to hidden, then enable the correct one
             conversation_messages_view.display = False
             prompt_editor_view.display = False
             character_card_view.display = False
             character_editor_view.display = False
+            dictionary_view.display = False
+            dictionary_editor_view.display = False
 
             # REMOVE or COMMENT OUT the query for llm_settings_container_right:
             # llm_settings_container_right = self.query_one("#ccp-right-pane-llm-settings-container")
@@ -1758,7 +1784,30 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     except QueryError as qe:
                         loguru_logger.error(f"QueryError clearing character card: {qe}", exc_info=True)
 
-            elif new_view == "conversation_details_view":
+            elif new_view == "dictionary_view":
+                # Center Pane: Show Dictionary Display
+                dictionary_view.display = True
+                # Optionally manage right-pane collapsibles
+                self.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = True
+                self.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
+                self.query_one("#ccp-dictionary-details-collapsible", Collapsible).collapsed = False
+                loguru_logger.info("Dictionary display view activated.")
+
+            elif new_view == "dictionary_editor_view":
+                # Center Pane: Show Dictionary Editor
+                dictionary_editor_view.display = True
+                # Optionally manage right-pane collapsibles
+                self.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = True
+                self.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
+                self.query_one("#ccp-dictionary-details-collapsible", Collapsible).collapsed = False
+                loguru_logger.info("Dictionary editor view activated.")
+                # Focus on dictionary name input
+                try:
+                    self.query_one("#ccp-editor-dict-name-input", Input).focus()
+                except QueryError:
+                    loguru_logger.warning("Could not focus dictionary name input in editor view.")
+
+            elif new_view == "conversation_details_view" or new_view == "conversation_messages_view":
                 # Center Pane: Show Conversation Messages
                 conversation_messages_view.display = True
                 # LLM settings container is gone, no need to show it.
@@ -2852,6 +2901,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     # Now it's safe to populate widgets
                     self.call_after_refresh(ccp_handlers.populate_ccp_character_select, self)
                     self.call_after_refresh(ccp_handlers.populate_ccp_prompts_list_view, self)
+                    self.call_after_refresh(ccp_handlers.populate_ccp_dictionary_select, self)
                     self.call_after_refresh(ccp_handlers.perform_ccp_conversation_search, self)
                 except QueryError:
                     loguru_logger.error("CCP window not found during widget population")
