@@ -379,6 +379,15 @@ class ToolsSettingsWindow(Container):
                 placeholder="0.0 - 2.0"
             )
             
+            yield Static("", classes="settings-separator")
+            yield Checkbox(
+                "Use Enhanced Chat Window",
+                value=chat_config.get("use_enhanced_window", False),
+                id="general-enhanced-chat-window",
+                classes="settings-checkbox"
+            )
+            yield Static("Enable the enhanced chat window with image support and advanced formatting (requires app restart)", classes="help-text")
+            
             # Character Defaults Section
             yield Static("", classes="settings-separator")
             yield Static("Character Defaults", classes="settings-subsection-title")
@@ -1936,6 +1945,18 @@ class ToolsSettingsWindow(Container):
             except ValueError:
                 self.app_instance.notify("Invalid chat temperature value", severity="warning")
             
+            # Enhanced Chat Window
+            enhanced_window = self.query_one("#general-enhanced-chat-window", Checkbox).value
+            current_enhanced = self.config_data.get("chat_defaults", {}).get("use_enhanced_window", False)
+            if enhanced_window != current_enhanced:
+                if save_setting_to_cli_config("chat_defaults", "use_enhanced_window", enhanced_window):
+                    saved_count += 1
+                    self.app_instance.notify(
+                        "Enhanced chat window setting changed. Please restart the app for this change to take effect.",
+                        severity="warning",
+                        timeout=8
+                    )
+            
             # Character Defaults
             if save_setting_to_cli_config("character_defaults", "provider", self.query_one("#general-character-provider", Select).value):
                 saved_count += 1
@@ -1975,6 +1996,7 @@ class ToolsSettingsWindow(Container):
             self.query_one("#general-chat-provider", Select).value = default_chat_provider
             self.query_one("#general-chat-model", Input).value = "gpt-4o"
             self.query_one("#general-chat-temperature", Input).value = "0.6"
+            self.query_one("#general-enhanced-chat-window", Checkbox).value = False  # Default is disabled
             
             # Reset Character Defaults
             default_char_provider = "Anthropic" if "Anthropic" in providers else (providers[0] if providers else "Anthropic")
