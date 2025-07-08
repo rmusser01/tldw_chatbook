@@ -1559,8 +1559,8 @@ local_mlx_lm = ["None"]
 
 [chat_defaults]
 # Default settings specifically for the 'Chat' tab
-provider = "DeepSeek"
-model = "deepseek-chat"
+provider = "OpenAI"
+model = "gpt-4o"
 system_prompt = "You are a helpful AI assistant."
 temperature = 0.6
 top_p = 0.95
@@ -1940,9 +1940,28 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
             with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
                 f.write(CONFIG_TOML_CONTENT) # Write the raw TOML string
             logger.info(f"Created default CLI config file at {DEFAULT_CONFIG_PATH}")
+            # Set a flag to notify the user on first run
+            loaded_config["_first_run"] = True
             # loaded_config is already correct as it's from DEFAULT_CONFIG_FROM_TOML
+        except PermissionError as e:
+            # Try alternative location in user's home directory
+            logger.warning(f"Permission denied creating config at {DEFAULT_CONFIG_PATH}: {e}")
+            alt_config_path = Path.home() / ".tldw_cli_config.toml"
+            logger.info(f"Attempting to create config at alternative location: {alt_config_path}")
+            try:
+                with open(alt_config_path, "w", encoding="utf-8") as f:
+                    f.write(CONFIG_TOML_CONTENT)
+                logger.warning(f"Created config file at alternative location: {alt_config_path}")
+                logger.warning("Please move this file to the standard location when possible.")
+                # Note: We don't update DEFAULT_CONFIG_PATH here to maintain consistency
+            except Exception as alt_e:
+                logger.error(f"Could not create config file at alternative location either: {alt_e}")
+                logger.error("Application will use internal defaults only.")
         except OSError as e:
             logger.error(f"Could not create default CLI config file {DEFAULT_CONFIG_PATH}: {e}. Using internal defaults.")
+            # Log more helpful information for the user
+            logger.info(f"You may need to manually create the directory: {DEFAULT_CONFIG_PATH.parent}")
+            logger.info("Or check that you have write permissions to this location.")
     else:
         logger.info(f"Attempting to load CLI config from: {DEFAULT_CONFIG_PATH}")
         try:

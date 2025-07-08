@@ -344,6 +344,77 @@ class ToolsSettingsWindow(Container):
             )
             yield Static("Shows an animated splash screen with app information when starting tldw-cli", classes="help-text")
             
+            # Chat Defaults Section
+            yield Static("", classes="settings-separator")
+            yield Static("Chat Defaults", classes="settings-subsection-title")
+            
+            chat_config = self.config_data.get("chat_defaults", {})
+            
+            yield Label("Default Chat Provider:", classes="settings-label")
+            providers = list(self.config_data.get("providers", {}).keys())
+            provider_options = [(p, p) for p in providers]
+            current_chat_provider = chat_config.get("provider", "OpenAI")
+            if current_chat_provider not in providers:
+                current_chat_provider = providers[0] if providers else "OpenAI"
+            yield Select(
+                options=provider_options,
+                value=current_chat_provider,
+                id="general-chat-provider",
+                classes="settings-select"
+            )
+            
+            yield Label("Default Chat Model:", classes="settings-label")
+            yield Input(
+                value=chat_config.get("model", "gpt-4o"),
+                id="general-chat-model",
+                classes="settings-input",
+                placeholder="e.g., gpt-4o, claude-3-opus"
+            )
+            
+            yield Label("Chat Temperature:", classes="settings-label")
+            yield Input(
+                value=str(chat_config.get("temperature", 0.6)),
+                id="general-chat-temperature",
+                classes="settings-input",
+                placeholder="0.0 - 2.0"
+            )
+            
+            # Character Defaults Section
+            yield Static("", classes="settings-separator")
+            yield Static("Character Defaults", classes="settings-subsection-title")
+            
+            character_config = self.config_data.get("character_defaults", {})
+            
+            yield Label("Default Character Provider:", classes="settings-label")
+            current_char_provider = character_config.get("provider", "Anthropic")
+            if current_char_provider not in providers:
+                current_char_provider = providers[0] if providers else "Anthropic"
+            yield Select(
+                options=provider_options,
+                value=current_char_provider,
+                id="general-character-provider",
+                classes="settings-select"
+            )
+            
+            yield Label("Default Character Model:", classes="settings-label")
+            yield Input(
+                value=character_config.get("model", "claude-3-haiku-20240307"),
+                id="general-character-model",
+                classes="settings-input",
+                placeholder="e.g., claude-3-haiku, gpt-3.5-turbo"
+            )
+            
+            yield Label("Character Temperature:", classes="settings-label")
+            yield Input(
+                value=str(character_config.get("temperature", 0.8)),
+                id="general-character-temperature",
+                classes="settings-input",
+                placeholder="0.0 - 2.0"
+            )
+            
+            yield Static("For more detailed chat and character settings, visit the Configuration File Settings section.", 
+                        classes="help-text settings-note")
+            
             with Container(classes="settings-button-container"):
                 yield Button("Save General Settings", id="save-general-settings", variant="primary")
                 yield Static("", classes="spacer")
@@ -1853,6 +1924,30 @@ class ToolsSettingsWindow(Container):
             if save_setting_to_cli_config("splash_screen", "enabled", splash_enabled):
                 saved_count += 1
             
+            # Chat Defaults
+            if save_setting_to_cli_config("chat_defaults", "provider", self.query_one("#general-chat-provider", Select).value):
+                saved_count += 1
+            if save_setting_to_cli_config("chat_defaults", "model", self.query_one("#general-chat-model", Input).value):
+                saved_count += 1
+            try:
+                temp_value = float(self.query_one("#general-chat-temperature", Input).value)
+                if save_setting_to_cli_config("chat_defaults", "temperature", temp_value):
+                    saved_count += 1
+            except ValueError:
+                self.app_instance.notify("Invalid chat temperature value", severity="warning")
+            
+            # Character Defaults
+            if save_setting_to_cli_config("character_defaults", "provider", self.query_one("#general-character-provider", Select).value):
+                saved_count += 1
+            if save_setting_to_cli_config("character_defaults", "model", self.query_one("#general-character-model", Input).value):
+                saved_count += 1
+            try:
+                temp_value = float(self.query_one("#general-character-temperature", Input).value)
+                if save_setting_to_cli_config("character_defaults", "temperature", temp_value):
+                    saved_count += 1
+            except ValueError:
+                self.app_instance.notify("Invalid character temperature value", severity="warning")
+            
             # Update internal config
             self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
             
@@ -1873,6 +1968,19 @@ class ToolsSettingsWindow(Container):
             self.query_one("#general-username", Input).value = "default_user"
             self.query_one("#general-log-level", Select).value = "INFO"
             self.query_one("#general-splash-enabled", Checkbox).value = True  # Default is enabled
+            
+            # Reset Chat Defaults
+            providers = list(self.config_data.get("providers", {}).keys())
+            default_chat_provider = "OpenAI" if "OpenAI" in providers else (providers[0] if providers else "OpenAI")
+            self.query_one("#general-chat-provider", Select).value = default_chat_provider
+            self.query_one("#general-chat-model", Input).value = "gpt-4o"
+            self.query_one("#general-chat-temperature", Input).value = "0.6"
+            
+            # Reset Character Defaults
+            default_char_provider = "Anthropic" if "Anthropic" in providers else (providers[0] if providers else "Anthropic")
+            self.query_one("#general-character-provider", Select).value = default_char_provider
+            self.query_one("#general-character-model", Input).value = "claude-3-haiku-20240307"
+            self.query_one("#general-character-temperature", Input).value = "0.8"
             
             self.app_instance.notify("General Settings reset to defaults!")
             

@@ -837,7 +837,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # Initialize with a dummy value or fetch default from config here
     # Ensure the initial value matches what's set in compose/settings_sidebar
     # Fetching default provider from config:
-    _default_chat_provider = APP_CONFIG.get("chat_defaults", {}).get("provider", "Ollama")
+    _default_chat_provider = APP_CONFIG.get("chat_defaults", {}).get("provider", "OpenAI")
     _default_ccp_provider = APP_CONFIG.get("character_defaults", {}).get("provider", "Anthropic") # Changed from character_defaults
 
     chat_api_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
@@ -2438,6 +2438,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         log_histogram("app_on_mount_duration_seconds", mount_duration,
                      documentation="Total time for on_mount() method")
         self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
+        
+        # Check if this is the first run (config was just created)
+        config_data = self.app_config
+        if config_data.get("_first_run", False):
+            self.call_later(self._show_first_run_notification)
+
+    def _show_first_run_notification(self) -> None:
+        """Show a notification to the user on first run."""
+        try:
+            from .config import DEFAULT_CONFIG_PATH
+            self.notify(
+                f"Welcome to tldw CLI! Configuration file created at:\n{DEFAULT_CONFIG_PATH}",
+                title="First Run",
+                severity="information",
+                timeout=10
+            )
+            self.loguru_logger.info("First run notification shown to user")
+        except Exception as e:
+            self.loguru_logger.error(f"Error showing first run notification: {e}")
 
     def hide_inactive_windows(self) -> None:
         """Hides all windows that are not the current active tab."""
@@ -4876,7 +4895,7 @@ if __name__ == "__main__":
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
-    # --- Check for encrypted config ---
+    # --- Check for encrypted config (config will be created if it doesn't exist) ---
     try:
         config_data = load_cli_config_and_ensure_existence()
         encryption_config = config_data.get("encryption", {})
@@ -5031,71 +5050,6 @@ def main_cli_runner():
         
     except Exception as e_css_main:
         logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
-
-    # --- Check for encrypted config ---
-    try:
-        config_data = load_cli_config_and_ensure_existence()
-        encryption_config = config_data.get("encryption", {})
-        
-        if encryption_config.get("enabled", False):
-            loguru_logger.info("Config file encryption is enabled. Password required.")
-            
-            # Import password dialog dependencies here to avoid circular imports
-            import asyncio
-            from textual.app import App
-            from tldw_chatbook.Widgets.password_dialog import PasswordDialog
-            
-            class PasswordPromptApp(App):
-                """Minimal app to prompt for password."""
-                def __init__(self):
-                    super().__init__()
-                    self.password = None
-                
-                async def on_mount(self) -> None:
-                    """Show password dialog immediately on mount."""
-                    password = await self.push_screen(
-                        PasswordDialog(
-                            mode="unlock",
-                            title="Unlock Configuration",
-                            message="Enter your master password to decrypt the configuration file.",
-                            on_submit=lambda p: None,
-                            on_cancel=lambda: None
-                        ),
-                        wait_for_dismiss=True
-                    )
-                    
-                    if password:
-                        # Verify password
-                        from tldw_chatbook.Utils.config_encryption import config_encryption
-                        stored_hash = encryption_config.get("password_hash", "")
-                        if config_encryption.verify_password(password, stored_hash):
-                            self.password = password
-                            self.exit()
-                        else:
-                            self.notify("Invalid password. Please try again.", severity="error")
-                            # Re-show the dialog
-                            await self.on_mount()
-                    else:
-                        # User cancelled
-                        loguru_logger.error("Password required but not provided. Exiting.")
-                        self.exit()
-            
-            # Run the password prompt app
-            password_app = PasswordPromptApp()
-            password_app.run()
-            
-            if password_app.password:
-                # Set the password for the session
-                set_encryption_password(password_app.password)
-                loguru_logger.info("Configuration decrypted successfully.")
-            else:
-                # Exit if no password provided
-                loguru_logger.error("Cannot proceed without decryption password.")
-                sys.exit(1)
-                
-    except Exception as e:
-        loguru_logger.error(f"Error checking config encryption: {e}")
-        # Continue without encryption if there's an error
 
     # Create instance with early logging flag
     app_instance = TldwCli()

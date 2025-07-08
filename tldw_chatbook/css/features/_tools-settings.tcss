@@ -206,6 +206,21 @@
     margin: 0 0 1 0;
 }
 
+.settings-subsection-title {
+    color: $text;
+    text-style: bold;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+.settings-note {
+    color: $text-muted;
+    text-style: italic;
+    margin-top: 1;
+    margin-bottom: 1;
+    padding: 0 1;
+}
+
 .checkbox-group {
     layout: horizontal;
     margin: 0 0 1 0;
