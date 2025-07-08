@@ -73,6 +73,23 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
         )
 
 
+def get_supported_extensions() -> Dict[str, List[str]]:
+    """
+    Get all supported file extensions organized by media type.
+    
+    Returns:
+        Dictionary mapping media types to their supported extensions
+    """
+    return {
+        'pdf': ['.pdf'],
+        'document': ['.doc', '.docx', '.odt', '.rtf'],
+        'ebook': ['.epub', '.mobi', '.azw', '.azw3', '.fb2'],
+        'xml': ['.xml', '.rss', '.atom'],
+        'html': ['.html', '.htm'],
+        'plaintext': ['.txt', '.md', '.markdown', '.rst', '.log', '.csv']
+    }
+
+
 def ingest_local_file(
     file_path: Union[str, Path],
     media_db: MediaDatabase,
@@ -312,17 +329,18 @@ def ingest_local_file(
         
         # Store in database
         logger.debug(f"Storing {file_type} content in database...")
-        media_id = media_db.add_media_with_keywords(
+        # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
+        media_id, media_uuid, message = media_db.add_media_with_keywords(
             title=extracted_title,
             media_type=file_type,
             content=content,
             keywords=all_keywords,
             url=f"file://{file_path.absolute()}",
-            media_metadata=media_metadata,
-            summary=analysis,
-            chunks=chunks,
+            analysis_content=analysis,
             author=extracted_author,
-            ingestion_date=datetime.now().strftime('%Y-%m-%d')
+            ingestion_date=datetime.now().strftime('%Y-%m-%d'),
+            chunks=chunks if chunks else None,
+            chunk_options=chunk_options if chunk_options else None
         )
         
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")

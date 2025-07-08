@@ -12,6 +12,7 @@ from .local_file_ingestion import (
     ingest_directory,
     quick_ingest,
     detect_file_type,
+    get_supported_extensions,
     FileIngestionError
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     'ingest_directory',
     'quick_ingest',
     'detect_file_type',
+    'get_supported_extensions',
     'FileIngestionError'
 ]

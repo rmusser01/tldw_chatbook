@@ -273,6 +273,9 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     pending_image = None
     pending_attachment = None
 
+    # Initialize world info processor
+    world_info_processor = None
+    
     if active_char_data:
         loguru_logger.info(
             f"Active character data found: {active_char_data.get('name', 'Unnamed')}. Checking for system prompt override.")
@@ -285,6 +288,17 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         else:
             loguru_logger.debug(
                 f"Active character has no system_prompt or it's empty. Using system_prompt from left sidebar: '{final_system_prompt_for_api[:100]}...'")
+        
+        # Check for world info/character book
+        if get_cli_setting("character_chat", "enable_world_info", True):
+            extensions = active_char_data.get('extensions', {})
+            if isinstance(extensions, dict) and extensions.get('character_book'):
+                try:
+                    from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
+                    world_info_processor = WorldInfoProcessor(active_char_data)
+                    loguru_logger.info(f"World info processor initialized with {len(world_info_processor.entries)} active entries")
+                except Exception as e:
+                    loguru_logger.error(f"Failed to initialize world info processor: {e}", exc_info=True)
     else:
         loguru_logger.info("No active character data. Using system prompt from left sidebar UI.")
 
@@ -476,6 +490,14 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         await chat_container.mount(user_msg_widget_instance)
         loguru_logger.debug(f"Mounted new user message to UI: '{message_text_from_input[:50]}...'")
         
+        # Add world info indicator if entries were matched
+        if hasattr(app, 'current_world_info_active') and app.current_world_info_active:
+            world_info_count = getattr(app, 'current_world_info_count', 0)
+            world_info_msg = f"[dim][World Info: {world_info_count} {'entry' if world_info_count == 1 else 'entries'} activated][/dim]"
+            world_info_widget = ChatMessage(Text.from_markup(world_info_msg), role="System", classes="-world-info-indicator")
+            await chat_container.mount(world_info_widget)
+            loguru_logger.debug(f"Added world info indicator: {world_info_count} entries")
+        
         # Update token counter after adding user message
         try:
             from .chat_token_events import update_chat_token_counter
@@ -616,8 +638,60 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     except Exception as e:
         loguru_logger.error(f"Error getting RAG context: {e}", exc_info=True)
     
+    # --- 10.6. Apply World Info if enabled ---
+    message_text_with_world_info = message_text_with_rag
+    world_info_injections = {}
+    
+    if world_info_processor:
+        try:
+            # Process messages to find matching world info entries
+            world_info_result = world_info_processor.process_messages(
+                message_text_with_rag,
+                chat_history_for_api
+            )
+            
+            if world_info_result['matched_entries']:
+                loguru_logger.info(f"World info: {len(world_info_result['matched_entries'])} entries matched")
+                
+                # Format the injections for use
+                world_info_injections = world_info_processor.format_injections(world_info_result['injections'])
+                
+                # Apply position-based injections
+                # For now, we'll inject "before_char" content before the message
+                # and "after_char" content after the message
+                before_content = world_info_injections.get('before_char', '')
+                after_content = world_info_injections.get('after_char', '')
+                at_start_content = world_info_injections.get('at_start', '')
+                at_end_content = world_info_injections.get('at_end', '')
+                
+                # Build the final message with world info
+                parts = []
+                if at_start_content:
+                    parts.append(at_start_content)
+                if before_content:
+                    parts.append(before_content)
+                parts.append(message_text_with_rag)
+                if after_content:
+                    parts.append(after_content)
+                if at_end_content:
+                    parts.append(at_end_content)
+                
+                message_text_with_world_info = '\n\n'.join(parts)
+                loguru_logger.debug(f"World info injected, new message length: {len(message_text_with_world_info)} chars")
+                
+                # Store world info status for UI indicator
+                app.current_world_info_active = True
+                app.current_world_info_count = len(world_info_result['matched_entries'])
+            else:
+                loguru_logger.debug("No world info entries matched")
+                app.current_world_info_active = False
+                app.current_world_info_count = 0
+        except Exception as e:
+            loguru_logger.error(f"Error processing world info: {e}", exc_info=True)
+            # Continue without world info on error
+    
     # --- 11. Prepare and Dispatch API Call via Worker ---
-    loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_with_rag[:50]}...', History items: {len(chat_history_for_api)}")
+    loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_with_world_info[:50]}...', History items: {len(chat_history_for_api)}")
 
     # Prepare media content if attachment is present
     media_content_for_api = {}
@@ -678,7 +752,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     loguru_logger.info(f"Set app.current_chat_is_streaming to: {should_stream}")
 
     worker_target = lambda: app.chat_wrapper(
-        message=message_text_with_rag, # Current user utterance with RAG context
+        message=message_text_with_world_info, # Current user utterance with RAG context and world info
         history=chat_history_for_api,    # History *before* current utterance
         media_content=media_content_for_api, # Pass media content as expected by chat function
         api_endpoint=selected_provider,
