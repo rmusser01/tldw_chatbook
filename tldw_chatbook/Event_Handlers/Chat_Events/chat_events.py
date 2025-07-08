@@ -704,7 +704,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         llm_tools=llm_tools_value,
         llm_tool_choice=llm_tool_choice_value,
         llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value, # Added new parameter
-        media_content=media_content_for_api, # Include image data if present
+        current_image_input=media_content_for_api, # Include image data if present
         selected_parts=[], # Placeholder for now
         chatdict_entries=None, # Placeholder for now
         max_tokens=500, # This is the existing chatdict max_tokens, distinct from llm_max_tokens
