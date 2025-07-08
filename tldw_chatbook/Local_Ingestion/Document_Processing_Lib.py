@@ -65,7 +65,6 @@ except ImportError:
 from ..config import get_cli_setting
 from ..LLM_Calls.Summarization_General_Lib import analyze
 from ..Metrics.metrics_logger import log_counter, log_histogram
-from ..Utils.text import md_to_text
 from ..Utils.optional_deps import get_safe_import
 from loguru import logger
 #

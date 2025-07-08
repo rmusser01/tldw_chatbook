@@ -16,6 +16,12 @@ import gc
 from datetime import datetime
 import re
 from typing import Dict, Any, Optional, List, Union
+import tempfile
+import shutil
+import uuid
+import time
+import os
+from pathlib import Path
 #
 # Import External Libs
 import pymupdf
@@ -26,6 +32,8 @@ from ..config import get_cli_setting
 from ..LLM_Calls.Summarization_General_Lib import analyze
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from loguru import logger
+
+
 #
 # Constants
 # Get configuration values or use defaults
@@ -186,17 +194,6 @@ def extract_metadata_from_pdf(pdf_path):
         log_counter("pdf_metadata_extraction_error", labels={"file_path": pdf_path, "error": str(e)})
         return {}
 
-
-# PDF_Ingestion_Lib.py
-# Add these imports at the top if not already present
-import tempfile
-import shutil
-import uuid
-import time
-import os
-from pathlib import Path
-
-# ... other imports ...
 
 def process_pdf(
     file_input: Union[str, bytes, Path], # Can be path, bytes, or Path object
