@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Dict, Any
 from textual.containers import Vertical
 from textual.widgets import ListView, Input, TextArea, Label, ListItem, Button, Markdown, Static  # Added ListItem
 from textual.css.query import QueryError
+from textual.message import Message
 from rich.text import Text  # For formatting details
 #
 # Local Imports
@@ -21,6 +22,23 @@ if TYPE_CHECKING:
 #
 # Statics:
 RESULTS_PER_PAGE = 20
+#
+# Event Classes:
+
+class MediaMetadataUpdateEvent(Message):
+    """Event for updating media metadata."""
+    
+    def __init__(self, media_id: int, title: str, media_type: str, author: str, 
+                 url: str, keywords: list, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.title = title
+        self.media_type = media_type
+        self.author = author
+        self.url = url
+        self.keywords = keywords
+        self.type_slug = type_slug
+
 #
 # Functions:
 
@@ -100,65 +118,56 @@ async def handle_media_list_item_selected(app: 'TldwCli', event: ListView.Select
         app.notify("Internal error: Could not identify media type for selection.", severity="error")
         return
 
-    details_display_widget_id = f"media-details-display-{type_slug}"
+    details_widget_id = f"media-details-widget-{type_slug}"
 
     try:
-        details_display = app.query_one(f"#{details_display_widget_id}", TextArea)
+        from ..Widgets.media_details_widget import MediaDetailsWidget
+        details_widget = app.query_one(f"#{details_widget_id}", MediaDetailsWidget)
     except QueryError:
-        logger.error(f"TextArea details display widget '#{details_display_widget_id}' not found for type_slug '{type_slug}'.")
+        logger.error(f"MediaDetailsWidget '#{details_widget_id}' not found for type_slug '{type_slug}'.")
         app.notify(f"Details display area missing for {type_slug}.", severity="error")
         return
 
-    details_display.text = "Loading details..."
+    # Show loading state
+    details_widget.media_data = None
 
     if not hasattr(event.item, 'media_data') or not event.item.media_data:
-        details_display.text = "Error: Selected item has no displayable data."
         app.current_loaded_media_item = None
+        details_widget.media_data = None
         return
 
     lightweight_media_data = event.item.media_data
     media_id_raw = lightweight_media_data.get('id')
 
     if media_id_raw is None:
-        details_display.text = "Error: Selected item has no ID."
         app.current_loaded_media_item = None
+        details_widget.media_data = None
         return
     try:
         media_id = int(media_id_raw)
     except (ValueError, TypeError):
-        details_display.text = f"Error: Invalid media ID format '{media_id_raw}'."
         app.current_loaded_media_item = None
+        details_widget.media_data = None
         return
 
     if not app.media_db:
-        details_display.text = "Error: Database connection is not available."
         app.current_loaded_media_item = None
+        details_widget.media_data = None
         return
 
     logger.info(f"Fetching full details for media item ID: {media_id} for view {type_slug}")
     full_media_data = app.media_db.get_media_by_id(media_id, include_trash=True)
 
     if full_media_data is None:
-        details_display.text = f"Error\n\nCould not find media item with ID `{media_id}`. It may have been deleted."
         app.current_loaded_media_item = None
+        details_widget.media_data = None
         return
 
     app.current_loaded_media_item = full_media_data
-
-    # Special formatting for "analysis-review"
-    if type_slug == "analysis-review":
-        title = full_media_data.get('title', 'Untitled')
-        url = full_media_data.get('url', 'No URL')
-        analysis_content = full_media_data.get('analysis_content', '')
-        if not analysis_content:
-            analysis_content = "No analysis available for this item."
-        markdown_details_string = f"## {title}\n\n**URL:** {url}\n\n### Analysis\n{analysis_content}"
-    else:
-        markdown_details_string = format_media_details_as_markdown(app, full_media_data)
-
-    details_display.text = markdown_details_string
-    details_display.scroll_home(animate=False)
-    logger.info(f"Displayed details for media ID {media_id} in '#{details_display_widget_id}'.")
+    
+    # Update the widget with the full media data
+    details_widget.update_media_data(full_media_data)
+    logger.info(f"Displayed details for media ID {media_id} in '#{details_widget_id}'.")
 
 
 async def handle_media_load_selected_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -179,11 +188,12 @@ async def handle_media_load_selected_button_pressed(app: 'TldwCli', event: Butto
         return
 
     list_view_id = f"media-list-view-{type_slug}"
-    details_display_widget_id = f"media-details-display-{type_slug}"
+    details_widget_id = f"media-details-widget-{type_slug}"
 
     try:
         list_view = app.query_one(f"#{list_view_id}", ListView)
-        details_display = app.query_one(f"#{details_display_widget_id}", TextArea) # Expect TextArea
+        from ..Widgets.media_details_widget import MediaDetailsWidget
+        details_widget = app.query_one(f"#{details_widget_id}", MediaDetailsWidget)
     except QueryError as e:
         logger.error(f"UI component not found for media load selected '{button_id}': {e}", exc_info=True)
         app.notify("Load details UI error.", severity="error")
@@ -191,7 +201,7 @@ async def handle_media_load_selected_button_pressed(app: 'TldwCli', event: Butto
 
     if not list_view.highlighted_child or not hasattr(list_view.highlighted_child, 'media_data'):
         app.notify("No media item selected from the list.", severity="warning")
-        details_display.text = "No item selected from the list."
+        details_widget.media_data = None
         app.current_loaded_media_item = None
         return
 
@@ -242,17 +252,17 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
     """Performs search in media DB and populates the ListView with rich, informative items."""
     logger = app.loguru_logger
     list_view_id = f"media-list-view-{type_slug}"
-    details_display_id = f"media-details-display-{type_slug}"
 
     try:
         list_view = app.query_one(f"#{list_view_id}", ListView)
         await list_view.clear()
 
         try:
-            details_display = app.query_one(f"#{details_display_id}", TextArea) # Expect TextArea
-            details_display.text = "Select an item to see details" # Use .text property
+            from ..Widgets.media_details_widget import MediaDetailsWidget
+            details_widget = app.query_one(f"#media-details-widget-{type_slug}", MediaDetailsWidget)
+            details_widget.media_data = None  # Clear the widget
         except QueryError:
-            logger.warning(f"Details display widget '#{details_display_id}' not found for clearing.")
+            logger.warning(f"MediaDetailsWidget '#media-details-widget-{type_slug}' not found for clearing.")
             pass # Continue if details display isn't critical for search itself
 
         if not app.media_db:
@@ -402,6 +412,58 @@ def format_media_details_as_markdown(app: 'TldwCli', media_data: Dict[str, Any])
         )
 
     return final_markdown
+
+async def handle_media_metadata_update(app: 'TldwCli', event: MediaMetadataUpdateEvent) -> None:
+    """
+    Handles media metadata update requests from the MediaDetailsWidget.
+    Updates the media item's metadata in the database and refreshes the display.
+    """
+    logger = app.loguru_logger
+    
+    try:
+        if not app.media_db:
+            raise RuntimeError("Media DB service not available")
+        
+        # Call the update method with the new metadata
+        success, message = app.media_db.update_media_metadata(
+            media_id=event.media_id,
+            title=event.title,
+            media_type=event.media_type,
+            author=event.author,
+            url=event.url,
+            keywords=event.keywords
+        )
+        
+        if success:
+            # Show success notification
+            app.notify(message, severity="information")
+            
+            # Refresh the media item display by fetching updated data
+            updated_media = app.media_db.get_media_by_id(event.media_id)
+            if updated_media:
+                # Update the app's current loaded media item
+                app.current_loaded_media_item = updated_media
+                
+                # Update the widget with new data
+                try:
+                    from ..Widgets.media_details_widget import MediaDetailsWidget
+                    details_widget = app.query_one(f"#media-details-widget-{event.type_slug}", MediaDetailsWidget)
+                    details_widget.update_media_data(updated_media)
+                    details_widget.edit_mode = False  # Exit edit mode
+                except QueryError:
+                    logger.warning(f"Could not find MediaDetailsWidget for type_slug: {event.type_slug}")
+                
+                # Also refresh the list view to reflect any title changes
+                await perform_media_search_and_display(app, event.type_slug, "")
+            else:
+                logger.error(f"Could not fetch updated media data for ID {event.media_id}")
+                app.notify("Error refreshing media data", severity="error")
+        else:
+            app.notify(f"Failed to update media: {message}", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error updating media metadata: {e}", exc_info=True)
+        app.notify(f"Error updating metadata: {str(e)[:100]}", severity="error")
 
 # --- Button Handler Map ---
 # This map will be dynamically generated in app.py's _build_handler_map based on _media_types_for_ui.

@@ -2314,6 +2314,129 @@ class MediaDatabase:
             logger.error(f"Unexpected keywords error media {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected keyword update error: {e}") from e
 
+    def update_media_metadata(self, media_id: int, title: str = None, media_type: str = None,
+                             author: str = None, url: str = None, keywords: List[str] = None) -> Tuple[bool, str]:
+        """
+        Updates metadata fields for a media item with optimistic locking.
+        
+        Args:
+            media_id (int): The ID of the media item to update
+            title (str, optional): New title for the media item
+            media_type (str, optional): New type for the media item
+            author (str, optional): New author for the media item
+            url (str, optional): New URL for the media item
+            keywords (List[str], optional): New list of keywords (replaces existing)
+            
+        Returns:
+            Tuple[bool, str]: (success, message) - success status and descriptive message
+            
+        Raises:
+            InputError: If media_id is invalid or media item not found
+            ConflictError: If optimistic locking fails (version mismatch)
+            DatabaseError: For database errors
+        """
+        logger = self.logger
+        client_id = self.client_id
+        now = self._get_current_utc_timestamp_str()
+        
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                
+                # Get current media item with version for optimistic locking
+                cursor.execute(
+                    "SELECT id, uuid, version, title, type, author, url FROM Media WHERE id = ? AND deleted = 0",
+                    (media_id,)
+                )
+                row = cursor.fetchone()
+                
+                if not row:
+                    raise InputError(f"Media item with ID {media_id} not found or deleted")
+                
+                media_uuid = row['uuid']
+                current_version = row['version']
+                
+                # Build update fields dynamically based on provided parameters
+                update_fields = ["last_modified = ?", "version = ?", "client_id = ?"]
+                update_params = [now, current_version + 1, client_id]
+                sync_payload = {"last_modified": now, "version": current_version + 1, "client_id": client_id}
+                
+                # Track what's being updated for the message
+                updates_made = []
+                
+                if title is not None and title != row['title']:
+                    update_fields.append("title = ?")
+                    update_params.append(title)
+                    sync_payload["title"] = title
+                    updates_made.append("title")
+                    
+                if media_type is not None and media_type != row['type']:
+                    update_fields.append("type = ?")
+                    update_params.append(media_type)
+                    sync_payload["type"] = media_type
+                    updates_made.append("type")
+                    
+                if author is not None and author != row['author']:
+                    update_fields.append("author = ?")
+                    update_params.append(author)
+                    sync_payload["author"] = author
+                    updates_made.append("author")
+                    
+                if url is not None and url != row['url']:
+                    update_fields.append("url = ?")
+                    update_params.append(url)
+                    sync_payload["url"] = url
+                    updates_made.append("URL")
+                
+                # Only update if there are actual changes
+                if len(update_fields) > 3 or keywords is not None:  # More than just version/timestamp fields
+                    # Add WHERE clause parameters
+                    update_params.extend([media_id, current_version])
+                    
+                    # Execute update with optimistic locking
+                    update_sql = f"UPDATE Media SET {', '.join(update_fields)} WHERE id = ? AND version = ?"
+                    cursor.execute(update_sql, update_params)
+                    
+                    if cursor.rowcount == 0:
+                        raise ConflictError(f"Media metadata update failed due to version conflict", media_id)
+                    
+                    # Log sync event for the update
+                    self._log_sync_event(conn, "Media", media_uuid, "update", current_version + 1, sync_payload)
+                    
+                    # Update FTS if title changed
+                    if title is not None and title != row['title']:
+                        # Get current content for FTS update
+                        cursor.execute("SELECT content FROM Media WHERE id = ?", (media_id,))
+                        content_row = cursor.fetchone()
+                        content = content_row['content'] if content_row else ""
+                        self._update_fts_media(conn, media_id, title, content)
+                    
+                    # Update keywords if provided
+                    if keywords is not None:
+                        self.update_keywords_for_media(media_id, keywords)
+                        updates_made.append("keywords")
+                    
+                    # Construct success message
+                    if updates_made:
+                        message = f"Successfully updated {', '.join(updates_made)} for media ID {media_id}"
+                    else:
+                        message = f"No changes needed for media ID {media_id}"
+                        
+                    logger.info(message)
+                    return True, message
+                else:
+                    return True, "No changes to update"
+                    
+        except (InputError, ConflictError, DatabaseError) as e:
+            logger.error(f"Error updating media metadata for ID {media_id}: {e}")
+            raise
+        except sqlite3.Error as e:
+            logger.error(f"Database error updating media metadata: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to update media metadata: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error updating media metadata: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error: {e}") from e
+
     def soft_delete_keyword(self, keyword: str) -> bool:
         """
         Soft deletes a keyword by setting its 'deleted' flag to 1.

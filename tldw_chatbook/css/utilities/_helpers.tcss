@@ -3,3 +3,8 @@
  * ======================================== 
  * Utility classes for common patterns
  * ======================================== */
+
+/* Visibility utilities */
+.hidden {
+    display: none !important;
+}

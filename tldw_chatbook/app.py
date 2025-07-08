@@ -2525,7 +2525,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Only populate widgets for the initial tab to avoid errors with placeholders
         initial_tab = self._initial_tab_value
         if initial_tab == TAB_CHAT:
-            self.call_later(chat_handlers.populate_chat_conversation_character_filter_select, self)
+            # IMPORTANT: Do not populate character filter select here to avoid database connection conflicts
+            # The populate_chat_conversation_character_filter_select creates a new DB instance that can
+            # conflict with RAG search operations using asyncio.to_thread, causing the app to hang.
+            # Instead, let the conversation search UI populate when it's actually visible/needed.
+            pass
         # Don't populate CCP widgets here - let watch_current_tab handle it when the tab is actually shown
         # This prevents errors when the window isn't fully initialized yet
         log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
@@ -3789,6 +3793,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def on_stream_done(self, event: StreamDone) -> None:
         await handle_stream_done(self, event)
     
+    @on(media_events.MediaMetadataUpdateEvent)
+    async def on_media_metadata_update(self, event: media_events.MediaMetadataUpdateEvent) -> None:
+        await media_events.handle_media_metadata_update(self, event)
+    
     @on(SplashScreenClosed)
     async def on_splash_screen_closed(self, event: SplashScreenClosed) -> None:
         """Handle splash screen closing."""
@@ -3885,6 +3893,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 rag_enable.value = True
                 plain_rag.value = True
                 top_k.value = "3"
+                # Also update the search mode dropdown if it exists (in advanced mode)
+                try:
+                    search_mode = self.query_one("#chat-rag-search-mode", Select)
+                    search_mode.value = "plain"
+                except QueryError:
+                    pass  # Search mode dropdown is in advanced mode
                 self.notify("Light RAG: BM25 only, top 3 results")
             elif preset == "full":
                 rag_enable.value = True
@@ -3896,6 +3910,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     rerank.value = True
                 except QueryError:
                     pass  # Reranking is in advanced mode
+                # Also update the search mode dropdown if it exists
+                try:
+                    search_mode = self.query_one("#chat-rag-search-mode", Select)
+                    search_mode.value = "semantic"
+                except QueryError:
+                    pass  # Search mode dropdown is in advanced mode
                 self.notify("Full RAG: Embeddings + reranking, top 10 results")
             elif preset == "custom":
                 rag_enable.value = True

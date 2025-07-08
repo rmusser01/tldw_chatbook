@@ -83,6 +83,26 @@ _rag_service_cache = {
     'config_hash': None
 }
 
+def _safe_init_flashrank():
+    """Safely initialize FlashRank Ranker to avoid file descriptor issues in Textual."""
+    from flashrank import Ranker
+    import sys
+    import os
+    
+    # Temporarily redirect stdout/stderr to avoid subprocess issues in Textual
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        # Use devnull to avoid file descriptor issues during model download
+        with open(os.devnull, 'w') as devnull:
+            sys.stdout = devnull
+            sys.stderr = devnull
+            ranker = Ranker()
+        return ranker
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
 async def perform_plain_rag_search(
     app: "TldwCli",
     query: str,
@@ -141,6 +161,7 @@ async def perform_plain_rag_search(
     # Search Media Items
     if sources.get('media', False) and app.media_db:
         logger.debug("Searching media items...")
+        logger.info(f"[RAG DEBUG] About to search media DB via asyncio.to_thread. Current thread: {asyncio.current_task()}")
         try:
             media_results = await asyncio.to_thread(
                 app.media_db.search_media_db,
@@ -150,6 +171,7 @@ async def perform_plain_rag_search(
                 results_per_page=top_k * 2,  # Get more results for re-ranking
                 include_trash=False
             )
+            logger.info(f"[RAG DEBUG] Media DB search completed successfully")
             # Extract just the results list
             if isinstance(media_results, tuple):
                 media_items = media_results[0]
@@ -197,12 +219,14 @@ async def perform_plain_rag_search(
     # Search Conversations
     if sources.get('conversations', False) and app.chachanotes_db:
         logger.debug("Searching conversations...")
+        logger.info(f"[RAG DEBUG] About to search conversations DB via asyncio.to_thread. Current thread: {asyncio.current_task()}")
         try:
             conv_results = await asyncio.to_thread(
                 app.chachanotes_db.search_conversations_by_content,
                 search_query=query,
                 limit=top_k * 2
             )
+            logger.info(f"[RAG DEBUG] Conversations DB search completed successfully")
             for conv in conv_results:
                 # Get messages for context
                 messages = await asyncio.to_thread(
@@ -246,6 +270,7 @@ async def perform_plain_rag_search(
     # Search Notes
     if sources.get('notes', False) and app.notes_service:
         logger.debug("Searching notes...")
+        logger.info(f"[RAG DEBUG] About to search notes via asyncio.to_thread. Current thread: {asyncio.current_task()}")
         try:
             note_results = await asyncio.to_thread(
                 app.notes_service.search_notes,
@@ -253,6 +278,7 @@ async def perform_plain_rag_search(
                 search_term=query,
                 limit=top_k * 2
             )
+            logger.info(f"[RAG DEBUG] Notes search completed successfully")
             for note in note_results:
                 title = note.get('title', 'Untitled Note')
                 content = note.get('content', '')
@@ -281,13 +307,13 @@ async def perform_plain_rag_search(
         except Exception as e:
             logger.error(f"Error searching notes: {e}", exc_info=True)
     
-    # Apply re-ranking if enabled and available
-    if enable_rerank:
+    # Apply re-ranking if enabled and available AND we have results to rank
+    if enable_rerank and len(all_results) > 0:
         if reranker_model == "flashrank" and RERANK_AVAILABLE:
             logger.debug("Applying FlashRank re-ranking...")
             try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
+                from flashrank import RerankRequest
+                ranker = _safe_init_flashrank()
                 
                 # Prepare documents for re-ranking
                 passages = []
@@ -584,8 +610,8 @@ async def perform_full_rag_pipeline(
     if enable_rerank and len(all_results) > 0:
         if reranker_model == "flashrank" and RERANK_AVAILABLE:
             try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
+                from flashrank import RerankRequest
+                ranker = _safe_init_flashrank()
                 
                 passages = []
                 for result in all_results:
@@ -994,8 +1020,8 @@ async def perform_hybrid_rag_search(
         if reranker_model == "flashrank" and RERANK_AVAILABLE:
             logger.debug("Applying FlashRank re-ranking to hybrid results...")
             try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
+                from flashrank import RerankRequest
+                ranker = _safe_init_flashrank()
                 
                 passages = []
                 for result in all_results:
@@ -1289,8 +1315,8 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 if reranker_model == "flashrank" and RERANK_AVAILABLE:
                     logger.debug("Applying FlashRank re-ranking to combined results...")
                     try:
-                        from flashrank import Ranker, RerankRequest
-                        ranker = Ranker()
+                        from flashrank import RerankRequest
+                        ranker = _safe_init_flashrank()
                         
                         passages = []
                         for result in all_results:

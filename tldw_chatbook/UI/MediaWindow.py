@@ -17,6 +17,7 @@ from textual.widgets import Static, Button, Label, Input, ListView, TextArea, Ma
 from ..Utils.text import slugify
 from ..Event_Handlers import media_events
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
+from ..Widgets.media_details_widget import MediaDetailsWidget
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -220,18 +221,18 @@ class MediaWindow(Container):
                             yield Label("Page 1 / 1", id=f"media-page-label-{type_slug}", classes="media-page-label")
                             yield Button("Next", id=f"media-next-page-button-{type_slug}", disabled=True)
 
-                    # --- RIGHT PANE (standardized to TextArea for better height control) ---
+                    # --- RIGHT PANE (using MediaDetailsWidget for editing capability) ---
                     # This VerticalScroll is the .media-content-right-pane
                     with VerticalScroll(classes="media-content-right-pane"):
-                        text_area_widget = TextArea(
-                            "Select an item from the list to see its details.",
-                            id=f"media-details-display-{type_slug}",
-                            classes="media-details-theme",
-                            read_only=True
+                        details_widget = MediaDetailsWidget(
+                            self.app_instance,
+                            type_slug,
+                            id=f"media-details-widget-{type_slug}",
+                            classes="media-details-theme"
                         )
-                        # Force the TextArea widget to expand to fill available space
-                        text_area_widget.styles.height = "1fr"
-                        yield text_area_widget
+                        # Force the widget to expand to fill available space
+                        details_widget.styles.height = "1fr"
+                        yield details_widget
 
             # Hide all views by default; watcher will manage visibility
             # This loop is crucial for the initial state.
