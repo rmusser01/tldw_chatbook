@@ -1255,7 +1255,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             **llm_management_events.LLM_MANAGEMENT_BUTTON_HANDLERS,
             **llm_nav_events.LLM_NAV_BUTTON_HANDLERS,
             **llm_management_events_mlx_lm.MLX_LM_BUTTON_HANDLERS,
-            #**llm_management_events_ollama.OLLAMA_BUTTON_HANDLERS,
+            **llm_management_events_ollama.OLLAMA_BUTTON_HANDLERS,
             **llm_management_events_onnx.ONNX_BUTTON_HANDLERS,
             **llm_management_events_transformers.TRANSFORMERS_BUTTON_HANDLERS,
             **llm_management_events_vllm.VLLM_BUTTON_HANDLERS,
@@ -2879,6 +2879,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.loguru_logger.debug(
                     f"Switched to LLM Management tab, activating initial view: {self._initial_llm_view}")
                 self.call_later(setattr, self, 'llm_active_view', self._initial_llm_view)
+            # Populate LLM help texts when the tab is shown
+            self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
         elif new_tab == TAB_EVALS: # Added for Evals tab
             # Placeholder for any specific actions when Evals tab is selected
             pass
@@ -4087,7 +4089,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         #######################################################################
         elif worker_group == "ollama_api":
             self.loguru_logger.info(f"Ollama API worker '{event.worker.name}' finished with state {event.state}.")
-            await llm_management_events_ollama.handle_ollama_worker_completion(self, event)
+            # Ollama operations now use asyncio.to_thread instead of workers
+            # await llm_management_events_ollama.handle_ollama_worker_completion(self, event)
 
         #######################################################################
         # --- Handle AI Generation Workers (for character generation) ---

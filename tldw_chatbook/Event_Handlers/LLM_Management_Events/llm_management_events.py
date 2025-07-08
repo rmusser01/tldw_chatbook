@@ -1007,6 +1007,7 @@ LLM_MANAGEMENT_BUTTON_HANDLERS = {
     # Model Download (Legacy)
     "browse-models-dir-button": handle_browse_models_dir_button_pressed,
     "start-model-download-button": handle_start_model_download_button_pressed,
+    # Ollama handlers will be added in app.py to avoid circular imports
 }
 
 #

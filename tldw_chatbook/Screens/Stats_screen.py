@@ -81,7 +81,7 @@ class StatsScreen(Container):
     
     # Reactive attributes
     stats_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
-    is_loading: reactive[bool] = reactive(True)
+    is_loading: reactive[bool] = reactive(False)  # Start as False
     error_message: reactive[Optional[str]] = reactive(None)
     
     def __init__(self, **kwargs):
@@ -90,45 +90,68 @@ class StatsScreen(Container):
         
     def on_mount(self) -> None:
         """Load statistics when the screen is mounted."""
+        # Get the app instance from the ancestry
+        from ..app import TldwCli
         self.app_instance = self.app
+        if not isinstance(self.app_instance, TldwCli):
+            logger.error(f"App instance is not TldwCli: {type(self.app_instance)}")
+            self.error_message = "Unable to access application instance"
+            return
+        logger.info("StatsScreen mounted, loading statistics...")
+        # Set loading state and trigger initial display
+        self.is_loading = True
         self.load_statistics()
         
     @work(thread=True)
     def load_statistics(self) -> None:
         """Load user statistics in a background thread."""
         try:
+            logger.info("Starting statistics load...")
             self.is_loading = True
             self.error_message = None
             
             # Get database instance
+            if not hasattr(self.app_instance, 'characters_rag_db'):
+                logger.error("App instance does not have characters_rag_db attribute")
+                self.error_message = "Database connection not initialized"
+                return
+                
             db = self.app_instance.characters_rag_db
             if not db:
+                logger.error("Database instance is None")
                 self.error_message = "Database not available"
                 return
+            
+            logger.info(f"Database instance obtained: {type(db)}")
                 
             # Calculate statistics
             stats_calculator = UserStatistics(db)
             stats = stats_calculator.get_all_stats()
             
+            logger.info(f"Statistics calculated: {len(stats)} items")
+            
             # Update reactive attribute
             self.stats_data = stats
             
         except Exception as e:
-            logger.error(f"Error loading user statistics: {e}")
+            logger.error(f"Error loading user statistics: {e}", exc_info=True)
             self.error_message = f"Error loading statistics: {str(e)}"
         finally:
             self.is_loading = False
+            logger.info("Statistics loading complete")
     
     def compose(self) -> ComposeResult:
         """Create the statistics display."""
-        yield Container(
-            Label("📊 User Statistics Dashboard", classes="stats-header"),
-            VerticalScroll(
-                Container(id="stats-content"),
-                id="stats-scroll"
-            ),
-            id="stats-container"
-        )
+        with Container(id="stats-container"):
+            yield Label("📊 User Statistics Dashboard", classes="stats-header")
+            with VerticalScroll(id="stats-scroll"):
+                with Container(id="stats-content"):
+                    # Initial content - will be replaced by refresh_stats_display
+                    yield Container(
+                        LoadingIndicator(),
+                        Label("Initializing statistics...", classes="loading-text"),
+                        classes="loading-container"
+                    )
     
     def watch_is_loading(self, is_loading: bool) -> None:
         """React to loading state changes."""
@@ -145,10 +168,13 @@ class StatsScreen(Container):
     def refresh_stats_display(self) -> None:
         """Refresh the statistics display based on current state."""
         try:
+            logger.debug(f"Refreshing stats display - loading: {self.is_loading}, error: {self.error_message}, has_data: {self.stats_data is not None}")
+            
             content = self.query_one("#stats-content", Container)
             content.remove_children()
             
             if self.is_loading:
+                logger.debug("Showing loading state")
                 content.mount(
                     Container(
                         LoadingIndicator(),
@@ -157,6 +183,7 @@ class StatsScreen(Container):
                     )
                 )
             elif self.error_message:
+                logger.debug(f"Showing error state: {self.error_message}")
                 content.mount(
                     Container(
                         Label(f"❌ {self.error_message}", classes="error-message"),
@@ -165,6 +192,7 @@ class StatsScreen(Container):
                     )
                 )
             elif self.stats_data:
+                logger.debug(f"Showing stats data with {len(self.stats_data)} items")
                 # Display all statistics
                 self._mount_overview_section(content)
                 self._mount_activity_section(content)
@@ -173,11 +201,12 @@ class StatsScreen(Container):
                 self._mount_fun_stats_section(content)
                 self._mount_character_stats_section(content)
             else:
+                logger.debug("No data available, showing empty state")
                 content.mount(Label("No statistics available yet. Start chatting to see your stats!", 
                                   classes="no-data-message"))
                 
         except Exception as e:
-            logger.error(f"Error refreshing stats display: {e}")
+            logger.error(f"Error refreshing stats display: {e}", exc_info=True)
     
     def _mount_overview_section(self, parent: Container) -> None:
         """Mount the overview statistics section."""

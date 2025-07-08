@@ -680,6 +680,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     worker_target = lambda: app.chat_wrapper(
         message=message_text_with_rag, # Current user utterance with RAG context
         history=chat_history_for_api,    # History *before* current utterance
+        media_content=media_content_for_api, # Pass media content as expected by chat function
         api_endpoint=selected_provider,
         api_key=api_key_for_call,
         custom_prompt=custom_prompt,
