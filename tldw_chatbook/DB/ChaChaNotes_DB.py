@@ -126,7 +126,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 7 # Incremented schema version for message role field support
+    _CURRENT_SCHEMA_VERSION = 8 # Incremented schema version for chat dictionary support
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
 
     _FULL_SCHEMA_SQL_V4 = """
@@ -996,6 +996,140 @@ UPDATE db_schema_version
    AND version = 6;
 """
 
+    _MIGRATE_V7_TO_V8_SQL = """
+/*───────────────────────────────────────────────────────────────
+  Migration from V7 to V8: Add chat dictionary support
+───────────────────────────────────────────────────────────────*/
+
+-- Create chat dictionaries table
+CREATE TABLE IF NOT EXISTS chat_dictionaries(
+  id              INTEGER  PRIMARY KEY AUTOINCREMENT,
+  name            TEXT     UNIQUE NOT NULL,
+  description     TEXT,
+  file_path       TEXT,
+  content         TEXT,
+  entries_json    TEXT,     -- JSON array of ChatDictionary objects
+  strategy        TEXT     DEFAULT 'sorted_evenly',
+  max_tokens      INTEGER  DEFAULT 1000,
+  enabled         BOOLEAN  NOT NULL DEFAULT 1,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_modified   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted         BOOLEAN  NOT NULL DEFAULT 0,
+  client_id       TEXT     NOT NULL DEFAULT 'unknown',
+  version         INTEGER  NOT NULL DEFAULT 1
+);
+
+-- Create FTS5 virtual table for chat dictionaries
+CREATE VIRTUAL TABLE IF NOT EXISTS chat_dictionaries_fts
+USING fts5(
+  name, description, content,
+  content='chat_dictionaries',
+  content_rowid='id'
+);
+
+-- Create triggers for FTS5 maintenance
+CREATE TRIGGER chat_dictionaries_ai
+AFTER INSERT ON chat_dictionaries BEGIN
+  INSERT INTO chat_dictionaries_fts(rowid, name, description, content)
+  VALUES(NEW.id, NEW.name, NEW.description, NEW.content);
+END;
+
+CREATE TRIGGER chat_dictionaries_au
+AFTER UPDATE ON chat_dictionaries BEGIN
+  UPDATE chat_dictionaries_fts 
+  SET name = NEW.name, description = NEW.description, content = NEW.content
+  WHERE rowid = NEW.id;
+END;
+
+CREATE TRIGGER chat_dictionaries_ad
+AFTER DELETE ON chat_dictionaries BEGIN
+  DELETE FROM chat_dictionaries_fts WHERE rowid = OLD.id;
+END;
+
+-- Create conversation_dictionaries junction table
+CREATE TABLE IF NOT EXISTS conversation_dictionaries(
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+  dictionary_id   INTEGER NOT NULL REFERENCES chat_dictionaries(id),
+  priority        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, dictionary_id)
+);
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_chat_dictionaries_name ON chat_dictionaries(name);
+CREATE INDEX IF NOT EXISTS idx_chat_dictionaries_enabled ON chat_dictionaries(enabled);
+CREATE INDEX IF NOT EXISTS idx_chat_dictionaries_deleted ON chat_dictionaries(deleted);
+CREATE INDEX IF NOT EXISTS idx_conversation_dictionaries_conv ON conversation_dictionaries(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_dictionaries_dict ON conversation_dictionaries(dictionary_id);
+
+-- Sync triggers for chat_dictionaries
+CREATE TRIGGER chat_dictionaries_sync_create
+AFTER INSERT ON chat_dictionaries BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('chat_dictionaries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'file_path', NEW.file_path, 'strategy', NEW.strategy, 'max_tokens', NEW.max_tokens,
+                     'enabled', NEW.enabled, 'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+CREATE TRIGGER chat_dictionaries_sync_update
+AFTER UPDATE ON chat_dictionaries
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.name IS NOT NEW.name OR
+     OLD.description IS NOT NEW.description OR
+     OLD.file_path IS NOT NEW.file_path OR
+     OLD.content IS NOT NEW.content OR
+     OLD.entries_json IS NOT NEW.entries_json OR
+     OLD.strategy IS NOT NEW.strategy OR
+     OLD.max_tokens IS NOT NEW.max_tokens OR
+     OLD.enabled IS NOT NEW.enabled OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('chat_dictionaries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'file_path', NEW.file_path, 'strategy', NEW.strategy, 'max_tokens', NEW.max_tokens,
+                     'enabled', NEW.enabled, 'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+CREATE TRIGGER chat_dictionaries_sync_delete
+AFTER UPDATE ON chat_dictionaries
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('chat_dictionaries', CAST(NEW.id AS TEXT), 'delete', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'deleted', NEW.deleted, 'last_modified', NEW.last_modified,
+                     'version', NEW.version, 'client_id', NEW.client_id));
+END;
+
+CREATE TRIGGER chat_dictionaries_sync_undelete
+AFTER UPDATE ON chat_dictionaries
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('chat_dictionaries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'file_path', NEW.file_path, 'strategy', NEW.strategy, 'max_tokens', NEW.max_tokens,
+                     'enabled', NEW.enabled, 'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+-- Update last_modified trigger
+CREATE TRIGGER chat_dictionaries_update_timestamp
+AFTER UPDATE ON chat_dictionaries
+BEGIN
+  UPDATE chat_dictionaries SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 8
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 7;
+"""
+
     def __init__(self, db_path: Union[str, Path], client_id: str):
         """
         Initializes the CharactersRAGDB instance.
@@ -1489,6 +1623,41 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V6 to V7 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 7 to version 8.
+
+        This migration adds chat dictionary support with tables for dictionaries,
+        entries, and conversation associations.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 8 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V7 to V8 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V7_TO_V8_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V7→V8] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 8:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V7→V8] Migration version check failed. Expected 8, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V7→V8] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V7→V8] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V7 to V8 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V7→V8] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V7 to V8 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _initialize_schema(self):
         """
         Initializes or migrates the database schema to `_CURRENT_SCHEMA_VERSION`.
@@ -1536,6 +1705,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 6 and target_version > 6:
                         self._migrate_from_v6_to_v7(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 7 and target_version > 7:
+                        self._migrate_from_v7_to_v8(conn)
                 elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -1544,13 +1716,24 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 6 and target_version > 6:
                         self._migrate_from_v6_to_v7(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 7 and target_version > 7:
+                        self._migrate_from_v7_to_v8(conn)
                 elif current_db_version == 5 and target_version >= 6:
                     self._migrate_from_v5_to_v6(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 6 and target_version > 6:
                         self._migrate_from_v6_to_v7(conn)
-                elif current_db_version == 6 and target_version == 7:
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 7 and target_version > 7:
+                        self._migrate_from_v7_to_v8(conn)
+                elif current_db_version == 6 and target_version >= 7:
                     self._migrate_from_v6_to_v7(conn)
+                    current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 7 and target_version > 7:
+                        self._migrate_from_v7_to_v8(conn)
+                elif current_db_version == 7 and target_version == 8:
+                    self._migrate_from_v7_to_v8(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(

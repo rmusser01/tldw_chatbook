@@ -789,7 +789,8 @@ def load_settings(force_reload: bool = False) -> Dict:
             'chat_dict_RAG_prompts': _get_typed_value(chat_dicts_section, 'chat_dictionary_RAG_prompts', ''),
             'chat_dict_replacement_strategy': _get_typed_value(chat_dicts_section, 'chat_dictionary_replacement_strategy', 'character_lore_first'),
             'chat_dict_max_tokens': _get_typed_value(chat_dicts_section, 'chat_dictionary_max_tokens', 1000, int),
-            'default_rag_prompt': _get_typed_value(chat_dicts_section, 'default_rag_prompt', '')
+            'default_rag_prompt': _get_typed_value(chat_dicts_section, 'default_rag_prompt', ''),
+            'chat_dicts_folder': ''  # Will be set dynamically below
         },
         "chunking_config": {
             # Global defaults
@@ -1063,6 +1064,11 @@ def load_settings(force_reload: bool = False) -> Dict:
             user_data_base_dir_server.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             logger.error(f"Could not create server user data base directory {user_data_base_dir_server}: {e}")
+    
+    # Set the chat dictionaries folder path dynamically
+    from .Utils.paths import get_user_data_dir
+    chat_dicts_folder = get_user_data_dir() / "chat_dicts"
+    config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
     
     # Cache the configuration before returning
     with _SETTINGS_CACHE_LOCK:

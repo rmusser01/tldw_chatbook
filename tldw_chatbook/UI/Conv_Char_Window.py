@@ -62,6 +62,12 @@ class CCPWindow(Container):
                 yield Input(id="ccp-prompt-search-input", placeholder="Search prompts...", classes="sidebar-input")
                 yield ListView(id="ccp-prompts-listview", classes="sidebar-listview")
                 yield Button("Load Selected Prompt", id="ccp-prompt-load-selected-button", classes="sidebar-button")
+            with Collapsible(title="Chat Dictionaries", id="ccp-dictionaries-collapsible"):
+                yield Button("Import Dictionary", id="ccp-import-dictionary-button", classes="sidebar-button")
+                yield Button("Create Dictionary", id="ccp-create-dictionary-button", classes="sidebar-button")
+                yield Select([], prompt="Select Dictionary...", allow_blank=True, id="ccp-dictionary-select")
+                yield Button("Load Dictionary", id="ccp-load-dictionary-button", classes="sidebar-button")
+                yield Button("Refresh List", id="ccp-refresh-dictionary-list-button", classes="sidebar-button")
 
         yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), id="toggle-conv-char-left-sidebar",
                      classes="cc-sidebar-toggle-button", tooltip="Toggle left sidebar")
@@ -188,6 +194,56 @@ class CCPWindow(Container):
                                  classes="sidebar-button")
                     yield Button("Clone Prompt", id="ccp-editor-prompt-clone-button", classes="sidebar-button")
 
+            # Container for dictionary display (initially hidden by CSS)
+            with Container(id="ccp-dictionary-view", classes="ccp-view-area"):
+                yield Static("Chat Dictionary", classes="pane-title", id="ccp-center-pane-title-dict")
+                yield Label("Dictionary Name:", classes="sidebar-label")
+                yield Static(id="ccp-dict-name-display")
+                yield Label("Description:", classes="sidebar-label")
+                yield TextArea(id="ccp-dict-description-display", read_only=True, classes="ccp-card-textarea")
+                yield Label("Strategy:", classes="sidebar-label")
+                yield Static(id="ccp-dict-strategy-display")
+                yield Label("Max Tokens:", classes="sidebar-label")
+                yield Static(id="ccp-dict-max-tokens-display")
+                yield Label("Entries:", classes="sidebar-label")
+                yield ListView(id="ccp-dict-entries-list")
+                with Horizontal(classes="ccp-dict-action-buttons"):
+                    yield Button("Edit Dictionary", id="ccp-dict-edit-button", variant="default")
+                    yield Button("Export Dictionary", id="ccp-dict-export-button", variant="primary")
+                    yield Button("Apply to Conversation", id="ccp-dict-apply-button", variant="success")
+
+            # Container for dictionary editing UI (initially hidden by CSS)
+            with Container(id="ccp-dictionary-editor-view", classes="ccp-view-area"):
+                yield Static("Dictionary Editor", classes="pane-title", id="ccp-center-pane-title-dict-editor")
+                yield Label("Dictionary Name:", classes="sidebar-label")
+                yield Input(id="ccp-editor-dict-name-input", placeholder="Dictionary name...", classes="sidebar-input")
+                yield Label("Description:", classes="sidebar-label")
+                yield TextArea(id="ccp-editor-dict-description-textarea", classes="sidebar-textarea ccp-prompt-textarea")
+                yield Label("Replacement Strategy:", classes="sidebar-label")
+                yield Select([
+                    ("sorted_evenly", "sorted_evenly"),
+                    ("character_lore_first", "character_lore_first"),
+                    ("global_lore_first", "global_lore_first")
+                ], value="sorted_evenly", id="ccp-editor-dict-strategy-select")
+                yield Label("Max Tokens:", classes="sidebar-label")
+                yield Input(id="ccp-editor-dict-max-tokens-input", placeholder="1000", value="1000", classes="sidebar-input")
+                yield Label("Dictionary Entries:", classes="sidebar-label")
+                yield ListView(id="ccp-editor-dict-entries-list")
+                with Horizontal(classes="ccp-dict-entry-controls"):
+                    yield Button("Add Entry", id="ccp-dict-add-entry-button", variant="primary")
+                    yield Button("Remove Entry", id="ccp-dict-remove-entry-button", variant="warning")
+                yield Label("Entry Key/Pattern:", classes="sidebar-label")
+                yield Input(id="ccp-dict-entry-key-input", placeholder="Key or /regex/flags", classes="sidebar-input")
+                yield Label("Entry Value:", classes="sidebar-label")
+                yield TextArea(id="ccp-dict-entry-value-textarea", classes="sidebar-textarea")
+                yield Label("Group (optional):", classes="sidebar-label")
+                yield Input(id="ccp-dict-entry-group-input", placeholder="e.g., character, global", classes="sidebar-input")
+                yield Label("Probability (0-100):", classes="sidebar-label")
+                yield Input(id="ccp-dict-entry-probability-input", placeholder="100", value="100", classes="sidebar-input")
+                with Horizontal(classes="ccp-dict-action-buttons"):
+                    yield Button("Save Dictionary", id="ccp-editor-dict-save-button", variant="success", classes="sidebar-button")
+                    yield Button("Cancel Edit", id="ccp-editor-dict-cancel-button", variant="error", classes="sidebar-button")
+
         # Button to toggle the right sidebar for CCP tab
         yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
                      id="toggle-conv-char-right-sidebar", classes="cc-sidebar-toggle-button", tooltip="Toggle right sidebar")
@@ -219,6 +275,21 @@ class CCPWindow(Container):
             with Collapsible(title="Delete Character", id="ccp-characters-collapsible", collapsed=True):
                 yield Button("Delete Character", id="ccp-character-delete-button", variant="error",)
                 # Add other character related widgets here if needed in the future
+            
+            # Dictionary Details Collapsible
+            with Collapsible(title="Dictionary Options", id="ccp-dictionary-details-collapsible", collapsed=True):
+                yield Static("Active Dictionaries:", classes="sidebar-label")
+                yield ListView(id="ccp-active-dictionaries-list", classes="sidebar-listview")
+                yield Button("Remove from Conversation", id="ccp-dict-remove-from-conv-button", variant="warning", 
+                             classes="sidebar-button")
+                yield Static("Dictionary Priority:", classes="sidebar-label")
+                yield Input(id="ccp-dict-priority-input", placeholder="0", value="0", classes="sidebar-input")
+                yield Button("Update Priority", id="ccp-dict-update-priority-button", classes="sidebar-button")
+            
+            # Dictionary Management Collapsible
+            with Collapsible(title="Dictionary Management", id="ccp-dictionary-management-collapsible", collapsed=True):
+                yield Button("Delete Dictionary", id="ccp-dict-delete-button", variant="error", classes="sidebar-button")
+                yield Button("Clone Dictionary", id="ccp-dict-clone-button", variant="primary", classes="sidebar-button")
 
 #
 # End of Conv_Char_Window.py
