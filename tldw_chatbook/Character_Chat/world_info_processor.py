@@ -11,16 +11,29 @@ from loguru import logger
 class WorldInfoProcessor:
     """Process and inject world info/lorebook entries into chat conversations."""
     
-    def __init__(self, character_data: Dict[str, Any]):
-        """Initialize with character data containing world info."""
-        self.character_book = self._extract_character_book(character_data)
+    def __init__(self, character_data: Optional[Dict[str, Any]] = None, 
+                 world_books: Optional[List[Dict[str, Any]]] = None):
+        """
+        Initialize with character data and/or standalone world books.
+        
+        Args:
+            character_data: Character data containing embedded world info
+            world_books: List of standalone world books with their entries
+        """
         self.entries = []
         self.scan_depth = 3  # Default scan depth
         self.token_budget = 500  # Default token budget
         self.recursive_scanning = False
         
-        if self.character_book:
-            self._process_character_book()
+        # Process character book if available
+        if character_data:
+            self.character_book = self._extract_character_book(character_data)
+            if self.character_book:
+                self._process_character_book()
+        
+        # Process standalone world books if available
+        if world_books:
+            self._process_world_books(world_books)
     
     def _extract_character_book(self, character_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Extract character book from character data."""
@@ -55,7 +68,35 @@ class WorldInfoProcessor:
         # Sort by insertion order
         self.entries.sort(key=lambda x: x.get('insertion_order', 0))
         
-        logger.debug(f"Loaded {len(self.entries)} active world info entries")
+        logger.debug(f"Loaded {len(self.entries)} active world info entries from character book")
+    
+    def _process_world_books(self, world_books: List[Dict[str, Any]]):
+        """Process standalone world books and add their entries."""
+        for book in world_books:
+            if not book.get('enabled', True):
+                continue
+                
+            # Update settings if book has higher values
+            self.scan_depth = max(self.scan_depth, book.get('scan_depth', 3))
+            self.token_budget = max(self.token_budget, book.get('token_budget', 500))
+            self.recursive_scanning = self.recursive_scanning or book.get('recursive_scanning', False)
+            
+            # Process entries from this book
+            book_entries = book.get('entries', [])
+            priority_offset = book.get('priority', 0) * 1000  # Use priority to offset insertion order
+            
+            for entry in book_entries:
+                if entry.get('enabled', True):
+                    processed_entry = self._process_entry(entry)
+                    if processed_entry:
+                        # Adjust insertion order based on book priority
+                        processed_entry['insertion_order'] += priority_offset
+                        self.entries.append(processed_entry)
+        
+        # Re-sort all entries by insertion order
+        self.entries.sort(key=lambda x: x.get('insertion_order', 0))
+        
+        logger.debug(f"Total {len(self.entries)} active world info entries after processing {len(world_books)} world books")
     
     def _process_entry(self, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process a single world info entry."""

@@ -3710,6 +3710,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.call_after_refresh(self.update_token_count_display)
         elif input_id == "chat-settings-search" and current_active_tab == TAB_CHAT:
             await self.handle_settings_search(event.value)
+        # --- Chat Tab World Book Search Input ---
+        elif input_id == "chat-worldbook-search-input" and current_active_tab == TAB_CHAT:
+            await chat_events_worldbooks.handle_worldbook_search_input(self, event.value)
+        # --- Chat Tab Dictionary Search Input ---
+        elif input_id == "chat-dictionary-search-input" and current_active_tab == TAB_CHAT:
+            await chat_events_dictionaries.handle_dictionary_search_input(self, event.value)
         # --- Chat Tab Media Search Input ---
         # elif input_id == "chat-media-search-input" and current_active_tab == TAB_CHAT:
         #     await handle_chat_media_search_input_changed(self, event.input)
@@ -3748,6 +3754,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Store the selected item for the Load Selected button, but don't load immediately
             # This maintains the existing UX where users must click "Load Selected"
             
+        elif list_view_id in ["chat-worldbook-available-listview", "chat-worldbook-active-listview"] and current_active_tab == TAB_CHAT:
+            self.loguru_logger.debug(f"World book selected in {list_view_id}")
+            await chat_events_worldbooks.handle_worldbook_selection(self, list_view_id)
+            
+        elif list_view_id in ["chat-dictionary-available-listview", "chat-dictionary-active-listview"] and current_active_tab == TAB_CHAT:
+            self.loguru_logger.debug(f"Dictionary selected in {list_view_id}")
+            await chat_events_dictionaries.handle_dictionary_selection(self, list_view_id)
+            
         # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
         else:
             self.loguru_logger.warning(
@@ -3763,6 +3777,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Handle attach button visibility toggle
             from .config import save_setting_to_cli_config
             save_setting_to_cli_config("chat.images", "show_attach_button", event.value)
+        elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
+            await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
+        elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:
+            await chat_events_dictionaries.handle_dictionary_enable_checkbox(self, event.value)
             
             # Update the UI if enhanced chat window is active
             use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)

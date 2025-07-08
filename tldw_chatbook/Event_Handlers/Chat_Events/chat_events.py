@@ -20,6 +20,8 @@ from textual.css.query import QueryError
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
+from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
+from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Widgets.chat_message import ChatMessage
@@ -291,11 +293,32 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         
         # Check for world info/character book
         if get_cli_setting("character_chat", "enable_world_info", True):
-            extensions = active_char_data.get('extensions', {})
+            world_books = []
+            
+            # Get standalone world books for this conversation
+            if active_conversation_id and db:
+                try:
+                    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+                    wb_manager = WorldBookManager(db)
+                    world_books = wb_manager.get_world_books_for_conversation(active_conversation_id, enabled_only=True)
+                    if world_books:
+                        loguru_logger.info(f"Found {len(world_books)} world books for conversation {active_conversation_id}")
+                except Exception as e:
+                    loguru_logger.error(f"Failed to load world books: {e}", exc_info=True)
+            
+            # Check character's embedded world info
+            has_character_book = False
             if isinstance(extensions, dict) and extensions.get('character_book'):
+                has_character_book = True
+            
+            # Initialize processor if we have any world info sources
+            if has_character_book or world_books:
                 try:
                     from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
-                    world_info_processor = WorldInfoProcessor(active_char_data)
+                    world_info_processor = WorldInfoProcessor(
+                        character_data=active_char_data if has_character_book else None,
+                        world_books=world_books if world_books else None
+                    )
                     loguru_logger.info(f"World info processor initialized with {len(world_info_processor.entries)} active entries")
                 except Exception as e:
                     loguru_logger.error(f"Failed to initialize world info processor: {e}", exc_info=True)
@@ -1514,6 +1537,11 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
     app.current_chat_conversation_id = None
     app.current_chat_is_ephemeral = True  # This triggers watcher to update UI elements
     app.current_chat_active_character_data = None
+    
+    # Clear world books for new conversation
+    await chat_events_worldbooks.refresh_active_worldbooks(app)
+    # Clear dictionaries for new conversation
+    await chat_events_dictionaries.refresh_active_dictionaries(app)
     try:
         default_system_prompt = app.app_config.get("chat_defaults", {}).get("system_prompt", "You are a helpful AI assistant.")
         app.query_one("#chat-system-prompt", TextArea).text = default_system_prompt
@@ -2067,6 +2095,11 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
 
     app.current_chat_conversation_id = conversation_id
     app.current_chat_is_ephemeral = False
+    
+    # Refresh world books for the new conversation
+    await chat_events_worldbooks.refresh_active_worldbooks(app)
+    # Refresh dictionaries for the new conversation
+    await chat_events_dictionaries.refresh_active_dictionaries(app)
 
     try:
         character_id_from_conv = conv_metadata.get('character_id')
@@ -3755,6 +3788,8 @@ CHAT_BUTTON_HANDLERS = {
     "toggle-chat-left-sidebar": handle_chat_tab_sidebar_toggle,
     "toggle-chat-right-sidebar": handle_chat_tab_sidebar_toggle,
     **chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS,
+    **chat_events_worldbooks.CHAT_WORLDBOOK_BUTTON_HANDLERS,
+    **chat_events_dictionaries.CHAT_DICTIONARY_BUTTON_HANDLERS,
 }
 
 #

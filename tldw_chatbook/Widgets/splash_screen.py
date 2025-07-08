@@ -142,7 +142,8 @@ class SplashScreen(Container):
                 "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score", # Batch 1
                 "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal", # Batch 2
                 "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars", # Batch 3
-                "raindrops_pond", "pixel_zoom", "text_explosion", "old_film", "maze_generator" # Batch 4 ("Crazy")
+                "raindrops_pond", "pixel_zoom", "text_explosion", "old_film", "maze_generator", # Batch 4 ("Crazy")
+                "dwarf_fortress" # Batch 5 ("Fantasy")
             ]
         }
 

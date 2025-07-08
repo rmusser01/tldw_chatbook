@@ -325,64 +325,65 @@ class SearchRAGWindow(Container):
         
     def compose(self) -> ComposeResult:
         """Create the enhanced UI layout"""
-        with VerticalScroll(classes="rag-search-container"):
-            # Header Section
-            with Container(classes="search-header-section"):
-                yield Static("🔍 RAG Search & Discovery", classes="rag-title-enhanced")
-                if not self.rag_search_available:
-                    yield Static(
-                        "⚠️ RAG search functionality is limited - install dependencies with: pip install -e '.[embeddings_rag]'",
-                        classes="rag-warning"
-                    )
-                else:
-                    yield Static("Search across your media, conversations, and notes with semantic understanding", classes="rag-subtitle")
-            
-            # Search Section with visual prominence
-            with Container(classes="search-section"):
-                with Container(classes="search-input-wrapper"):
-                    with Horizontal(classes="search-bar-enhanced"):
-                        self.search_input = Input(
-                            placeholder="🔎 Enter your search query...",
-                            id="rag-search-input",
-                            classes="search-input-enhanced"
+        with Container(classes="rag-search-main-wrapper"):
+            with VerticalScroll(classes="rag-search-container"):
+                # Header Section
+                with Container(classes="search-header-section"):
+                    yield Static("🔍 RAG Search & Discovery", classes="rag-title-enhanced")
+                    if not self.rag_search_available:
+                        yield Static(
+                            "⚠️ RAG search functionality is limited - install dependencies with: pip install -e '.[embeddings_rag]'",
+                            classes="rag-warning"
                         )
-                        self.search_input.tooltip = "Press Ctrl+K to focus • Esc to clear"
-                        yield self.search_input
-                        yield Button("×", id="clear-search-btn", classes="clear-button hidden", variant="default")
-                        yield Button("Search", id="rag-search-btn", classes="primary search-button-enhanced", variant="primary")
-                    yield LoadingIndicator(id="search-loading", classes="search-loading-indicator hidden")
-                    
-                    # Search history dropdown
-                    yield SearchHistoryDropdown(self.search_history_db)
-            
-            # Settings Section with better organization
-            with Container(classes="settings-section"):
-                # Quick Settings Row
-                with Container(classes="quick-settings-container"):
-                    yield Static("⚙️ Search Configuration", classes="settings-title")
-                    
-                    with Horizontal(classes="settings-grid"):
-                        # Search Mode Selection
-                        with Vertical(classes="setting-group"):
-                            yield Label("Search Mode:", classes="setting-label")
-                            yield Select(
-                                options=[
-                                    ("📊 Plain RAG (Fast)", "plain"),
-                                    ("🧠 Semantic" if self.embeddings_available else "🧠 Semantic (Unavailable)", "full"),
-                                    ("🔀 Hybrid" if self.embeddings_available else "🔀 Hybrid (Unavailable)", "hybrid")
-                                ],
-                                value="plain",
-                                id="search-mode-select",
-                                classes="mode-select"
+                    else:
+                        yield Static("Search across your media, conversations, and notes with semantic understanding", classes="rag-subtitle")
+                
+                # Search Section with visual prominence
+                with Container(classes="search-section"):
+                    with Container(classes="search-input-wrapper"):
+                        with Horizontal(classes="search-bar-enhanced"):
+                            self.search_input = Input(
+                                placeholder="🔎 Enter your search query...",
+                                id="rag-search-input",
+                                classes="search-input-enhanced"
                             )
+                            self.search_input.tooltip = "Press Ctrl+K to focus • Esc to clear"
+                            yield self.search_input
+                            yield Button("×", id="clear-search-btn", classes="clear-button hidden", variant="default")
+                            yield Button("Search", id="rag-search-btn", classes="primary search-button-enhanced", variant="primary")
+                        yield LoadingIndicator(id="search-loading", classes="search-loading-indicator hidden")
                         
-                        # Source Selection
-                        with Vertical(classes="setting-group"):
-                            yield Label("Search Sources:", classes="setting-label")
-                            with Horizontal(classes="source-checkboxes-enhanced"):
-                                yield Checkbox("🎬 Media", value=True, id="source-media", classes="source-checkbox")
-                                yield Checkbox("💬 Chats", value=True, id="source-conversations", classes="source-checkbox")
-                                yield Checkbox("📝 Notes", value=True, id="source-notes", classes="source-checkbox")
+                        # Search history dropdown
+                        yield SearchHistoryDropdown(self.search_history_db)
+                
+                # Settings Section with better organization
+                with Container(classes="settings-section"):
+                    # Quick Settings Row
+                    with Container(classes="quick-settings-container"):
+                        yield Static("⚙️ Search Configuration", classes="settings-title")
+                        
+                        with Horizontal(classes="settings-grid"):
+                            # Search Mode Selection
+                            with Vertical(classes="setting-group"):
+                                yield Label("Search Mode:", classes="setting-label")
+                                yield Select(
+                                    options=[
+                                        ("📊 Plain RAG (Fast)", "plain"),
+                                        ("🧠 Semantic" if self.embeddings_available else "🧠 Semantic (Unavailable)", "full"),
+                                        ("🔀 Hybrid" if self.embeddings_available else "🔀 Hybrid (Unavailable)", "hybrid")
+                                    ],
+                                    value="plain",
+                                    id="search-mode-select",
+                                    classes="mode-select"
+                                )
+                        
+                            # Source Selection
+                            with Vertical(classes="setting-group"):
+                                yield Label("Search Sources:", classes="setting-label")
+                                with Horizontal(classes="source-checkboxes-enhanced"):
+                                    yield Checkbox("🎬 Media", value=True, id="source-media", classes="source-checkbox")
+                                    yield Checkbox("💬 Chats", value=True, id="source-conversations", classes="source-checkbox")
+                                    yield Checkbox("📝 Notes", value=True, id="source-notes", classes="source-checkbox")
                 
                 # Saved searches panel - moved here for better flow
                 yield SavedSearchesPanel()

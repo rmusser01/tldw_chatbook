@@ -240,7 +240,7 @@ class CCPWindow(Container):
                 yield Input(id="ccp-dict-entry-group-input", placeholder="e.g., character, global", classes="sidebar-input")
                 yield Label("Probability (0-100):", classes="sidebar-label")
                 yield Input(id="ccp-dict-entry-probability-input", placeholder="100", value="100", classes="sidebar-input")
-                with Horizontal(classes="ccp-dict-action-buttons"):
+                with Horizontal(classes="ccp-prompt-action-buttons"):
                     yield Button("Save Dictionary", id="ccp-editor-dict-save-button", variant="success", classes="sidebar-button")
                     yield Button("Cancel Edit", id="ccp-editor-dict-cancel-button", variant="error", classes="sidebar-button")
 

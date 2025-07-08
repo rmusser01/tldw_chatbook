@@ -2920,6 +2920,19 @@ async def handle_ccp_create_dictionary_button_pressed(app: 'TldwCli', event: But
     # Switch to dictionary editor view
     app.switch_ccp_center_view("dictionary_editor")
     
+    # Debug: Check if buttons exist
+    try:
+        save_btn = app.query_one("#ccp-editor-dict-save-button", Button)
+        cancel_btn = app.query_one("#ccp-editor-dict-cancel-button", Button)
+        logger.info(f"Save button found: {save_btn}, visible: {save_btn.display}")
+        logger.info(f"Cancel button found: {cancel_btn}, visible: {cancel_btn.display}")
+        
+        # Check parent container
+        dict_editor = app.query_one("#ccp-dictionary-editor-view")
+        logger.info(f"Dictionary editor view display: {dict_editor.display}")
+    except QueryError as e:
+        logger.error(f"Could not find buttons: {e}")
+    
     # Clear all fields for new dictionary
     try:
         app.query_one("#ccp-editor-dict-name-input", Input).value = ""
@@ -2938,6 +2951,14 @@ async def handle_ccp_create_dictionary_button_pressed(app: 'TldwCli', event: But
         app.query_one("#ccp-dict-entry-probability-input", Input).value = "100"
         
         app.notify("Ready to create new dictionary", severity="information")
+        
+        # Scroll the center pane to bottom to ensure buttons are visible
+        try:
+            center_pane = app.query_one("#conv-char-center-pane", VerticalScroll)
+            center_pane.scroll_end(animate=True)
+        except QueryError:
+            pass
+            
     except QueryError as e:
         logger.error(f"Failed to clear dictionary editor fields: {e}")
         app.notify("Error preparing dictionary editor", severity="error")

@@ -112,9 +112,9 @@
 /* Styles for the dynamic view areas within the CCP center pane */
 .ccp-view-area {
     width: 100%;
-    height: auto; /* Allow height to be determined by content */
-    /* overflow: auto; /* If content within might overflow */
-    overflow: auto;
+    height: 100%; /* Fill parent container */
+    overflow-y: auto; /* Allow vertical scrolling */
+    overflow-x: hidden; /* No horizontal scroll */
 }
 
 /* Add this class to hide elements */
@@ -267,6 +267,42 @@
     height: 3;
     margin-bottom: 1;
     margin-top: 1;
+}
+
+#ccp-dictionary-view {
+    display: none; /* Initially hidden by CSS */
+}
+
+#ccp-dictionary-editor-view {
+    display: none; /* Initially hidden by CSS */
+    layout: vertical; /* Important for stacking content */
+    width: 100%;
+    height: 100%; /* Fill the parent container */
+    padding-bottom: 1; /* Space at bottom for buttons */
+}
+
+/* Dictionary entries list */
+#ccp-editor-dict-entries-list {
+    height: 10; /* Fixed height to prevent it from expanding too much */
+    margin-bottom: 1;
+}
+
+/* Dictionary entry controls styling */
+.ccp-dict-entry-controls {
+    margin-top: 1;
+    margin-bottom: 1;
+    height: auto;
+    width: 100%;
+}
+
+.ccp-dict-entry-controls Button {
+    width: 1fr; /* Equal width buttons */
+    margin: 0 1 0 0; /* Right margin except last */
+    height: 3; /* Standard button height */
+}
+
+.ccp-dict-entry-controls Button:last-child {
+    margin-right: 0;
 }
 
 /* --- End of Conversations, Characters & Prompts Window specific layouts --- */

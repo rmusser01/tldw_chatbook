@@ -40,8 +40,8 @@
 .search-content-pane { /* Style for the right content display area in Search Tab */
     width: 1fr;
     height: 100%;
-    padding: 1 2;
-    overflow: auto; /* Changed from overflow-y: auto to allow both horizontal and vertical scrolling if needed */
+    padding: 0;
+    overflow: visible;
 }
 
 /* Generic style for all search view areas */
@@ -49,17 +49,21 @@
     height: 100%;
     width: 100%;
     display: block;
-    overflow: hidden;
+    overflow: visible;
 }
 
 /* Specific rule for the RAG Q&A view container */
 #search-view-rag-qa {
-    overflow: hidden;
+    overflow: visible;
+    height: 100%;
+    width: 100%;
 }
 
-/* Hide the SearchRAGWindow when parent is hidden */
+/* Ensure SearchRAGWindow fills its container properly */
 #search-view-rag-qa SearchRAGWindow {
     display: block;
+    height: 100%;
+    width: 100%;
 }
 
 /* -------------------------------------------------------------------------------------- */
@@ -175,6 +179,12 @@
 /* ----------------------------- ************************* ----------------------------- */
 
 /* Enhanced SearchRAGWindow Styles */
+.rag-search-main-wrapper {
+    height: 100%;
+    width: 100%;
+    background: $background;
+}
+
 .rag-search-container {
     height: 100%;
     width: 100%;
@@ -864,7 +874,7 @@
     height: 100%;
     width: 100%;
     display: block;
-    overflow: hidden;
+    overflow: visible;
 }
 
 /* --- Enhanced RAG Search UI Styles --- */
