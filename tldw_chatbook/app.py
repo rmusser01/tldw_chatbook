@@ -1469,7 +1469,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("logs", LogsWindow, "logs-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
-            ("coding", CodingWindow, "coding-window"),
             ("embeddings", EmbeddingsWindow, "embeddings-window"),
         ]
         
@@ -1546,7 +1545,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("logs", LogsWindow, "logs-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
-            ("coding", CodingWindow, "coding-window"),
             ("embeddings", EmbeddingsWindow, "embeddings-window"),
         ]
         

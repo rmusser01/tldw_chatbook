@@ -158,7 +158,9 @@ class ChatWindowEnhanced(Container):
         def on_file_selected(file_path: Optional[Path]):
             if file_path:
                 # Process the selected file
-                self.app_instance.call_after_refresh(self.process_file_attachment, str(file_path))
+                async def process_async():
+                    await self.process_file_attachment(str(file_path))
+                self.app_instance.call_later(process_async)
         
         # Create filter functions
         def create_filter(patterns: str):
@@ -235,39 +237,58 @@ class ChatWindowEnhanced(Container):
         from pathlib import Path
         
         try:
+            logger.info(f"Processing file attachment: {file_path}")
             # Process the file
             processed_file = await file_handler_registry.process_file(file_path)
+            logger.info(f"File processed successfully: {processed_file}")
             
             if processed_file.insert_mode == "inline":
                 # For text/code/data files, insert content directly into chat input
                 try:
+                    logger.info("Attempting to insert inline content")
                     chat_input = self.query_one("#chat-input", TextArea)
+                    logger.info(f"Found chat input: {chat_input}")
+                    
                     # Get current content
                     current_text = chat_input.text
+                    logger.info(f"Current text length: {len(current_text)}")
+                    
                     # Add file content
                     if current_text:
                         # If there's existing text, add a newline before the file content
                         new_text = current_text + "\n\n" + processed_file.content
                     else:
                         new_text = processed_file.content
+                    
+                    logger.info(f"New text length: {len(new_text)}")
                     # Update the text area
                     chat_input.text = new_text
-                    # Move cursor to end
-                    chat_input.cursor_location = len(new_text)
+                    # Move cursor to end - TextArea cursor_location needs (row, column) tuple
+                    try:
+                        # Calculate the row and column for the end position
+                        lines = new_text.split('\n')
+                        last_row = len(lines) - 1
+                        last_col = len(lines[-1]) if lines else 0
+                        chat_input.cursor_location = (last_row, last_col)
+                    except Exception as cursor_error:
+                        logger.warning(f"Failed to set cursor location: {cursor_error}")
                     
                     # Show notification
                     emoji_map = {
                         "text": "📄",
                         "code": "💻", 
                         "data": "📊",
+                        "pdf": "📕",
+                        "ebook": "📚",
+                        "document": "📝",
                         "file": "📎"
                     }
                     emoji = emoji_map.get(processed_file.file_type, "📎")
                     self.app_instance.notify(f"{emoji} {processed_file.display_name} content inserted")
                     
                 except Exception as e:
-                    logger.error(f"Failed to insert file content: {e}")
-                    self.app_instance.notify(f"Failed to insert content: {e}", severity="error")
+                    logger.error(f"Failed to insert file content: {e}", exc_info=True)
+                    self.app_instance.notify(f"Failed to insert content: {str(e)}", severity="error")
                     
             elif processed_file.insert_mode == "attachment":
                 # For images and other attachments, store as pending
@@ -306,7 +327,7 @@ class ChatWindowEnhanced(Container):
                 
         except Exception as e:
             logger.error(f"Error processing file attachment: {e}", exc_info=True)
-            self.app_instance.notify(f"Error processing file: {e}", severity="error")
+            self.app_instance.notify(f"Error processing file: {str(e)}", severity="error")
 
     async def handle_image_path_submitted(self, event):
         """Handle image path submission from file input field.
@@ -406,6 +427,14 @@ class ChatWindowEnhanced(Container):
                 )
                 yield TextArea(id="chat-input", classes="chat-input")
                 
+                yield Button(
+                    get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
+                            FALLBACK_SEND if self.is_send_button else FALLBACK_STOP),
+                    id="send-stop-chat",
+                    classes="send-button",
+                    tooltip="Send message" if self.is_send_button else "Stop generation"
+                )
+                
                 # Check config to see if attach button should be shown
                 from ..config import get_cli_setting
                 show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
@@ -416,14 +445,6 @@ class ChatWindowEnhanced(Container):
                         classes="action-button attach-button",
                         tooltip="Attach file"
                     )
-                
-                yield Button(
-                    get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
-                            FALLBACK_SEND if self.is_send_button else FALLBACK_STOP),
-                    id="send-stop-chat",
-                    classes="send-button",
-                    tooltip="Send message" if self.is_send_button else "Stop generation"
-                )
                 yield Button(
                     "💡", 
                     id="respond-for-me-button", 
@@ -463,16 +484,16 @@ class ChatWindowEnhanced(Container):
                 
                 # Find the input area and add the button
                 input_area = self.query_one("#chat-input-area", Horizontal)
-                chat_input = self.query_one("#chat-input", TextArea)
+                send_button = self.query_one("#send-stop-chat", Button)
                 
-                # Create and mount the button after the chat input
+                # Create and mount the button after the send button
                 attach_button = Button(
                     "📎", 
                     id="attach-image", 
                     classes="action-button attach-button",
                     tooltip="Attach file"
                 )
-                await input_area.mount(attach_button, after=chat_input)
+                await input_area.mount(attach_button, after=send_button)
                 
                 # Re-arrange the buttons to maintain order
                 await self._rearrange_chat_buttons()
@@ -499,13 +520,15 @@ class ChatWindowEnhanced(Container):
         try:
             input_area = self.query_one("#chat-input-area", Horizontal)
             
-            # Get all the buttons that should be after the attach button
+            # Get all the buttons in the desired order
             send_stop_button = self.query_one("#send-stop-chat", Button)
+            attach_button = self.query_one("#attach-image", Button)
             respond_button = self.query_one("#respond-for-me-button", Button)
             right_sidebar_button = self.query_one("#toggle-chat-right-sidebar", Button)
             
             # Move them to the end in the correct order
             await send_stop_button.move(parent=input_area, after=-1)
+            await attach_button.move(parent=input_area, after=-1)
             await respond_button.move(parent=input_area, after=-1)
             await right_sidebar_button.move(parent=input_area, after=-1)
             

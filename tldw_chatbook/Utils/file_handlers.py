@@ -333,54 +333,16 @@ class DocumentFileHandler(FileHandler):
         return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
     
     async def process(self, file_path: Path) -> ProcessedFile:
-        """Process document file for database ingestion."""
-        try:
-            # Import the ingestion function
-            from ..Local_Ingestion.local_file_ingestion import ingest_local_file
-            from ..DB.Client_Media_DB_v2 import MediaDatabase
-            from ..config import get_cli_setting
-            
-            # Get database path
-            db_config = get_cli_setting("database", {})
-            db_path = db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")
-            db_path = Path(db_path).expanduser()
-            
-            # Initialize database
-            media_db = MediaDatabase(str(db_path), client_id="file_handler")
-            
-            try:
-                # Process the document
-                result = ingest_local_file(
-                    file_path=file_path,
-                    media_db=media_db,
-                    title=file_path.stem,
-                    keywords=['document', file_path.stem, file_path.suffix[1:]],
-                    chunk_options={
-                        'method': 'paragraphs',
-                        'size': 500,
-                        'overlap': 200
-                    }
-                )
-                
-                # Return a reference to the processed file
-                chunks = result.get('chunks_created', 0)
-                return ProcessedFile(
-                    content=f"[Document Processed: {file_path.name} - {chunks} chunks created]",
-                    display_name=file_path.name,
-                    insert_mode="inline",
-                    file_type="document"
-                )
-            finally:
-                media_db.close_connection()
-                
-        except Exception as e:
-            logger.error(f"Failed to process document {file_path}: {e}")
-            return ProcessedFile(
-                content=f"[Error processing document: {file_path.name} - {str(e)}]",
-                display_name=file_path.name,
-                insert_mode="inline",
-                file_type="document"
-            )
+        """Process document file - just return a placeholder for now."""
+        # For now, we'll just indicate that document files should be processed separately
+        # The actual ingestion should happen through the dedicated ingestion UI/API
+        return ProcessedFile(
+            content=f"[Document File: {file_path.name}]\n"
+                   f"To process this document file, please use the Media Ingestion tab.",
+            display_name=file_path.name,
+            insert_mode="inline",
+            file_type="document"
+        )
 
 
 class EbookFileHandler(FileHandler):
@@ -392,54 +354,16 @@ class EbookFileHandler(FileHandler):
         return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
     
     async def process(self, file_path: Path) -> ProcessedFile:
-        """Process ebook file for database ingestion."""
-        try:
-            # Import the ingestion function
-            from ..Local_Ingestion.local_file_ingestion import ingest_local_file
-            from ..DB.Client_Media_DB_v2 import MediaDatabase
-            from ..config import get_cli_setting
-            
-            # Get database path
-            db_config = get_cli_setting("database", {})
-            db_path = db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")
-            db_path = Path(db_path).expanduser()
-            
-            # Initialize database
-            media_db = MediaDatabase(str(db_path), client_id="file_handler")
-            
-            try:
-                # Process the ebook
-                result = ingest_local_file(
-                    file_path=file_path,
-                    media_db=media_db,
-                    title=file_path.stem,
-                    keywords=['ebook', file_path.stem, file_path.suffix[1:]],
-                    chunk_options={
-                        'method': 'ebook_chapters',
-                        'size': 1000,
-                        'overlap': 200
-                    }
-                )
-                
-                # Return a reference to the processed file
-                chunks = result.get('chunks_created', 0)
-                return ProcessedFile(
-                    content=f"[Ebook Processed: {file_path.name} - {chunks} chunks created]",
-                    display_name=file_path.name,
-                    insert_mode="inline",
-                    file_type="ebook"
-                )
-            finally:
-                media_db.close_connection()
-                
-        except Exception as e:
-            logger.error(f"Failed to process ebook {file_path}: {e}")
-            return ProcessedFile(
-                content=f"[Error processing ebook: {file_path.name} - {str(e)}]",
-                display_name=file_path.name,
-                insert_mode="inline",
-                file_type="ebook"
-            )
+        """Process ebook file - just return a placeholder for now."""
+        # For now, we'll just indicate that ebook files should be processed separately
+        # The actual ingestion should happen through the dedicated ingestion UI/API
+        return ProcessedFile(
+            content=f"[Ebook File: {file_path.name}]\n"
+                   f"To process this ebook file, please use the Media Ingestion tab.",
+            display_name=file_path.name,
+            insert_mode="inline",
+            file_type="ebook"
+        )
 
 
 class PlaintextDatabaseHandler(FileHandler):
@@ -462,68 +386,29 @@ class PlaintextDatabaseHandler(FileHandler):
             # Check file size
             if file_path.stat().st_size > self.MAX_FILE_SIZE:
                 return ProcessedFile(
-                    content=f"[File too large for database: {file_path.name} ({file_path.stat().st_size / 1024 / 1024:.1f}MB)]\nMax size: 10MB",
+                    content=f"[File too large: {file_path.name} ({file_path.stat().st_size / 1024 / 1024:.1f}MB)]\n"
+                           f"To process large text files, please use the Media Ingestion tab.",
                     display_name=file_path.name,
                     insert_mode="inline",
                     file_type="text"
                 )
             
-            # Import the ingestion function
-            from ..Local_Ingestion.local_file_ingestion import ingest_local_file
-            from ..DB.Client_Media_DB_v2 import MediaDatabase
-            from ..config import get_cli_setting
-            
-            # Get database path
-            db_config = get_cli_setting("database", {})
-            db_path = db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")
-            db_path = Path(db_path).expanduser()
-            
-            # Initialize database
-            media_db = MediaDatabase(str(db_path), client_id="file_handler")
-            
-            try:
-                # Process the plaintext file
-                result = ingest_local_file(
-                    file_path=file_path,
-                    media_db=media_db,
-                    title=file_path.stem,
-                    keywords=['plaintext', file_path.stem, file_path.suffix[1:]],
-                    chunk_options={
-                        'method': 'paragraphs',
-                        'size': 500,
-                        'overlap': 200
-                    }
-                )
-                
-                # Return a reference to the processed file
-                chunks = result.get('chunks_created', 0)
-                return ProcessedFile(
-                    content=f"[Text File Processed: {file_path.name} - {chunks} chunks created]\nStored in database for RAG search.",
-                    display_name=file_path.name,
-                    insert_mode="inline",
-                    file_type="text"
-                )
-            finally:
-                media_db.close_connection()
+            # For large text files, suggest using the ingestion tab
+            return ProcessedFile(
+                content=f"[Large Text File: {file_path.name} ({file_path.stat().st_size / 1024:.1f}KB)]\n"
+                       f"To process this file for RAG search, please use the Media Ingestion tab.",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="text"
+            )
         except Exception as e:
-            logger.error(f"Failed to process plaintext for database {file_path}: {e}")
-            # Fall back to inline insertion
-            try:
-                content = file_path.read_text(encoding='utf-8', errors='replace')
-                formatted_content = f"--- Contents of {file_path.name} ---\n{content}\n--- End of {file_path.name} ---"
-                return ProcessedFile(
-                    content=formatted_content,
-                    display_name=file_path.name,
-                    insert_mode="inline",
-                    file_type="text"
-                )
-            except:
-                return ProcessedFile(
-                    content=f"[Error processing text file: {file_path.name}]",
-                    display_name=file_path.name,
-                    insert_mode="inline",
-                    file_type="text"
-                )
+            logger.error(f"Failed to check text file {file_path}: {e}")
+            return ProcessedFile(
+                content=f"[Error checking text file: {file_path.name}]",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="text"
+            )
 
 
 class DefaultFileHandler(FileHandler):

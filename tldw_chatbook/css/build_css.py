@@ -32,6 +32,7 @@ CSS_MODULES = [
     "components/_dialogs.tcss",
     "components/_status.tcss",
     "components/_widgets.tcss",
+    "components/stats_screen.css",
     
     # 4. Features - Application Specific (depends on all above)
     "features/_chat.tcss",

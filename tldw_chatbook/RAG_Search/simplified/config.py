@@ -81,11 +81,11 @@ class SearchConfig:
 class QueryExpansionConfig:
     """Configuration for query expansion/rewriting."""
     enabled: bool = False
-    method: str = "llm"  # "llm", "local_llm", "keywords"
+    method: str = "llm"  # "llm", "local_llm", "llamafile", "keywords"
     max_sub_queries: int = 3
     llm_provider: str = "openai"  # Which LLM provider to use
     llm_model: str = "gpt-3.5-turbo"  # Model for query expansion
-    local_model: str = "qwen2.5:0.5b"  # For Ollama/local models
+    local_model: str = "Qwen3-0.6B-Q6_K.gguf"  # For Ollama/local models/llamafile
     expansion_prompt_template: str = "default"  # Template name or custom prompt
     combine_results: bool = True  # Combine results from all sub-queries
     cache_expansions: bool = True  # Cache expanded queries
@@ -616,11 +616,11 @@ reranker_top_k = 5
 # Query expansion configuration
 [AppRAGSearchConfig.rag.query_expansion]
 enabled = false
-method = "llm"  # "llm", "local_llm", "keywords"
+method = "llm"  # "llm", "local_llm", "llamafile", "keywords"
 max_sub_queries = 3
 llm_provider = "openai"
 llm_model = "gpt-3.5-turbo"
-local_model = "qwen2.5:0.5b"
+local_model = "Qwen3-0.6B-Q6_K.gguf"  # For Ollama/llamafile
 expansion_prompt_template = "default"
 combine_results = true
 cache_expansions = true

@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 from tldw_chatbook.RAG_Search.simplified.config import QueryExpansionConfig
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import chat_with_openai, chat_with_anthropic, chat_with_deepseek
-from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_ollama
+from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_ollama, chat_with_local_llm
 from tldw_chatbook.config import get_cli_setting
 
 logger = logging.getLogger(__name__)
@@ -112,6 +112,8 @@ Original query: {query}"""
                 expansions = await self._expand_with_llm(query)
             elif self.config.method == "local_llm":
                 expansions = await self._expand_with_local_llm(query)
+            elif self.config.method == "llamafile":
+                expansions = await self._expand_with_llamafile(query)
             elif self.config.method == "keywords":
                 expansions = self._expand_with_keywords(query)
             else:
@@ -240,6 +242,41 @@ Original query: {query}"""
                 
         except Exception as e:
             logger.error(f"Local LLM call failed: {e}")
+        
+        return []
+    
+    async def _expand_with_llamafile(self, query: str) -> List[str]:
+        """Expand query using llamafile local server."""
+        # Get the prompt template
+        prompt_template = self._get_prompt_template()
+        prompt = prompt_template.format(
+            query=query,
+            max_queries=self.config.max_sub_queries
+        )
+        
+        # Prepare messages
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that generates alternative search queries."},
+            {"role": "user", "content": prompt}
+        ]
+        
+        try:
+            # Call llamafile via chat_with_local_llm
+            # Use the local_model field for the model name
+            response = await asyncio.to_thread(
+                chat_with_local_llm,
+                messages,
+                model=self.config.local_model,  # Use local_model for llamafile
+                temp=0.7,
+                max_tokens=200
+            )
+            
+            # Parse the response
+            if response:
+                return self._parse_llm_response(response)
+                
+        except Exception as e:
+            logger.error(f"Llamafile call failed: {e}")
         
         return []
     
