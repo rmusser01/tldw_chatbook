@@ -172,6 +172,14 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 yield Checkbox("Conversations", id=f"{id_prefix}-rag-search-conversations-checkbox", value=False)
                 yield Checkbox("Notes", id=f"{id_prefix}-rag-search-notes-checkbox", value=False)
             
+            # Keyword filter
+            yield Static("Filter by Keywords", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-keyword-filter",
+                placeholder="Enter keywords (comma-separated)",
+                classes="sidebar-input rag-keyword-filter"
+            )
+            
             # Basic RAG parameters
             yield Static("Top Results", classes="sidebar-label")
             yield Input(

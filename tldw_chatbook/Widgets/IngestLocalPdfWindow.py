@@ -9,6 +9,7 @@ from textual.widgets import (
     Static, Button, Input, Select, Checkbox, TextArea, Label, 
     ListView, ListItem, LoadingIndicator, Collapsible
 )
+from ..config import get_media_ingestion_defaults
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -29,6 +30,9 @@ class IngestLocalPdfWindow(Vertical):
         analysis_provider_options = [(name, name) for name in analysis_api_providers if name]
         if not analysis_provider_options:
             analysis_provider_options = [("No Providers Configured", Select.BLANK)]
+        
+        # Get PDF-specific default chunking settings from config
+        pdf_defaults = get_media_ingestion_defaults("pdf")
         
         with VerticalScroll(classes="ingest-form-scrollable"):
             yield Static("Local PDF Processing", classes="sidebar-title")
@@ -84,18 +88,27 @@ class IngestLocalPdfWindow(Vertical):
                     ("ebook_chapters", "ebook_chapters"),
                     ("json", "json")
                 ]
-                yield Select(chunk_method_options, id="local-chunk-method-pdf", prompt="Default (per type)")
+                yield Select(chunk_method_options, id="local-chunk-method-pdf", 
+                            value=pdf_defaults.get("chunk_method", "semantic"),
+                            prompt="Default (per type)")
                 with Horizontal(classes="ingest-form-row"):
                     with Vertical(classes="ingest-form-col"):
                         yield Label("Chunk Size:")
-                        yield Input("500", id="local-chunk-size-pdf", type="integer")
+                        yield Input(str(pdf_defaults.get("chunk_size", 500)), 
+                                   id="local-chunk-size-pdf", type="integer")
                     with Vertical(classes="ingest-form-col"):
                         yield Label("Chunk Overlap:")
-                        yield Input("200", id="local-chunk-overlap-pdf", type="integer")
+                        yield Input(str(pdf_defaults.get("chunk_overlap", 200)), 
+                                   id="local-chunk-overlap-pdf", type="integer")
                 yield Label("Chunk Language (e.g., 'en', optional):")
-                yield Input(id="local-chunk-lang-pdf", placeholder="Defaults to media language")
-                yield Checkbox("Use Adaptive Chunking", False, id="local-adaptive-chunking-pdf")
-                yield Checkbox("Use Multi-level Chunking", False, id="local-multi-level-chunking-pdf")
+                yield Input(pdf_defaults.get("chunk_language", ""), id="local-chunk-lang-pdf", 
+                           placeholder="Defaults to media language")
+                yield Checkbox("Use Adaptive Chunking", 
+                              pdf_defaults.get("use_adaptive_chunking", False), 
+                              id="local-adaptive-chunking-pdf")
+                yield Checkbox("Use Multi-level Chunking", 
+                              pdf_defaults.get("use_multi_level_chunking", False), 
+                              id="local-multi-level-chunking-pdf")
                 yield Label("Custom Chapter Pattern (Regex, optional):")
                 yield Input(id="local-custom-chapter-pattern-pdf", placeholder="e.g., ^Chapter\\s+\\d+")
             

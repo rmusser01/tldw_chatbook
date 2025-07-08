@@ -9,6 +9,7 @@ from textual.widgets import (
     Static, Button, Input, Select, Checkbox, TextArea, Label, 
     ListView, ListItem, LoadingIndicator, Collapsible
 )
+from ..config import get_media_ingestion_defaults
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -29,6 +30,9 @@ class IngestLocalDocumentWindow(Vertical):
         analysis_provider_options = [(name, name) for name in analysis_api_providers if name]
         if not analysis_provider_options:
             analysis_provider_options = [("No Providers Configured", Select.BLANK)]
+        
+        # Get document-specific default chunking settings from config
+        document_defaults = get_media_ingestion_defaults("document")
         
         with VerticalScroll(classes="ingest-form-scrollable"):
             yield Static("Local Document Processing", classes="sidebar-title")
@@ -95,18 +99,26 @@ class IngestLocalDocumentWindow(Vertical):
                     ("sliding_window", "sliding_window")
                 ]
                 yield Select(chunk_method_options, id="local-chunk-method-document", 
-                            value="sentences", prompt="Select chunking method...")
+                            value=document_defaults.get("chunk_method", "sentences"),
+                            prompt="Select chunking method...")
                 with Horizontal(classes="ingest-form-row"):
                     with Vertical(classes="ingest-form-col"):
                         yield Label("Chunk Size:")
-                        yield Input("1500", id="local-chunk-size-document", type="integer")
+                        yield Input(str(document_defaults.get("chunk_size", 1500)), 
+                                   id="local-chunk-size-document", type="integer")
                     with Vertical(classes="ingest-form-col"):
                         yield Label("Chunk Overlap:")
-                        yield Input("100", id="local-chunk-overlap-document", type="integer")
+                        yield Input(str(document_defaults.get("chunk_overlap", 100)), 
+                                   id="local-chunk-overlap-document", type="integer")
                 yield Label("Chunk Language (e.g., 'en', optional):")
-                yield Input(id="local-chunk-lang-document", placeholder="Defaults to media language")
-                yield Checkbox("Use Adaptive Chunking", False, id="local-adaptive-chunking-document")
-                yield Checkbox("Use Multi-level Chunking", False, id="local-multi-level-chunking-document")
+                yield Input(document_defaults.get("chunk_language", ""), id="local-chunk-lang-document", 
+                           placeholder="Defaults to media language")
+                yield Checkbox("Use Adaptive Chunking", 
+                              document_defaults.get("use_adaptive_chunking", False), 
+                              id="local-adaptive-chunking-document")
+                yield Checkbox("Use Multi-level Chunking", 
+                              document_defaults.get("use_multi_level_chunking", False), 
+                              id="local-multi-level-chunking-document")
             
             # --- Document-Specific Options ---
             with Collapsible(title="Document-Specific Options", collapsed=True):

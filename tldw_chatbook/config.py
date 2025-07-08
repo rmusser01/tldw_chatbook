@@ -127,6 +127,49 @@ DEFAULT_RAG_SEARCH_CONFIG = {
     }
 }
 
+DEFAULT_MEDIA_INGESTION_CONFIG = {
+    "pdf": {
+        "chunk_method": "semantic",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    },
+    "ebook": {
+        "chunk_method": "ebook_chapters",
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    },
+    "document": {
+        "chunk_method": "sentences",
+        "chunk_size": 1500,
+        "chunk_overlap": 100,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    },
+    "plaintext": {
+        "chunk_method": "paragraphs",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    },
+    "web_article": {
+        "chunk_method": "paragraphs",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    }
+}
+
 def load_openai_mappings() -> Dict:
     current_file_path = Path(__file__).resolve()
     api_component_root = current_file_path.parent.parent.parent
@@ -2107,6 +2150,39 @@ def get_cli_setting(section: str, key: str, default: Any = None) -> Any:
         return section_data.get(key, default)
     # If section is not a dict or not found, return default
     return default
+
+
+def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
+    """
+    Get default chunking settings for a specific media type.
+    
+    Args:
+        media_type: Type of media ('pdf', 'ebook', 'document', 'plaintext', 'web_article')
+        
+    Returns:
+        Dictionary containing chunking configuration for the media type
+    """
+    # First check if user has custom settings in config
+    config = load_cli_config_and_ensure_existence()
+    media_ingestion_config = config.get("media_ingestion", {})
+    
+    # Get media-specific config if it exists
+    if media_type in media_ingestion_config and isinstance(media_ingestion_config[media_type], dict):
+        # Use deep merge to combine with defaults, allowing partial overrides
+        return deep_merge_dicts(
+            DEFAULT_MEDIA_INGESTION_CONFIG.get(media_type, {}),
+            media_ingestion_config[media_type]
+        )
+    
+    # Fall back to hardcoded defaults
+    return DEFAULT_MEDIA_INGESTION_CONFIG.get(media_type, {
+        "chunk_method": "paragraphs",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    })
 
 
 # --- CLI Providers and Models Getter ---

@@ -1228,6 +1228,18 @@ class IngestWindow(Container):
             keywords_text = self.query_one("#ingest-local-plaintext-keywords", TextArea).text.strip()
             keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
             
+            # Get chunking options
+            perform_chunking = self.query_one("#ingest-local-plaintext-perform-chunking", Checkbox).value
+            chunk_method = self.query_one("#ingest-local-plaintext-chunk-method", Select).value
+            chunk_size = int(self.query_one("#ingest-local-plaintext-chunk-size", Input).value or "500")
+            chunk_overlap = int(self.query_one("#ingest-local-plaintext-chunk-overlap", Input).value or "200")
+            
+            # If chunk method is Select.BLANK (Default per type), get media-specific defaults
+            if chunk_method == Select.BLANK:
+                from ..config import get_media_ingestion_defaults
+                plaintext_defaults = get_media_ingestion_defaults("plaintext")
+                chunk_method = plaintext_defaults.get("chunk_method", "paragraphs")
+            
             # Check if media DB is available
             if not self.app_instance.media_db:
                 logger.error("Media database not initialized")
@@ -1268,6 +1280,13 @@ class IngestWindow(Container):
                     # Use filename as title if no override
                     title = title_override or file_path.stem
                     
+                    # Build chunk options dict
+                    chunk_options = {
+                        'method': chunk_method,
+                        'max_size': chunk_size,
+                        'overlap': chunk_overlap
+                    } if perform_chunking else None
+                    
                     # Add to media database
                     media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
                         url=str(file_path),
@@ -1276,6 +1295,7 @@ class IngestWindow(Container):
                         content=content,
                         keywords=keywords,
                         author=author,
+                        chunk_options=chunk_options,
                         ingestion_date=None,  # Will use current time
                         overwrite=False
                     )
@@ -1400,6 +1420,18 @@ class IngestWindow(Container):
             keywords_text = self.query_one("#ingest-local-web-keywords", TextArea).text.strip()
             keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
             
+            # Get chunking options
+            perform_chunking = self.query_one("#ingest-local-web-perform-chunking", Checkbox).value
+            chunk_method = self.query_one("#ingest-local-web-chunk-method", Select).value
+            chunk_size = int(self.query_one("#ingest-local-web-chunk-size", Input).value or "500")
+            chunk_overlap = int(self.query_one("#ingest-local-web-chunk-overlap", Input).value or "200")
+            
+            # If chunk method is Select.BLANK (Default per type), get media-specific defaults
+            if chunk_method == Select.BLANK:
+                from ..config import get_media_ingestion_defaults
+                web_article_defaults = get_media_ingestion_defaults("web_article")
+                chunk_method = web_article_defaults.get("chunk_method", "paragraphs")
+            
             # Parse cookies if provided
             custom_cookies = None
             if cookies_str:
@@ -1424,7 +1456,11 @@ class IngestWindow(Container):
                 'author_override': author_override,
                 'keywords': keywords,
                 'js_render': js_render,
-                'css_selector': css_selector
+                'css_selector': css_selector,
+                'perform_chunking': perform_chunking,
+                'chunk_method': chunk_method,
+                'chunk_size': chunk_size,
+                'chunk_overlap': chunk_overlap
             }
             
             # Add stop button
@@ -1714,6 +1750,12 @@ class IngestWindow(Container):
         is_retry = data.get('is_retry', False)
         max_retries = data.get('max_retries', 2)
         
+        # Extract chunking options
+        perform_chunking = data.get('perform_chunking', True)
+        chunk_method = data.get('chunk_method', 'paragraphs')
+        chunk_size = data.get('chunk_size', 500)
+        chunk_overlap = data.get('chunk_overlap', 200)
+        
         # Import scraping function
         from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
         
@@ -1768,6 +1810,13 @@ class IngestWindow(Container):
                             'error': 'No content found'
                         }
                     
+                    # Build chunk options dict
+                    chunk_options = {
+                        'method': chunk_method,
+                        'max_size': chunk_size,
+                        'overlap': chunk_overlap
+                    } if perform_chunking else None
+                    
                     # Add to media database
                     media_id, media_uuid, msg = self.app_instance.media_db.add_media_with_keywords(
                         url=url,
@@ -1776,6 +1825,7 @@ class IngestWindow(Container):
                         content=content,
                         keywords=keywords,
                         author=author,
+                        chunk_options=chunk_options,
                         metadata={
                             'publication_date': article_data.get('date'),
                             'extraction_method': 'trafilatura',
@@ -2214,6 +2264,12 @@ class IngestWindow(Container):
             chunk_size = int(self.query_one("#local-chunk-size-pdf", Input).value or "500")
             chunk_overlap = int(self.query_one("#local-chunk-overlap-pdf", Input).value or "200")
             
+            # If chunk method is Select.BLANK (Default per type), get media-specific defaults
+            if chunk_method == Select.BLANK:
+                from ..config import get_media_ingestion_defaults
+                pdf_defaults = get_media_ingestion_defaults("pdf")
+                chunk_method = pdf_defaults.get("chunk_method", "semantic")
+            
             # Check if media DB is available
             if not self.app_instance.media_db:
                 logger.error("Media database not initialized")
@@ -2242,7 +2298,7 @@ class IngestWindow(Container):
                     
                     # Build chunk options dict
                     chunk_options = {
-                        'method': chunk_method if chunk_method != Select.BLANK else 'recursive',
+                        'method': chunk_method,  # chunk_method already has the proper default
                         'max_size': chunk_size,
                         'overlap': chunk_overlap
                     } if perform_chunking else None
@@ -2418,6 +2474,12 @@ class IngestWindow(Container):
             chunk_size = int(self.query_one("#local-chunk-size-ebook", Input).value or "500")
             chunk_overlap = int(self.query_one("#local-chunk-overlap-ebook", Input).value or "200")
             
+            # If chunk method is Select.BLANK (Default per type), get media-specific defaults
+            if chunk_method == Select.BLANK:
+                from ..config import get_media_ingestion_defaults
+                ebook_defaults = get_media_ingestion_defaults("ebook")
+                chunk_method = ebook_defaults.get("chunk_method", "ebook_chapters")
+            
             # Check if media DB is available
             if not self.app_instance.media_db:
                 logger.error("Media database not initialized")
@@ -2447,7 +2509,7 @@ class IngestWindow(Container):
                     # Process ebook using local library
                     # Build chunk options dict
                     chunk_options = {
-                        'method': chunk_method if chunk_method != Select.BLANK else 'ebook_chapters',
+                        'method': chunk_method,  # chunk_method already has the proper default
                         'max_size': chunk_size,
                         'overlap': chunk_overlap
                     } if perform_chunking else None
@@ -2617,6 +2679,12 @@ class IngestWindow(Container):
             chunk_method = self.query_one("#local-chunk-method-document", Select).value
             chunk_size = int(self.query_one("#local-chunk-size-document", Input).value or "1500")
             chunk_overlap = int(self.query_one("#local-chunk-overlap-document", Input).value or "100")
+            
+            # If chunk method is Select.BLANK (Default per type), get media-specific defaults
+            if chunk_method == Select.BLANK:
+                from ..config import get_media_ingestion_defaults
+                document_defaults = get_media_ingestion_defaults("document")
+                chunk_method = document_defaults.get("chunk_method", "sentences")
             
             # Get document-specific options
             extract_tables = self.query_one("#local-extract-tables-document", Checkbox).value

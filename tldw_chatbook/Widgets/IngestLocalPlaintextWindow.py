@@ -9,6 +9,7 @@ from textual.widgets import (
     Static, Button, Input, Select, Checkbox, TextArea, Label, 
     ListView, ListItem, LoadingIndicator, Collapsible
 )
+from ..config import get_media_ingestion_defaults
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -23,6 +24,9 @@ class IngestLocalPlaintextWindow(Vertical):
     
     def compose(self) -> ComposeResult:
         """Compose the plaintext ingestion form."""
+        # Get plaintext-specific default chunking settings from config
+        plaintext_defaults = get_media_ingestion_defaults("plaintext")
+        
         with VerticalScroll(classes="ingest-form-scrollable"):
             yield Static("Text File Selection", classes="sidebar-title")
             
@@ -83,6 +87,40 @@ class IngestLocalPlaintextWindow(Vertical):
                 placeholder="e.g., \\n\\n+ for double newlines",
                 tooltip="Regular expression pattern for custom text splitting"
             )
+            
+            # Chunking Options
+            with Collapsible(title="Chunking Options", collapsed=True, id="ingest-local-plaintext-chunking-collapsible"):
+                yield Checkbox("Perform Chunking", True, id="ingest-local-plaintext-perform-chunking")
+                yield Label("Chunking Method:")
+                chunk_method_options = [
+                    ("paragraphs", "paragraphs"),
+                    ("sentences", "sentences"),
+                    ("tokens", "tokens"),
+                    ("words", "words"),
+                    ("sliding_window", "sliding_window")
+                ]
+                yield Select(chunk_method_options, id="ingest-local-plaintext-chunk-method", 
+                            value=plaintext_defaults.get("chunk_method", "paragraphs"),
+                            prompt="Select chunking method...")
+                with Horizontal(classes="ingest-form-row"):
+                    with Vertical(classes="ingest-form-col"):
+                        yield Label("Chunk Size:")
+                        yield Input(str(plaintext_defaults.get("chunk_size", 500)), 
+                                   id="ingest-local-plaintext-chunk-size", type="integer")
+                    with Vertical(classes="ingest-form-col"):
+                        yield Label("Chunk Overlap:")
+                        yield Input(str(plaintext_defaults.get("chunk_overlap", 200)), 
+                                   id="ingest-local-plaintext-chunk-overlap", type="integer")
+                yield Label("Chunk Language (e.g., 'en', optional):")
+                yield Input(plaintext_defaults.get("chunk_language", ""), 
+                           id="ingest-local-plaintext-chunk-lang", 
+                           placeholder="Defaults to media language")
+                yield Checkbox("Use Adaptive Chunking", 
+                              plaintext_defaults.get("use_adaptive_chunking", False), 
+                              id="ingest-local-plaintext-adaptive-chunking")
+                yield Checkbox("Use Multi-level Chunking", 
+                              plaintext_defaults.get("use_multi_level_chunking", False), 
+                              id="ingest-local-plaintext-multi-level-chunking")
             
             # Database Options
             yield Static("Database Options", classes="sidebar-title")

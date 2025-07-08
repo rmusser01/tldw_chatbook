@@ -11,6 +11,7 @@ from textual.widgets import (
 )
 from textual.reactive import reactive
 from textual.widget import Widget
+from ..config import get_media_ingestion_defaults
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -29,6 +30,9 @@ class IngestLocalWebArticleWindow(Vertical):
     
     def compose(self) -> ComposeResult:
         """Compose the web article ingestion form."""
+        # Get web article-specific default chunking settings from config
+        web_article_defaults = get_media_ingestion_defaults("web_article")
+        
         with VerticalScroll(classes="ingest-form-scrollable"):
             # Scraping Mode Selection
             yield Static("Scraping Mode", classes="sidebar-title")
@@ -166,6 +170,40 @@ class IngestLocalWebArticleWindow(Vertical):
                 )
                 yield Label("Custom Analysis Prompt (optional):")
                 yield TextArea(id="ingest-local-web-custom-prompt", classes="ingest-textarea-small")
+            
+            # Chunking Options
+            with Collapsible(title="Chunking Options", collapsed=True, id="ingest-local-web-chunking-collapsible"):
+                yield Checkbox("Perform Chunking", True, id="ingest-local-web-perform-chunking")
+                yield Label("Chunking Method:")
+                chunk_method_options = [
+                    ("paragraphs", "paragraphs"),
+                    ("sentences", "sentences"),
+                    ("tokens", "tokens"),
+                    ("words", "words"),
+                    ("sliding_window", "sliding_window")
+                ]
+                yield Select(chunk_method_options, id="ingest-local-web-chunk-method", 
+                            value=web_article_defaults.get("chunk_method", "paragraphs"),
+                            prompt="Select chunking method...")
+                with Horizontal(classes="ingest-form-row"):
+                    with Vertical(classes="ingest-form-col"):
+                        yield Label("Chunk Size:")
+                        yield Input(str(web_article_defaults.get("chunk_size", 500)), 
+                                   id="ingest-local-web-chunk-size", type="integer")
+                    with Vertical(classes="ingest-form-col"):
+                        yield Label("Chunk Overlap:")
+                        yield Input(str(web_article_defaults.get("chunk_overlap", 200)), 
+                                   id="ingest-local-web-chunk-overlap", type="integer")
+                yield Label("Chunk Language (e.g., 'en', optional):")
+                yield Input(web_article_defaults.get("chunk_language", ""), 
+                           id="ingest-local-web-chunk-lang", 
+                           placeholder="Defaults to media language")
+                yield Checkbox("Use Adaptive Chunking", 
+                              web_article_defaults.get("use_adaptive_chunking", False), 
+                              id="ingest-local-web-adaptive-chunking")
+                yield Checkbox("Use Multi-level Chunking", 
+                              web_article_defaults.get("use_multi_level_chunking", False), 
+                              id="ingest-local-web-multi-level-chunking")
             
             # Action Section
             yield Button("Scrape Articles", id="ingest-local-web-process", variant="primary", classes="ingest-submit-button")

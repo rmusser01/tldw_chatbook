@@ -802,6 +802,54 @@ chat_context_limit = 10
 
 
 # --- Model Capabilities Configuration ---
+# ==========================================================
+# Media Ingestion Settings
+# ==========================================================
+[media_ingestion]
+# Default chunking settings for different media types during local ingestion
+# These settings are used when "Default (per type)" is selected in the UI
+
+[media_ingestion.pdf]
+chunk_method = "semantic"       # Options: semantic, tokens, paragraphs, sentences, words
+chunk_size = 500               # Size of each chunk
+chunk_overlap = 200            # Overlap between chunks
+use_adaptive_chunking = false  # Enable adaptive chunking
+use_multi_level_chunking = false # Enable multi-level chunking
+chunk_language = ""            # Language code for semantic chunking (e.g., "en")
+
+[media_ingestion.ebook]
+chunk_method = "ebook_chapters" # Options: ebook_chapters, tokens, paragraphs, sentences, words
+chunk_size = 1000              # Size of each chunk (if not using chapters)
+chunk_overlap = 200            # Overlap between chunks
+use_adaptive_chunking = false  # Enable adaptive chunking
+use_multi_level_chunking = false # Enable multi-level chunking
+chunk_language = ""            # Language code for semantic chunking
+
+[media_ingestion.document]
+chunk_method = "sentences"      # Options: semantic, tokens, paragraphs, sentences, words
+chunk_size = 1500              # Size of each chunk
+chunk_overlap = 100            # Overlap between chunks
+use_adaptive_chunking = false  # Enable adaptive chunking
+use_multi_level_chunking = false # Enable multi-level chunking
+chunk_language = ""            # Language code for semantic chunking
+
+[media_ingestion.plaintext]
+chunk_method = "paragraphs"     # Options: paragraphs, sentences, tokens, words
+chunk_size = 500               # Size of each chunk
+chunk_overlap = 200            # Overlap between chunks
+use_adaptive_chunking = false  # Enable adaptive chunking
+use_multi_level_chunking = false # Enable multi-level chunking
+chunk_language = ""            # Language code for semantic chunking
+
+[media_ingestion.web_article]
+chunk_method = "paragraphs"     # Options: paragraphs, sentences, tokens, words
+chunk_size = 500               # Size of each chunk
+chunk_overlap = 200            # Overlap between chunks
+use_adaptive_chunking = false  # Enable adaptive chunking
+use_multi_level_chunking = false # Enable multi-level chunking
+chunk_language = ""            # Language code for semantic chunking
+
+# --- Model Capabilities Configuration ---
 [model_capabilities]
 # This section defines which models have specific capabilities like vision support.
 # Users can override or extend these patterns in their config file.

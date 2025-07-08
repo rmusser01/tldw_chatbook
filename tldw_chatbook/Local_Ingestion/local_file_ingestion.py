@@ -158,17 +158,28 @@ def ingest_local_file(
         'api_key': api_key,
     }
     
-    # Add chunking parameters with defaults
-    chunk_defaults = {
-        'pdf': {'method': 'semantic', 'size': 500, 'overlap': 200},
-        'document': {'method': 'paragraphs', 'size': 500, 'overlap': 200},
-        'ebook': {'method': 'ebook_chapters', 'size': 1000, 'overlap': 200},
-        'xml': {'method': 'xml', 'size': 1000, 'overlap': 200},
-        'plaintext': {'method': 'paragraphs', 'size': 500, 'overlap': 200},
-        'html': {'method': 'paragraphs', 'size': 500, 'overlap': 200}
+    # Get media-specific defaults from config
+    from ..config import get_media_ingestion_defaults
+    
+    # Map file types to media types used in config
+    file_type_to_media_type = {
+        'pdf': 'pdf',
+        'document': 'document',
+        'ebook': 'ebook',
+        'xml': 'xml',
+        'plaintext': 'plaintext',
+        'html': 'web_article'  # HTML files map to web_article config
     }
     
-    defaults = chunk_defaults.get(file_type, {})
+    media_type = file_type_to_media_type.get(file_type, file_type)
+    config_defaults = get_media_ingestion_defaults(media_type)
+    
+    # Extract defaults with proper key mapping
+    defaults = {
+        'method': config_defaults.get('chunk_method', 'paragraphs'),
+        'size': config_defaults.get('chunk_size', 500),
+        'overlap': config_defaults.get('chunk_overlap', 200)
+    }
     common_params.update({
         'chunk_method': chunk_options.get('method', defaults.get('method', 'paragraphs')),
         'chunk_size': chunk_options.get('size', defaults.get('size', 500)),

@@ -9,6 +9,7 @@ from textual.widgets import (
     Static, Button, Input, Select, Checkbox, TextArea, Label, 
     ListView, ListItem, LoadingIndicator, Collapsible
 )
+from ..config import get_media_ingestion_defaults
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -29,6 +30,9 @@ class IngestLocalEbookWindow(Vertical):
         analysis_provider_options = [(name, name) for name in analysis_api_providers if name]
         if not analysis_provider_options:
             analysis_provider_options = [("No Providers Configured", Select.BLANK)]
+        
+        # Get ebook-specific default chunking settings from config
+        ebook_defaults = get_media_ingestion_defaults("ebook")
         
         with VerticalScroll(classes="ingest-form-scrollable"):
             yield Static("Local Ebook Processing", classes="sidebar-title")
@@ -85,18 +89,27 @@ class IngestLocalEbookWindow(Vertical):
                     ("ebook_chapters", "ebook_chapters"),
                     ("json", "json")
                 ]
-                yield Select(chunk_method_options, id="local-chunk-method-ebook", prompt="Default (per type)")
+                yield Select(chunk_method_options, id="local-chunk-method-ebook", 
+                            value=ebook_defaults.get("chunk_method", "ebook_chapters"),
+                            prompt="Default (per type)")
                 with Horizontal(classes="ingest-form-row"):
                     with Vertical(classes="ingest-form-col"):
                         yield Label("Chunk Size:")
-                        yield Input("500", id="local-chunk-size-ebook", type="integer")
+                        yield Input(str(ebook_defaults.get("chunk_size", 1000)), 
+                                   id="local-chunk-size-ebook", type="integer")
                     with Vertical(classes="ingest-form-col"):
                         yield Label("Chunk Overlap:")
-                        yield Input("200", id="local-chunk-overlap-ebook", type="integer")
+                        yield Input(str(ebook_defaults.get("chunk_overlap", 200)), 
+                                   id="local-chunk-overlap-ebook", type="integer")
                 yield Label("Chunk Language (e.g., 'en', optional):")
-                yield Input(id="local-chunk-lang-ebook", placeholder="Defaults to media language")
-                yield Checkbox("Use Adaptive Chunking", False, id="local-adaptive-chunking-ebook")
-                yield Checkbox("Use Multi-level Chunking", False, id="local-multi-level-chunking-ebook")
+                yield Input(ebook_defaults.get("chunk_language", ""), id="local-chunk-lang-ebook", 
+                           placeholder="Defaults to media language")
+                yield Checkbox("Use Adaptive Chunking", 
+                              ebook_defaults.get("use_adaptive_chunking", False), 
+                              id="local-adaptive-chunking-ebook")
+                yield Checkbox("Use Multi-level Chunking", 
+                              ebook_defaults.get("use_multi_level_chunking", False), 
+                              id="local-multi-level-chunking-ebook")
                 yield Label("Custom Chapter Pattern (Regex, optional):")
                 yield Input(id="local-custom-chapter-pattern-ebook", placeholder="e.g., ^Chapter\\s+\\d+")
             
