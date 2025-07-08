@@ -843,6 +843,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     chat_api_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
     # Renamed character_api_provider_value to ccp_api_provider_value for clarity with TAB_CCP
     ccp_api_provider_value: reactive[Optional[str]] = reactive(_default_ccp_provider)
+    # RAG expansion provider reactive
+    rag_expansion_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
 
     # --- Reactives for CCP Character EDITOR (Center Pane) ---
     current_editing_character_id: reactive[Optional[str]] = reactive(None)
@@ -3731,6 +3733,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await notes_handlers.handle_notes_sort_changed(self, event)
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
+        elif select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT:
+            await self.handle_query_expansion_method_changed(event)
+        elif select_id == "chat-rag-expansion-provider" and current_active_tab == TAB_CHAT:
+            # Update the reactive value to trigger the watcher
+            self.rag_expansion_provider_value = event.value
         elif select_id == "chat-api-provider" and current_active_tab == TAB_CHAT:
             # Update token counter when provider changes
             try:
@@ -3887,6 +3894,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             method = event.value
             
             # Get the relevant widgets
+            provider_label = self.query_one(".rag-expansion-provider-label", Static)
+            provider_select = self.query_one("#chat-rag-expansion-provider", Select)
             llm_model_label = self.query_one(".rag-expansion-llm-label", Static)
             llm_model_select = self.query_one("#chat-rag-expansion-llm-model", Select)
             local_model_label = self.query_one(".rag-expansion-local-label", Static)
@@ -3894,19 +3903,25 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             # Show/hide based on method
             if method == "llm":
-                # Show LLM model selection, hide local model
+                # Show provider and model selection, hide local model
+                provider_label.remove_class("hidden")
+                provider_select.remove_class("hidden")
                 llm_model_label.remove_class("hidden")
                 llm_model_select.remove_class("hidden")
                 local_model_label.add_class("hidden")
                 local_model_input.add_class("hidden")
-            elif method == "local_llm":
-                # Show local model input, hide LLM model selection
+            elif method == "llamafile":
+                # Show local model input, hide provider and model selection
+                provider_label.add_class("hidden")
+                provider_select.add_class("hidden")
                 llm_model_label.add_class("hidden")
                 llm_model_select.add_class("hidden")
                 local_model_label.remove_class("hidden")
                 local_model_input.remove_class("hidden")
             elif method == "keywords":
-                # Hide both LLM and local model fields
+                # Hide all model fields
+                provider_label.add_class("hidden")
+                provider_select.add_class("hidden")
                 llm_model_label.add_class("hidden")
                 llm_model_select.add_class("hidden")
                 local_model_label.add_class("hidden")
@@ -4662,6 +4677,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         models = self.providers_models.get(new_value, [])
         self._update_model_select(TAB_CCP, models)
 
+    def watch_rag_expansion_provider_value(self, new_value: Optional[str]) -> None:
+        """Watch for changes in RAG expansion provider selection."""
+        if not hasattr(self, "app") or not self.app:
+            return
+        if not self._ui_ready:
+            return
+        self.loguru_logger.debug(f"Watcher: rag_expansion_provider_value changed to {new_value}")
+        if new_value is None or new_value == Select.BLANK:
+            self._update_rag_expansion_model_select([])
+            return
+        models = self.providers_models.get(new_value, [])
+        self._update_rag_expansion_model_select(models)
+
 
     def _update_model_select(self, id_prefix: str, models: list[str]) -> None:
         if not self._ui_ready:  # Add guard
@@ -4686,6 +4714,30 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             logging.error(f"Helper ERROR: Cannot find model select '{model_select_id}'")
         except Exception as e_set_options:
              logging.error(f"Helper ERROR setting options/value for {model_select_id}: {e_set_options}")
+
+    def _update_rag_expansion_model_select(self, models: list[str]) -> None:
+        """Update the RAG expansion model select options."""
+        if not self._ui_ready:
+            return
+        model_select_id = "#chat-rag-expansion-llm-model"
+        try:
+            model_select = self.query_one(model_select_id, Select)
+            new_model_options = [(model, model) for model in models]
+            current_value = model_select.value
+            model_select.set_options(new_model_options)
+
+            if current_value in models:
+                model_select.value = current_value
+            elif models:
+                model_select.value = models[0]
+            else:
+                model_select.value = Select.BLANK
+
+            model_select.prompt = "Select Model..." if models else "No models available"
+        except QueryError:
+            self.loguru_logger.error(f"Cannot find RAG expansion model select '{model_select_id}'")
+        except Exception as e:
+            self.loguru_logger.error(f"Error setting RAG expansion model options: {e}")
 
     def chat_wrapper(self, strip_thinking_tags: bool = True, **kwargs: Any) -> Any:
         """

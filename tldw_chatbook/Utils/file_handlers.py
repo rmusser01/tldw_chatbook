@@ -312,45 +312,16 @@ class PDFFileHandler(FileHandler):
         return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
     
     async def process(self, file_path: Path) -> ProcessedFile:
-        """Process PDF file for database ingestion."""
-        try:
-            # Import the ingestion function
-            from ..Event_Handlers.ingest_events import process_local_pdf_ingestion
-            
-            # Prepare metadata
-            metadata = {
-                'title': file_path.stem,
-                'author': 'Unknown',
-                'keywords': f'pdf,{file_path.stem}',
-                'ingestion_date': datetime.now().isoformat(),
-                'type': 'pdf_document'
-            }
-            
-            # Process the PDF
-            result = await process_local_pdf_ingestion(
-                file_path=str(file_path),
-                metadata=metadata,
-                perform_chunking=True,
-                chunk_method='semantic',
-                chunk_size=500,
-                chunk_overlap=200
-            )
-            
-            # Return a reference to the processed file
-            return ProcessedFile(
-                content=f"[PDF Processed: {file_path.name} - {result.get('chunks', 0)} chunks created]",
-                display_name=file_path.name,
-                insert_mode="inline",
-                file_type="pdf"
-            )
-        except Exception as e:
-            logger.error(f"Failed to process PDF {file_path}: {e}")
-            return ProcessedFile(
-                content=f"[Error processing PDF: {file_path.name} - {str(e)}]",
-                display_name=file_path.name,
-                insert_mode="inline",
-                file_type="pdf"
-            )
+        """Process PDF file - just return a placeholder for now."""
+        # For now, we'll just indicate that PDF files should be processed separately
+        # The actual ingestion should happen through the dedicated ingestion UI/API
+        return ProcessedFile(
+            content=f"[PDF File: {file_path.name}]\n"
+                   f"To process this PDF file, please use the Media Ingestion tab.",
+            display_name=file_path.name,
+            insert_mode="inline",
+            file_type="pdf"
+        )
 
 
 class DocumentFileHandler(FileHandler):
@@ -365,34 +336,43 @@ class DocumentFileHandler(FileHandler):
         """Process document file for database ingestion."""
         try:
             # Import the ingestion function
-            from ..Event_Handlers.ingest_events import process_local_document_ingestion
+            from ..Local_Ingestion.local_file_ingestion import ingest_local_file
+            from ..DB.Client_Media_DB_v2 import MediaDatabase
+            from ..config import get_cli_setting
             
-            # Prepare metadata
-            metadata = {
-                'title': file_path.stem,
-                'author': 'Unknown',
-                'keywords': f'document,{file_path.stem},{file_path.suffix[1:]}',
-                'ingestion_date': datetime.now().isoformat(),
-                'type': 'document'
-            }
+            # Get database path
+            db_config = get_cli_setting("database", {})
+            db_path = db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")
+            db_path = Path(db_path).expanduser()
             
-            # Process the document
-            result = await process_local_document_ingestion(
-                file_path=str(file_path),
-                metadata=metadata,
-                perform_chunking=True,
-                chunk_method='paragraphs',
-                chunk_size=500,
-                chunk_overlap=200
-            )
+            # Initialize database
+            media_db = MediaDatabase(str(db_path), client_id="file_handler")
             
-            # Return a reference to the processed file
-            return ProcessedFile(
-                content=f"[Document Processed: {file_path.name} - {result.get('chunks', 0)} chunks created]",
-                display_name=file_path.name,
-                insert_mode="inline",
-                file_type="document"
-            )
+            try:
+                # Process the document
+                result = ingest_local_file(
+                    file_path=file_path,
+                    media_db=media_db,
+                    title=file_path.stem,
+                    keywords=['document', file_path.stem, file_path.suffix[1:]],
+                    chunk_options={
+                        'method': 'paragraphs',
+                        'size': 500,
+                        'overlap': 200
+                    }
+                )
+                
+                # Return a reference to the processed file
+                chunks = result.get('chunks_created', 0)
+                return ProcessedFile(
+                    content=f"[Document Processed: {file_path.name} - {chunks} chunks created]",
+                    display_name=file_path.name,
+                    insert_mode="inline",
+                    file_type="document"
+                )
+            finally:
+                media_db.close_connection()
+                
         except Exception as e:
             logger.error(f"Failed to process document {file_path}: {e}")
             return ProcessedFile(
@@ -415,34 +395,43 @@ class EbookFileHandler(FileHandler):
         """Process ebook file for database ingestion."""
         try:
             # Import the ingestion function
-            from ..Event_Handlers.ingest_events import process_local_ebook_ingestion
+            from ..Local_Ingestion.local_file_ingestion import ingest_local_file
+            from ..DB.Client_Media_DB_v2 import MediaDatabase
+            from ..config import get_cli_setting
             
-            # Prepare metadata
-            metadata = {
-                'title': file_path.stem,
-                'author': 'Unknown',
-                'keywords': f'ebook,{file_path.stem},{file_path.suffix[1:]}',
-                'ingestion_date': datetime.now().isoformat(),
-                'type': 'ebook'
-            }
+            # Get database path
+            db_config = get_cli_setting("database", {})
+            db_path = db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")
+            db_path = Path(db_path).expanduser()
             
-            # Process the ebook
-            result = await process_local_ebook_ingestion(
-                file_path=str(file_path),
-                metadata=metadata,
-                perform_chunking=True,
-                chunk_method='ebook_chapters',
-                chunk_size=1000,
-                chunk_overlap=200
-            )
+            # Initialize database
+            media_db = MediaDatabase(str(db_path), client_id="file_handler")
             
-            # Return a reference to the processed file
-            return ProcessedFile(
-                content=f"[Ebook Processed: {file_path.name} - {result.get('chunks', 0)} chunks created]",
-                display_name=file_path.name,
-                insert_mode="inline",
-                file_type="ebook"
-            )
+            try:
+                # Process the ebook
+                result = ingest_local_file(
+                    file_path=file_path,
+                    media_db=media_db,
+                    title=file_path.stem,
+                    keywords=['ebook', file_path.stem, file_path.suffix[1:]],
+                    chunk_options={
+                        'method': 'ebook_chapters',
+                        'size': 1000,
+                        'overlap': 200
+                    }
+                )
+                
+                # Return a reference to the processed file
+                chunks = result.get('chunks_created', 0)
+                return ProcessedFile(
+                    content=f"[Ebook Processed: {file_path.name} - {chunks} chunks created]",
+                    display_name=file_path.name,
+                    insert_mode="inline",
+                    file_type="ebook"
+                )
+            finally:
+                media_db.close_connection()
+                
         except Exception as e:
             logger.error(f"Failed to process ebook {file_path}: {e}")
             return ProcessedFile(
@@ -480,34 +469,42 @@ class PlaintextDatabaseHandler(FileHandler):
                 )
             
             # Import the ingestion function
-            from ..Event_Handlers.ingest_events import process_local_plaintext_ingestion
+            from ..Local_Ingestion.local_file_ingestion import ingest_local_file
+            from ..DB.Client_Media_DB_v2 import MediaDatabase
+            from ..config import get_cli_setting
             
-            # Prepare metadata
-            metadata = {
-                'title': file_path.stem,
-                'author': 'Unknown',
-                'keywords': f'plaintext,{file_path.stem},{file_path.suffix[1:]}',
-                'ingestion_date': datetime.now().isoformat(),
-                'type': 'plaintext'
-            }
+            # Get database path
+            db_config = get_cli_setting("database", {})
+            db_path = db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db")
+            db_path = Path(db_path).expanduser()
             
-            # Process the plaintext file
-            result = await process_local_plaintext_ingestion(
-                file_path=str(file_path),
-                metadata=metadata,
-                perform_chunking=True,
-                chunk_method='paragraphs',
-                chunk_size=500,
-                chunk_overlap=200
-            )
+            # Initialize database
+            media_db = MediaDatabase(str(db_path), client_id="file_handler")
             
-            # Return a reference to the processed file
-            return ProcessedFile(
-                content=f"[Text File Processed: {file_path.name} - {result.get('chunks', 0)} chunks created]\nStored in database for RAG search.",
-                display_name=file_path.name,
-                insert_mode="inline",
-                file_type="text"
-            )
+            try:
+                # Process the plaintext file
+                result = ingest_local_file(
+                    file_path=file_path,
+                    media_db=media_db,
+                    title=file_path.stem,
+                    keywords=['plaintext', file_path.stem, file_path.suffix[1:]],
+                    chunk_options={
+                        'method': 'paragraphs',
+                        'size': 500,
+                        'overlap': 200
+                    }
+                )
+                
+                # Return a reference to the processed file
+                chunks = result.get('chunks_created', 0)
+                return ProcessedFile(
+                    content=f"[Text File Processed: {file_path.name} - {chunks} chunks created]\nStored in database for RAG search.",
+                    display_name=file_path.name,
+                    insert_mode="inline",
+                    file_type="text"
+                )
+            finally:
+                media_db.close_connection()
         except Exception as e:
             logger.error(f"Failed to process plaintext for database {file_path}: {e}")
             # Fall back to inline insertion

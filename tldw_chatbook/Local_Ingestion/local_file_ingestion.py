@@ -13,11 +13,9 @@ from datetime import datetime
 from loguru import logger
 
 # Import processing libraries
-from ..Media_DB.PDF_Processing_Lib import process_pdf
-from ..Media_DB.Document_Processing_Lib import process_document
-from ..Media_DB.Book_Ingestion_Lib import process_ebook
-from ..Media_DB.XML_Processing_Lib import process_xml_file
-from ..Media_DB.Import_Lib import import_plaintext_file, import_web_article
+from .PDF_Processing_Lib import process_pdf
+from .Document_Processing_Lib import process_document
+from .Book_Ingestion_Lib import process_ebook
 
 # Import database
 from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -186,66 +184,96 @@ def ingest_local_file(
         # Process based on file type
         if file_type == 'pdf':
             result = process_pdf(
-                pdf_file_path=str(file_path),
-                **common_params
+                file_input=str(file_path),
+                filename=file_path.name,
+                title_override=title,
+                author_override=author,
+                keywords=keywords,
+                perform_chunking=True,
+                chunk_options=chunk_options,
+                perform_analysis=perform_analysis,
+                api_name=api_name,
+                api_key=api_key,
+                custom_prompt=custom_prompt,
+                system_prompt=system_prompt
             )
             
         elif file_type == 'document':
             result = process_document(
-                document_file_path=str(file_path),
-                **common_params
+                file_path=str(file_path),
+                title_override=title,
+                author_override=author,
+                keywords=keywords,
+                custom_prompt=custom_prompt,
+                system_prompt=system_prompt,
+                auto_summarize=perform_analysis,
+                api_name=api_name,
+                api_key=api_key,
+                chunk_options=chunk_options
             )
             
         elif file_type == 'ebook':
             result = process_ebook(
-                ebook_file_path=str(file_path),
-                **common_params
+                file_path=str(file_path),
+                title_override=title,
+                author_override=author,
+                keywords=keywords,
+                custom_prompt=custom_prompt,
+                system_prompt=system_prompt,
+                perform_chunking=True,
+                chunk_options=chunk_options,
+                perform_analysis=perform_analysis,
+                api_name=api_name,
+                api_key=api_key
             )
             
         elif file_type == 'xml':
-            result = process_xml_file(
-                xml_file_path=str(file_path),
-                **common_params
-            )
+            # XML processing not yet implemented in the expected format
+            raise FileIngestionError(f"XML file processing is not yet implemented")
             
         elif file_type == 'plaintext':
-            # For plaintext, we use import_plaintext_file which has a different signature
-            result = import_plaintext_file(
-                file_path=str(file_path),
-                title=title,
-                author=author or 'Unknown',
-                keywords=keywords,
-                custom_prompt=custom_prompt,
-                system_prompt=system_prompt,
-                auto_summarize=perform_analysis,
-                api_name=api_name,
-                api_key=api_key,
-                chunk_method=common_params['chunk_method'],
-                chunk_size=common_params['chunk_size'],
-                chunk_overlap=common_params['chunk_overlap'],
-                chunk_language=common_params['chunk_language']
-            )
+            # For plaintext files, we'll process them directly
+            content = file_path.read_text(encoding='utf-8', errors='replace')
+            
+            # Simple result structure for plaintext
+            result = {
+                'content': content,
+                'title': title,
+                'author': author or 'Unknown',
+                'keywords': keywords,
+                'chunks': [],  # Chunking will be handled by the database
+                'analysis': ''
+            }
+            
+            # If chunking is requested, we'll let the database handle it
+            # The MediaDatabase.add_media_with_keywords method will handle chunking
             
         elif file_type == 'html':
-            # For HTML, we use import_web_article
+            # For HTML files, we'll extract text content
+            from bs4 import BeautifulSoup
+            
             with open(file_path, 'r', encoding='utf-8') as f:
                 html_content = f.read()
             
-            result = import_web_article(
-                url=f"file://{file_path.absolute()}",
-                title=title,
-                author=author or 'Unknown',
-                content=html_content,
-                keywords=keywords,
-                custom_prompt=custom_prompt,
-                system_prompt=system_prompt,
-                auto_summarize=perform_analysis,
-                api_name=api_name,
-                api_key=api_key,
-                chunk_method=common_params['chunk_method'],
-                chunk_size=common_params['chunk_size'],
-                chunk_overlap=common_params['chunk_overlap']
-            )
+            # Parse HTML and extract text
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Extract title if present
+            title_tag = soup.find('title')
+            if title_tag and not title:
+                title = title_tag.text.strip()
+            
+            # Extract text content
+            content = soup.get_text(separator='\n', strip=True)
+            
+            result = {
+                'content': content,
+                'title': title or file_path.stem,
+                'author': author or 'Unknown',
+                'keywords': keywords,
+                'chunks': [],  # Chunking will be handled by the database
+                'analysis': ''
+            }
         
         # Check if processing was successful
         if not result or 'error' in result:

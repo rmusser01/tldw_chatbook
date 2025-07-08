@@ -195,7 +195,7 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             yield Select(
                 options=[
                     ("Remote LLM", "llm"),
-                    ("Local LLM", "local_llm"),
+                    ("Local Model (Llamafile)", "llamafile"),
                     ("Keywords", "keywords")
                 ],
                 value="llm",
@@ -204,26 +204,35 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 classes="rag-expansion-select sidebar-select"
             )
             
-            # LLM Model selection (shown when Remote LLM is selected)
-            yield Static("Expansion Model", classes="sidebar-label rag-expansion-llm-label")
+            # Provider & Model selection (shown when Remote LLM is selected)
+            yield Static("Expansion Provider", classes="sidebar-label rag-expansion-provider-label")
+            rag_provider_options = [(provider, provider) for provider in available_providers]
             yield Select(
-                options=[
-                    ("GPT-3.5 Turbo", "gpt-3.5-turbo"),
-                    ("GPT-4o Mini", "gpt-4o-mini"),
-                    ("Claude 3 Haiku", "claude-3-haiku"),
-                    ("Custom", "custom")
-                ],
-                value="gpt-3.5-turbo",
+                options=rag_provider_options,
+                prompt="Select Provider…",
+                allow_blank=False,
+                id=f"{id_prefix}-rag-expansion-provider",
+                value=default_provider,
+                classes="rag-expansion-provider sidebar-select"
+            )
+            
+            yield Static("Expansion Model", classes="sidebar-label rag-expansion-llm-label")
+            rag_initial_models = providers_models.get(default_provider, [])
+            rag_model_options = [(model, model) for model in rag_initial_models]
+            yield Select(
+                options=rag_model_options,
+                prompt="Select Model…",
+                allow_blank=True,
                 id=f"{id_prefix}-rag-expansion-llm-model",
-                prompt="Select model...",
+                value=rag_initial_models[0] if rag_initial_models else Select.BLANK,
                 classes="rag-expansion-llm-model sidebar-select"
             )
             
-            # Local model input (shown when Local LLM is selected)
-            yield Static("Local Model", classes="sidebar-label rag-expansion-local-label hidden")
+            # Local model selection (shown when Local Model is selected)
+            yield Static("Llamafile Model", classes="sidebar-label rag-expansion-local-label hidden")
             yield Input(
-                placeholder="e.g., qwen2.5:0.5b",
-                value="qwen2.5:0.5b",
+                placeholder="e.g., Qwen3-0.6B-Q6_K.gguf",
+                value="Qwen3-0.6B-Q6_K.gguf",
                 id=f"{id_prefix}-rag-expansion-local-model",
                 classes="sidebar-input rag-expansion-local-model hidden"
             )

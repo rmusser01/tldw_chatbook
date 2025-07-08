@@ -1091,9 +1091,10 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
             # Get the current provider more reliably
             if query_expansion_method == "llm":
                 try:
-                    current_provider = str(app.query_one("#provider-select").value).lower()
+                    # Use the dedicated expansion provider widget
+                    current_provider = str(app.query_one("#chat-rag-expansion-provider").value).lower()
                 except Exception as e:
-                    logger.warning(f"Could not get provider from UI, using default: {e}")
+                    logger.warning(f"Could not get expansion provider from UI, using default: {e}")
                     current_provider = "openai"
             else:
                 # For local_llm or keywords, provider doesn't matter
