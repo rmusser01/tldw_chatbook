@@ -6,7 +6,7 @@ Widget for displaying and editing media item metadata with content display.
 from typing import TYPE_CHECKING, Dict, Any, Optional, List
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static, Button, Label, Input, TextArea
 from textual.reactive import reactive
 from loguru import logger
@@ -41,45 +41,45 @@ class MediaDetailsWidget(Container):
         
     def compose(self) -> ComposeResult:
         """Compose the widget's UI structure."""
-        with VerticalScroll(classes="media-details-container"):
-            # Metadata section
-            with Container(id=f"metadata-section-{self.type_slug}", classes="metadata-section"):
-                # View mode elements
-                with Container(id=f"metadata-view-{self.type_slug}", classes="metadata-view"):
-                    yield Static("", id=f"metadata-display-{self.type_slug}", classes="metadata-display")
-                    yield Button("Edit", id=f"edit-button-{self.type_slug}", classes="metadata-edit-button")
-                
-                # Edit mode elements (initially hidden)
-                with Container(id=f"metadata-edit-{self.type_slug}", classes="metadata-edit hidden"):
-                    # Input fields for editing
-                    with Vertical(classes="edit-fields"):
-                        yield Label("Title:")
-                        yield Input(id=f"edit-title-{self.type_slug}", placeholder="Enter title")
-                        
-                        yield Label("Type:")
-                        yield Input(id=f"edit-type-{self.type_slug}", placeholder="Enter type")
-                        
-                        yield Label("Author:")
-                        yield Input(id=f"edit-author-{self.type_slug}", placeholder="Enter author")
-                        
-                        yield Label("URL:")
-                        yield Input(id=f"edit-url-{self.type_slug}", placeholder="Enter URL")
-                        
-                        yield Label("Keywords (comma-separated):")
-                        yield Input(id=f"edit-keywords-{self.type_slug}", placeholder="keyword1, keyword2, keyword3")
-                    
-                    # Action buttons
-                    with Horizontal(classes="edit-actions"):
-                        yield Button("Save", id=f"save-button-{self.type_slug}", variant="primary")
-                        yield Button("Cancel", id=f"cancel-button-{self.type_slug}", variant="default")
+        # Don't wrap in VerticalScroll - the container itself should handle layout
+        # Metadata section
+        with Container(id=f"metadata-section-{self.type_slug}", classes="metadata-section"):
+            # View mode elements
+            with Container(id=f"metadata-view-{self.type_slug}", classes="metadata-view"):
+                yield Button("Edit", id=f"edit-button-{self.type_slug}", classes="metadata-edit-button")
+                yield Static("", id=f"metadata-display-{self.type_slug}", classes="metadata-display")
             
-            # Content section (read-only)
-            yield TextArea(
-                "Select an item from the list to see its details.",
-                id=f"content-display-{self.type_slug}",
-                classes="media-content-display",
-                read_only=True
-            )
+            # Edit mode elements (initially hidden)
+            with Container(id=f"metadata-edit-{self.type_slug}", classes="metadata-edit hidden"):
+                # Input fields for editing
+                with Vertical(classes="edit-fields"):
+                    yield Label("Title:")
+                    yield Input(id=f"edit-title-{self.type_slug}", placeholder="Enter title")
+                    
+                    yield Label("Type:")
+                    yield Input(id=f"edit-type-{self.type_slug}", placeholder="Enter type", disabled=True)
+                    
+                    yield Label("Author:")
+                    yield Input(id=f"edit-author-{self.type_slug}", placeholder="Enter author")
+                    
+                    yield Label("URL:")
+                    yield Input(id=f"edit-url-{self.type_slug}", placeholder="Enter URL")
+                    
+                    yield Label("Keywords (comma-separated):")
+                    yield Input(id=f"edit-keywords-{self.type_slug}", placeholder="keyword1, keyword2, keyword3")
+                
+                # Action buttons
+                with Horizontal(classes="edit-actions"):
+                    yield Button("Save", id=f"save-button-{self.type_slug}", variant="primary")
+                    yield Button("Cancel", id=f"cancel-button-{self.type_slug}", variant="default")
+        
+        # Content section (read-only)
+        yield TextArea(
+            "Select an item from the list to see its details.",
+            id=f"content-display-{self.type_slug}",
+            classes="media-content-display",
+            read_only=True
+        )
     
     def watch_edit_mode(self, old_value: bool, new_value: bool) -> None:
         """React to edit mode changes."""
@@ -222,13 +222,13 @@ class MediaDetailsWidget(Container):
         if event.button.id == f"edit-button-{self.type_slug}":
             self.edit_mode = True
     
-    @on(Button.Pressed, "#save-button-*")
+    @on(Button.Pressed)
     def handle_save_button(self, event: Button.Pressed) -> None:
         """Handle save button press."""
         if event.button.id == f"save-button-{self.type_slug}":
             self._save_metadata()
     
-    @on(Button.Pressed, "#cancel-button-*")
+    @on(Button.Pressed)
     def handle_cancel_button(self, event: Button.Pressed) -> None:
         """Handle cancel button press."""
         if event.button.id == f"cancel-button-{self.type_slug}":
@@ -245,7 +245,8 @@ class MediaDetailsWidget(Container):
         try:
             # Collect values from input fields
             title = self.query_one(f"#edit-title-{self.type_slug}", Input).value.strip()
-            media_type = self.query_one(f"#edit-type-{self.type_slug}", Input).value.strip()
+            # Type is disabled, so we use the original value
+            media_type = self.media_data.get('type', '')
             author = self.query_one(f"#edit-author-{self.type_slug}", Input).value.strip()
             url = self.query_one(f"#edit-url-{self.type_slug}", Input).value.strip()
             keywords_str = self.query_one(f"#edit-keywords-{self.type_slug}", Input).value.strip()
@@ -256,10 +257,6 @@ class MediaDetailsWidget(Container):
             # Validate required fields
             if not title:
                 self.app_instance.notify("Title cannot be empty", severity="warning")
-                return
-            
-            if not media_type:
-                self.app_instance.notify("Type cannot be empty", severity="warning")
                 return
             
             # Post message to trigger the update event handler

@@ -924,7 +924,7 @@ The evaluation system provides comprehensive LLM benchmarking:
 - **Package Data**: Includes templates, CSS, and default configs
 
 #### Installation Methods
-1. **PyPI**: `pip install tldw-cli`
+1. **PyPI**: `pip install tldw-chatbook`
 2. **Development**: `pip install -e .`
 3. **Docker**: Container support (if implemented)
 4. **Homebrew**: macOS formula (if available)

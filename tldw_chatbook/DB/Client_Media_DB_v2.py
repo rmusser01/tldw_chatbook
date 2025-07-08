@@ -2335,7 +2335,7 @@ class MediaDatabase:
             ConflictError: If optimistic locking fails (version mismatch)
             DatabaseError: For database errors
         """
-        logger = self.logger
+        logger = logging.getLogger(__name__)
         client_id = self.client_id
         now = self._get_current_utc_timestamp_str()
         

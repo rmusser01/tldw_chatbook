@@ -138,7 +138,7 @@ dev = [
 "Source Code" = "https://github.com/rmusser01/tldw_chatbook"
 "Changelog" = "https://github.com/rmusser01/tldw_chatbook/blob/main/CHANGELOG.md"
 
-# This creates a command-line script called 'tldw-cli'
+# This creates a command-line script called 'tldw-chatbook'
 [project.scripts]
 # Points to the main function in your tldw_chatbook package's app module.
 # Structure: project_root/tldw_chatbook/app.py, function main_cli_runner

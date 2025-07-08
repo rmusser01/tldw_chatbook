@@ -77,7 +77,7 @@ export RAG_SEARCH_MODE="hybrid"
 ## Troubleshooting
 
 If semantic or hybrid search isn't working:
-1. Check that embeddings dependencies are installed: `pip install tldw-cli[embeddings_rag]`
+1. Check that embeddings dependencies are installed: `pip install tldw-chatbook[embeddings_rag]`
 2. Verify your embedding model is configured correctly
 3. Check available system resources (RAM/GPU memory)
 4. Try keyword search as a fallback

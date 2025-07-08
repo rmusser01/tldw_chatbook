@@ -64,7 +64,7 @@ This guide outlines the process for building and releasing tldw_chatbook to PyPI
 
 3. Test the installation:
    ```bash
-   tldw-cli --version
+   tldw-chatbook --version
    ```
 
 4. Test with optional dependencies:

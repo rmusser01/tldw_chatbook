@@ -61,7 +61,7 @@ This checklist ensures the project is ready for PyPI distribution.
    python -m venv test_env
    source test_env/bin/activate
    pip install dist/tldw_chatbook-*.whl
-   tldw-cli --help
+   tldw-chatbook --help
    deactivate
    rm -rf test_env
    ```

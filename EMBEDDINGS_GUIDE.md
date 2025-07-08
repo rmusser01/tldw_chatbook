@@ -231,7 +231,7 @@ export TLDW_EMBEDDINGS_CACHE="/path/to/cache"
 ### Common Issues
 
 **1. "No module named 'sentence_transformers'"**
-- Solution: Install with `pip install "tldw-cli[embeddings_rag]"`
+- Solution: Install with `pip install "tldw-chatbook[embeddings_rag]"`
 
 **2. "Model download failed"**
 - Check internet connection

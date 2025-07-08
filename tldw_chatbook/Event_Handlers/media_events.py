@@ -375,40 +375,39 @@ def format_media_details_as_markdown(app: 'TldwCli', media_data: Dict[str, Any])
 
     title = media_data.get('title', 'Untitled')
 
-    # Create a compact, multi-line metadata block
-    meta_header = (
-        f"**ID:** `{media_data.get('id', 'N/A')}`  **UUID:** `{media_data.get('uuid', 'N/A')}`\n"
-        f"**Type:** `{media_data.get('type', 'N/A')}`  **Author:** `{media_data.get('author', 'N/A')}`\n"
-        f"**URL:** `{media_data.get('url', 'N/A')}`\n"
-        f"**Keywords:** {keywords_str}"
-    )
-
-    # Format timestamps
-    ingested = f"**Ingested:** `{media_data.get('ingestion_date', 'N/A')}`"
-    modified = f"**Modified:** `{media_data.get('last_modified', 'N/A')}`"
+    # Create a well-structured metadata section
+    metadata_section = "### Metadata\n\n"
+    metadata_section += f"**ID:** `{media_data.get('id', 'N/A')}`\n"
+    metadata_section += f"**UUID:** `{media_data.get('uuid', 'N/A')}`\n"
+    metadata_section += f"**Type:** `{media_data.get('type', 'N/A')}`\n"
+    metadata_section += f"**Author:** `{media_data.get('author', 'N/A')}`\n"
+    metadata_section += f"**URL:** `{media_data.get('url', 'N/A')}`\n"
+    metadata_section += f"**Keywords:** {keywords_str}\n"
+    
+    # Format timestamps in separate section
+    timestamps_section = "\n### Timestamps\n\n"
+    timestamps_section += f"**Ingested:** `{media_data.get('ingestion_date', 'N/A')}`\n"
+    timestamps_section += f"**Modified:** `{media_data.get('last_modified', 'N/A')}`\n"
 
     content = media_data.get('content', 'N/A') or 'N/A'
     analysis_content = media_data.get('analysis_content', '') # Get analysis content
 
-    # Assemble the final markdown string
+    # Assemble the final markdown string with better structure
     final_markdown = (
-        f"## {title}\n\n"
-        f"{meta_header}\n\n"
+        f"# {title}\n\n"
+        f"{metadata_section}"
+        f"{timestamps_section}\n"
         "---\n\n"
-        f"{ingested}\n{modified}\n\n"
         "### Content\n\n"
-        "```text\n" # Using text for now, can be ```markdown if content is markdown
         f"{content}\n"
-        "```"
     )
 
     # Add Analysis section if content exists for it
     if analysis_content:
         final_markdown += (
-            "\n\n### Analysis\n\n"
-            "```text\n" # Or ```markdown if analysis is markdown
+            "\n---\n\n"
+            "### Analysis\n\n"
             f"{analysis_content}\n"
-            "```"
         )
 
     return final_markdown
@@ -444,7 +443,7 @@ async def handle_media_metadata_update(app: 'TldwCli', event: MediaMetadataUpdat
                 # Update the app's current loaded media item
                 app.current_loaded_media_item = updated_media
                 
-                # Update the widget with new data
+                # Update the widget with new data and exit edit mode
                 try:
                     from ..Widgets.media_details_widget import MediaDetailsWidget
                     details_widget = app.query_one(f"#media-details-widget-{event.type_slug}", MediaDetailsWidget)

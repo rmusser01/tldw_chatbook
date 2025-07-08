@@ -2282,8 +2282,8 @@ class IngestWindow(Container):
                 from ..Local_Ingestion.PDF_Processing_Lib import process_pdf
             except ImportError as e:
                 logger.error(f"Failed to import PDF processing library: {e}")
-                self.app_instance.notify("Error: PDF processing library not available. Please install with: pip install tldw-cli[pdf]", severity="error")
-                status_area.load_text("Error: PDF processing library not available.\nPlease install with: pip install tldw-cli[pdf]")
+                self.app_instance.notify("Error: PDF processing library not available. Please install with: pip install tldw-chatbook[pdf]", severity="error")
+                status_area.load_text("Error: PDF processing library not available.\nPlease install with: pip install tldw-chatbook[pdf]")
                 return
             
             # Process files
@@ -2492,8 +2492,8 @@ class IngestWindow(Container):
                 from ..Local_Ingestion.Book_Ingestion_Lib import process_ebook
             except ImportError as e:
                 logger.error(f"Failed to import ebook processing library: {e}")
-                self.app_instance.notify("Error: Ebook processing library not available. Please install with: pip install tldw-cli[ebook]", severity="error")
-                status_area.load_text("Error: Ebook processing library not available.\nPlease install with: pip install tldw-cli[ebook]")
+                self.app_instance.notify("Error: Ebook processing library not available. Please install with: pip install tldw-chatbook[ebook]", severity="error")
+                status_area.load_text("Error: Ebook processing library not available.\nPlease install with: pip install tldw-chatbook[ebook]")
                 return
             
             # Process files
@@ -2703,8 +2703,8 @@ class IngestWindow(Container):
                 from ..Local_Ingestion.Document_Processing_Lib import process_document
             except ImportError as e:
                 logger.error(f"Failed to import document processing library: {e}")
-                self.app_instance.notify("Error: Document processing library not available. Please install with: pip install tldw-cli[documents]", severity="error")
-                status_area.load_text("Error: Document processing library not available.\nPlease install with: pip install tldw-cli[documents]")
+                self.app_instance.notify("Error: Document processing library not available. Please install with: pip install tldw-chatbook[documents]", severity="error")
+                status_area.load_text("Error: Document processing library not available.\nPlease install with: pip install tldw-chatbook[documents]")
                 return
             
             # Process files

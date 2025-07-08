@@ -4995,11 +4995,11 @@ if __name__ == "__main__":
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 
-# Entry point for the tldw-cli command
+# Entry point for the tldw-chatbook command
 def main_cli_runner():
-    """Entry point for the tldw-cli command.
+    """Entry point for the tldw-chatbook command.
 
-    This function is referenced in pyproject.toml as the entry point for the tldw-cli command.
+    This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
     """
     # Initialize logging first

@@ -1119,7 +1119,7 @@ LOCAL_PROVIDERS = {
 
 # --- Configuration File Content (for reference or auto-creation for the CLI) ---
 CONFIG_TOML_CONTENT = """
-# Configuration for tldw-cli TUI App
+# Configuration for tldw-chatbook TUI App
 # Located at: ~/.config/tldw_cli/config.toml
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
