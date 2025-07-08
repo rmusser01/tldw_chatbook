@@ -201,8 +201,8 @@ class ChatMessageEnhanced(Widget):
                     
                     # Image controls
                     with Container(classes="image-controls"):
-                        yield Button("Toggle View", id="toggle-image-mode")
-                        yield Button("Save Image", id="save-image")
+                        yield Button("Toggle View", id="toggle-image-mode", tooltip="Switch between image display modes")
+                        yield Button("Save Image", id="save-image", tooltip="Save image to Downloads")
             
             # Action buttons
             actions_class = "message-actions"
@@ -212,8 +212,8 @@ class ChatMessageEnhanced(Widget):
             with Horizontal(classes=actions_class) as actions_bar:
                 actions_bar.id = f"actions-bar-{self.id or self.message_id_internal or 'new'}"
                 # Common buttons
-                yield Button("Edit", classes="action-button edit-button")
-                yield Button("📋", classes="action-button copy-button", id="copy")
+                yield Button("Edit", classes="action-button edit-button", tooltip="Edit message")
+                yield Button("📋", classes="action-button copy-button", id="copy", tooltip="Copy message to clipboard")
                 yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
                 
                 # Add file extraction button if files detected
@@ -225,20 +225,20 @@ class ChatMessageEnhanced(Widget):
                                id="extract-files", 
                                tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
                 
-                yield Button("🔊", classes="action-button speak-button", id="speak")
+                yield Button("🔊", classes="action-button speak-button", id="speak", tooltip="Read message aloud")
                 
                 # AI-specific buttons
                 if self.has_class("-ai"):
                     # Display feedback state on thumb buttons
                     thumb_up_label = "👍✓" if self.feedback == "1;" else "👍"
                     thumb_down_label = "👎✓" if self.feedback == "2;" else "👎"
-                    yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up")
-                    yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down")
-                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate")
-                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button")
+                    yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up", tooltip="Mark as helpful")
+                    yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down", tooltip="Mark as unhelpful")
+                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate", tooltip="Regenerate response")
+                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button", tooltip="Continue response")
                 
                 # Delete button
-                yield Button("🗑️", classes="action-button delete-button")
+                yield Button("🗑️", classes="action-button delete-button", tooltip="Delete message")
     
     def on_mount(self) -> None:
         """Render image when widget is mounted."""

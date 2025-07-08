@@ -15,8 +15,12 @@ import yaml
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Literal, Union
+from typing import Dict, List, Optional, Literal, Union, TYPE_CHECKING
 from loguru import logger
+from datetime import datetime
+
+if TYPE_CHECKING:
+    from ..DB.Client_Media_DB_v2 import MediaDatabase
 
 
 @dataclass
@@ -299,6 +303,232 @@ class DataFileHandler(FileHandler):
             return f"[Error reading CSV: {e}]"
 
 
+class PDFFileHandler(FileHandler):
+    """Handler for PDF files using local ingestion."""
+    
+    SUPPORTED_EXTENSIONS = {'.pdf'}
+    
+    def can_handle(self, file_path: Path) -> bool:
+        return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
+    
+    async def process(self, file_path: Path) -> ProcessedFile:
+        """Process PDF file for database ingestion."""
+        try:
+            # Import the ingestion function
+            from ..Event_Handlers.ingest_events import process_local_pdf_ingestion
+            
+            # Prepare metadata
+            metadata = {
+                'title': file_path.stem,
+                'author': 'Unknown',
+                'keywords': f'pdf,{file_path.stem}',
+                'ingestion_date': datetime.now().isoformat(),
+                'type': 'pdf_document'
+            }
+            
+            # Process the PDF
+            result = await process_local_pdf_ingestion(
+                file_path=str(file_path),
+                metadata=metadata,
+                perform_chunking=True,
+                chunk_method='semantic',
+                chunk_size=500,
+                chunk_overlap=200
+            )
+            
+            # Return a reference to the processed file
+            return ProcessedFile(
+                content=f"[PDF Processed: {file_path.name} - {result.get('chunks', 0)} chunks created]",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="pdf"
+            )
+        except Exception as e:
+            logger.error(f"Failed to process PDF {file_path}: {e}")
+            return ProcessedFile(
+                content=f"[Error processing PDF: {file_path.name} - {str(e)}]",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="pdf"
+            )
+
+
+class DocumentFileHandler(FileHandler):
+    """Handler for document files (Word, RTF, ODT) using local ingestion."""
+    
+    SUPPORTED_EXTENSIONS = {'.doc', '.docx', '.rtf', '.odt'}
+    
+    def can_handle(self, file_path: Path) -> bool:
+        return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
+    
+    async def process(self, file_path: Path) -> ProcessedFile:
+        """Process document file for database ingestion."""
+        try:
+            # Import the ingestion function
+            from ..Event_Handlers.ingest_events import process_local_document_ingestion
+            
+            # Prepare metadata
+            metadata = {
+                'title': file_path.stem,
+                'author': 'Unknown',
+                'keywords': f'document,{file_path.stem},{file_path.suffix[1:]}',
+                'ingestion_date': datetime.now().isoformat(),
+                'type': 'document'
+            }
+            
+            # Process the document
+            result = await process_local_document_ingestion(
+                file_path=str(file_path),
+                metadata=metadata,
+                perform_chunking=True,
+                chunk_method='paragraphs',
+                chunk_size=500,
+                chunk_overlap=200
+            )
+            
+            # Return a reference to the processed file
+            return ProcessedFile(
+                content=f"[Document Processed: {file_path.name} - {result.get('chunks', 0)} chunks created]",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="document"
+            )
+        except Exception as e:
+            logger.error(f"Failed to process document {file_path}: {e}")
+            return ProcessedFile(
+                content=f"[Error processing document: {file_path.name} - {str(e)}]",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="document"
+            )
+
+
+class EbookFileHandler(FileHandler):
+    """Handler for ebook files (EPUB, MOBI, AZW3) using local ingestion."""
+    
+    SUPPORTED_EXTENSIONS = {'.epub', '.mobi', '.azw', '.azw3', '.fb2'}
+    
+    def can_handle(self, file_path: Path) -> bool:
+        return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
+    
+    async def process(self, file_path: Path) -> ProcessedFile:
+        """Process ebook file for database ingestion."""
+        try:
+            # Import the ingestion function
+            from ..Event_Handlers.ingest_events import process_local_ebook_ingestion
+            
+            # Prepare metadata
+            metadata = {
+                'title': file_path.stem,
+                'author': 'Unknown',
+                'keywords': f'ebook,{file_path.stem},{file_path.suffix[1:]}',
+                'ingestion_date': datetime.now().isoformat(),
+                'type': 'ebook'
+            }
+            
+            # Process the ebook
+            result = await process_local_ebook_ingestion(
+                file_path=str(file_path),
+                metadata=metadata,
+                perform_chunking=True,
+                chunk_method='ebook_chapters',
+                chunk_size=1000,
+                chunk_overlap=200
+            )
+            
+            # Return a reference to the processed file
+            return ProcessedFile(
+                content=f"[Ebook Processed: {file_path.name} - {result.get('chunks', 0)} chunks created]",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="ebook"
+            )
+        except Exception as e:
+            logger.error(f"Failed to process ebook {file_path}: {e}")
+            return ProcessedFile(
+                content=f"[Error processing ebook: {file_path.name} - {str(e)}]",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="ebook"
+            )
+
+
+class PlaintextDatabaseHandler(FileHandler):
+    """Handler for plaintext files that should be stored in the database."""
+    
+    SUPPORTED_EXTENSIONS = {'.txt', '.md', '.log', '.text', '.rst', '.textile'}
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit for database storage
+    
+    def can_handle(self, file_path: Path) -> bool:
+        # Check if this is a plaintext file AND user wants database storage
+        # For now, we'll handle this based on file size - large files go to DB
+        if file_path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
+            return False
+        # Store files larger than 100KB in database
+        return file_path.stat().st_size > 100 * 1024
+    
+    async def process(self, file_path: Path) -> ProcessedFile:
+        """Process plaintext file for database ingestion."""
+        try:
+            # Check file size
+            if file_path.stat().st_size > self.MAX_FILE_SIZE:
+                return ProcessedFile(
+                    content=f"[File too large for database: {file_path.name} ({file_path.stat().st_size / 1024 / 1024:.1f}MB)]\nMax size: 10MB",
+                    display_name=file_path.name,
+                    insert_mode="inline",
+                    file_type="text"
+                )
+            
+            # Import the ingestion function
+            from ..Event_Handlers.ingest_events import process_local_plaintext_ingestion
+            
+            # Prepare metadata
+            metadata = {
+                'title': file_path.stem,
+                'author': 'Unknown',
+                'keywords': f'plaintext,{file_path.stem},{file_path.suffix[1:]}',
+                'ingestion_date': datetime.now().isoformat(),
+                'type': 'plaintext'
+            }
+            
+            # Process the plaintext file
+            result = await process_local_plaintext_ingestion(
+                file_path=str(file_path),
+                metadata=metadata,
+                perform_chunking=True,
+                chunk_method='paragraphs',
+                chunk_size=500,
+                chunk_overlap=200
+            )
+            
+            # Return a reference to the processed file
+            return ProcessedFile(
+                content=f"[Text File Processed: {file_path.name} - {result.get('chunks', 0)} chunks created]\nStored in database for RAG search.",
+                display_name=file_path.name,
+                insert_mode="inline",
+                file_type="text"
+            )
+        except Exception as e:
+            logger.error(f"Failed to process plaintext for database {file_path}: {e}")
+            # Fall back to inline insertion
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='replace')
+                formatted_content = f"--- Contents of {file_path.name} ---\n{content}\n--- End of {file_path.name} ---"
+                return ProcessedFile(
+                    content=formatted_content,
+                    display_name=file_path.name,
+                    insert_mode="inline",
+                    file_type="text"
+                )
+            except:
+                return ProcessedFile(
+                    content=f"[Error processing text file: {file_path.name}]",
+                    display_name=file_path.name,
+                    insert_mode="inline",
+                    file_type="text"
+                )
+
+
 class DefaultFileHandler(FileHandler):
     """Fallback handler for unsupported file types."""
     
@@ -335,7 +565,11 @@ class FileHandlerRegistry:
     def __init__(self):
         self.handlers: List[FileHandler] = [
             ImageFileHandler(),
-            TextFileHandler(),
+            PDFFileHandler(),
+            DocumentFileHandler(),
+            EbookFileHandler(),
+            PlaintextDatabaseHandler(),  # For large text files
+            TextFileHandler(),  # For small text files (inline)
             CodeFileHandler(),
             DataFileHandler(),
             DefaultFileHandler(),  # Must be last as it handles everything

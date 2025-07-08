@@ -165,26 +165,45 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         message_text_from_input = sanitize_string(message_text_from_input, max_length=100000)
     
     reuse_last_user_bubble = False
+    resend_conversation = False  # New flag specifically for resending the entire conversation
 
-    if not message_text_from_input: # Try to reuse last user message if input is empty
+    if not message_text_from_input: # Try to resend conversation if last message is from user
         try:
-            last_msg_widget: Optional[ChatMessage] = None
-            # Iterate over a materialized list to avoid issues if querying during modification (though less likely here)
-            for widget in reversed(list(chat_container.query(ChatMessage))):
-                if widget.role == "User": # Only reuse User messages
-                    last_msg_widget = widget
-                    break
-            if last_msg_widget:
-                message_text_from_input = last_msg_widget.message_text
-                reuse_last_user_bubble = True
-                loguru_logger.debug("Reusing last user message as input is empty.")
+            # Check if the last message in the conversation is from the user
+            # Query both ChatMessage and ChatMessageEnhanced widgets
+            all_chat_messages = list(chat_container.query(ChatMessage))
+            all_enhanced_messages = list(chat_container.query(ChatMessageEnhanced))
+            
+            # Combine and sort by mount time to get proper order
+            all_messages = sorted(
+                all_chat_messages + all_enhanced_messages,
+                key=lambda msg: msg._mount_time if hasattr(msg, '_mount_time') else 0
+            )
+            
+            if all_messages:
+                last_message = all_messages[-1]
+                loguru_logger.debug(f"Found {len(all_messages)} messages. Last message role: {last_message.role}, type: {type(last_message).__name__}")
+                
+                if last_message.role == "User":
+                    # The last message is from the user, so we should resend the conversation
+                    loguru_logger.info("Last message is from user, resending conversation")
+                    resend_conversation = True
+                    # Set a dummy message to pass validation
+                    message_text_from_input = "[Resending conversation]"
+                else:
+                    # Last message is not from user (likely AI or System)
+                    loguru_logger.debug("Last message is not from user (role: %s), not resending", last_message.role)
+                    text_area.focus()
+                    return
+            else:
+                # No messages in conversation
+                loguru_logger.debug("No messages in conversation, nothing to resend")
+                text_area.focus()
+                return
         except Exception as exc:
-            loguru_logger.error("Failed to inspect last message for reuse: %s", exc, exc_info=True)
-
-    if not message_text_from_input:
-        loguru_logger.debug("Send Button: Empty message and no reusable user bubble in '%s'. Focusing input.", prefix)
-        text_area.focus()
-        return
+            loguru_logger.error("Failed to inspect last message for resend: %s", exc, exc_info=True)
+            text_area.focus()
+            return
 
     selected_provider = str(provider_widget.value) if provider_widget.value != Select.BLANK else None
     selected_model = str(model_widget.value) if model_widget.value != Select.BLANK else None
@@ -246,6 +265,13 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     system_prompt_from_ui = system_prompt_widget.text # This is the system prompt from the LEFT sidebar
     active_char_data = app.current_chat_active_character_data  # This is from the RIGHT sidebar's loaded char
     final_system_prompt_for_api = system_prompt_from_ui  # Default to UI
+    
+    # Check if we're using enhanced chat window (needed for multiple places in this function)
+    use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+    
+    # Initialize pending_image and pending_attachment early (needed for multiple places in this function)
+    pending_image = None
+    pending_attachment = None
 
     if active_char_data:
         loguru_logger.info(
@@ -328,7 +354,12 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         # For now, let's take all completed User/AI messages *before* any reused bubble
 
         messages_to_process_for_history = all_ui_messages
-        if reuse_last_user_bubble and all_ui_messages:
+        
+        # When resending conversation, include ALL messages
+        if resend_conversation:
+            loguru_logger.debug("Resending conversation - including all messages in history")
+            messages_to_process_for_history = all_ui_messages
+        elif reuse_last_user_bubble and all_ui_messages:
             # If we are reusing the last bubble, it means it's already in the UI.
             # The history should include everything *before* that reused bubble.
             # Find the index of the last_msg_widget (which is the one being reused)
@@ -396,12 +427,8 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     user_msg_widget_instance: Optional[Union[ChatMessage, ChatMessageEnhanced]] = None
 
     # --- 6. Mount User Message to UI ---
-    if not reuse_last_user_bubble:
+    if not reuse_last_user_bubble and not resend_conversation:
         # Check if we're using enhanced chat window and if there's a pending image
-        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
-        pending_image = None
-        pending_attachment = None
-        
         if use_enhanced_chat:
             try:
                 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
@@ -458,7 +485,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
 
     # --- 7. Save User Message to DB (IF CHAT IS ALREADY PERSISTENT) ---
     if not app.current_chat_is_ephemeral and active_conversation_id and db:
-        if not reuse_last_user_bubble and user_msg_widget_instance:
+        if not reuse_last_user_bubble and not resend_conversation and user_msg_widget_instance:
             try:
                 loguru_logger.debug(f"Chat is persistent (ID: {active_conversation_id}). Saving user message to DB.")
                 # Include image data if present
@@ -592,10 +619,33 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # --- 11. Prepare and Dispatch API Call via Worker ---
     loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_with_rag[:50]}...', History items: {len(chat_history_for_api)}")
 
-    # Prepare media content if image is attached and model supports vision
+    # Prepare media content if attachment is present
     media_content_for_api = {}
     
-    if pending_image and is_vision_capable(selected_provider, selected_model):
+    # Handle new unified attachment system
+    if pending_attachment and pending_attachment.get('insert_mode') == 'attachment':
+        file_type = pending_attachment.get('file_type', 'unknown')
+        
+        # For images, check if model supports vision
+        if file_type == 'image' and is_vision_capable(selected_provider, selected_model):
+            try:
+                import base64
+                media_content_for_api = {
+                    "type": "image",
+                    "data": base64.b64encode(pending_attachment['data']).decode(),
+                    "mime_type": pending_attachment['mime_type']
+                }
+                loguru_logger.info(f"Including image attachment in API call (type: {pending_attachment['mime_type']}, size: {len(pending_attachment['data'])} bytes)")
+            except Exception as e:
+                loguru_logger.error(f"Failed to prepare image attachment for API: {e}")
+                # Continue without image
+        else:
+            # For non-image attachments, we could potentially handle them differently in the future
+            # For now, log that we have an attachment but it's not being sent
+            loguru_logger.debug(f"Attachment of type '{file_type}' present but not included in API call")
+    
+    # Fall back to legacy pending_image if no attachment
+    elif pending_image and is_vision_capable(selected_provider, selected_model):
         try:
             import base64
             media_content_for_api = {
@@ -603,9 +653,9 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                 "data": base64.b64encode(pending_image['data']).decode(),
                 "mime_type": pending_image['mime_type']
             }
-            loguru_logger.info(f"Including image in API call (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
+            loguru_logger.info(f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
         except Exception as e:
-            loguru_logger.error(f"Failed to prepare image for API: {e}")
+            loguru_logger.error(f"Failed to prepare image for API (legacy): {e}")
             # Continue without image
 
     # Log API parameters for debugging

@@ -82,7 +82,16 @@ def test_process_image_attachment_stores_data():
         # Run the process_file_attachment method
         asyncio.run(chat_window.process_file_attachment(test_path))
     
-    # Check that pending_image was set correctly
+    # Check that pending_attachment was set correctly (new unified system)
+    assert chat_window.pending_attachment is not None
+    assert chat_window.pending_attachment['data'] == test_image_data
+    assert chat_window.pending_attachment['mime_type'] == test_mime_type
+    assert chat_window.pending_attachment['path'] == test_path
+    assert chat_window.pending_attachment['display_name'] == "test_image.png"
+    assert chat_window.pending_attachment['file_type'] == "image"
+    assert chat_window.pending_attachment['insert_mode'] == "attachment"
+    
+    # Check that pending_image was also set for backward compatibility
     assert chat_window.pending_image is not None
     assert chat_window.pending_image['data'] == test_image_data
     assert chat_window.pending_image['mime_type'] == test_mime_type
@@ -95,6 +104,63 @@ def test_process_image_attachment_stores_data():
     
     # Check notification
     mock_app.notify.assert_called_with("test_image.png attached")
+
+def test_process_text_file_attachment():
+    """Test that process_file_attachment properly handles text files (inline mode)."""
+    # Create a mock app instance
+    mock_app = Mock()
+    mock_app.notify = Mock()
+    
+    # Create the chat window
+    chat_window = ChatWindowEnhanced(app_instance=mock_app)
+    chat_window.app_instance = mock_app
+    
+    # Mock the query_one method to return mock widgets
+    mock_chat_input = Mock()
+    mock_chat_input.text = "Existing text"
+    
+    def mock_query_one(selector, widget_type=None):
+        if selector == "#chat-input":
+            return mock_chat_input
+        raise Exception(f"Widget not found: {selector}")
+    
+    chat_window.query_one = mock_query_one
+    
+    # Create test text file data
+    test_content = "--- Contents of test.txt ---\nThis is test content\n--- End of test.txt ---"
+    test_path = "/tmp/test.txt"
+    
+    # Mock the file handler registry
+    with patch('tldw_chatbook.Utils.file_handlers.file_handler_registry.process_file') as mock_process:
+        # Create a mock processed file result for text (inline mode)
+        mock_result = Mock()
+        mock_result.insert_mode = "inline"
+        mock_result.content = test_content
+        mock_result.display_name = "test.txt"
+        mock_result.file_type = "text"
+        
+        # Create an async mock that returns the mock result
+        import asyncio
+        
+        async def mock_process_file(path):
+            return mock_result
+        
+        mock_process.side_effect = mock_process_file
+        
+        # Run the process_file_attachment method
+        asyncio.run(chat_window.process_file_attachment(test_path))
+    
+    # Check that text was inserted into chat input
+    expected_text = "Existing text\n\n" + test_content
+    assert mock_chat_input.text == expected_text
+    assert mock_chat_input.cursor_location == len(expected_text)
+    
+    # Check that pending_attachment and pending_image were NOT set (inline mode)
+    assert not hasattr(chat_window, 'pending_attachment') or chat_window.pending_attachment is None
+    assert chat_window.pending_image is None
+    
+    # Check notification
+    mock_app.notify.assert_called_with("📄 test.txt content inserted")
 
 def test_clear_image_attachment():
     """Test that clearing image attachment works properly."""

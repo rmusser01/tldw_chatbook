@@ -274,7 +274,8 @@ class ChatWindowEnhanced(Container):
                     'mime_type': processed_file.attachment_mime_type,
                     'path': file_path,
                     'display_name': processed_file.display_name,
-                    'file_type': processed_file.file_type
+                    'file_type': processed_file.file_type,
+                    'insert_mode': processed_file.insert_mode
                 }
                 
                 # For backward compatibility, also set pending_image if it's an image

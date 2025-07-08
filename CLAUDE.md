@@ -172,11 +172,16 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `settings_sidebar.py` - Settings sidebar widget
   - `file_picker_dialog.py` - Advanced file picker dialog
   - `custom_list_items.py` - Custom list item implementations
+  - `IngestLocalDocumentWindow.py` - Local document file ingestion
   - `IngestLocalEbookWindow.py` - Local e-book file ingestion
   - `IngestLocalPdfWindow.py` - Local PDF file ingestion
   - `IngestLocalPlaintextWindow.py` - Local plain text file ingestion
   - `IngestLocalWebArticleWindow.py` - Local web article ingestion
   - `document_generation_modal.py` - Document generation UI modal
+  - `form_components.py` - Standardized form creation components
+  - `status_widget.py` - Status display widget
+  - `tool_message_widgets.py` - Tool calling UI widgets (ToolCallMessage, ToolResultMessage)
+  - `password_dialog.py` - Password dialogs for config encryption
 
 #### Business Logic Layer
 - **`Event_Handlers/`** - Decoupled event handling with clear responsibilities
@@ -204,6 +209,10 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - Image handling and multimodal support
 - **`Coding/`** - Code assistance functionality
   - `code_mapper.py` - Code mapping and analysis utilities
+- **`Tools/`** - Tool calling system implementation
+  - `tool_executor.py` - Tool execution engine with safety features
+  - Built-in tools: DateTimeTool, CalculatorTool
+  - Abstract Tool base class for custom implementations
 - **`Character_Chat/`** - Character system implementation
   - `Character_Chat_Lib.py` - Character CRUD operations
   - `ccv3_parser.py` - Character card format parsing
@@ -270,6 +279,11 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `schemas.py` - Data models and validation schemas
   - `exceptions.py` - Custom exception handling
   - `utils.py` - Utility functions for API operations
+- **`Local_Ingestion/`** - Local file processing module
+  - `Book_Ingestion_Lib.py` - E-book processing functionality
+  - `Document_Processing_Lib.py` - Document format handling
+  - `PDF_Processing_Lib.py` - PDF-specific processing
+  - `XML_Ingestion.py` - XML file ingestion
 
 - **`Config_Files/`** - Configuration management
   - `create_custom_template.py` - Template creation utilities
@@ -302,6 +316,8 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `terminal_utils.py` - Terminal capability detection (sixel, iTerm2 graphics protocol support)
   - `text.py` - Text processing utilities
   - `Emoji_Handling.py` - Emoji processing and display utilities
+  - `config_encryption.py` - AES-256 encryption for sensitive config data
+  - `custom_tokenizers.py` - Custom tokenizer support for accurate token counting
   - **Splash Screen System** - Application startup visuals
     - `Splash.py` - Core splash screen functionality
     - `Splash_Strings.py` - Splash screen text content
@@ -313,6 +329,19 @@ The codebase follows a sophisticated modular architecture with clear separation 
   - `logger_config.py` - Logger configuration settings
   - Performance monitoring
   - Usage analytics (local only)
+- **`Helper_Scripts/`** - Development and content tools
+  - `Character_Cards/` - Sample character cards (PNG, Markdown formats)
+  - `Prompts/` - Extensive prompt library organized by category:
+    - Academic/Studying prompts
+    - Image generation prompts
+    - Jailbreak templates
+    - Programming assistants
+    - Summarization templates
+    - Writing assistants
+    - WebSearch prompts
+    - Fabric Patterns integration
+  - `Convert_Fabric_Prompts.py` - Fabric prompt conversion tool
+  - `Ingest_Prompts.py` - Prompt ingestion utility
 - **`Tools/`** - Additional utility tools
   - `Mind_Map/` - Mind mapping functionality
     - `anytree-demo.py` - Demonstration of tree structures
@@ -358,6 +387,59 @@ The application includes a sophisticated splash screen system with customizable 
   - `cyberpunk_card.toml`, `gaming_card.toml`, `minimalist_card.toml`
   - `custom_animation_effect.py` - Template for custom animations
 
+### Tool Calling System
+
+#### Architecture
+The application includes a sophisticated tool calling system for LLM function calling:
+- **Core Components**:
+  - `Tools/tool_executor.py` - Safe execution engine with timeouts and concurrency
+  - Abstract `Tool` base class for implementing custom tools
+  - Built-in tools: `DateTimeTool`, `CalculatorTool`
+  - UI widgets: `ToolCallMessage`, `ToolResultMessage`, `ToolExecutionWidget`
+- **Database Support**: Schema migration v6→v7 adds tool message support
+- **Provider Integration**: Tool response parsing for multiple LLM providers
+- **Status**: Partially implemented - detection works, execution pending integration
+
+### Config File Encryption
+
+#### Security Features
+- **AES-256 Encryption**: With PBKDF2 key derivation for config protection
+- **Components**:
+  - `Utils/config_encryption.py` - Core encryption functionality
+  - `Widgets/password_dialog.py` - Password UI dialogs
+  - `EncryptionSetupDialog` - Guided encryption setup
+- **Features**:
+  - Automatic API key detection and encryption
+  - Master password protection
+  - Password change functionality
+  - Secure key derivation
+
+### Custom Tokenizers
+
+#### Architecture
+- **Location**: `Utils/custom_tokenizers.py`
+- **Features**:
+  - Support for custom tokenizer.json files
+  - Accurate token counting for different models
+  - Provider-specific tokenizer mappings
+  - Installation directory: `~/.config/tldw_cli/tokenizers`
+- **Usage**: Enables precise token counting for cost estimation and limits
+
+### Form Components Library
+
+#### Standardized UI Forms
+- **Location**: `Widgets/form_components.py`
+- **Components**:
+  - `create_form_field()` - Creates standard form fields
+  - `create_form_row()` - Creates form row layouts
+  - `create_form_section()` - Creates collapsible form sections
+- **Field Types**: Input, textarea, select, checkbox
+- **Features**:
+  - Consistent styling across forms
+  - Built-in validation support
+  - Collapsible sections
+  - Button groups and status areas
+
 ### Database Design
 
 #### Schema Versioning
@@ -365,6 +447,7 @@ The application includes a sophisticated splash screen system with customizable 
 - Migration support via SQL scripts
 - Backward compatibility maintained
 - SQLite datetime handling fixes via `sqlite_datetime_fix.py`
+- Current schema version: v7 (supports tool messages)
 
 #### Key Relationships
 1. **Conversations ↔ Messages**: One-to-many with ordering
@@ -444,102 +527,6 @@ def chat_with_provider(
     **kwargs
 ) -> Union[str, Generator[str, None, None]]
 ```
-
-#### Model Capabilities
-The system includes intelligent model capability detection via `model_capabilities.py`:
-- **Vision Support**: Automatic detection of multimodal models
-- **Provider Mapping**: Configuration-based capability definitions
-- **Dynamic Updates**: Easy addition of new model capabilities
-
-#### Commercial Providers
-Located in `LLM_Calls/LLM_API_Calls.py`:
-- **OpenAI**: GPT-3.5/4 models with function calling support
-- **Anthropic**: Claude models with system prompt handling
-- **Google**: Gemini models with safety settings
-- **Cohere**: Command models with web search
-- **DeepSeek**: Specialized coding models
-- **Mistral**: Open-weight commercial models
-- **Groq**: High-speed inference
-- **HuggingFace**: Hub model access
-- **OpenRouter**: Multi-provider gateway
-- **TabbyAPI**: High-performance inference server
-- **Custom OpenAI 2**: Alternative OpenAI-compatible implementation
-
-#### Local Providers
-Located in `LLM_Calls/LLM_API_Calls_Local.py`:
-- **Llama.cpp**: Direct C++ inference
-- **Ollama**: Containerized local models
-- **Kobold.cpp**: Gaming-focused inference
-- **vLLM**: High-throughput serving
-- **Aphrodite**: vLLM fork with extensions
-- **MLX**: Apple Silicon optimized
-- **Custom OpenAI**: Any OpenAI-compatible endpoint
-- **Llamafile**: Single-file executable LLM server
-- **ONNX**: Cross-platform neural network inference
-- **Transformers**: HuggingFace transformers library
-
-### Provider Implementation Guide
-
-#### Adding a New Provider
-1. **Create Provider Function**:
-   ```python
-   def chat_with_newprovider(
-       messages, api_key, model, temperature=0.7,
-       max_tokens=4096, stream=False, **kwargs
-   ):
-       # Implementation
-   ```
-
-2. **Update Configuration**:
-   - Add to `API_MODELS_BY_PROVIDER` in `config.py`
-   - Add default models and endpoints
-   - Update config.toml template
-
-3. **Implement Streaming**:
-   ```python
-   if stream:
-       for chunk in response:
-           yield extract_content(chunk)
-   ```
-
-4. **Add UI Integration**:
-   - Update provider dropdowns
-   - Add to model selection logic
-   - Handle provider-specific parameters
-
-5. **Error Handling**:
-   - Implement retry logic
-   - Provide meaningful error messages
-   - Handle rate limits gracefully
-
-### Provider-Specific Features
-
-#### Streaming Implementation
-- Chunk-based yielding for real-time display
-- Proper cleanup on cancellation
-- Token counting for progress indication
-
-#### Parameter Mapping
-- Temperature scaling for different providers
-- Token limit adjustments
-- System prompt handling variations
-
-#### Authentication
-- API key validation
-- OAuth support where applicable
-- Custom header injection
-
-### Local Model Management
-
-#### Server Lifecycle
-1. **Startup**: Managed by LLM_Management_Window
-2. **Health Checks**: Periodic connectivity tests
-3. **Shutdown**: Graceful termination on app exit
-
-#### Model Loading
-- Automatic model discovery (Ollama)
-- Manual path specification (llama.cpp)
-- HuggingFace model downloading (MLX)
 
 ## Key Development Patterns
 
@@ -931,8 +918,8 @@ The evaluation system provides comprehensive LLM benchmarking:
 ### Deployment and Distribution
 
 #### PyPI Package
-- **Package Name**: `tldw-cli`
-- **Entry Point**: `tldw-cli` command
+- **Package Name**: `tldw-chatbook`
+- **Entry Point**: `tldw-chatbook` command
 - **Build System**: setuptools with pyproject.toml
 - **Package Data**: Includes templates, CSS, and default configs
 
@@ -958,6 +945,68 @@ The evaluation system provides comprehensive LLM benchmarking:
 - Use Textual dev console
 - Ask in discussions with minimal reproduction
 
+## Testing Infrastructure
+
+### Test Utilities
+The project includes comprehensive testing utilities:
+- **`Tests/fixtures/`** - Mock data and test fixtures
+- **`Tests/integration/`** - Integration test suites
+- **`Tests/unit/`** - Unit test modules
+- **Test Utilities**:
+  - `api_test_utilities.py` - API testing helpers
+  - `datetime_test_utils.py` - Date/time test utilities
+  - `db_test_utilities.py` - Database test helpers
+  - `textual_test_harness.py` - Textual testing framework
+  - `textual_test_utils.py` - Textual-specific test utilities
+- **Test Reports**: `test_reports/` directory for execution results
+
+### Property-Based Testing
+- **Methodology**: Documented in `PBT-METHODOLOGY.md`
+- **Framework**: Hypothesis for automatic edge case discovery
+- **Coverage**: Input validation, database operations, sync logic
+
+## Build and Packaging
+
+### Build Tools
+Located in `Packaging/` directory:
+- **Scripts**:
+  - `build_dist.sh` - Distribution building script
+  - `build_release.sh` - Release preparation script
+  - `check_manifest.py` - Manifest validation tool
+  - `clean.sh` - Build cleanup utility
+- **Documentation**:
+  - `PACKAGING_CHECKLIST.md` - Release checklist
+  - `PYPI_README.md` - PyPI-specific documentation
+  - `PYPI_RELEASE.md` - PyPI release guide
+
+### Additional Tools
+- `clean_cache.py` - Cache cleaning utility
+- `find_call_from_thread.py` - Threading debug utility
+- `generate_coverage.py` - Code coverage generation
+
+## Examples and Configuration Templates
+
+### Example Configurations
+Located in `examples/` directory:
+- **Custom Splash Cards**: `custom_splash_cards/`
+  - `cyberpunk_card.toml` - Cyberpunk theme splash
+  - `gaming_card.toml` - Gaming theme splash
+  - `minimalist_card.toml` - Minimal theme splash
+  - `custom_animation_effect.py` - Template for custom animations
+- **RAG Configurations**:
+  - `rag_query_expansion_config.toml` - Query expansion settings
+  - `rag_search_mode_config.toml` - Search mode configuration
+
+## Documentation Structure
+
+### Development Documentation
+- **Location**: `Docs/Development/`
+- **Key Documents**:
+  - `SPLASH_SCREEN_GUIDE.md` - Splash screen customization
+  - `STARTUP_METRICS_SUMMARY.md` - Performance metrics
+  - `TOOL-CALLING.md` - Tool calling system guide
+  - Various implementation summaries and fix documentation
+- **Feature Documentation**: Embeddings, evaluation system, RAG pipeline guides
 
 ## Code Style
 - Use Python type hints for function parameters and return values
@@ -970,49 +1019,3 @@ The evaluation system provides comprehensive LLM benchmarking:
 - Use Pydantic models for data validation
 - Validate input parameters and handle exceptions with appropriate error codes
 - Tests should use pytest fixtures and mocks for external services
-
-## Commit Guidelines
-- Use conventional commit message format (Release Please compatible):
-  * Format: `<type>(<scope>): <description>`
-  * Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-  * Example: `fix(dependencies): update log4j to patch security vulnerability`
-  * Breaking changes: Add `!` after type/scope and include `BREAKING CHANGE:` in body
-  * Example: `feat(api)!: change response format` with body containing `BREAKING CHANGE: API now returns JSON instead of XML`
-- Ensure commit messages are concise and descriptive
-- Explain the purpose and impact of changes in the commit message
-- Group related changes in a single commit
-- Keep commits focused and atomic
-- For version bumps, use `chore(release): v1.2.3` format
-
-## PR Description Guidelines
-Use the output of the git diff to create the description of the Merge Request. Follow this structure exactly:
-
-1. **Title**  
-   *A one-line summary of the change (max 60 characters).*
-
-2. **Summary**  
-   *Briefly explain what this PR does and why.*
-
-3. **Changes**  
-   *List each major change as a bullet:*  
-   - Change A: what was done  
-   - Change B: what was done  
-
-4. **Technical Details**
-   *Highlight any notable technical details relevant to the changes*
-
-## CHANGELOG Guidelines
-- Maintain a CHANGELOG.md file in the root directory
-- Add entries under the following sections:
-  * `Added` - New features
-  * `Changed` - Changes in existing functionality
-  * `Fixed` - Bug fixes
-  * `Security` - Vulnerability fixes
-- Example:
-  ```markdown
-  ## 2024-03-20
-  ### Added
-  - New feature X
-  ### Fixed
-  - Bug fix Y
-  ```

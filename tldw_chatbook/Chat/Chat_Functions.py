@@ -739,7 +739,10 @@ def chat_api_call(
 
     # Add provider_name to kwargs only for handlers that support it
     # Some local providers use this for dynamic configuration loading
-    PROVIDERS_WITH_PROVIDER_NAME = {'llama_cpp', 'vllm', 'ollama', 'mlx_lm', 'vllm_api', 'mlx'}
+    PROVIDERS_WITH_PROVIDER_NAME = {
+        'llama_cpp', 'vllm', 'ollama', 'mlx_lm', 'vllm_api', 'mlx',
+        'local_llamacpp', 'local_llamafile', 'local_vllm', 'local_ollama', 'local_mlx_lm'
+    }
     
     if endpoint_lower in PROVIDERS_WITH_PROVIDER_NAME:
         call_kwargs['provider_name'] = endpoint_lower

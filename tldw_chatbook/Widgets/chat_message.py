@@ -161,8 +161,8 @@ class ChatMessage(Widget):
             with Horizontal(classes=actions_class) as actions_bar:
                 actions_bar.id = f"actions-bar-{self.id or self.message_id_internal or 'new'}"
                 # Common buttons
-                yield Button("Edit", classes="action-button edit-button")
-                yield Button("📋", classes="action-button copy-button", id="copy") # Emoji for copy
+                yield Button("Edit", classes="action-button edit-button", tooltip="Edit message")
+                yield Button("📋", classes="action-button copy-button", id="copy", tooltip="Copy message to clipboard") # Emoji for copy
                 yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
                 
                 # Add file extraction button if files detected
@@ -174,20 +174,20 @@ class ChatMessage(Widget):
                                id="extract-files", 
                                tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
                 
-                yield Button("🔊", classes="action-button speak-button", id="speak") # Emoji for speak
+                yield Button("🔊", classes="action-button speak-button", id="speak", tooltip="Read message aloud") # Emoji for speak
 
                 # AI-specific buttons
                 if self.has_class("-ai"):
                     # Display feedback state on thumb buttons
                     thumb_up_label = "👍✓" if self.feedback == "1;" else "👍"
                     thumb_down_label = "👎✓" if self.feedback == "2;" else "👎"
-                    yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up")
-                    yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down")
-                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate") # Emoji for regenerate
-                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button")
+                    yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up", tooltip="Mark as helpful")
+                    yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down", tooltip="Mark as unhelpful")
+                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate", tooltip="Regenerate response") # Emoji for regenerate
+                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button", tooltip="Continue response")
 
                 # Add delete button for all messages at very end
-                yield Button("🗑️", classes="action-button delete-button")  # Emoji for delete ; Label: Delete, Class: delete-button
+                yield Button("🗑️", classes="action-button delete-button", tooltip="Delete message")  # Emoji for delete ; Label: Delete, Class: delete-button
 
     def watch__generation_complete_internal(self, complete: bool) -> None:
         """
