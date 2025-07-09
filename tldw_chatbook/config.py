@@ -2014,16 +2014,33 @@ temp_dir = ""  # Empty means use system temp
 
 [transcription]
 # Default transcription provider
-# Options: "faster-whisper", "qwen2audio"
+# Options: "faster-whisper", "qwen2audio", "parakeet", "canary"
 default_provider = "faster-whisper"
 
 # Default model for transcription
 # For faster-whisper: tiny, base, small, medium, large-v1, large-v2, large-v3, distil-large-v3
+#   Note: faster-whisper supports translation to English for non-English audio
 # For qwen2audio: Qwen2-Audio-7B-Instruct
+# For parakeet: nvidia/parakeet-tdt-1.1b, nvidia/parakeet-rnnt-1.1b, nvidia/parakeet-ctc-1.1b,
+#               nvidia/parakeet-tdt-0.6b, nvidia/parakeet-rnnt-0.6b, nvidia/parakeet-ctc-0.6b,
+#               nvidia/parakeet-tdt-0.6b-v2
+# For canary: nvidia/canary-1b-flash, nvidia/canary-1b
+#   Note: Canary supports multilingual ASR and translation between en, de, es, fr
 default_model = "base"
 
 # Default language for transcription (use "auto" for automatic detection)
+# For source language in transcription
 default_language = "en"
+
+# Default source language (overrides default_language if specified)
+# Used for explicitly setting the audio's language
+default_source_language = ""
+
+# Default target language for translation (leave empty for no translation)
+# Supported by:
+#   - faster-whisper: Only supports translation to English ("en")
+#   - canary: Supports translation between en, de, es, fr
+default_target_language = ""
 
 # Device to use for transcription
 # Options: "cpu", "cuda", "mps" (Apple Silicon)
@@ -2038,6 +2055,10 @@ use_vad_by_default = false
 
 # Speaker diarization (not yet fully implemented)
 use_diarization_by_default = false
+
+# Chunk length for long audio processing (in seconds)
+# Used by Canary model for efficient processing of long audio files
+chunk_length_seconds = 40.0
 
 [local_ingestion]
 # YouTube/URL download settings

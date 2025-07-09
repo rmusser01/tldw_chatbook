@@ -1,0 +1,46 @@
+# Starship Boot Sequence splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "starfield"
+style = "cyan on black"
+
+# Starfield effect parameters
+star_count = 100
+warp_speed = 0.5
+system_boot_sequence = true
+
+content = """
+═══════════════════════════════════════════════
+    UNITED EARTH STARSHIP SYSTEMS v47.3.1
+═══════════════════════════════════════════════
+
+SYSTEM INITIALIZATION:
+├─ Fusion Reactors.......... [ONLINE]
+├─ Inertial Dampeners....... [ONLINE]
+├─ Life Support............. [ONLINE]
+├─ Artificial Gravity....... [ONLINE]
+├─ Navigation Systems....... [ONLINE]
+├─ Warp Drive............... [WARMING UP]
+├─ Shields.................. [CHARGING: 47%]
+├─ Coffee Maker............. [CRITICAL]
+└─ AI Assistant TLDW........ [READY]
+
+DESTINATION: The Digital Frontier
+ETA: ∞ (Time is relative in cyberspace)
+
+ENGAGE
+═══════════════════════════════════════════════
+"""
+
+# Progress messages
+progress_messages = [
+    "Calibrating quantum flux compensators...",
+    "Reversing polarity of neutron flow...",
+    "Engaging the improbability drive...",
+    "Rerouting power from holodeck...",
+    "Replicating Earl Grey, hot..."
+]
+
+# Additional styling
+css_classes = ["starship-bridge", "federation-theme"]

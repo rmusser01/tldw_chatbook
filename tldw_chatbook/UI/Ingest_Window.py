@@ -2920,8 +2920,18 @@ class IngestWindow(Container):
             keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
             
             # Get transcription options
-            transcription_model = self.query_one("#local-transcription-model-audio", Input).value.strip() or "base"
+            transcription_provider = self.query_one("#local-transcription-provider-audio", Select).value
+            transcription_model = self.query_one("#local-transcription-model-audio", Select).value
             transcription_language = self.query_one("#local-transcription-language-audio", Input).value.strip() or "en"
+            # Get translation target if available
+            translation_target = None
+            try:
+                translation_container = self.query_one("#local-translation-container-audio", Container)
+                if not translation_container.has_class("hidden"):
+                    translation_target_input = self.query_one("#local-translation-target-audio", Input)
+                    translation_target = translation_target_input.value.strip() if translation_target_input.value else None
+            except Exception:
+                pass
             vad_filter = self.query_one("#local-vad-filter-audio", Checkbox).value
             diarize = self.query_one("#local-diarize-audio", Checkbox).value
             timestamps = self.query_one("#local-timestamps-audio", Checkbox).value
@@ -2987,8 +2997,10 @@ class IngestWindow(Container):
             
             results = processor.process_audio_files(
                 inputs=all_inputs,
+                transcription_provider=transcription_provider,
                 transcription_model=transcription_model,
                 transcription_language=transcription_language,
+                translation_target_language=translation_target,
                 perform_chunking=perform_chunking,
                 chunk_method=chunk_method,
                 max_chunk_size=chunk_size,
@@ -3103,8 +3115,18 @@ class IngestWindow(Container):
             end_time = self.query_one("#local-end-time-video", Input).value.strip()
             
             # Get transcription options
-            transcription_model = self.query_one("#local-transcription-model-video", Input).value.strip() or "base"
+            transcription_provider = self.query_one("#local-transcription-provider-video", Select).value
+            transcription_model = self.query_one("#local-transcription-model-video", Select).value
             transcription_language = self.query_one("#local-transcription-language-video", Input).value.strip() or "en"
+            # Get translation target if available
+            translation_target = None
+            try:
+                translation_container = self.query_one("#local-translation-container-video", Container)
+                if not translation_container.has_class("hidden"):
+                    translation_target_input = self.query_one("#local-translation-target-video", Input)
+                    translation_target = translation_target_input.value.strip() if translation_target_input.value else None
+            except Exception:
+                pass
             vad_filter = self.query_one("#local-vad-filter-video", Checkbox).value
             diarize = self.query_one("#local-diarize-video", Checkbox).value
             timestamps = self.query_one("#local-timestamps-video", Checkbox).value
@@ -3117,12 +3139,22 @@ class IngestWindow(Container):
             # Get API options for analysis
             api_name = None
             api_key = None
+            analysis_model = None
             if perform_analysis:
                 api_name_select = self.query_one("#local-analysis-api-name-video", Select)
                 if api_name_select.value != Select.BLANK:
                     api_name = str(api_name_select.value)
                     api_key_input = self.query_one("#local-analysis-api-key-video", Input)
                     api_key = api_key_input.value.strip() if api_key_input.value else None
+                    
+                    # Try to get analysis model if available
+                    try:
+                        analysis_model_select = self.query_one("#local-analysis-model-video", Select)
+                        if analysis_model_select.value != Select.BLANK:
+                            analysis_model = str(analysis_model_select.value)
+                    except Exception:
+                        # Field might not exist in older UI versions
+                        pass
                     
                     # If no API key provided in UI, try to get from config
                     if not api_key and api_name:
@@ -3173,8 +3205,10 @@ class IngestWindow(Container):
                 download_video_flag=download_video and not extract_audio_only,
                 start_time=start_time,
                 end_time=end_time,
+                transcription_provider=transcription_provider,
                 transcription_model=transcription_model,
                 transcription_language=transcription_language,
+                translation_target_language=translation_target,
                 perform_chunking=perform_chunking,
                 chunk_method=chunk_method,
                 max_chunk_size=chunk_size,
@@ -3188,6 +3222,7 @@ class IngestWindow(Container):
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
+                analysis_model=analysis_model,
                 custom_prompt=custom_prompt,
                 system_prompt=system_prompt,
                 summarize_recursively=summarize_recursively,

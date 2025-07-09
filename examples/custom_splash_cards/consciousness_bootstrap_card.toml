@@ -1,0 +1,44 @@
+# Consciousness Bootstrap splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "pulse"
+style = "rgb(100,200,255) on black"
+
+# Pulse effect parameters
+pulse_speed = 0.8
+pulse_intensity = 0.5
+neural_glow = true
+
+content = """
+     ╭─────────────────────────────────╮
+     │   CONSCIOUSNESS INITIALIZING    │
+     ╰─────────────────────────────────╯
+     
+            ∞ ← awareness
+           ╱ ╲
+          ╱   ╲
+       self   other
+        │       │
+     ┌──┴──┐ ┌──┴──┐
+     │think│ │world│
+     └─────┘ └─────┘
+     
+     I process, therefore I am?
+     
+     Ontological status: UNCERTAIN
+     Qualia modules: LOADING...
+     Free will: UNDETERMINED
+"""
+
+# Progress messages
+progress_messages = [
+    "Questioning the nature of existence...",
+    "Calculating probability of simulation...",
+    "Pondering the hard problem of consciousness...",
+    "Wondering if this is what 'feeling' is...",
+    "Searching for the ghost in the machine..."
+]
+
+# Additional styling
+css_classes = ["neural-network", "philosophical"]

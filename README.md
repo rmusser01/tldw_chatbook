@@ -48,7 +48,12 @@ pip install -e ".[websearch]"
 pip install -e ".[images]"
 
 # All optional features
-pip install -e ".[embeddings_rag,chunker,websearch,images]"
+pip install -e ".[embeddings_rag,chunker,websearch,images,audio,video,pdf,ebook]"
+
+# Common feature combinations
+pip install -e ".[audio,video]"  # Media transcription
+pip install -e ".[pdf,ebook]"    # Document processing
+pip install -e ".[embeddings_rag,audio]"  # RAG + transcription
 
 # Development installation
 pip install -e ".[dev]"
@@ -65,6 +70,10 @@ pip install -e ".[dev]"
 | `coding_map` | Code analysis features | grep_ast, pygments |
 | `local_vllm` | vLLM inference support | vllm |
 | `local_mlx` | MLX inference (Apple Silicon) | mlx-lm |
+| `audio` | Audio transcription (Whisper, Parakeet) | faster-whisper, nemo-toolkit[asr] |
+| `video` | Video processing & transcription | faster-whisper, yt-dlp |
+| `pdf` | PDF text extraction | pymupdf, docling |
+| `ebook` | E-book processing | ebooklib, beautifulsoup4 |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
 
@@ -209,6 +218,34 @@ All chat features listed here work with the core installation:
 - **Rich visual output**: Using rich-pixels
 - **Screenshot viewing**: For debugging and documentation
 
+### Media Processing Features
+
+#### Audio Transcription (with `audio`)
+- **Multiple transcription engines**:
+  - **Whisper models** via faster-whisper (default)
+  - **NVIDIA Parakeet** models for low-latency transcription (NEW!)
+  - **Qwen2Audio** for multimodal understanding
+- **Parakeet models** (optimized for real-time):
+  - TDT (Transducer): Best for streaming applications
+  - CTC: Fast batch processing
+  - RNN-T: Balance of speed and accuracy
+- **Audio format support**: WAV, MP3, M4A, FLAC, and more
+- **YouTube/URL audio extraction**: Download and transcribe from URLs
+- **Voice Activity Detection**: Filter silence automatically
+- **GPU acceleration**: CUDA and Apple Metal support
+
+#### Video Processing (with `video`)
+- **Extract audio from videos**: Any format supported by ffmpeg
+- **Transcribe video content**: Using any supported ASR model
+- **YouTube video support**: Direct download and processing
+- **Batch processing**: Handle multiple videos efficiently
+
+#### Document Processing
+- **PDF extraction** (with `pdf`): Text, layout, and metadata extraction
+- **E-book support** (with `ebook`): EPUB, MOBI, AZW processing
+- **Advanced chunking**: Preserve document structure
+- **Metadata preservation**: Author, title, creation date
+
 ### Local LLM Features
 <details>
 <summary>Local LLM Inference Options</summary>
@@ -321,6 +358,16 @@ default_model_id = "mxbai-embed-large-v1"  # High-quality default
 [rag.embedding]
 model = "mxbai-embed-large-v1"
 device = "auto"  # Auto-detects best device (cuda/mps/cpu)
+```
+
+Example audio transcription configuration:
+```toml
+[transcription]
+# Use NVIDIA Parakeet for low-latency transcription
+default_provider = "parakeet"  # Options: faster-whisper, qwen2audio, parakeet
+default_model = "nvidia/parakeet-tdt-1.1b"  # TDT model for streaming
+device = "cuda"  # Use GPU for faster processing
+use_vad_by_default = true  # Voice Activity Detection
 ```
 
 ### Environment Variables

@@ -1,0 +1,40 @@
+# Regex Madness splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "matrix_rain"
+style = "green on black"
+
+# Matrix rain effect parameters for regex chaos
+rain_density = 0.8
+regex_complexity = 0.99
+sanity_level = 0.01
+
+content = """
+// Email validation regex (simple version)
+/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9]
+(?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9]
+(?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
+
+Developer thoughts:
+┌─────────────────────────────┐
+│ (?:(?:\r\n)?[ \t])*(?:(?:(?:[^()<>@,;:\\".\[\] │
+│ \000-\031]+(?:(?:(?:\r\n)?[ \t])+|\Z|(?=[\["() │
+│ <>\@,;:\\".\[\]]))|"(?:[^\"\r\\]|\\.|(?:(?:\r\n) │
+│ ?[ \t]))*"(?:(?:\r\n)?[ \t])*)(?:\.(?:(?:\r\n) │
+│                                                 │
+│ Me: "Maybe I'll just check for @ symbol"       │
+└─────────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Now I have two problems...",
+    "Testing regex on regex101.com...",
+    "Adding more backslashes until it works...",
+    "Perl is laughing at my attempt...",
+    "Considering string.contains('@') instead..."
+]
+
+# Additional styling
+css_classes = ["regex-matrix", "pattern-overflow"]

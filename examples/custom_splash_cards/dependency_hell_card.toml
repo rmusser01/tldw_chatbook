@@ -1,0 +1,45 @@
+# Dependency Hell splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "text_explosion"
+style = "yellow on black"
+
+# Text explosion effect parameters
+explosion_delay = 2.0
+cascade_speed = 0.03
+npm_chaos = 1.0
+
+content = """
+npm install
+
+npm WARN deprecated coffee-script@0.0.1
+npm WARN deprecated left-pad@0.0.1
+npm ERR! peer dep missing: react@^15.0.0
+npm ERR! peer dep missing: react@^16.0.0  
+npm ERR! peer dep missing: react@^17.0.0
+npm ERR! peer dep missing: react@^18.0.0
+
+found 47,293 vulnerabilities
+  42,178 low severity
+  5,112 moderate severity
+  3 high severity
+
+run `npm audit fix` to fix them
+run `npm audit fix --force` to REALLY fix them
+run `rm -rf node_modules` to achieve peace
+
+added 2,847,293 packages in 4h 32m 17s
+"""
+
+# Progress messages
+progress_messages = [
+    "Downloading the entire internet...",
+    "Installing dependencies of dependencies...",
+    "node_modules achieved sentience...",
+    "Folder size exceeds available disk space...",
+    "Creating black hole in project directory..."
+]
+
+# Additional styling
+css_classes = ["npm-chaos", "dependency-cascade"]

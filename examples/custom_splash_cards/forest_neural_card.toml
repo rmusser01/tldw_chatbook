@@ -1,0 +1,41 @@
+# Forest Neural Network splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "maze_generator"
+style = "rgb(50,200,50) on black"
+
+# Maze generator effect parameters for forest paths
+path_complexity = 0.7
+tree_density = 0.85
+neural_connections = true
+
+content = """
+    🌲 RANDOM FOREST CLASSIFIER 🌲
+    
+    ╱│╲   ╱│╲   ╱│╲   ╱│╲   ╱│╲
+   ╱ │ ╲ ╱ │ ╲ ╱ │ ╲ ╱ │ ╲ ╱ │ ╲
+  ╱  │  ╲  │  ╲  │  ╲  │  ╲  │  ╲
+ ╱   │   ╲ │   ╲ │   ╲ │   ╲ │   ╲
+╱    │    ╲│    ╲│    ╲│    ╲│    ╲
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Roots: [INTERCONNECTED NEURONS]
+
+Trees: 100 | Depth: 16 | Accuracy: 97.3%
+
+Each tree votes on the classification
+Democracy in the forest of algorithms
+Nature's wisdom in silicon
+"""
+
+# Progress messages
+progress_messages = [
+    "Growing decision trees...",
+    "Pruning overfitted branches...",
+    "Cross-pollinating features...",
+    "Listening to the wisdom of the forest...",
+    "Achieving ensemble harmony..."
+]
+
+# Additional styling
+css_classes = ["forest-neural", "tree-network"]

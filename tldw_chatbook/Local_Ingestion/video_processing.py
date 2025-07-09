@@ -6,6 +6,7 @@ Handles video file processing by extracting audio and leveraging audio processin
 
 import json
 import os
+import shutil
 import tempfile
 import logging
 from pathlib import Path
@@ -17,7 +18,7 @@ import subprocess
 from .audio_processing import LocalAudioProcessor, AudioProcessingError
 from ..config import get_cli_setting
 from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Utils.Utils import sanitize_filename
+from ..Utils.text import sanitize_filename
 
 # Optional imports
 try:
@@ -371,6 +372,35 @@ class LocalVideoProcessor:
                 result["db_message"] = db_result.get("message", "Stored successfully")
             
             result["status"] = "Success" if not result["warnings"] else "Warning"
+            
+            # Handle keep_original option - move video/audio file to Downloads folder
+            if kwargs.get("keep_original", False) and is_url and download_video_flag:
+                try:
+                    # Get user's Downloads folder
+                    downloads_dir = Path.home() / "Downloads"
+                    downloads_dir.mkdir(exist_ok=True)
+                    
+                    # Generate a unique filename if needed
+                    media_filename = Path(processing_path).name
+                    dest_path = downloads_dir / media_filename
+                    
+                    # Handle filename conflicts
+                    if dest_path.exists():
+                        base_name = dest_path.stem
+                        extension = dest_path.suffix
+                        counter = 1
+                        while dest_path.exists():
+                            dest_path = downloads_dir / f"{base_name}_{counter}{extension}"
+                            counter += 1
+                    
+                    # Move the file
+                    shutil.move(processing_path, str(dest_path))
+                    logger.info(f"Moved video file to: {dest_path}")
+                    result["saved_video_path"] = str(dest_path)
+                    result["warnings"].append(f"Video file saved to Downloads folder: {dest_path.name}")
+                except Exception as e:
+                    logger.error(f"Failed to move video file to Downloads: {str(e)}")
+                    result["warnings"].append(f"Could not save video file: {str(e)}")
             
         except Exception as e:
             logger.error(f"Error processing video: {str(e)}", exc_info=True)

@@ -17,7 +17,7 @@ import numpy as np
 
 # Local imports  
 from ..config import get_cli_setting
-from ..Utils.Utils import sanitize_filename
+from ..Utils.text import sanitize_filename
 
 # Optional imports with graceful degradation
 try:
@@ -49,6 +49,13 @@ except ImportError:
     SCIPY_AVAILABLE = False
     logging.warning("scipy not available. Some audio processing features may be limited.")
 
+try:
+    import nemo.collections.asr as nemo_asr
+    NEMO_AVAILABLE = True
+except ImportError:
+    NEMO_AVAILABLE = False
+    logging.warning("NeMo toolkit not available. Install with: pip install nemo-toolkit[asr]")
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,8 +78,11 @@ class TranscriptionService:
             'default_provider': get_cli_setting('transcription.default_provider', 'faster-whisper'),
             'default_model': get_cli_setting('transcription.default_model', 'base'),
             'default_language': get_cli_setting('transcription.default_language', 'en'),
+            'default_source_language': get_cli_setting('transcription.default_source_language', ''),
+            'default_target_language': get_cli_setting('transcription.default_target_language', ''),
             'device': get_cli_setting('transcription.device', 'cpu'),
             'compute_type': get_cli_setting('transcription.compute_type', 'int8'),
+            'chunk_length_seconds': get_cli_setting('transcription.chunk_length_seconds', 40.0),
         }
         
         # Model cache
@@ -82,12 +92,21 @@ class TranscriptionService:
         self._qwen_processor = None
         self._qwen_model = None
         
+        # Parakeet/NeMo models (lazy loaded)
+        self._parakeet_model = None
+        
+        # Canary model (lazy loaded)
+        self._canary_model = None
+        self._canary_decoding = None
+        
     def transcribe(
         self,
         audio_path: str,
         provider: Optional[str] = None,
         model: Optional[str] = None,
         language: Optional[str] = None,
+        source_lang: Optional[str] = None,  # Explicit source language
+        target_lang: Optional[str] = None,  # Translation target language
         vad_filter: bool = False,
         diarize: bool = False,
         **kwargs
@@ -97,9 +116,11 @@ class TranscriptionService:
         
         Args:
             audio_path: Path to audio file
-            provider: Transcription provider ('faster-whisper', 'qwen2audio')
+            provider: Transcription provider ('faster-whisper', 'qwen2audio', 'parakeet', 'canary')
             model: Model name/size
-            language: Target language code
+            language: Language code (for backward compatibility)
+            source_lang: Explicit source language for transcription
+            target_lang: Target language for translation (if supported)
             vad_filter: Apply voice activity detection
             diarize: Perform speaker diarization (placeholder)
             
@@ -108,7 +129,12 @@ class TranscriptionService:
         """
         provider = provider or self.config['default_provider']
         model = model or self.config['default_model']
-        language = language or self.config['default_language']
+        # Handle source language - prefer explicit source_lang over language param
+        source_lang = source_lang or self.config['default_source_language'] or language or self.config['default_language']
+        # Handle target language
+        target_lang = target_lang or self.config['default_target_language'] or None
+        # For backward compatibility, set language to source_lang if not specified
+        language = language or source_lang
         
         # Convert to WAV if needed
         wav_path = self._ensure_wav_format(audio_path)
@@ -116,10 +142,16 @@ class TranscriptionService:
         try:
             if provider == 'faster-whisper':
                 return self._transcribe_with_faster_whisper(
-                    wav_path, model, language, vad_filter, **kwargs
+                    wav_path, model, language, vad_filter, source_lang, target_lang, **kwargs
                 )
             elif provider == 'qwen2audio':
                 return self._transcribe_with_qwen2audio(wav_path, **kwargs)
+            elif provider == 'parakeet':
+                return self._transcribe_with_parakeet(wav_path, model, source_lang, **kwargs)
+            elif provider == 'canary':
+                return self._transcribe_with_canary(
+                    wav_path, model, source_lang, target_lang, **kwargs
+                )
             else:
                 raise ValueError(f"Unknown transcription provider: {provider}")
                 
@@ -227,6 +259,8 @@ class TranscriptionService:
         model: str,
         language: str,
         vad_filter: bool,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """Transcribe using faster-whisper."""
@@ -250,12 +284,19 @@ class TranscriptionService:
         
         whisper_model = self._model_cache[cache_key]
         
+        # Use source_lang if provided, otherwise fall back to language
+        transcribe_language = source_lang or language
+        
+        # Determine task - translate if target language is specified and different from source
+        task = 'translate' if target_lang and target_lang == 'en' and transcribe_language != 'en' else 'transcribe'
+        
         # Transcription options
         options = {
             'beam_size': 5,
             'best_of': 5,
             'vad_filter': vad_filter,
-            'language': language if language != 'auto' else None,
+            'language': transcribe_language if transcribe_language != 'auto' else None,
+            'task': task,
         }
         
         try:
@@ -285,13 +326,24 @@ class TranscriptionService:
                     f"(confidence: {info.language_probability:.2f})"
                 )
             
-            return {
+            result = {
                 "text": " ".join(full_text),
                 "segments": segments,
                 "language": info.language,
                 "language_probability": info.language_probability,
                 "duration": info.duration,
+                "provider": "faster-whisper",
+                "model": model,
             }
+            
+            # Add translation info if applicable
+            if task == 'translate':
+                result["task"] = "translation"
+                result["source_language"] = transcribe_language or info.language
+                result["target_language"] = "en"
+                result["translation"] = result["text"]
+            
+            return result
             
         except Exception as e:
             raise TranscriptionError(
@@ -392,6 +444,263 @@ class TranscriptionService:
                 f"Qwen2Audio transcription failed: {str(e)}"
             ) from e
     
+    def _transcribe_with_parakeet(
+        self,
+        audio_path: str,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Transcribe using NVIDIA Parakeet models via NeMo."""
+        
+        if not NEMO_AVAILABLE:
+            raise TranscriptionError(
+                "NeMo toolkit not installed. "
+                "Install with: pip install nemo-toolkit[asr]"
+            )
+        
+        # Lazy load Parakeet model
+        if self._parakeet_model is None:
+            logger.info(f"Loading Parakeet model: {model or 'nvidia/parakeet-tdt-1.1b'}")
+            try:
+                model_name = model or "nvidia/parakeet-tdt-1.1b"
+                self._parakeet_model = nemo_asr.models.ASRModel.from_pretrained(
+                    model_name=model_name
+                )
+                
+                # Enable optimizations for streaming/long audio
+                self._parakeet_model.change_attention_model(
+                    "rel_pos_local_attn", 
+                    context_sizes=[128, 128]
+                )
+                self._parakeet_model.change_subsampling_conv_chunking_factor(1)
+                
+                # Move to appropriate device
+                if self.config['device'] == 'cuda' and torch.cuda.is_available():
+                    self._parakeet_model = self._parakeet_model.cuda()
+                
+            except Exception as e:
+                raise TranscriptionError(
+                    f"Failed to load Parakeet model: {str(e)}"
+                ) from e
+        
+        try:
+            # Transcribe the audio
+            transcripts = self._parakeet_model.transcribe(
+                paths2audio_files=[audio_path],
+                batch_size=1,
+                return_hypotheses=True,
+                verbose=False
+            )
+            
+            # Process results
+            if transcripts and len(transcripts) > 0:
+                # Get the first (and only) transcript
+                transcript = transcripts[0]
+                
+                # Handle different return formats from NeMo
+                if isinstance(transcript, str):
+                    text = transcript
+                elif hasattr(transcript, 'text'):
+                    text = transcript.text
+                elif isinstance(transcript, list) and len(transcript) > 0:
+                    text = transcript[0]
+                else:
+                    text = str(transcript)
+                
+                # Create segments (Parakeet doesn't provide timestamps by default)
+                return {
+                    "text": text,
+                    "segments": [{
+                        "start": 0.0,
+                        "end": 0.0,
+                        "text": text,
+                        "Time_Start": 0.0,
+                        "Time_End": 0.0,
+                        "Text": text
+                    }],
+                    "language": language or "unknown",
+                    "provider": "parakeet",
+                    "model": model or "nvidia/parakeet-tdt-1.1b"
+                }
+            else:
+                raise TranscriptionError("No transcription produced")
+                
+        except Exception as e:
+            raise TranscriptionError(
+                f"Parakeet transcription failed: {str(e)}"
+            ) from e
+    
+    def _transcribe_with_canary(
+        self,
+        audio_path: str,
+        model: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        chunk_len_in_secs: Optional[float] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Transcribe using NVIDIA Canary model with chunked inference for long audio."""
+        
+        # Use configured chunk length if not specified
+        chunk_len_in_secs = chunk_len_in_secs or self.config['chunk_length_seconds']
+        
+        if not NEMO_AVAILABLE:
+            raise TranscriptionError(
+                "NeMo toolkit not installed. "
+                "Install with: pip install nemo-toolkit[asr]"
+            )
+        
+        # Import additional NeMo modules needed for Canary
+        try:
+            from nemo.collections.asr.models import EncDecMultiTaskModel
+            from nemo.collections.asr.parts.utils.transcribe_utils import (
+                transcribe_partial_audio,
+                get_buffered_pred_feat_multitaskAED
+            )
+        except ImportError as e:
+            raise TranscriptionError(
+                f"Failed to import required NeMo modules: {str(e)}"
+            ) from e
+        
+        # Lazy load Canary model
+        if self._canary_model is None:
+            logger.info(f"Loading Canary model: {model or 'nvidia/canary-1b-flash'}")
+            try:
+                model_name = model or "nvidia/canary-1b-flash"
+                self._canary_model = EncDecMultiTaskModel.from_pretrained(
+                    model_name=model_name
+                )
+                
+                # Initialize decoding strategy
+                self._canary_decoding = self._canary_model.decoding
+                
+                # Move to appropriate device
+                if self.config['device'] == 'cuda' and torch.cuda.is_available():
+                    self._canary_model = self._canary_model.cuda()
+                
+                # Set to evaluation mode
+                self._canary_model.eval()
+                
+            except Exception as e:
+                raise TranscriptionError(
+                    f"Failed to load Canary model: {str(e)}"
+                ) from e
+        
+        try:
+            # Determine task type based on target language
+            taskname = "s2t_translation" if target_lang and target_lang != source_lang else "asr"
+            
+            # Map language codes to Canary format
+            lang_map = {
+                "en": "en", "de": "de", "es": "es", "fr": "fr",
+                "english": "en", "german": "de", "spanish": "es", "french": "fr"
+            }
+            
+            source_lang = lang_map.get((source_lang or "en").lower(), "en")
+            if target_lang:
+                target_lang = lang_map.get(target_lang.lower(), target_lang)
+            
+            # For ASR, source and target should be the same
+            if taskname == "asr":
+                target_lang = source_lang
+            
+            # Create manifest entry for Canary
+            manifest_entry = {
+                "audio_filepath": audio_path,
+                "taskname": taskname,
+                "source_lang": source_lang,
+                "target_lang": target_lang or source_lang,
+                "pnc": "yes",  # Punctuation and capitalization
+                "answer": "na",  # Not used for inference
+                "duration": None  # Will be computed
+            }
+            
+            # Get audio duration
+            audio_info = sf.info(audio_path)
+            duration = audio_info.duration
+            manifest_entry["duration"] = duration
+            
+            # Use chunked inference for long audio
+            if duration > chunk_len_in_secs:
+                logger.info(f"Using chunked inference for {duration:.1f}s audio")
+                
+                # Prepare for chunked processing
+                model_stride_in_secs = 0.04  # 40ms model stride
+                tokens_per_chunk = int(chunk_len_in_secs / model_stride_in_secs)
+                
+                # Perform chunked transcription
+                hyps = get_buffered_pred_feat_multitaskAED(
+                    self._canary_model.cfg.preprocessor,
+                    [manifest_entry],
+                    self._canary_model,
+                    chunk_len_in_secs,
+                    tokens_per_chunk,
+                    self._canary_model.device,
+                )
+                
+                # Extract transcription text
+                text = hyps[0] if hyps else ""
+                
+            else:
+                # For short audio, use regular inference
+                transcripts = self._canary_model.transcribe(
+                    audio=[audio_path],
+                    batch_size=1,
+                    task=taskname,
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                    pnc=True,
+                    verbose=False
+                )
+                
+                text = transcripts[0] if transcripts else ""
+            
+            # Create response
+            result = {
+                "text": text,
+                "segments": [{
+                    "start": 0.0,
+                    "end": duration,
+                    "text": text,
+                    "Time_Start": 0.0,
+                    "Time_End": duration,
+                    "Text": text
+                }],
+                "language": source_lang,
+                "provider": "canary",
+                "model": model or "nvidia/canary-1b-flash",
+                "task": taskname
+            }
+            
+            # Add translation info if applicable
+            if taskname == "s2t_translation":
+                result["source_language"] = source_lang
+                result["target_language"] = target_lang
+                result["translation"] = text
+            
+            return result
+            
+        except Exception as e:
+            raise TranscriptionError(
+                f"Canary transcription failed: {str(e)}"
+            ) from e
+    
+    def get_available_providers(self) -> List[str]:
+        """Get list of available transcription providers based on installed dependencies."""
+        providers = []
+        
+        if FASTER_WHISPER_AVAILABLE:
+            providers.append('faster-whisper')
+        
+        if QWEN2AUDIO_AVAILABLE:
+            providers.append('qwen2audio')
+            
+        if NEMO_AVAILABLE:
+            providers.extend(['parakeet', 'canary'])
+            
+        return providers
+    
     def list_available_models(self, provider: Optional[str] = None) -> Dict[str, List[str]]:
         """List available models for each provider."""
         
@@ -409,6 +718,21 @@ class TranscriptionService:
         
         if QWEN2AUDIO_AVAILABLE:
             models['qwen2audio'] = ['Qwen2-Audio-7B-Instruct']
+        
+        if NEMO_AVAILABLE:
+            models['parakeet'] = [
+                'nvidia/parakeet-tdt-1.1b',
+                'nvidia/parakeet-rnnt-1.1b',
+                'nvidia/parakeet-ctc-1.1b',
+                'nvidia/parakeet-tdt-0.6b',
+                'nvidia/parakeet-rnnt-0.6b',
+                'nvidia/parakeet-ctc-0.6b',
+                'nvidia/parakeet-tdt-0.6b-v2'
+            ]
+            models['canary'] = [
+                'nvidia/canary-1b-flash',
+                'nvidia/canary-1b'
+            ]
         
         if provider:
             return {provider: models.get(provider, [])}

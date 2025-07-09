@@ -1,0 +1,44 @@
+# Mixing Console splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "pulse"
+style = "yellow on rgb(30,25,20)"
+
+# Pulse effect parameters
+channel_activity = true
+vu_meter_bounce = 0.8
+fader_automation = true
+
+content = """
+    ╔═══════════════════════════════════════════╗
+    ║        SSL 9000J MIXING CONSOLE           ║
+    ╚═══════════════════════════════════════════╝
+     CH1  CH2  CH3  CH4  CH5  CH6  CH7  CH8  MASTER
+     ┃▓▓┃ ┃▓▓┃ ┃▓▓┃ ┃▓▓┃ ┃▓▓┃ ┃▓▓┃ ┃▓▓┃ ┃▓▓┃ ┃▓▓▓▓┃
+     ┃▓▓┃ ┃░▓┃ ┃▓░┃ ┃░░┃ ┃▓▓┃ ┃░▓┃ ┃▓▓┃ ┃░░┃ ┃▓▓▓░┃
+     ┃░▓┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃▓░┃ ┃░░┃ ┃░▓┃ ┃░░┃ ┃▓▓░░┃
+     ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃▓░░░┃
+     ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░┃ ┃░░░░┃
+     ╰──╯ ╰──╯ ╰──╯ ╰──╯ ╰──╯ ╰──╯ ╰──╯ ╰──╯ ╰────╯
+     ◉HI  ◉HI  ◉HI  ◉HI  ◉HI  ◉HI  ◉HI  ◉HI   AUX1
+     ◉MID ◉MID ◉MID ◉MID ◉MID ◉MID ◉MID ◉MID  AUX2
+     ◉LOW ◉LOW ◉LOW ◉LOW ◉LOW ◉LOW ◉LOW ◉LOW  AUX3
+     ▄▄▄  ▄▄▄  ▄▄▄  ▄▄▄  ▄▄▄  ▄▄▄  ▄▄▄  ▄▄▄  ▄▄▄▄
+     ███  ██▄  ▄██  ▄▄▄  ███  ▄██  ███  ▄▄▄  ████
+      0   -3   -6   -12   0   -6    0   -18   +3dB
+     
+     TLDW MIX v1.0 | 24-bit/96kHz | ARMED
+"""
+
+# Progress messages
+progress_messages = [
+    "Zeroing all faders...",
+    "Calibrating VU meters...",
+    "Engaging phantom power...",
+    "Routing aux sends...",
+    "Applying vintage transformer saturation..."
+]
+
+# Additional styling
+css_classes = ["mixing-desk", "studio-gear"]

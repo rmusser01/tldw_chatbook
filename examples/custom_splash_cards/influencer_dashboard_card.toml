@@ -1,0 +1,52 @@
+# Influencer Dashboard splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "pulse"
+style = "rgb(255,0,255) on rgb(20,20,40)"
+
+# Pulse effect parameters
+engagement_rate = 0.85
+viral_potential = 0.7
+authenticity = 0.1
+
+content = """
+╔══════════════ INFLUENCER OS v2024 ══════════════╗
+║         ✨ DASHBOARD ANALYTICS ✨                ║
+╠══════════════════════════════════════════════════╣
+║                                                  ║
+║  FOLLOWERS: 1,337,420 📈 (+69,420 today)        ║
+║  ├─ Real humans: 12%                             ║
+║  ├─ Bots: 45%                                    ║
+║  └─ Confused parents: 43%                        ║
+║                                                  ║
+║  ENGAGEMENT METRICS:                             ║
+║  ❤️  Likes: ████████████████░░ 87%              ║
+║  💬 Comments: ███████░░░░░░░░░ 42%              ║
+║  🔄 Shares: ████░░░░░░░░░░░░░ 23%              ║
+║  😭 Tears: ████████████████████ 100%            ║
+║                                                  ║
+║  CONTENT QUEUE:                                  ║
+║  ├─ "Just woke up like this 💅" [SCHEDULED]     ║
+║  ├─ "So blessed 🙏 #authentic" [OPTIMIZING]     ║
+║  ├─ "Use code TLDW for 10% off!" [PENDING]      ║
+║  └─ "Taking a social media break" [AUTO-POST]   ║
+║                                                  ║
+║  Sponsorship Revenue: $4,206.90                  ║
+║  Soul Remaining: ░░░░░░░░░░░░░░ 2%              ║
+║                                                  ║
+║  TLDW: Too Long; Didn't Watch (but liked anyway)║
+╚══════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Optimizing hashtag performance...",
+    "Calculating peak posting times...",
+    "Filtering reality for maximum likes...",
+    "Generating relatable content...",
+    "Monetizing your insecurities..."
+]
+
+# Additional styling
+css_classes = ["influencer-glow", "fake-authentic"]

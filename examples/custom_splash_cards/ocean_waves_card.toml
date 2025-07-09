@@ -1,0 +1,44 @@
+# Ocean Waves Terminal splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "wave_ripple"
+style = "blue on rgb(0,20,40)"
+
+# Wave ripple effect parameters
+wave_frequency = 0.5
+wave_amplitude = 3.0
+tide_strength = 0.8
+
+content = """
+～～～～～～～～～～～～～～～～～～～～～～～
+  ～～～～～～～～～～～～～～～～～～～～～～
+    ～～～～～～～～～～～～～～～～～～～～
+
+         DEEP LEARNING OCEAN
+         
+    while (true) {           🐟
+        waves.push();    🐠
+        waves.pull();        🐙
+        data.flow();    🦈      🐡
+    }                      🐢
+
+    Current: ████████░░ strong
+    Depth: undefined
+    Pressure: building...
+    
+  ～～～～～～～～～～～～～～～～～～～～～～
+～～～～～～～～～～～～～～～～～～～～～～～～
+"""
+
+# Progress messages
+progress_messages = [
+    "Diving into deep learning...",
+    "Swimming through data streams...",
+    "Navigating neural networks...",
+    "Fishing for insights...",
+    "Going with the data flow..."
+]
+
+# Additional styling
+css_classes = ["ocean-waves", "deep-blue"]

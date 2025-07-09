@@ -140,6 +140,11 @@ media_processing = [
     "yt-dlp",
     "numpy",
 ]
+nemo = [
+    "nemo-toolkit[asr]>=1.20.0",  # For NVIDIA Parakeet and Canary models
+    "torch",  # Required by NeMo
+    "torchaudio",  # Required for audio processing
+]
 dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests

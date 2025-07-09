@@ -7,6 +7,7 @@ Adapted from server implementation for local use.
 
 import json
 import os
+import shutil
 import tempfile
 import time
 import uuid
@@ -21,10 +22,10 @@ import numpy as np
 
 # Local imports
 from ..config import get_media_ingestion_defaults, get_cli_setting
-from ..LLM_Calls.LLM_API_Calls import chat_api_call
+from ..Chat.Chat_Functions import chat_api_call
 from ..RAG_Search.chunking_service import ChunkingService
 from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Utils.Utils import sanitize_filename
+from ..Utils.text import sanitize_filename
 
 # Optional imports
 try:
@@ -176,8 +177,10 @@ class LocalAudioProcessor:
     def process_audio_files(
         self,
         inputs: List[str],
+        transcription_provider: str = "faster-whisper",
         transcription_model: str = "base",
         transcription_language: Optional[str] = 'en',
+        translation_target_language: Optional[str] = None,
         perform_chunking: bool = True,
         chunk_method: Optional[str] = None,
         max_chunk_size: int = 500,
@@ -218,8 +221,10 @@ class LocalAudioProcessor:
                     result = self._process_single_audio(
                         input_item=input_item,
                         processing_dir=processing_dir,
+                        transcription_provider=transcription_provider,
                         transcription_model=transcription_model,
                         transcription_language=transcription_language,
+                        translation_target_language=translation_target_language,
                         perform_chunking=perform_chunking,
                         chunk_method=chunk_method,
                         max_chunk_size=max_chunk_size,
@@ -316,8 +321,10 @@ class LocalAudioProcessor:
             # Transcribe audio
             transcription_result = self._transcribe_audio(
                 audio_path,
+                provider=kwargs.get("transcription_provider", "faster-whisper"),
                 model=kwargs.get("transcription_model", "base"),
                 language=kwargs.get("transcription_language", "en"),
+                target_lang=kwargs.get("translation_target_language"),
                 vad_filter=kwargs.get("vad_use", False),
                 diarize=kwargs.get("diarize", False)
             )
@@ -361,6 +368,35 @@ class LocalAudioProcessor:
                 result["db_message"] = db_result.get("message", "Stored successfully")
             
             result["status"] = "Success" if not result["warnings"] else "Warning"
+            
+            # Handle keep_original option - move audio file to Downloads folder
+            if kwargs.get("keep_original", False) and is_url:
+                try:
+                    # Get user's Downloads folder
+                    downloads_dir = Path.home() / "Downloads"
+                    downloads_dir.mkdir(exist_ok=True)
+                    
+                    # Generate a unique filename if needed
+                    audio_filename = Path(audio_path).name
+                    dest_path = downloads_dir / audio_filename
+                    
+                    # Handle filename conflicts
+                    if dest_path.exists():
+                        base_name = dest_path.stem
+                        extension = dest_path.suffix
+                        counter = 1
+                        while dest_path.exists():
+                            dest_path = downloads_dir / f"{base_name}_{counter}{extension}"
+                            counter += 1
+                    
+                    # Move the file
+                    shutil.move(audio_path, str(dest_path))
+                    logger.info(f"Moved audio file to: {dest_path}")
+                    result["saved_audio_path"] = str(dest_path)
+                    result["warnings"].append(f"Audio file saved to Downloads folder: {dest_path.name}")
+                except Exception as e:
+                    logger.error(f"Failed to move audio file to Downloads: {str(e)}")
+                    result["warnings"].append(f"Could not save audio file: {str(e)}")
             
         except Exception as e:
             logger.error(f"Error processing audio: {str(e)}", exc_info=True)

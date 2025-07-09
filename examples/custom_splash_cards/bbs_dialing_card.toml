@@ -1,0 +1,40 @@
+# BBS Dialing Screen splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "glitch_reveal"
+style = "cyan on black"
+
+# Glitch reveal effect parameters
+glitch_intensity = 0.3
+reveal_speed = 0.05
+modem_sounds = true
+
+content = """
+╔══════════════════════════════════════════╗
+║        ELITE BBS - NODE 1 OF 1           ║
+║         SysOp: The Architect             ║
+╠══════════════════════════════════════════╣
+║                                          ║
+║  ATDT 555-1337                          ║
+║  CONNECT 2400                           ║
+║                                          ║
+║  ░░▒▒▓▓█ ESTABLISHING LINK █▓▓▒▒░░     ║
+║                                          ║
+║  Downloads: 0 | Uploads: ∞              ║
+║  Time Left: UNLIMITED                    ║
+║                                          ║
+╚══════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "NEGOTIATING PROTOCOLS...",
+    "ZMODEM READY...",
+    "NO CARRIER DETECTED. TRYING HARDER...",
+    "MOM PICKED UP PHONE. RECONNECTING...",
+    "DOWNLOADING ANSI ART AT 2400 BAUD..."
+]
+
+# Additional styling
+css_classes = ["bbs-ansi", "terminal-glow"]

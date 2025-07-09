@@ -1,0 +1,43 @@
+# Stack Overflow Driven Development splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "spotlight"
+style = "orange on rgb(40,40,40)"
+
+# Spotlight effect parameters
+spotlight_radius = 10
+search_speed = 0.05
+desperation_level = 0.95
+
+content = """
+┌─ Stack Overflow ─────────────────────┐
+│ Q: How to exit vim?                  │
+│ Views: 2,847,293 | Votes: 9,847     │
+├──────────────────────────────────────┤
+│ Marked as duplicate of:              │
+│ • How do I exit vim?                 │
+│ • Help, I'm stuck in vim             │
+│ • Vim won't let me leave             │
+│ • My family misses me (vim related)  │
+│                                      │
+│ Top Answer (4,723 votes):            │
+│ "Have you tried turning it off       │
+│  and on again?"                      │
+│                                      │
+│ Accepted Answer (2 votes):           │
+│ ":q!"  ← This changed my life        │
+└──────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Copy-pasting solution without reading...",
+    "Upvoting answer that 'works on my machine'...",
+    "Commenting 'Thanks!' instead of upvoting...",
+    "Marking as duplicate without reading...",
+    "Solution requires jQuery for some reason..."
+]
+
+# Additional styling
+css_classes = ["stackoverflow-theme", "duplicate-question"]

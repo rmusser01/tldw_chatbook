@@ -1,4 +1,4 @@
-# Audio_Transcription_Lib.py
+# Audio_Transcription_Lib-OLD.py
 #########################################
 # Transcription Library
 # This library is used to perform transcription of audio files.
@@ -43,7 +43,8 @@ import wave
 #    combine_transcription_and_diarization, DiarizationError
 #
 # Import Local
-from tldw_Server_API.app.core.Utils.Utils import sanitize_filename, logging
+from ..Utils.text import sanitize_filename
+import logging
 from tldw_Server_API.app.core.Metrics.metrics_logger import log_counter, log_histogram, timeit
 from tldw_Server_API.app.core.config import load_and_log_configs, loaded_config_data
 
@@ -678,9 +679,8 @@ def transcribe_audio(audio_data: np.ndarray, transcription_provider, sample_rate
         on the provider.
 
     Note:
-        - 'parakeet' support is currently a FIXME and will return an error message
-          if selected, unless Nemo toolkit is installed and the FIXME is resolved.
-        - For 'faster-whisper', this function creates and deletes a temporary WAV file.
+        - 'parakeet' support requires the NeMo toolkit to be installed.
+        - For both 'faster-whisper' and 'parakeet', this function creates and deletes a temporary WAV file.
     """
     loaded_config_data = load_and_log_configs()
     if not transcription_provider:
@@ -693,24 +693,33 @@ def transcribe_audio(audio_data: np.ndarray, transcription_provider, sample_rate
 
     elif transcription_provider.lower() == "parakeet":
         logging.info("Transcribing using Parakeet")
-        # FIXME - implement Parakeet
+        # Use the new transcription service for Parakeet support
         try:
-            import nemo.collections.asr as nemo_asr
-        except ImportError:
-            return "Nemo package not found. Please install 'nemo_toolkit[asr]' to use Parakeet."
-
-        asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name="nvidia/parakeet-rnnt-1.1b")
-
-        # Enable local attention
-        asr_model.change_attention_model("rel_pos_local_attn", [128, 128])  # local attn
-
-        # Enable chunking for subsampling module
-        asr_model.change_subsampling_conv_chunking_factor(1)  # 1 = auto select
-
-        # Transcribe a huge audio file
-        transcript = asr_model.transcribe(["<path to a huge audio file>.wav"])
-
-        return transcript
+            from .transcription_service import TranscriptionService
+            service = TranscriptionService()
+            # Save audio to temporary file for transcription
+            import tempfile
+            import soundfile as sf
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                sf.write(tmp_file.name, audio_data, sample_rate)
+                tmp_wav_path = tmp_file.name
+            
+            try:
+                result = service.transcribe(
+                    tmp_wav_path,
+                    provider="parakeet",
+                    model=whisper_model if whisper_model != "distil-large-v3" else None,
+                    language=speaker_lang
+                )
+                return result.get("text", "")
+            finally:
+                # Clean up temporary file
+                try:
+                    os.remove(tmp_wav_path)
+                except:
+                    pass
+        except Exception as e:
+            return f"Parakeet transcription failed: {str(e)}"
 
     else:
         logging.info(f"Transcribing using faster-whisper with model: {whisper_model}")
@@ -1506,7 +1515,7 @@ def convert_to_wav(video_file_path: str, offset: int = 0, overwrite: bool = Fals
     ffmpeg_cmd = "ffmpeg" # Default for non-Windows or if specific path fails
     if sys.platform.startswith('win'):
         # Look for ffmpeg relative to this file's location structure
-        # Assumes: .../app/core/Ingestion_Media_Processing/Audio/Audio_Transcription_Lib.py
+        # Assumes: .../app/core/Ingestion_Media_Processing/Audio/Audio_Transcription_Lib-OLD.py
         # Goal: .../app/Bin/ffmpeg.exe
         try:
             APP_DIR = Path(__file__).resolve().parents[3] # .../app

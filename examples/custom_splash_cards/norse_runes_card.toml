@@ -1,0 +1,49 @@
+# Norse Runes splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "terminal_boot"
+style = "rgb(100,150,200) on rgb(10,15,25)"
+
+# Terminal boot effect parameters
+runic_power = true
+yggdrasil_connection = 0.9
+valhalla_access = true
+
+content = """
+          ⚔️═══════ MIDGARD TERMINAL ═══════⚔️
+                    
+                    ᚦᛟᚱ  ᛟᛞᛁᚾ  ᚠᚱᛖᛃᚨ
+                        ╱─│─╲
+                       ╱  │  ╲
+                      ╱   │   ╲
+                     ╱ YGGDRASIL ╲
+                    ╱─────┼─────╲
+                   ╱  ╱───┼───╲  ╲
+                  ╱  ╱    │    ╲  ╲
+                 ╱  ╱  ᛏᛚᛞᚹ  ╲  ╲
+                ╱──╱───────────╲──╲
+               
+    ┌─────────────────────────────────────┐
+    │ By ODIN's wisdom, THOR's might,    │
+    │ And FREYA's sight...                │
+    │                                     │
+    │ RUNES CAST: ᚦ ᛚ ᛞ ᚹ                │
+    │ READING: "The path forward is lit"  │
+    │                                     │
+    │ Connecting to Asgard servers...     │
+    │ Ravens dispatched: Huginn & Muninn  │
+    └─────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Forging connection in dwarven datacenters...",
+    "Summoning the Valkyries of validation...",
+    "Consulting the Well of Wisdom...",
+    "Ragnarök-proofing your session...",
+    "Loading berserker mode optimizations..."
+]
+
+# Additional styling
+css_classes = ["norse-stone", "runic-glow"]

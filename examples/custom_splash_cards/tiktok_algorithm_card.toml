@@ -1,0 +1,54 @@
+# TikTok Algorithm splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "scrolling_credits"
+style = "white on black"
+
+# Scrolling credits effect parameters
+scroll_speed = 3.0
+addiction_level = 0.99
+attention_span = 0.001
+
+content = """
+┌────────────── ⏰ TIKTOK ALGORITHM ⏰ ─────────────┐
+│                                                  │
+│  FOR YOU PAGE LOADING... ∞                      │
+│                                                  │
+│  ╔════════════════════════════════════════╗    │
+│  ║  NOW PLAYING: Dance #4,206,969         ║    │
+│  ║  ♫ ♪ ♫ Oh no, oh no, oh no no no... ♫ ║    │
+│  ║                                         ║    │
+│  ║  👤 @random_teen                        ║    │
+│  ║  ❤️  2.3M  💬 45K  ↗️ 89K               ║    │
+│  ║                                         ║    │
+│  ║  ⏱️ Watch time: 0.3 seconds            ║    │
+│  ╚════════════════════════════════════════╝    │
+│                                                  │
+│  ALGORITHM ANALYSIS:                             │
+│  ├─ Dopamine hit delivered ✓                     │
+│  ├─ Attention captured for 0.3s ✓               │
+│  ├─ User data harvested ✓                       │
+│  └─ Next video queued (identical content) ✓     │
+│                                                  │
+│  Time on app today: 4h 20m 69s                  │
+│  Videos watched: 1,337                           │
+│  Original thoughts remaining: 0                  │
+│                                                  │
+│  SWIPE UP FOR MORE ⬆️⬆️⬆️                        │
+│                                                  │
+│  TLDW: Time Lost; Dreams Wasted                 │
+└──────────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Training your addiction response...",
+    "Shortening attention span...",
+    "Queueing identical content...",
+    "Harvesting scrolling patterns...",
+    "It's 3 AM, just one more video..."
+]
+
+# Additional styling
+css_classes = ["tiktok-loop", "infinite-scroll"]
