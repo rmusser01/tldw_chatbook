@@ -2935,6 +2935,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     self.call_after_refresh(ccp_handlers.populate_ccp_character_select, self)
                     self.call_after_refresh(ccp_handlers.populate_ccp_prompts_list_view, self)
                     self.call_after_refresh(ccp_handlers.populate_ccp_dictionary_select, self)
+                    self.call_after_refresh(ccp_handlers.populate_ccp_worldbook_list, self)
                     self.call_after_refresh(ccp_handlers.perform_ccp_conversation_search, self)
                 except QueryError:
                     loguru_logger.error("CCP window not found during widget population")
@@ -3756,6 +3757,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await ccp_handlers.handle_ccp_conversation_search_input_changed(self, event)
         elif input_id == "ccp-prompt-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_prompt_search_input_changed(self, event)
+        elif input_id == "ccp-worldbook-search-input" and current_active_tab == TAB_CCP:
+            await ccp_handlers.handle_ccp_worldbook_search_input_changed(self, event)
         elif input_id == "chat-prompt-search-input" and current_active_tab == TAB_CHAT: # New condition
             if self._chat_sidebar_prompt_search_timer: # Use the new timer variable
                 self._chat_sidebar_prompt_search_timer.stop()

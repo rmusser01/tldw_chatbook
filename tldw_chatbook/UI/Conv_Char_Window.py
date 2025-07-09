@@ -68,6 +68,14 @@ class CCPWindow(Container):
                 yield Select([], prompt="Select Dictionary...", allow_blank=True, id="ccp-dictionary-select")
                 yield Button("Load Dictionary", id="ccp-load-dictionary-button", classes="sidebar-button")
                 yield Button("Refresh List", id="ccp-refresh-dictionary-list-button", classes="sidebar-button")
+            with Collapsible(title="World/Lore Books", id="ccp-worldbooks-collapsible"):
+                yield Button("Import World Book", id="ccp-import-worldbook-button", classes="sidebar-button")
+                yield Button("Create World Book", id="ccp-create-worldbook-button", classes="sidebar-button")
+                yield Input(id="ccp-worldbook-search-input", placeholder="Search world books...", classes="sidebar-input")
+                yield ListView(id="ccp-worldbooks-listview", classes="sidebar-listview")
+                yield Button("Load Selected", id="ccp-worldbook-load-button", classes="sidebar-button")
+                yield Button("Edit Selected", id="ccp-worldbook-edit-button", classes="sidebar-button")
+                yield Button("Refresh List", id="ccp-refresh-worldbook-list-button", classes="sidebar-button")
 
         yield Button(get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), id="toggle-conv-char-left-sidebar",
                      classes="cc-sidebar-toggle-button", tooltip="Toggle left sidebar")

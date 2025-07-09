@@ -3475,6 +3475,165 @@ async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
         logger.error(f"Error populating active dictionaries: {e}", exc_info=True)
 
 
+########################################################################################################################
+#
+# World Book Event Handlers
+#
+########################################################################################################################
+
+async def handle_ccp_import_worldbook_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Import World Book button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Import World Book button pressed")
+    app.notify("Import World Book functionality coming soon!", severity="information")
+    # TODO: Implement file picker and import logic
+
+async def handle_ccp_create_worldbook_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Create World Book button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Create World Book button pressed")
+    
+    try:
+        from ..Character_Chat.world_book_manager import WorldBookManager
+        
+        if not app.db:
+            app.notify("Database not initialized", severity="error")
+            return
+            
+        # TODO: Show dialog to get world book details
+        # For now, create a sample world book
+        wb_manager = WorldBookManager(app.db)
+        world_book_id = wb_manager.create_world_book(
+            name=f"New World Book {datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            description="A new world book for your stories",
+            scan_depth=3,
+            token_budget=500,
+            recursive_scanning=False,
+            enabled=True
+        )
+        
+        app.notify(f"Created new world book with ID {world_book_id}", severity="success")
+        await handle_ccp_refresh_worldbook_list_button_pressed(app, event)
+        
+    except Exception as e:
+        logger.error(f"Error creating world book: {e}", exc_info=True)
+        app.notify(f"Failed to create world book: {e}", severity="error")
+
+async def handle_ccp_worldbook_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:
+    """Handle world book search input changes."""
+    if event.input.id != "ccp-worldbook-search-input":
+        return
+        
+    logger = getattr(app, 'loguru_logger', logging)
+    search_term = event.value
+    logger.debug(f"World book search term: '{search_term}'")
+    
+    await populate_ccp_worldbook_list(app, search_term)
+
+async def handle_ccp_worldbook_load_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Load Selected World Book button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Load World Book button pressed")
+    
+    try:
+        listview = app.query_one("#ccp-worldbooks-listview", ListView)
+        if listview.highlighted_child is None:
+            app.notify("Please select a world book to load", severity="warning")
+            return
+            
+        selected_item = listview.highlighted_child
+        if hasattr(selected_item, 'world_book_id'):
+            world_book_id = selected_item.world_book_id
+            logger.info(f"Loading world book ID: {world_book_id}")
+            
+            # TODO: Display world book details in center pane
+            app.notify(f"Loaded world book ID {world_book_id}", severity="success")
+            
+    except Exception as e:
+        logger.error(f"Error loading world book: {e}", exc_info=True)
+        app.notify(f"Failed to load world book: {e}", severity="error")
+
+async def handle_ccp_worldbook_edit_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Edit Selected World Book button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Edit World Book button pressed")
+    
+    try:
+        listview = app.query_one("#ccp-worldbooks-listview", ListView)
+        if listview.highlighted_child is None:
+            app.notify("Please select a world book to edit", severity="warning")
+            return
+            
+        selected_item = listview.highlighted_child
+        if hasattr(selected_item, 'world_book_id'):
+            world_book_id = selected_item.world_book_id
+            logger.info(f"Editing world book ID: {world_book_id}")
+            
+            # TODO: Show edit dialog/view
+            app.notify(f"Editing world book ID {world_book_id}", severity="information")
+            
+    except Exception as e:
+        logger.error(f"Error editing world book: {e}", exc_info=True)
+        app.notify(f"Failed to edit world book: {e}", severity="error")
+
+async def handle_ccp_refresh_worldbook_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Refresh World Book List button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Refresh World Book List button pressed")
+    
+    await populate_ccp_worldbook_list(app)
+
+async def populate_ccp_worldbook_list(app: 'TldwCli', search_term: str = "") -> None:
+    """Populate the world book list view."""
+    logger = getattr(app, 'loguru_logger', logging)
+    
+    try:
+        from ..Character_Chat.world_book_manager import WorldBookManager
+        
+        listview = app.query_one("#ccp-worldbooks-listview", ListView)
+        await listview.clear()
+        
+        if not app.db:
+            app.notify("Database not initialized", severity="error")
+            return
+            
+        wb_manager = WorldBookManager(app.db)
+        all_books = wb_manager.list_world_books(include_disabled=False)
+        
+        # Filter by search term if provided
+        if search_term.strip():
+            search_lower = search_term.lower()
+            filtered_books = [
+                book for book in all_books
+                if search_lower in book['name'].lower() or 
+                   (book.get('description') and search_lower in book['description'].lower())
+            ]
+        else:
+            filtered_books = all_books
+        
+        # Populate the list
+        for book in filtered_books:
+            label_text = book['name']
+            if book.get('description'):
+                label_text += f" - {book['description'][:50]}..."
+                
+            item = ListItem(Label(label_text))
+            item.world_book_id = book['id']  # Store ID for later use
+            await listview.append(item)
+            
+        logger.info(f"Populated world book list with {len(filtered_books)} items")
+        
+        if not filtered_books:
+            if search_term:
+                await listview.append(ListItem(Label("No world books found matching search")))
+            else:
+                await listview.append(ListItem(Label("No world books available")))
+                
+    except Exception as e:
+        logger.error(f"Error populating world book list: {e}", exc_info=True)
+        app.notify(f"Failed to load world books: {e}", severity="error")
+
+
 CCP_BUTTON_HANDLERS = {
     # Left Pane
     "ccp-import-character-button": handle_ccp_import_character_button_pressed,
@@ -3493,6 +3652,13 @@ CCP_BUTTON_HANDLERS = {
     "ccp-create-dictionary-button": handle_ccp_create_dictionary_button_pressed,
     "ccp-load-dictionary-button": handle_ccp_load_dictionary_button_pressed,
     "ccp-refresh-dictionary-list-button": handle_ccp_refresh_dictionary_list_button_pressed,
+    
+    # World Book buttons
+    "ccp-import-worldbook-button": handle_ccp_import_worldbook_button_pressed,
+    "ccp-create-worldbook-button": handle_ccp_create_worldbook_button_pressed,
+    "ccp-worldbook-load-button": handle_ccp_worldbook_load_button_pressed,
+    "ccp-worldbook-edit-button": handle_ccp_worldbook_edit_button_pressed,
+    "ccp-refresh-worldbook-list-button": handle_ccp_refresh_worldbook_list_button_pressed,
     "ccp-dict-edit-button": handle_ccp_dict_edit_button_pressed,
     "ccp-dict-export-button": handle_ccp_dict_export_button_pressed,
     "ccp-dict-apply-button": handle_ccp_dict_apply_button_pressed,
