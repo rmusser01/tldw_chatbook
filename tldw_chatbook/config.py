@@ -2018,7 +2018,9 @@ temp_dir = ""  # Empty means use system temp
 default_provider = "faster-whisper"
 
 # Default model for transcription
-# For faster-whisper: tiny, base, small, medium, large-v1, large-v2, large-v3, distil-large-v3
+# For faster-whisper: large-v1, large-v2, large-v3, large, distil-large-v2, distil-large-v3,
+#                     distil-medium.en, distil-small.en, deepdml/faster-distil-whisper-large-v3.5,
+#                     deepdml/faster-whisper-large-v3-turbo-ct2, nyrahealth/faster_CrisperWhisper
 #   Note: faster-whisper supports translation to English for non-English audio
 # For qwen2audio: Qwen2-Audio-7B-Instruct
 # For parakeet: nvidia/parakeet-tdt-1.1b, nvidia/parakeet-rnnt-1.1b, nvidia/parakeet-ctc-1.1b,
@@ -2026,7 +2028,7 @@ default_provider = "faster-whisper"
 #               nvidia/parakeet-tdt-0.6b-v2
 # For canary: nvidia/canary-1b-flash, nvidia/canary-1b
 #   Note: Canary supports multilingual ASR and translation between en, de, es, fr
-default_model = "base"
+default_model = "distil-large-v3"
 
 # Default language for transcription (use "auto" for automatic detection)
 # For source language in transcription

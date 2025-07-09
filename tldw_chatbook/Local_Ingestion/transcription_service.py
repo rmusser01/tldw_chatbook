@@ -708,12 +708,11 @@ class TranscriptionService:
         
         if FASTER_WHISPER_AVAILABLE:
             models['faster-whisper'] = [
-                'tiny', 'tiny.en',
-                'base', 'base.en',
-                'small', 'small.en',
-                'medium', 'medium.en',
-                'large-v1', 'large-v2', 'large-v3',
-                'distil-large-v2', 'distil-large-v3',
+                'large-v1', 'large-v2', 'large-v3', 'large',
+                'distil-large-v2', 'distil-medium.en', 'distil-small.en', 'distil-large-v3',
+                'deepdml/faster-distil-whisper-large-v3.5',
+                'deepdml/faster-whisper-large-v3-turbo-ct2',
+                'nyrahealth/faster_CrisperWhisper'
             ]
         
         if QWEN2AUDIO_AVAILABLE:
