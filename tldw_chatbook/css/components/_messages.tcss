@@ -40,6 +40,11 @@ ChatMessage.-tool-result > Vertical {
     width: 100%;
     height: auto;
 }
+
+.message-text.tts-generating {
+    opacity: 0.8;
+    border-left: 3px solid $accent;
+}
 .message-actions {
     height: auto;
     width: 100%;

@@ -1065,13 +1065,26 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
     
     elif "speak-button" in button_classes:
         logging.info(f"Action: Speak clicked for {message_role} message: '{message_text[:50]}...'")
-        # Actual TTS would go here. For UI feedback:
+        
+        # Import TTS event
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent
+        
+        # Get message ID for tracking
+        message_id = getattr(action_widget, 'message_id_internal', None)
+        
+        # Post TTS request event
+        app.post_message(TTSRequestEvent(
+            text=message_text,
+            message_id=message_id
+        ))
+        
+        # Update UI to show speaking status
         try:
             text_widget = action_widget.query_one(".message-text", Static)
-            original_display = text_widget.renderable  # Store to restore
-            text_widget.update(f"Speaking: {message_text}")
-            # After TTS simulation/actual call:
-            # app.set_timer(3, lambda: text_widget.update(original_display)) # Example restore
+            # Add a visual indicator that TTS is being generated
+            text_widget.add_class("tts-generating")
+            
+            # The TTSCompleteEvent handler will remove this class when done
         except QueryError:
             logging.error("Could not find .message-text Static for speak action.")
 

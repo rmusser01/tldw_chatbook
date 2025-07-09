@@ -85,6 +85,9 @@ from .Event_Handlers import (
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSEventHandler
+)
 from .Notes.Notes_Library import NotesInteropService
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from .Widgets.chat_message import ChatMessage
@@ -1632,6 +1635,70 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self, event.button, event.message_widget
         )
 
+    @on(TTSRequestEvent)
+    async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:
+        """Handle TTS generation request."""
+        self.loguru_logger.info(f"TTS request received for text: '{event.text[:50]}...'")
+        if self._tts_handler:
+            await self._tts_handler.handle_tts_request(event)
+        else:
+            self.loguru_logger.error("TTS handler not initialized")
+            await self.post_message(
+                TTSCompleteEvent(
+                    message_id=event.message_id or "unknown",
+                    error="TTS service not available"
+                )
+            )
+
+    @on(TTSCompleteEvent)
+    async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
+        """Handle TTS generation completion."""
+        self.loguru_logger.info(f"TTS complete for message {event.message_id}")
+        
+        if event.error:
+            self.notify(f"TTS failed: {event.error}", severity="error")
+            # Remove TTS generating class from message
+            try:
+                if event.message_id:
+                    # Find the message widget and remove the generating class
+                    for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                        if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                            text_widget = message_widget.query_one(".message-text", Static)
+                            text_widget.remove_class("tts-generating")
+                            break
+            except Exception as e:
+                self.loguru_logger.error(f"Error updating message UI: {e}")
+        else:
+            # Play the audio file
+            if event.audio_file and event.audio_file.exists():
+                try:
+                    # Import the play function
+                    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import play_audio_file
+                    play_audio_file(event.audio_file)
+                    
+                    # Clean up the temp file after playing
+                    event.audio_file.unlink(missing_ok=True)
+                except Exception as e:
+                    self.loguru_logger.error(f"Error playing audio: {e}")
+                    self.notify("Failed to play audio", severity="error")
+            
+            # Remove TTS generating class from message
+            try:
+                if event.message_id:
+                    for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                        if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                            text_widget = message_widget.query_one(".message-text", Static)
+                            text_widget.remove_class("tts-generating")
+                            break
+            except Exception as e:
+                self.loguru_logger.error(f"Error updating message UI: {e}")
+
+    @on(TTSPlaybackEvent)
+    async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
+        """Handle TTS playback control."""
+        if self._tts_handler:
+            await self._tts_handler.handle_tts_playback(event)
+
     def switch_ccp_center_view(self, view_name: str) -> None:
         """Switch the center pane view in the CCP tab."""
         valid_views = {
@@ -2585,6 +2652,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         #     self.loguru_logger.error(f"_post_mount_setup: Error binding CCP provider select: {e}", exc_info=True)
         log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
                      labels={"phase": "widget_binding"}, 
+                     documentation="Duration of post-mount phase in seconds")
+
+        # Initialize TTS service
+        phase_start = time.perf_counter()
+        try:
+            self.loguru_logger.info("Initializing TTS service...")
+            # Create TTS event handler instance
+            self._tts_handler = TTSEventHandler()
+            await self._tts_handler.initialize_tts()
+            self.loguru_logger.info("TTS service initialized successfully")
+        except Exception as e:
+            self.loguru_logger.error(f"Failed to initialize TTS service: {e}")
+            self._tts_handler = None
+        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                     labels={"phase": "tts_init"}, 
                      documentation="Duration of post-mount phase in seconds")
 
         # Set initial tab now that other bindings might be ready
