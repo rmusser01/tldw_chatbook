@@ -4,6 +4,7 @@ Tests for World Book Manager functionality.
 
 import pytest
 import json
+from pathlib import Path
 from typing import Dict, Any, List
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
@@ -12,17 +13,32 @@ from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
 
 
 @pytest.fixture
-def test_db(tmp_path):
-    """Create a test database."""
-    db_path = tmp_path / "test_world_books.db"
-    db = CharactersRAGDB(str(db_path), "test_client")
-    return db
+def test_db(tmp_path, request):
+    """Create a test database with proper cleanup and isolation."""
+    # Use test name in db filename for better isolation
+    test_name = request.node.name.replace("[", "_").replace("]", "_").replace(" ", "_")
+    db_path = tmp_path / f"test_world_books_{test_name}.db"
+    
+    # Clean up any existing files from previous runs
+    for suffix in ["", "-wal", "-shm"]:
+        p = db_path.parent / (db_path.name + suffix)
+        if p.exists():
+            try:
+                p.unlink(missing_ok=True)
+            except Exception as e:
+                print(f"Warning: Could not unlink {p}: {e}")
+    
+    # Just return the path, let each test create its own connection
+    yield str(db_path)
 
 
 @pytest.fixture
 def wb_manager(test_db):
-    """Create a WorldBookManager instance."""
-    return WorldBookManager(test_db)
+    """Create a WorldBookManager instance with fresh database."""
+    db = CharactersRAGDB(test_db, "test_client")
+    manager = WorldBookManager(db)
+    yield manager
+    db.close_connection()
 
 
 class TestWorldBookManager:
@@ -207,10 +223,25 @@ class TestWorldBookManager:
         entries = wb_manager.get_world_book_entries(wb_id)
         assert len(entries) == 0
     
-    def test_conversation_associations(self, wb_manager, test_db):
+    def test_conversation_associations(self, wb_manager):
         """Test associating world books with conversations."""
+        # Get the database from the world book manager
+        db = wb_manager.db
+        
         # Create a conversation first
-        conv_id = test_db.create_conversation(title="Test Conversation")
+        # First create a character for the conversation
+        character_id = db.add_character_card({
+            'name': 'Test Character',
+            'description': 'A test character',
+            'first_message': 'Hello!',
+            'personality': 'Friendly'
+        })
+        
+        # Now create a conversation with required character_id
+        conv_id = db.add_conversation({
+            'character_id': character_id,
+            'title': 'Test Conversation'
+        })
         
         # Create world books
         wb1_id = wb_manager.create_world_book(name="Book 1")

@@ -1,0 +1,25 @@
+{
+  "name": "rolling_summarize",
+  "description": "Progressive summarization for very long documents",
+  "base_method": "rolling_summarize",
+  "pipeline": [
+    {
+      "stage": "chunk",
+      "method": "rolling_summarize",
+      "options": {
+        "detail": 0.5,
+        "min_chunk_tokens": 500,
+        "chunk_delimiter": ".",
+        "recursive_summarization": false,
+        "verbose": false,
+        "system_prompt": "Rewrite this text in summarized form.",
+        "additional_instructions": null
+      }
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["very_long_documents", "books", "transcripts"],
+    "requires_llm": true,
+    "creates_summary": true
+  }
+}

@@ -9,6 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static, Button, Label, Input, TextArea
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -46,8 +47,10 @@ class MediaDetailsWidget(Container):
         with Container(id=f"metadata-section-{self.type_slug}", classes="metadata-section"):
             # View mode elements
             with Container(id=f"metadata-view-{self.type_slug}", classes="metadata-view"):
-                yield Button("Edit", id=f"edit-button-{self.type_slug}", classes="metadata-edit-button")
                 yield Static("", id=f"metadata-display-{self.type_slug}", classes="metadata-display")
+                with Horizontal(classes="metadata-buttons"):
+                    yield Button("Edit", id=f"edit-button-{self.type_slug}", classes="metadata-edit-button")
+                    yield Button("Delete", id=f"delete-button-{self.type_slug}", classes="metadata-delete-button", variant="error")
             
             # Edit mode elements (initially hidden)
             with Container(id=f"metadata-edit-{self.type_slug}", classes="metadata-edit hidden"):
@@ -103,6 +106,7 @@ class MediaDetailsWidget(Container):
         if new_data:
             self._update_metadata_display()
             self._update_content_display()
+            self._update_delete_button()
         else:
             self._clear_displays()
     
@@ -125,10 +129,14 @@ class MediaDetailsWidget(Container):
                 except Exception as e:
                     keywords_str = f"Error: {e}"
             
+            # Check if item is deleted
+            is_deleted = self.media_data.get('deleted', 0) == 1
+            status_text = "  [red][DELETED][/red]" if is_deleted else ""
+            
             # Format metadata for display
             metadata_text = (
                 f"[bold]ID:[/bold] {self.media_data.get('id', 'N/A')}  "
-                f"[bold]UUID:[/bold] {self.media_data.get('uuid', 'N/A')}\n"
+                f"[bold]UUID:[/bold] {self.media_data.get('uuid', 'N/A')}{status_text}\n"
                 f"[bold]Type:[/bold] {self.media_data.get('type', 'N/A')}  "
                 f"[bold]Author:[/bold] {self.media_data.get('author', 'N/A')}\n"
                 f"[bold]URL:[/bold] {self.media_data.get('url', 'N/A')}\n"
@@ -279,3 +287,56 @@ class MediaDetailsWidget(Container):
         """Update the displayed media data."""
         self.media_data = media_data
         self.edit_mode = False  # Exit edit mode when new data is loaded
+    
+    def _update_delete_button(self) -> None:
+        """Update the delete button text based on whether the item is deleted."""
+        if not self.media_data:
+            return
+            
+        try:
+            delete_button = self.query_one(f"#delete-button-{self.type_slug}", Button)
+            is_deleted = self.media_data.get('deleted', 0) == 1
+            
+            if is_deleted:
+                delete_button.label = "Undelete"
+                delete_button.variant = "success"
+            else:
+                delete_button.label = "Delete"
+                delete_button.variant = "error"
+                
+        except Exception as e:
+            logger.error(f"Error updating delete button: {e}")
+    
+    @on(Button.Pressed)
+    def handle_delete_button(self, event: Button.Pressed) -> None:
+        """Handle delete/undelete button press."""
+        if event.button.id == f"delete-button-{self.type_slug}":
+            if not self.media_data:
+                return
+                
+            is_deleted = self.media_data.get('deleted', 0) == 1
+            
+            if is_deleted:
+                # Direct undelete without confirmation
+                self._perform_undelete()
+            else:
+                # Show confirmation dialog for deletion
+                self._show_delete_confirmation()
+    
+    def _show_delete_confirmation(self) -> None:
+        """Show confirmation dialog before deletion."""
+        from ..Event_Handlers.media_events import MediaDeleteConfirmationEvent
+        self.post_message(MediaDeleteConfirmationEvent(
+            media_id=self.media_data['id'],
+            media_title=self.media_data.get('title', 'Untitled'),
+            type_slug=self.type_slug
+        ))
+    
+    def _perform_undelete(self) -> None:
+        """Perform undelete operation."""
+        from ..Event_Handlers.media_events import MediaUndeleteEvent
+        self.post_message(MediaUndeleteEvent(
+            media_id=self.media_data['id'],
+            type_slug=self.type_slug
+        ))
+    

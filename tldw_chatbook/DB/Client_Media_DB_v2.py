@@ -1857,6 +1857,230 @@ class MediaDatabase:
             logger.error(f"Unexpected error soft deleting media ID {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during soft delete: {e}") from e
 
+    def undelete_media(self, media_id: int, cascade: bool = True) -> bool:
+        """
+        Undeletes a soft-deleted Media item by setting its 'deleted' flag to 0.
+
+        Increments the version number, updates `last_modified`, logs an 'undelete'
+        sync event for the Media item, and restores its FTS entry.
+        If `cascade` is True (default), it also performs the following within
+        the same transaction:
+        - Restores soft-deleted child records (Transcripts, MediaChunks,
+          UnvectorizedMediaChunks, DocumentVersions), logging 'undelete' events
+          for each child.
+
+        Args:
+            media_id (int): The ID of the Media item to undelete.
+            cascade (bool): Whether to also undelete related child records.
+                            Defaults to True.
+
+        Returns:
+            bool: True if the media item was successfully undeleted,
+                  False if the item was not found or not deleted.
+
+        Raises:
+            ConflictError: If the media item's version has changed since being read.
+            DatabaseError: For other database errors during the operation or sync logging.
+        """
+        current_time = self._get_current_utc_timestamp_str()
+        client_id = self.client_id
+        logger.info(f"Attempting undelete for Media ID: {media_id} [Client: {client_id}, Cascade: {cascade}]")
+
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT uuid, version, title, content FROM Media WHERE id = ? AND deleted = 1", (media_id,))
+                media_info = cursor.fetchone()
+                if not media_info:
+                    logger.warning(f"Cannot undelete: Media ID {media_id} not found or not deleted.")
+                    return False
+                media_uuid, current_media_version, title, content = media_info['uuid'], media_info['version'], media_info['title'], media_info['content']
+                new_media_version = current_media_version + 1
+
+                # Update Media: Set deleted = 0
+                cursor.execute("UPDATE Media SET deleted = 0, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ?",
+                               (current_time, new_media_version, client_id, media_id, current_media_version))
+                if cursor.rowcount == 0:
+                    raise ConflictError(entity="Media", identifier=media_id)
+
+                # Payload reflects the state after the update
+                undelete_payload = {'uuid': media_uuid, 'last_modified': current_time, 'version': new_media_version, 'client_id': client_id, 'deleted': 0}
+                self._log_sync_event(conn, 'Media', media_uuid, 'undelete', new_media_version, undelete_payload)
+                
+                # Restore FTS entry
+                self._update_fts_media(conn, media_id, title, content)
+
+                if cascade:
+                    logger.info(f"Performing cascade undelete for Media ID: {media_id}")
+                    # Undelete child tables
+                    child_tables = [("Transcripts", "media_id", "uuid"), ("MediaChunks", "media_id", "uuid"),
+                                    ("UnvectorizedMediaChunks", "media_id", "uuid"), ("DocumentVersions", "media_id", "uuid")]
+                    for table, fk_col, uuid_col in child_tables:
+                        # Validate SQL identifiers to prevent injection
+                        if not validate_table_name(table, 'media'):
+                            raise InputError(f"Invalid table name: {table}")
+                        if not validate_column_name(fk_col, table):
+                            raise InputError(f"Invalid column name: {fk_col}")
+                        if not validate_column_name(uuid_col, table):
+                            raise InputError(f"Invalid column name: {uuid_col}")
+
+                        cursor.execute(f"SELECT id, {uuid_col} AS uuid, version FROM {table} WHERE {fk_col} = ? AND deleted = 1", (media_id,))
+                        items_to_undelete = cursor.fetchall()
+                        for item in items_to_undelete:
+                            new_item_version = item['version'] + 1
+                            cursor.execute(f"UPDATE {table} SET deleted = 0, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ?",
+                                           (current_time, new_item_version, client_id, item['id'], item['version']))
+                            if cursor.rowcount > 0:
+                                undelete_item_payload = {'uuid': item['uuid'], 'last_modified': current_time, 'version': new_item_version, 'client_id': client_id, 'deleted': 0}
+                                self._log_sync_event(conn, table, item['uuid'], 'undelete', new_item_version, undelete_item_payload)
+
+        except (ConflictError, DatabaseError, InputError, Exception) as e:
+            logger.error(f"Error undeleting Media ID {media_id}: {e}", exc_info=True)
+            if isinstance(e, ConflictError):
+                raise e
+            else:
+                raise DatabaseError(f"Error undeleting Media ID {media_id}: {e}") from e
+
+        logger.info(f"Successfully undeleted Media ID: {media_id} and related records.")
+        return True
+
+    def hard_delete_old_media(self, days_old: int = 30) -> int:
+        """
+        Permanently delete media items that have been soft-deleted for more than X days.
+        
+        This method performs a true deletion, removing records from the database entirely.
+        It cascades to all related tables (MediaKeywords, Transcripts, MediaChunks, etc.)
+        
+        Args:
+            days_old: Number of days after soft deletion to wait before hard deletion.
+                     Defaults to 30 days.
+                     
+        Returns:
+            Number of items permanently deleted
+            
+        Raises:
+            DatabaseError: If there's an error during the deletion process
+        """
+        from datetime import datetime, timedelta
+        
+        # Calculate cutoff date
+        cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+        cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
+        
+        logger.info(f"Starting hard deletion of media soft-deleted before {cutoff_str} (>{days_old} days old)")
+        
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                
+                # First get the items to be deleted for logging and cleanup
+                cursor.execute(
+                    """SELECT id, uuid, title, type 
+                       FROM Media 
+                       WHERE deleted = 1 AND last_modified < ?
+                       ORDER BY last_modified""",
+                    (cutoff_str,)
+                )
+                items_to_delete = cursor.fetchall()
+                
+                if not items_to_delete:
+                    logger.info("No media items found for hard deletion")
+                    return 0
+                
+                deleted_count = 0
+                
+                # Process each item for deletion
+                for item in items_to_delete:
+                    media_id = item['id']
+                    media_uuid = item['uuid']
+                    title = item['title']
+                    media_type = item['type']
+                    
+                    try:
+                        # Delete from FTS if it exists (shouldn't, but just in case)
+                        self._delete_fts_media(conn, media_id)
+                        
+                        # Delete related records in order of dependencies
+                        # 1. Delete MediaKeywords links
+                        cursor.execute("DELETE FROM MediaKeywords WHERE media_id = ?", (media_id,))
+                        keywords_deleted = cursor.rowcount
+                        
+                        # 2. Delete Transcripts
+                        cursor.execute("DELETE FROM Transcripts WHERE media_id = ?", (media_id,))
+                        transcripts_deleted = cursor.rowcount
+                        
+                        # 3. Delete MediaChunks
+                        cursor.execute("DELETE FROM MediaChunks WHERE media_id = ?", (media_id,))
+                        chunks_deleted = cursor.rowcount
+                        
+                        # 4. Delete UnvectorizedMediaChunks
+                        cursor.execute("DELETE FROM UnvectorizedMediaChunks WHERE media_id = ?", (media_id,))
+                        unvectorized_chunks_deleted = cursor.rowcount
+                        
+                        # 5. Delete DocumentVersions
+                        cursor.execute("DELETE FROM DocumentVersions WHERE media_id = ?", (media_id,))
+                        doc_versions_deleted = cursor.rowcount
+                        
+                        # 6. Finally delete the Media record itself
+                        cursor.execute("DELETE FROM Media WHERE id = ?", (media_id,))
+                        
+                        if cursor.rowcount > 0:
+                            deleted_count += 1
+                            logger.info(
+                                f"Hard deleted media '{title}' (ID: {media_id}, UUID: {media_uuid}, Type: {media_type}). "
+                                f"Cascade deleted: {keywords_deleted} keywords, {transcripts_deleted} transcripts, "
+                                f"{chunks_deleted} chunks, {unvectorized_chunks_deleted} unvectorized chunks, "
+                                f"{doc_versions_deleted} document versions"
+                            )
+                            
+                            # Log final deletion event (for audit purposes if sync log is being monitored)
+                            self._log_sync_event(
+                                conn, 'Media', media_uuid, 'hard_delete', 0,
+                                {'uuid': media_uuid, 'title': title, 'permanent': True}
+                            )
+                        else:
+                            logger.warning(f"Failed to delete media ID {media_id} - may have been deleted already")
+                            
+                    except Exception as e:
+                        logger.error(f"Error hard deleting media ID {media_id}: {e}", exc_info=True)
+                        # Continue with other deletions rather than failing entirely
+                        continue
+                
+                logger.info(f"Hard deletion complete. Permanently deleted {deleted_count} media items.")
+                return deleted_count
+                
+        except Exception as e:
+            logger.error(f"Error during hard deletion process: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to perform hard deletion: {e}") from e
+
+    def get_deletion_candidates(self, days_old: int = 30) -> List[Dict[str, Any]]:
+        """
+        Get a list of media items that are candidates for hard deletion.
+        
+        Args:
+            days_old: Number of days after soft deletion to consider for hard deletion
+            
+        Returns:
+            List of dictionaries containing media info (id, uuid, title, type, last_modified)
+        """
+        from datetime import datetime, timedelta
+        
+        cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+        cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
+        
+        try:
+            cursor = self.execute_query(
+                """SELECT id, uuid, title, type, last_modified 
+                   FROM Media 
+                   WHERE deleted = 1 AND last_modified < ?
+                   ORDER BY last_modified""",
+                (cutoff_str,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting deletion candidates: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to get deletion candidates: {e}") from e
+
     def add_media_with_keywords(
             self,
             *,
@@ -2511,6 +2735,228 @@ class MediaDatabase:
         except Exception as e:
             logger.error(f"Unexpected soft delete keyword error '{keyword}': {e}", exc_info=True)
             raise DatabaseError(f"Unexpected soft delete keyword error: {e}") from e
+
+    def rename_keyword(self, keyword_id: int, new_keyword: str) -> bool:
+        """
+        Rename a keyword to a new name.
+        
+        Args:
+            keyword_id (int): ID of the keyword to rename
+            new_keyword (str): New keyword name
+            
+        Returns:
+            bool: True if successful, False otherwise
+            
+        Raises:
+            ValueError: If new_keyword is empty or already exists
+            DatabaseError: For database operation errors
+        """
+        new_keyword = new_keyword.strip().lower()
+        if not new_keyword:
+            raise ValueError("New keyword cannot be empty")
+            
+        current_time = self._get_current_utc_timestamp_str()
+        client_id = self.client_id
+        
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                
+                # Check if keyword exists and is not deleted
+                cursor.execute('SELECT keyword, uuid, version FROM Keywords WHERE id = ? AND deleted = 0', (keyword_id,))
+                keyword_info = cursor.fetchone()
+                if not keyword_info:
+                    logger.warning(f"Keyword ID {keyword_id} not found or deleted")
+                    return False
+                    
+                old_keyword = keyword_info['keyword']
+                keyword_uuid = keyword_info['uuid']
+                current_version = keyword_info['version']
+                
+                # Check if new keyword already exists
+                cursor.execute('SELECT id FROM Keywords WHERE keyword = ? AND deleted = 0 AND id != ?', (new_keyword, keyword_id))
+                if cursor.fetchone():
+                    raise ValueError(f"Keyword '{new_keyword}' already exists")
+                    
+                new_version = current_version + 1
+                
+                # Update the keyword
+                cursor.execute("""
+                    UPDATE Keywords 
+                    SET keyword = ?, last_modified = ?, version = ?, client_id = ?
+                    WHERE id = ? AND version = ?
+                """, (new_keyword, current_time, new_version, client_id, keyword_id, current_version))
+                
+                if cursor.rowcount == 0:
+                    raise ConflictError("Keywords", keyword_id)
+                    
+                # Update FTS
+                self._update_fts_keyword(conn, keyword_id, new_keyword)
+                
+                # Log sync event
+                update_payload = {
+                    'uuid': keyword_uuid,
+                    'keyword': new_keyword,
+                    'last_modified': current_time,
+                    'version': new_version,
+                    'client_id': client_id
+                }
+                self._log_sync_event(conn, 'Keywords', keyword_uuid, 'update', new_version, update_payload)
+                
+                logger.info(f"Renamed keyword '{old_keyword}' to '{new_keyword}' (ID: {keyword_id})")
+                return True
+                
+        except (ValueError, ConflictError, DatabaseError) as e:
+            logger.error(f"Error renaming keyword ID {keyword_id}: {e}")
+            raise
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error renaming keyword ID {keyword_id}: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to rename keyword: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error renaming keyword ID {keyword_id}: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected rename error: {e}") from e
+
+    def merge_keywords(self, source_keyword_ids: List[int], target_keyword: str, create_if_not_exists: bool = True) -> bool:
+        """
+        Merge multiple keywords into a single target keyword.
+        
+        Args:
+            source_keyword_ids (List[int]): IDs of keywords to merge
+            target_keyword (str): Target keyword to merge into
+            create_if_not_exists (bool): Create target keyword if it doesn't exist
+            
+        Returns:
+            bool: True if successful, False otherwise
+            
+        Raises:
+            ValueError: If source_keyword_ids is empty or target_keyword is empty
+            DatabaseError: For database operation errors
+        """
+        if not source_keyword_ids:
+            raise ValueError("Source keyword IDs cannot be empty")
+            
+        target_keyword = target_keyword.strip().lower()
+        if not target_keyword:
+            raise ValueError("Target keyword cannot be empty")
+            
+        current_time = self._get_current_utc_timestamp_str()
+        client_id = self.client_id
+        
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                
+                # Get or create target keyword
+                cursor.execute('SELECT id FROM Keywords WHERE keyword = ? AND deleted = 0', (target_keyword,))
+                target_result = cursor.fetchone()
+                
+                if target_result:
+                    target_keyword_id = target_result['id']
+                elif create_if_not_exists:
+                    # Create new keyword
+                    result = self.add_keyword(target_keyword)
+                    if result[0] is None:
+                        raise DatabaseError(f"Failed to create target keyword: {result[1]}")
+                    target_keyword_id = result[0]
+                else:
+                    raise ValueError(f"Target keyword '{target_keyword}' does not exist")
+                    
+                # Get all media items associated with source keywords
+                placeholders = ','.join('?' * len(source_keyword_ids))
+                cursor.execute(f"""
+                    SELECT DISTINCT mk.media_id 
+                    FROM MediaKeywords mk
+                    JOIN Keywords k ON mk.keyword_id = k.id
+                    WHERE k.id IN ({placeholders}) AND k.deleted = 0
+                """, source_keyword_ids)
+                
+                media_ids = [row['media_id'] for row in cursor.fetchall()]
+                
+                # Add target keyword to all media items
+                for media_id in media_ids:
+                    # Check if link already exists
+                    cursor.execute("""
+                        SELECT id FROM MediaKeywords 
+                        WHERE media_id = ? AND keyword_id = ?
+                    """, (media_id, target_keyword_id))
+                    
+                    if not cursor.fetchone():
+                        # Create new link
+                        cursor.execute("""
+                            INSERT INTO MediaKeywords (media_id, keyword_id)
+                            VALUES (?, ?)
+                        """, (media_id, target_keyword_id))
+                        
+                # Remove source keywords from media items
+                cursor.execute(f"""
+                    DELETE FROM MediaKeywords 
+                    WHERE keyword_id IN ({placeholders})
+                """, source_keyword_ids)
+                
+                # Soft delete source keywords
+                for keyword_id in source_keyword_ids:
+                    if keyword_id != target_keyword_id:  # Don't delete if merging into itself
+                        cursor.execute("""
+                            UPDATE Keywords 
+                            SET deleted = 1, last_modified = ?, version = version + 1, client_id = ?
+                            WHERE id = ? AND deleted = 0
+                        """, (current_time, client_id, keyword_id))
+                        
+                        # Update FTS
+                        self._delete_fts_keyword(conn, keyword_id)
+                        
+                logger.info(f"Merged {len(source_keyword_ids)} keywords into '{target_keyword}' affecting {len(media_ids)} media items")
+                return True
+                
+        except (ValueError, DatabaseError) as e:
+            logger.error(f"Error merging keywords: {e}")
+            raise
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error merging keywords: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to merge keywords: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error merging keywords: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected merge error: {e}") from e
+
+    def get_keyword_usage_stats(self) -> List[Dict[str, Any]]:
+        """
+        Get usage statistics for all keywords.
+        
+        Returns:
+            List[Dict[str, Any]]: List of dictionaries containing keyword info and usage count
+                Each dict contains: id, keyword, uuid, usage_count, created_at, last_modified
+                
+        Raises:
+            DatabaseError: For database operation errors
+        """
+        try:
+            query = """
+                SELECT 
+                    k.id,
+                    k.keyword,
+                    k.uuid,
+                    k.created_at,
+                    k.last_modified,
+                    COUNT(DISTINCT mk.media_id) as usage_count
+                FROM Keywords k
+                LEFT JOIN MediaKeywords mk ON k.id = mk.keyword_id
+                WHERE k.deleted = 0
+                GROUP BY k.id, k.keyword, k.uuid, k.created_at, k.last_modified
+                ORDER BY usage_count DESC, k.keyword COLLATE NOCASE
+            """
+            
+            cursor = self.execute_query(query)
+            results = [dict(row) for row in cursor.fetchall()]
+            
+            logger.debug(f"Retrieved usage stats for {len(results)} keywords")
+            return results
+            
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error getting keyword usage stats: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to get keyword usage stats: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error getting keyword usage stats: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected stats error: {e}") from e
 
     def soft_delete_document_version(self, version_uuid: str) -> bool:
         """

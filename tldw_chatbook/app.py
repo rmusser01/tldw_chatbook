@@ -31,6 +31,7 @@ from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
 from textual.worker import Worker, WorkerState
 from textual.binding import Binding
+from textual.message import Message
 from textual.dom import DOMNode  # For type hinting if needed
 from textual.timer import Timer
 from textual.css.query import QueryError
@@ -878,6 +879,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     notes_sort_by: reactive[str] = reactive("date_created")  # date_created, date_modified, title
     notes_sort_ascending: reactive[bool] = reactive(False)  # False = newest first
     notes_preview_mode: reactive[bool] = reactive(False)  # False = edit mode, True = preview mode
+    
+    # Auto-save related reactive variables
+    notes_auto_save_enabled: reactive[bool] = reactive(True)  # Auto-save enabled by default
+    notes_auto_save_timer: reactive[Optional[Timer]] = reactive(None)  # Timer reference for auto-save
+    notes_last_save_time: reactive[Optional[float]] = reactive(None)  # Timestamp of last save
+    notes_auto_save_status: reactive[str] = reactive("")  # Status: "", "saving", "saved"
 
     # --- Reactives for chat sidebar prompt display ---
     chat_sidebar_selected_prompt_id: reactive[Optional[int]] = reactive(None)
@@ -1278,6 +1285,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             media_handlers_map[f"media-load-selected-button-{slug}"] = media_events.handle_media_load_selected_button_pressed
             media_handlers_map[f"media-prev-page-button-{slug}"] = media_events.handle_media_page_change_button_pressed
             media_handlers_map[f"media-next-page-button-{slug}"] = media_events.handle_media_page_change_button_pressed
+        
+        # Add handlers for special media sub-tabs
+        media_handlers_map["media-nav-analysis-review"] = media_events.handle_media_nav_button_pressed
+        media_handlers_map["media-nav-collections-tags"] = media_events.handle_media_nav_button_pressed
+        media_handlers_map["media-nav-multi-item-review"] = media_events.handle_media_nav_button_pressed
 
         # --- Search Handlers ---
         search_handlers = {
@@ -2690,6 +2702,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             # Final memory usage
             log_resource_usage()
+            
+        # Schedule media cleanup if enabled
+        self.schedule_media_cleanup()
 
 
     async def update_db_sizes(self) -> None:
@@ -2814,6 +2829,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
+            # Handle Notes tab auto-save cleanup when leaving the tab
+            if old_tab == TAB_NOTES:
+                # Cancel any pending auto-save timer
+                if hasattr(self, 'notes_auto_save_timer') and self.notes_auto_save_timer is not None:
+                    self.notes_auto_save_timer.stop()
+                    self.notes_auto_save_timer = None
+                    loguru_logger.debug("Cancelled auto-save timer when leaving Notes tab")
+                
+                # Perform one final auto-save if auto-save is enabled and there are unsaved changes
+                if (hasattr(self, 'notes_auto_save_enabled') and self.notes_auto_save_enabled and
+                    hasattr(self, 'notes_unsaved_changes') and self.notes_unsaved_changes and 
+                    self.current_selected_note_id):
+                    loguru_logger.debug("Performing final auto-save before leaving Notes tab")
+                    # Import here to avoid circular imports
+                    from tldw_chatbook.Event_Handlers.notes_events import _perform_auto_save
+                    # Schedule the auto-save as a background task
+                    self.run_worker(_perform_auto_save(self), name="notes_final_autosave")
+            
             try: self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
             except QueryError: logging.warning(f"Watcher: Could not find old button #tab-{old_tab}")
             try: self.query_one(f"#{old_tab}-window").display = False
@@ -2912,11 +2945,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Use call_after_refresh for async function
             self.call_after_refresh(notes_handlers.load_and_display_notes_handler, self)
         elif new_tab == TAB_MEDIA:
-            try:
-                media_window = self.query_one(MediaWindow)
-                media_window.activate_initial_view()
-            except QueryError:
-                self.loguru_logger.error("Could not find MediaWindow to activate its initial view.")
+            def activate_media_initial_view():
+                try:
+                    media_window = self.query_one(MediaWindow)
+                    media_window.activate_initial_view()
+                except QueryError:
+                    loguru_logger.error("Could not find MediaWindow to activate its initial view.")
+            
+            # Use a timer to ensure the window is fully initialized
+            self.set_timer(0.1, activate_media_initial_view)
         elif new_tab == TAB_SEARCH:
             # Handle search tab initialization with a delay to ensure window is ready
             def initialize_search_tab():
@@ -3067,12 +3104,44 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             return
         try:
             indicator = self.query_one("#notes-unsaved-indicator", Label)
+            # Don't update if we're showing auto-save status
+            if self.notes_auto_save_status:
+                return
             if has_unsaved:
                 indicator.update("● Unsaved")
                 indicator.add_class("has-unsaved")
             else:
                 indicator.update("")
                 indicator.remove_class("has-unsaved")
+        except QueryError:
+            pass  # Indicator might not exist yet
+
+    def watch_notes_auto_save_status(self, status: str) -> None:
+        """Update the indicator based on auto-save status."""
+        if not self._ui_ready:
+            return
+        try:
+            indicator = self.query_one("#notes-unsaved-indicator", Label)
+            if status == "saving":
+                indicator.update("⟳ Auto-saving...")
+                indicator.remove_class("has-unsaved")
+                indicator.add_class("auto-saving")
+            elif status == "saved":
+                indicator.update("✓ Saved")
+                indicator.remove_class("has-unsaved", "auto-saving")
+                indicator.add_class("saved")
+                # Clear the saved status after 2 seconds
+                self.set_timer(2.0, lambda: setattr(self, 'notes_auto_save_status', ''))
+            else:
+                # Empty status - let the unsaved changes watcher handle it
+                indicator.remove_class("auto-saving", "saved")
+                # Re-evaluate unsaved changes
+                if self.notes_unsaved_changes:
+                    indicator.update("● Unsaved")
+                    indicator.add_class("has-unsaved")
+                else:
+                    indicator.update("")
+                    indicator.remove_class("has-unsaved")
         except QueryError:
             pass  # Indicator might not exist yet
 
@@ -3802,6 +3871,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         if switch_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
             await self.handle_settings_mode_toggle(event)
+        elif switch_id == "notes-auto-save-toggle":
+            await self.handle_notes_auto_save_toggle(event)
 
 
     async def on_select_changed(self, event: Select.Changed) -> None:
@@ -3864,6 +3935,22 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     @on(media_events.MediaMetadataUpdateEvent)
     async def on_media_metadata_update(self, event: media_events.MediaMetadataUpdateEvent) -> None:
         await media_events.handle_media_metadata_update(self, event)
+    
+    # Collections/Tags event handlers
+    @on(Message)
+    async def on_collections_tag_message(self, event: Message) -> None:
+        """Handle Collections/Tag events."""
+        from .Event_Handlers import collections_tag_events
+        
+        if event.__class__.__name__ == 'KeywordRenameEvent':
+            await collections_tag_events.handle_keyword_rename(self, event)
+        elif event.__class__.__name__ == 'KeywordMergeEvent':
+            await collections_tag_events.handle_keyword_merge(self, event)
+        elif event.__class__.__name__ == 'KeywordDeleteEvent':
+            await collections_tag_events.handle_keyword_delete(self, event)
+        elif event.__class__.__name__ == 'BatchAnalysisStartEvent':
+            from .Event_Handlers import multi_item_review_events
+            await multi_item_review_events.handle_batch_analysis_start(self, event)
     
     @on(SplashScreenClosed)
     async def on_splash_screen_closed(self, event: SplashScreenClosed) -> None:
@@ -3942,6 +4029,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e:
             self.loguru_logger.error(f"Error toggling settings mode: {e}")
             self.notify("Error switching settings mode", severity="error")
+
+    async def handle_notes_auto_save_toggle(self, event: Switch.Changed) -> None:
+        """Handles the notes auto-save toggle."""
+        try:
+            # Update the reactive variable
+            self.notes_auto_save_enabled = event.value
+            
+            # If auto-save is being disabled, cancel any pending timer
+            if not event.value and self.notes_auto_save_timer is not None:
+                self.notes_auto_save_timer.stop()
+                self.notes_auto_save_timer = None
+                self.loguru_logger.info("Auto-save timer cancelled")
+            
+            # Save the setting to config
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("notes", "auto_save_enabled", event.value)
+            
+            # Notify the user
+            status = "enabled" if event.value else "disabled"
+            self.notify(f"Notes auto-save {status}", timeout=2)
+            self.loguru_logger.info(f"Notes auto-save {status}")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error toggling notes auto-save: {e}")
+            self.notify("Error changing auto-save setting", severity="error")
 
     async def handle_rag_preset_changed(self, event: Select.Changed) -> None:
         """Handles RAG preset selection."""
@@ -4856,9 +4968,120 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # are passed via kwargs from the calling event handler (e.g., handle_chat_send_button_pressed).
         return worker_events.chat_wrapper_function(self, strip_thinking_tags=strip_thinking_tags, **kwargs) # Pass self as 'app_instance'
 
+    def schedule_media_cleanup(self) -> None:
+        """Schedule periodic media cleanup based on configuration."""
+        try:
+            # Get cleanup configuration
+            cleanup_config = get_cli_setting("media_cleanup", "enabled", True)
+            if not cleanup_config:
+                self.loguru_logger.info("Media cleanup is disabled in configuration")
+                return
+                
+            cleanup_interval_hours = get_cli_setting("media_cleanup", "cleanup_interval_hours", 24)
+            cleanup_on_startup = get_cli_setting("media_cleanup", "cleanup_on_startup", True)
+            
+            # Run cleanup on startup if configured
+            if cleanup_on_startup:
+                self.loguru_logger.info("Running media cleanup on startup")
+                self.call_later(self.perform_media_cleanup)
+            
+            # Schedule periodic cleanup
+            cleanup_interval_seconds = cleanup_interval_hours * 3600
+            self._media_cleanup_timer = self.set_interval(cleanup_interval_seconds, self.perform_media_cleanup)
+            self.loguru_logger.info(f"Scheduled media cleanup every {cleanup_interval_hours} hours")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error scheduling media cleanup: {e}", exc_info=True)
+    
+    async def perform_media_cleanup(self) -> None:
+        """Perform media cleanup based on configuration settings."""
+        try:
+            if not self.media_db:
+                self.loguru_logger.warning("Media database not available for cleanup")
+                return
+                
+            # Get cleanup configuration
+            cleanup_days = get_cli_setting("media_cleanup", "cleanup_days", 30)
+            max_items = get_cli_setting("media_cleanup", "max_items_per_cleanup", 100)
+            notify_before = get_cli_setting("media_cleanup", "notify_before_cleanup", True)
+            
+            # Check for candidates first
+            candidates = await self.run_in_thread(self.media_db.get_deletion_candidates, cleanup_days)
+            
+            if not candidates:
+                self.loguru_logger.info("No media items eligible for cleanup")
+                return
+                
+            candidate_count = len(candidates)
+            items_to_delete = min(candidate_count, max_items)
+            
+            # Notify user if configured
+            if notify_before and candidate_count > 0:
+                self.notify(
+                    f"Found {candidate_count} media items eligible for permanent deletion "
+                    f"(soft-deleted over {cleanup_days} days ago). "
+                    f"Will delete up to {items_to_delete} items.",
+                    title="Media Cleanup",
+                    severity="information",
+                    timeout=5
+                )
+            
+            # Perform the cleanup
+            deleted_count = await self.run_in_thread(self.media_db.hard_delete_old_media, cleanup_days)
+            
+            if deleted_count > 0:
+                self.loguru_logger.info(f"Media cleanup completed: {deleted_count} items permanently deleted")
+                self.notify(
+                    f"Media cleanup completed: {deleted_count} items permanently deleted",
+                    severity="information",
+                    timeout=3
+                )
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error during media cleanup: {e}", exc_info=True)
+            self.notify(
+                f"Error during media cleanup: {str(e)}",
+                severity="error",
+                timeout=5
+            )
+    
     def action_quit(self) -> None:
         """Handle application quit - save persistent caches before exiting."""
         loguru_logger.info("Application quit initiated")
+        
+        # Cancel media cleanup timer if it exists
+        if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
+            self._media_cleanup_timer.stop()
+        
+        # Handle Notes auto-save cleanup
+        if hasattr(self, 'notes_auto_save_timer') and self.notes_auto_save_timer is not None:
+            self.notes_auto_save_timer.stop()
+            self.notes_auto_save_timer = None
+            loguru_logger.debug("Cancelled auto-save timer during app quit")
+        
+        # Perform final save if on Notes tab with unsaved changes (respect auto-save setting)
+        if (self.current_tab == TAB_NOTES and 
+            hasattr(self, 'notes_unsaved_changes') and 
+            self.notes_unsaved_changes and 
+            self.current_selected_note_id):
+            # Check if we should save based on auto-save setting
+            should_save = hasattr(self, 'notes_auto_save_enabled') and self.notes_auto_save_enabled
+            if should_save:
+                loguru_logger.debug("Performing final auto-save during app quit")
+            else:
+                loguru_logger.debug("Skipping final save during app quit (auto-save disabled)")
+            
+            if should_save:
+                try:
+                    # Import here to avoid circular imports
+                    from tldw_chatbook.Event_Handlers.notes_events import save_current_note_handler
+                    # Run synchronously since we're quitting
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(save_current_note_handler(self))
+                    loop.close()
+                except Exception as e:
+                    loguru_logger.error(f"Error performing final save during quit: {e}")
         
         # Try to save caches but don't let it block quitting
         try:

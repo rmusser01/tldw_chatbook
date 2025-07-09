@@ -22,6 +22,7 @@ from nltk.tokenize import sent_tokenize
 from tldw_chatbook.config import load_settings, get_cli_setting
 from .language_chunkers import LanguageChunkerFactory
 from .token_chunker import create_token_chunker
+from .chunking_templates import ChunkingTemplateManager, ChunkingPipeline, ChunkingTemplate
 #
 #######################################################################################################################
 # Custom Exceptions
@@ -98,7 +99,8 @@ _default_chunk_options_from_config = {
     'summarize_additional_instructions': get_cli_setting('chunking_config', 'summarize_additional_instructions', None),
     'summarize_temperature': float(get_cli_setting('chunking_config', 'summarize_temperature', 0.1)),
     'summarization_llm_provider': get_cli_setting('chunking_config', 'summarization_llm_provider', 'openai'),
-    'summarization_llm_model': get_cli_setting('chunking_config', 'summarization_llm_model', 'gpt-4o')
+    'summarization_llm_model': get_cli_setting('chunking_config', 'summarization_llm_model', 'gpt-4o'),
+    'template': get_cli_setting('chunking_config', 'template', None)  # Template name if using template-based chunking
 }
 logger.info("Chunking library defaults loaded from config.")
 logger.debug(f"Default chunking options: {_default_chunk_options_from_config}")
@@ -117,6 +119,8 @@ class Chunker:
     def __init__(self,
                  options: Optional[Dict[str, Any]] = None,
                  tokenizer_name_or_path: str = "gpt2",
+                 template: Optional[str] = None,
+                 template_manager: Optional[ChunkingTemplateManager] = None,
                  # Specific methods needing LLMs will take them as args or use a callback.
                  ):
         """
@@ -126,7 +130,34 @@ class Chunker:
             options (Optional[Dict[str, Any]]): Custom chunking options to override defaults.
             tokenizer_name_or_path (str): Name or path of the Hugging Face tokenizer to use.
                                            Defaults to "gpt2".
+            template (Optional[str]): Name of chunking template to use.
+            template_manager (Optional[ChunkingTemplateManager]): Template manager instance.
         """
+        # Initialize template manager
+        self.template_manager = template_manager or ChunkingTemplateManager()
+        self.pipeline = ChunkingPipeline(self.template_manager)
+        
+        # Load template if specified
+        self.template: Optional[ChunkingTemplate] = None
+        if template:
+            self.template = self.template_manager.load_template(template)
+            if self.template:
+                logger.info(f"Loaded chunking template: {template}")
+                # Extract options from template
+                template_options = {}
+                for stage in self.template.pipeline:
+                    if stage.stage == 'chunk':
+                        template_options.update(stage.options)
+                        if stage.method:
+                            template_options['method'] = stage.method
+                        break
+                # Template options have lower priority than explicit options
+                if options:
+                    template_options.update(options)
+                options = template_options
+            else:
+                logger.warning(f"Template '{template}' not found, using default options")
+        
         # Initialize options: start with defaults, then update with provided options
         self.options = DEFAULT_CHUNK_OPTIONS.copy()
         if options:
@@ -226,6 +257,7 @@ class Chunker:
                    method: Optional[str] = None,
                    llm_call_function: Optional[Callable[[Dict[str, Any]], Union[str, Generator[str, None, None]]]] = None,
                    llm_api_config: Optional[Dict[str, Any]] = None,
+                   use_template: Optional[bool] = None,
                    ) -> List[Union[str, Dict[str, Any]]]:
         """
         Main method to chunk text based on the specified method in options or argument.
@@ -233,6 +265,7 @@ class Chunker:
         Args:
             text (str): The text to chunk.
             method (Optional[str]): Override the chunking method defined in options.
+            use_template (Optional[bool]): Force use/bypass of template if loaded.
 
         Returns:
             List[Union[str, Dict[str, Any]]]: A list of chunks.
@@ -242,6 +275,28 @@ class Chunker:
             InvalidChunkingMethodError: If the method is not supported.
             ChunkingError: For errors during the chunking process.
         """
+        # Check if we should use template-based chunking
+        if use_template is None:
+            use_template = self.template is not None
+        
+        if use_template and self.template:
+            logger.info(f"Using template-based chunking with template: {self.template.name}")
+            # Execute template pipeline
+            template_results = self.pipeline.execute(
+                text=text,
+                template=self.template,
+                chunker_instance=self,
+                llm_call_function=llm_call_function,
+                llm_api_config=llm_api_config
+            )
+            # Convert template results to expected format
+            chunks = []
+            for result in template_results:
+                if isinstance(result, dict) and 'text' in result:
+                    chunks.append(result['text'])
+                else:
+                    chunks.append(result)
+            return chunks
         chunk_method = method if method else self._get_option('method', 'words')
         max_size = self._get_option('max_size') # Already int from __init__
         overlap = self._get_option('overlap')   # Already int from __init__
@@ -1277,6 +1332,8 @@ def process_document_with_metadata(text: str,
 def improved_chunking_process(text: str,
                               chunk_options_dict: Optional[Dict[str, Any]] = None,
                               tokenizer_name_or_path: str = "gpt2",
+                              template: Optional[str] = None,
+                              template_manager: Optional[ChunkingTemplateManager] = None,
                               # Parameters for LLM calls if needed by a chunking method
                               llm_call_function_for_chunker: Optional[Callable] = None,
                               llm_api_config_for_chunker: Optional[Dict[str, Any]] = None
@@ -1284,9 +1341,13 @@ def improved_chunking_process(text: str,
     logger.info("Improved chunking process started...")
     logger.debug(f"Received chunk_options_dict: {chunk_options_dict}")
     logger.debug(f"Text length: {len(text)} characters, tokenizer: {tokenizer_name_or_path}")
+    if template:
+        logger.debug(f"Using template: {template}")
 
     chunker_instance = Chunker(options=chunk_options_dict,
                                tokenizer_name_or_path=tokenizer_name_or_path,
+                               template=template,
+                               template_manager=template_manager,
                                 )
 
     # Get effective options from the chunker instance (these are now resolved)

@@ -465,6 +465,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_database_settings_cli = get_toml_section('database')
     final_chat_defaults_cli = get_toml_section('chat_defaults')
     final_character_defaults_cli = get_toml_section('character_defaults')
+    final_notes_settings_cli = get_toml_section('notes')
 
     # --- Application Mode ---
     single_user_mode_str = os.getenv("APP_MODE", _get_typed_value(processing_section, "app_mode", "single")).lower()
@@ -530,6 +531,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "providers": final_providers_settings,  # For UI dropdowns
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
+        "notes": final_notes_settings_cli,  # For notes auto-save settings
 
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
@@ -1195,6 +1197,15 @@ prompts_db_path = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
 media_db_path = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
 USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
 
+[media_cleanup]
+# Media cleanup settings for automatic hard deletion of soft-deleted items
+enabled = true  # Enable/disable automatic cleanup
+cleanup_days = 30  # Number of days after soft deletion before hard deletion
+cleanup_interval_hours = 24  # How often to run cleanup (in hours)
+cleanup_on_startup = true  # Run cleanup check on application startup
+max_items_per_cleanup = 100  # Maximum items to delete in one cleanup run
+notify_before_cleanup = true  # Show notification before performing cleanup
+
 [api_endpoints]
 # Optional: Specify URLs for local/custom endpoints if they differ from library defaults
 # These keys should match the provider names used in the app (adjust if needed)
@@ -1659,6 +1670,11 @@ auto_sync_enabled = false            # Enable automatic sync on startup
 sync_on_close = false               # Sync when closing the app
 conflict_resolution = "newer_wins"   # Default conflict resolution: newer_wins, ask, disk_wins, db_wins
 sync_direction = "bidirectional"     # Default sync direction: bidirectional, disk_to_db, db_to_disk
+
+# Auto-save settings
+auto_save_enabled = true             # Enable auto-save feature
+auto_save_delay_ms = 3000           # Delay in milliseconds before auto-saving (3 seconds)
+auto_save_on_every_key = false      # If true, saves on every keystroke; if false, uses delay
 
 
 # ==========================================================

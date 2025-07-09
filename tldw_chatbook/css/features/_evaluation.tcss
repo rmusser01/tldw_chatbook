@@ -26,7 +26,6 @@
 
 .evals-view-area {
     height: 100%;
-    overflow-y: auto;
 }
 
 /* Section containers */
@@ -416,7 +415,6 @@
 
 /* View areas */
 .evals-view-area {
-    layout: vertical;
     height: 100%;
     width: 100%;
     display: none; /* Hidden by default */

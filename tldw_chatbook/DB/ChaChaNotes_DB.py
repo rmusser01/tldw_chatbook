@@ -126,7 +126,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 9 # Incremented schema version for world books/lorebooks support
+    _CURRENT_SCHEMA_VERSION = 10 # Incremented schema version to fix world books FTS triggers
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
 
     _FULL_SCHEMA_SQL_V4 = """
@@ -1168,7 +1168,7 @@ CREATE TABLE IF NOT EXISTS world_book_entries(
 
 -- Create conversation_world_books junction table
 CREATE TABLE IF NOT EXISTS conversation_world_books(
-  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   world_book_id   INTEGER NOT NULL REFERENCES world_books(id) ON DELETE CASCADE,
   priority        INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (conversation_id, world_book_id)
@@ -1199,15 +1199,20 @@ END;
 
 CREATE TRIGGER world_books_au
 AFTER UPDATE ON world_books BEGIN
-  UPDATE world_books_fts 
-  SET name = NEW.name, description = NEW.description
-  WHERE rowid = NEW.id;
+  INSERT INTO world_books_fts(world_books_fts, rowid, name, description)
+  VALUES('delete', OLD.id, OLD.name, OLD.description);
+  
+  INSERT INTO world_books_fts(rowid, name, description)
+  SELECT NEW.id, NEW.name, NEW.description
+  WHERE NEW.deleted = 0;
 END;
 
 CREATE TRIGGER world_books_ad
 AFTER DELETE ON world_books BEGIN
   DELETE FROM world_books_fts WHERE rowid = OLD.id;
 END;
+
+-- Note: Soft deletion is handled by world_books_au trigger
 
 -- Create triggers for world_book_entries FTS5 maintenance
 CREATE TRIGGER world_book_entries_ai
@@ -1218,9 +1223,11 @@ END;
 
 CREATE TRIGGER world_book_entries_au
 AFTER UPDATE ON world_book_entries BEGIN
-  UPDATE world_book_entries_fts 
-  SET keys = NEW.keys, content = NEW.content
-  WHERE rowid = NEW.id;
+  INSERT INTO world_book_entries_fts(world_book_entries_fts, rowid, keys, content)
+  VALUES('delete', OLD.id, OLD.keys, OLD.content);
+  
+  INSERT INTO world_book_entries_fts(rowid, keys, content)
+  VALUES(NEW.id, NEW.keys, NEW.content);
 END;
 
 CREATE TRIGGER world_book_entries_ad
@@ -1340,23 +1347,57 @@ AFTER DELETE ON world_book_entries BEGIN
 END;
 
 -- Update last_modified triggers
-CREATE TRIGGER world_books_update_timestamp
-AFTER UPDATE ON world_books
-BEGIN
-  UPDATE world_books SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
+-- NOTE: This trigger is intentionally removed because last_modified is already
+-- set in the UPDATE statement from the application code, and having this trigger
+-- would cause an infinite loop of UPDATE operations
 
-CREATE TRIGGER world_book_entries_update_timestamp
-AFTER UPDATE ON world_book_entries
-BEGIN
-  UPDATE world_book_entries SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
+-- NOTE: This trigger is intentionally removed because last_modified is already
+-- set in the UPDATE statement from the application code, and having this trigger
+-- would cause an infinite loop of UPDATE operations
 
 -- Update schema version
 UPDATE db_schema_version
    SET version = 9
  WHERE schema_name = 'rag_char_chat_schema'
    AND version = 8;
+"""
+
+    _MIGRATE_V9_TO_V10_SQL = """
+-- Migration from V9 to V10: Fix world books FTS triggers to prevent corruption
+
+-- Drop the problematic triggers
+DROP TRIGGER IF EXISTS world_books_au;
+DROP TRIGGER IF EXISTS world_book_entries_au;
+DROP TRIGGER IF EXISTS world_books_soft_delete_fts;
+
+-- Recreate world_books_au trigger using DELETE + INSERT pattern
+CREATE TRIGGER world_books_au
+AFTER UPDATE ON world_books BEGIN
+  INSERT INTO world_books_fts(world_books_fts, rowid, name, description)
+  VALUES('delete', OLD.id, OLD.name, OLD.description);
+  
+  INSERT INTO world_books_fts(rowid, name, description)
+  SELECT NEW.id, NEW.name, NEW.description
+  WHERE NEW.deleted = 0;
+END;
+
+-- Recreate world_book_entries_au trigger using DELETE + INSERT pattern
+CREATE TRIGGER world_book_entries_au
+AFTER UPDATE ON world_book_entries BEGIN
+  INSERT INTO world_book_entries_fts(world_book_entries_fts, rowid, keys, content)
+  VALUES('delete', OLD.id, OLD.keys, OLD.content);
+  
+  INSERT INTO world_book_entries_fts(rowid, keys, content)
+  VALUES(NEW.id, NEW.keys, NEW.content);
+END;
+
+-- Note: FTS rebuild removed - will be handled if needed
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 10
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 9;
 """
 
     def __init__(self, db_path: Union[str, Path], client_id: str):
@@ -1887,6 +1928,41 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V8→V9] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V8 to V9 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v9_to_v10(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 9 to version 10.
+
+        This migration fixes world books FTS triggers to prevent database corruption
+        by replacing UPDATE operations with DELETE + INSERT pattern.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 10 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V9 to V10 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V9_TO_V10_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V9→V10] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 10:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V9→V10] Migration version check failed. Expected 10, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V9→V10] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V9→V10] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V9 to V10 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V9 to V10 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 7 to version 8.
@@ -1975,6 +2051,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 8 and target_version > 8:
                         self._migrate_from_v8_to_v9(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 9 and target_version > 9:
+                        self._migrate_from_v9_to_v10(conn)
                 elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -1989,6 +2068,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 8 and target_version > 8:
                         self._migrate_from_v8_to_v9(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 9 and target_version > 9:
+                        self._migrate_from_v9_to_v10(conn)
                 elif current_db_version == 5 and target_version >= 6:
                     self._migrate_from_v5_to_v6(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2000,6 +2082,9 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 8 and target_version > 8:
                         self._migrate_from_v8_to_v9(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 9 and target_version > 9:
+                        self._migrate_from_v9_to_v10(conn)
                 elif current_db_version == 6 and target_version >= 7:
                     self._migrate_from_v6_to_v7(conn)
                     current_db_version = self._get_db_version(conn) # Refresh version
@@ -2008,10 +2093,15 @@ UPDATE db_schema_version
                         current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 8 and target_version > 8:
                         self._migrate_from_v8_to_v9(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 9 and target_version > 9:
+                        self._migrate_from_v9_to_v10(conn)
                 elif current_db_version == 7 and target_version == 8:
                     self._migrate_from_v7_to_v8(conn)
                 elif current_db_version == 8 and target_version == 9:
                     self._migrate_from_v8_to_v9(conn)
+                elif current_db_version == 9 and target_version == 10:
+                    self._migrate_from_v9_to_v10(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(

@@ -755,10 +755,40 @@ class ToolsSettingsWindow(Container):
                 id="config-db-base-dir"
             ),
             
+            Static("", classes="form-separator"),
+            Static("Media Cleanup", classes="form-subsection-title"),
+            
+            Checkbox(
+                "Enable automatic media cleanup",
+                value=get_cli_setting("media_cleanup", "enabled", True),
+                id="config-media-cleanup-enabled"
+            ),
+            
+            Label("Days before permanent deletion:", classes="form-label"),
+            Input(
+                value=str(get_cli_setting("media_cleanup", "cleanup_days", 30)),
+                placeholder="30",
+                id="config-media-cleanup-days"
+            ),
+            
+            Label("Cleanup interval (hours):", classes="form-label"),
+            Input(
+                value=str(get_cli_setting("media_cleanup", "cleanup_interval_hours", 24)),
+                placeholder="24",
+                id="config-media-cleanup-interval"
+            ),
+            
+            Checkbox(
+                "Run cleanup on startup",
+                value=get_cli_setting("media_cleanup", "cleanup_on_startup", True),
+                id="config-media-cleanup-on-startup"
+            ),
+            
             Container(
                 Button("Save Database Config", id="save-database-config-form", variant="primary"),
                 Button("Reset Section", id="reset-database-config-form"),
                 Button("Vacuum All Databases", id="vacuum-all-databases", variant="warning"),
+                Button("Run Media Cleanup Now", id="run-media-cleanup-now", variant="default"),
                 classes="form-actions"
             ),
             classes="config-form"
@@ -1835,6 +1865,8 @@ class ToolsSettingsWindow(Container):
             await self._reset_database_config_form()
         elif button_id == "vacuum-all-databases":
             await self._vacuum_databases()
+        elif button_id == "run-media-cleanup-now":
+            await self._run_media_cleanup_now()
         elif button_id == "save-rag-config-form":
             await self._save_rag_config_form()
         elif button_id == "reset-rag-config-form":
@@ -2187,6 +2219,13 @@ class ToolsSettingsWindow(Container):
             save_setting_to_cli_config("database", "prompts_db_path", self.query_one("#config-db-prompts-path", Input).value)
             save_setting_to_cli_config("database", "media_db_path", self.query_one("#config-db-media-path", Input).value)
             save_setting_to_cli_config("database", "USER_DB_BASE_DIR", self.query_one("#config-db-base-dir", Input).value)
+            
+            # Save media cleanup settings
+            save_setting_to_cli_config("media_cleanup", "enabled", self.query_one("#config-media-cleanup-enabled", Checkbox).value)
+            save_setting_to_cli_config("media_cleanup", "cleanup_days", int(self.query_one("#config-media-cleanup-days", Input).value))
+            save_setting_to_cli_config("media_cleanup", "cleanup_interval_hours", int(self.query_one("#config-media-cleanup-interval", Input).value))
+            save_setting_to_cli_config("media_cleanup", "cleanup_on_startup", self.query_one("#config-media-cleanup-on-startup", Checkbox).value)
+            
             self.app_instance.notify("Database configuration saved!")
         except Exception as e:
             self.app_instance.notify(f"Error saving database config: {e}", severity="error")
@@ -2714,6 +2753,17 @@ class ToolsSettingsWindow(Container):
                 pass
     
     # Database Tools Methods
+    async def _run_media_cleanup_now(self) -> None:
+        """Run media cleanup manually."""
+        try:
+            self.app_instance.notify("Starting media cleanup...", severity="information")
+            
+            # Run the cleanup
+            await self.app_instance.perform_media_cleanup()
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error running media cleanup: {e}", severity="error")
+    
     async def _vacuum_databases(self) -> None:
         """Vacuum all databases to reclaim unused space and optimize performance."""
         try:

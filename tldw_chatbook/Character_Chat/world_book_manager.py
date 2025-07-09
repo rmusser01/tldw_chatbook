@@ -249,9 +249,10 @@ class WorldBookManager:
         
         # Add standard update fields
         updates.extend(["last_modified = CURRENT_TIMESTAMP", "version = version + 1", "client_id = ?"])
-        params.extend([self.db.client_id, world_book_id])
+        params.append(self.db.client_id)
         
         query = f"UPDATE world_books SET {', '.join(updates)} WHERE id = ? AND deleted = 0"
+        params.append(world_book_id)
         
         if expected_version is not None:
             query += " AND version = ?"
@@ -446,9 +447,9 @@ class WorldBookManager:
         
         # Add last_modified update
         updates.append("last_modified = CURRENT_TIMESTAMP")
-        params.append(entry_id)
         
         query = f"UPDATE world_book_entries SET {', '.join(updates)} WHERE id = ?"
+        params.append(entry_id)
         
         with self.db.transaction() as conn:
             cursor = conn.cursor()

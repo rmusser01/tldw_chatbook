@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Dict, Any
 #
 # 3rd-party Libraries
+from textual import on
 from textual.containers import Vertical
 from textual.widgets import ListView, Input, TextArea, Label, ListItem, Button, Markdown, Static  # Added ListItem
 from textual.css.query import QueryError
@@ -39,6 +40,25 @@ class MediaMetadataUpdateEvent(Message):
         self.keywords = keywords
         self.type_slug = type_slug
 
+
+class MediaDeleteConfirmationEvent(Message):
+    """Event to trigger deletion confirmation dialog."""
+    
+    def __init__(self, media_id: int, media_title: str, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.media_title = media_title
+        self.type_slug = type_slug
+
+
+class MediaUndeleteEvent(Message):
+    """Event to trigger media undeletion."""
+    
+    def __init__(self, media_id: int, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.type_slug = type_slug
+
 #
 # Functions:
 
@@ -59,7 +79,14 @@ async def handle_media_nav_button_pressed(app: 'TldwCli', event: Button.Pressed)
 
         app.current_media_type_filter_slug = type_slug
         app.media_current_page = 1
-        await perform_media_search_and_display(app, type_slug, search_term="")
+        
+        # Special handling for Collections/Tags and Multi-Item Review windows
+        if type_slug in ["collections-tags", "multi-item-review"]:
+            # These windows handle their own initialization and don't need search
+            logger.info(f"Activated special window: {type_slug}")
+        else:
+            # Regular media types use the search and display function
+            await perform_media_search_and_display(app, type_slug, search_term="")
 
     except Exception as e:
         logger.error(f"Error in handle_media_nav_button_pressed for '{button_id}': {e}", exc_info=True)
@@ -251,6 +278,12 @@ async def handle_media_page_change_button_pressed(app: 'TldwCli', event: Button.
 async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, search_term: str = "") -> None:
     """Performs search in media DB and populates the ListView with rich, informative items."""
     logger = app.loguru_logger
+    
+    # Skip search for special windows that don't have standard media views
+    if type_slug in ["collections-tags", "multi-item-review"]:
+        logger.info(f"Skipping search for special window: {type_slug}")
+        return
+    
     list_view_id = f"media-list-view-{type_slug}"
 
     try:
@@ -280,6 +313,16 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
         query_arg = search_term if search_term else None
         fields_arg = ['title', 'content', 'author', 'url', 'type', 'analysis_content'] # Ensure analysis_content is searched
 
+        # Check if we should show deleted items
+        show_deleted = False
+        try:
+            # Try to get the MediaWindow and check its show_deleted_items state
+            from ..UI.MediaWindow import MediaWindow
+            media_window = app.query_one(MediaWindow)
+            show_deleted = media_window.show_deleted_items
+        except QueryError:
+            logger.debug("MediaWindow not found, using default show_deleted=False")
+
         results, total_matches = app.media_db.search_media_db(
             search_query=query_arg,
             media_types=media_types_filter,
@@ -288,7 +331,7 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
             page=app.media_current_page, # Use app.media_current_page directly
             results_per_page=RESULTS_PER_PAGE,
             include_trash=False,
-            include_deleted=False
+            include_deleted=show_deleted
         )
 
         if not results:
@@ -316,13 +359,18 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
 
                 snippet = (snippet_label + content_preview[:70] + '...') if content_preview else "No preview available."
 
+                # Check if item is deleted
+                is_deleted = item.get('deleted', 0) == 1
+                title_display = f"[DELETED] {title}" if is_deleted else title
+                
                 # Create a richer ListItem with a Vertical layout
                 rich_list_item = ListItem(
                     Vertical(
-                        Label(f"{title}", classes="media-item-title"),
-                        Static(snippet, classes="media-item-snippet"),
-                        Static(f"Type: {item.get('type')}  |  Ingested: {ingestion_date}", classes="media-item-meta")
-                    )
+                        Label(f"{title_display}", classes="media-item-title media-item-deleted" if is_deleted else "media-item-title"),
+                        Static(snippet, classes="media-item-snippet media-item-deleted" if is_deleted else "media-item-snippet"),
+                        Static(f"Type: {item.get('type')}  |  Ingested: {ingestion_date}", classes="media-item-meta media-item-deleted" if is_deleted else "media-item-meta")
+                    ),
+                    classes="deleted-media-item" if is_deleted else ""
                 )
                 rich_list_item.media_data = item
                 await list_view.append(rich_list_item)
@@ -341,7 +389,7 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
             pass
 
     except (QueryError, RuntimeError, Exception) as e:
-        logger.error(f"Error during media search for type '{type_slug}': {e}", exc_info=True)
+        logger.error(f"Error during media search for type '{type_slug}': {str(e)}", exc_info=True)
         # Attempt to show error in the list view if possible
         try:
             list_view = app.query_one(f"#{list_view_id}", ListView)
@@ -463,6 +511,142 @@ async def handle_media_metadata_update(app: 'TldwCli', event: MediaMetadataUpdat
     except Exception as e:
         logger.error(f"Error updating media metadata: {e}", exc_info=True)
         app.notify(f"Error updating metadata: {str(e)[:100]}", severity="error")
+
+
+async def handle_media_delete_confirmation(app: 'TldwCli', event: MediaDeleteConfirmationEvent) -> None:
+    """
+    Handles media delete confirmation by showing a modal dialog.
+    """
+    from textual.screen import ModalScreen
+    from textual.widgets import Button, Label
+    from textual.containers import Vertical, Horizontal
+    
+    class DeleteConfirmationModal(ModalScreen):
+        """Modal dialog for confirming media deletion."""
+        
+        CSS = """
+        DeleteConfirmationModal {
+            align: center middle;
+        }
+        
+        DeleteConfirmationModal > Vertical {
+            background: $surface;
+            width: 50;
+            height: auto;
+            border: thick $background;
+            padding: 1 2;
+        }
+        
+        DeleteConfirmationModal .dialog-title {
+            text-style: bold;
+            margin-bottom: 1;
+        }
+        
+        DeleteConfirmationModal .dialog-text {
+            margin-bottom: 2;
+        }
+        
+        DeleteConfirmationModal .dialog-buttons {
+            align: center middle;
+            height: auto;
+        }
+        
+        DeleteConfirmationModal .dialog-buttons Button {
+            margin: 0 1;
+        }
+        """
+        
+        def __init__(self, media_id: int, media_title: str, type_slug: str):
+            super().__init__()
+            self.media_id = media_id
+            self.media_title = media_title
+            self.type_slug = type_slug
+            
+        def compose(self) -> ComposeResult:
+            with Vertical():
+                yield Label("Confirm Delete", classes="dialog-title")
+                yield Label(
+                    f"Are you sure you want to delete '{self.media_title}'?\n\n"
+                    "This item will be soft deleted and can be restored within the configured cleanup period.",
+                    classes="dialog-text"
+                )
+                with Horizontal(classes="dialog-buttons"):
+                    yield Button("Delete", variant="error", id="confirm-delete")
+                    yield Button("Cancel", variant="default", id="cancel-delete")
+        
+        @on(Button.Pressed, "#confirm-delete")
+        async def confirm_deletion(self) -> None:
+            """Handle delete confirmation."""
+            # Perform the deletion
+            if self.app.media_db:
+                success = self.app.media_db.soft_delete_media(self.media_id)
+                if success:
+                    self.app.notify(f"'{self.media_title}' has been deleted", severity="information")
+                    # Refresh the current view
+                    await perform_media_search_and_display(self.app, self.type_slug, "")
+                    # Update the details widget if the deleted item was selected
+                    if self.app.current_loaded_media_item and self.app.current_loaded_media_item.get('id') == self.media_id:
+                        updated_media = self.app.media_db.get_media_by_id(self.media_id)
+                        if updated_media:
+                            try:
+                                from ..Widgets.media_details_widget import MediaDetailsWidget
+                                details_widget = self.app.query_one(f"#media-details-widget-{self.type_slug}", MediaDetailsWidget)
+                                details_widget.update_media_data(updated_media)
+                            except QueryError:
+                                pass
+                else:
+                    self.app.notify(f"Failed to delete '{self.media_title}'", severity="error")
+            self.dismiss()
+        
+        @on(Button.Pressed, "#cancel-delete")
+        def cancel_deletion(self) -> None:
+            """Handle cancel button."""
+            self.dismiss()
+    
+    # Show the modal
+    await app.push_screen(DeleteConfirmationModal(event.media_id, event.media_title, event.type_slug))
+
+
+async def handle_media_undelete(app: 'TldwCli', event: MediaUndeleteEvent) -> None:
+    """
+    Handles media undelete requests.
+    """
+    logger = app.loguru_logger
+    
+    try:
+        if not app.media_db:
+            raise RuntimeError("Media DB service not available")
+        
+        # Get media info for notification
+        media_item = app.media_db.get_media_by_id(event.media_id)
+        if not media_item:
+            app.notify("Media item not found", severity="error")
+            return
+            
+        # Perform undelete
+        success = app.media_db.undelete_media(event.media_id)
+        
+        if success:
+            app.notify(f"'{media_item.get('title', 'Untitled')}' has been restored", severity="information")
+            
+            # Refresh the current view
+            await perform_media_search_and_display(app, event.type_slug, "")
+            
+            # Update the details widget
+            updated_media = app.media_db.get_media_by_id(event.media_id)
+            if updated_media:
+                try:
+                    from ..Widgets.media_details_widget import MediaDetailsWidget
+                    details_widget = app.query_one(f"#media-details-widget-{event.type_slug}", MediaDetailsWidget)
+                    details_widget.update_media_data(updated_media)
+                except QueryError:
+                    logger.warning(f"Could not find MediaDetailsWidget for type_slug: {event.type_slug}")
+        else:
+            app.notify(f"Failed to restore '{media_item.get('title', 'Untitled')}'", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error undeleting media: {e}", exc_info=True)
+        app.notify(f"Error restoring media: {str(e)[:100]}", severity="error")
 
 # --- Button Handler Map ---
 # This map will be dynamically generated in app.py's _build_handler_map based on _media_types_for_ui.

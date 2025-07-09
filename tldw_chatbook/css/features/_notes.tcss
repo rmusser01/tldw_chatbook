@@ -26,4 +26,30 @@
     align: center middle; /* Aligns buttons horizontally if Horizontal container */
                            /* If this itself is a Vertical container, this might not do much */
 }
+
+/* --- Auto-save status indicators --- */
+.unsaved-indicator {
+    margin: 0 1;
+    text-style: bold;
+}
+
+.unsaved-indicator.has-unsaved {
+    color: $error;
+}
+
+.unsaved-indicator.auto-saving {
+    color: $primary;
+    text-style: italic;
+}
+
+.unsaved-indicator.saved {
+    color: $success;
+    text-style: bold;
+}
+
+.auto-save-label {
+    margin-left: 1;
+    color: $text-muted;
+}
+
 /* --- End of Notes Tab Window --- */

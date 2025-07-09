@@ -1,0 +1,21 @@
+{
+  "name": "ebook_chapters",
+  "description": "E-book chunking that preserves chapter structure",
+  "base_method": "ebook_chapters",
+  "pipeline": [
+    {
+      "stage": "chunk",
+      "method": "ebook_chapters",
+      "options": {
+        "max_size": 0,
+        "overlap": 0,
+        "custom_chapter_pattern": null
+      }
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["ebooks", "novels", "textbooks"],
+    "preserves_chapters": true,
+    "sub_chunks_large_chapters": true
+  }
+}

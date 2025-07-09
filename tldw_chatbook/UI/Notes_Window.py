@@ -50,6 +50,16 @@ class NotesWindow(Container):
         color: $error;
     }
     
+    .unsaved-indicator.auto-saving {
+        color: $primary;
+        text-style: italic;
+    }
+    
+    .unsaved-indicator.saved {
+        color: $success;
+        text-style: bold;
+    }
+    
     .word-count {
         color: $text-muted;
         margin: 0 1;
@@ -105,6 +115,7 @@ class NotesWindow(Container):
         #     # but if handled here, it would be:
         #     # self.app.action_save_current_note() # Assuming such an action
         #     pass # Let other handlers catch it if not stopped
+
 
 
     def on_emoji_picker_emoji_selected(self, message: EmojiSelected) -> None:

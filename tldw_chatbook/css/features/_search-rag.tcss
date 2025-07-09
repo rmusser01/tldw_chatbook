@@ -41,7 +41,7 @@
     width: 1fr;
     height: 100%;
     padding: 0;
-    overflow: visible;
+    overflow-y: auto;
 }
 
 /* Generic style for all search view areas */
@@ -49,12 +49,12 @@
     height: 100%;
     width: 100%;
     display: block;
-    overflow: visible;
+    overflow-y: auto;
 }
 
 /* Specific rule for the RAG Q&A view container */
 #search-view-rag-qa {
-    overflow: visible;
+    overflow-y: auto;
     height: 100%;
     width: 100%;
 }
@@ -874,7 +874,7 @@
     height: 100%;
     width: 100%;
     display: block;
-    overflow: visible;
+    overflow-y: auto;
 }
 
 /* --- Enhanced RAG Search UI Styles --- */

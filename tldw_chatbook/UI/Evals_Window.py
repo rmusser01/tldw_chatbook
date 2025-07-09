@@ -589,7 +589,7 @@ class EvalsWindow(Container):
             )
 
             # Create a view for Evaluation Setup
-            with Container(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
+            with VerticalScroll(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
                 yield Static("Evaluation Setup", classes="pane-title")
                 
                 # Task Upload Section
@@ -645,7 +645,7 @@ class EvalsWindow(Container):
                     )
 
             # Create a view for Results Dashboard
-            with Container(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
+            with VerticalScroll(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
                 yield Static("Results Dashboard", classes="pane-title")
                 
                 # Results Overview Section
@@ -693,7 +693,7 @@ class EvalsWindow(Container):
                     yield CostSummaryWidget(CostEstimator(), id="cost-summary")
 
             # Create a view for Model Management
-            with Container(id=EVALS_VIEW_MODELS, classes="evals-view-area"):
+            with VerticalScroll(id=EVALS_VIEW_MODELS, classes="evals-view-area"):
                 yield Static("Model Management", classes="pane-title")
                 
                 # Model List Section
@@ -722,7 +722,7 @@ class EvalsWindow(Container):
                     yield Static("", id="provider-setup-status", classes="status-text")
 
             # Create a view for Dataset Management
-            with Container(id=EVALS_VIEW_DATASETS, classes="evals-view-area"):
+            with VerticalScroll(id=EVALS_VIEW_DATASETS, classes="evals-view-area"):
                 yield Static("Dataset Management", classes="pane-title")
                 
                 # Dataset Upload Section
