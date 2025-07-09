@@ -1,8 +1,6 @@
-# tldw_chatbook README
+# tldw_chatbook
 
-A Textual TUI for interacting with various LLM APIs, managing conversation history, characters, notes, and more.
-
-Current status: Working/In-Progress
+A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. It provides a complete ecosystem for AI-powered interactions including conversation management, character/persona chat, notes with bidirectional file sync, media ingestion, advanced RAG (Retrieval-Augmented Generation) capabilities, and comprehensive LLM evaluation system.
 
 ![Screenshot](https://github.com/rmusser01/tldw_chatbook/blob/main/static/PoC-Frontpage.PNG?raw=true)
 
@@ -48,7 +46,7 @@ pip install -e ".[websearch]"
 pip install -e ".[images]"
 
 # All optional features
-pip install -e ".[embeddings_rag,chunker,websearch,images,audio,video,pdf,ebook]"
+pip install -e ".[embeddings_rag,chunker,websearch,images,audio,video,pdf,ebook,nemo]"
 
 # Common feature combinations
 pip install -e ".[audio,video]"  # Media transcription
@@ -61,41 +59,63 @@ pip install -e ".[dev]"
 
 ### Optional Feature Groups
 
-| Feature Group | Enables | Key Dependencies |
-|--------------|---------|------------------|
-| `embeddings_rag` | Vector search, semantic similarity, hybrid RAG | torch, transformers, sentence-transformers*, chromadb* |
-| `chunker` | Advanced text chunking, language detection | nltk, langdetect, jieba, fugashi |
-| `websearch` | Web scraping, content extraction | beautifulsoup4, playwright, trafilatura |
-| `images` | Image display in TUI | textual-image, rich-pixels |
-| `coding_map` | Code analysis features | grep_ast, pygments |
-| `local_vllm` | vLLM inference support | vllm |
-| `local_mlx` | MLX inference (Apple Silicon) | mlx-lm |
-| `audio` | Audio transcription (Whisper, Parakeet) | faster-whisper, nemo-toolkit[asr] |
-| `video` | Video processing & transcription | faster-whisper, yt-dlp |
-| `pdf` | PDF text extraction | pymupdf, docling |
-| `ebook` | E-book processing | ebooklib, beautifulsoup4 |
+| Feature Group                  | Enables | Key Dependencies |
+|--------------------------------|---------|------------------|
+| `embeddings_rag`               | Vector search, semantic similarity, hybrid RAG | torch, transformers, sentence-transformers*, chromadb* |
+| `chunker`                      | Advanced text chunking, language detection | nltk, langdetect, jieba, fugashi |
+| `websearch`                    | Web scraping, content extraction | beautifulsoup4, playwright, trafilatura |
+| `images`                       | Image display in TUI | textual-image, rich-pixels |
+| (WIP/Not working) `coding_map` | Code analysis features | grep_ast, pygments |
+| `local_vllm`                   | vLLM inference support | vllm |
+| `local_mlx`                    | MLX inference (Apple Silicon) | mlx-lm |
+| `audio`                        | Audio transcription (Whisper) | faster-whisper, soundfile |
+| `video`                        | Video processing & transcription | faster-whisper, yt-dlp |
+| `pdf`                          | PDF text extraction | pymupdf, docling |
+| `ebook`                        | E-book processing | ebooklib, beautifulsoup4, defusedxml |
+| `nemo`                         | NVIDIA Parakeet ASR models | nemo-toolkit[asr] |
+| `local_transformers`           | HuggingFace transformers | transformers |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
 
 ## Core Features (Always Available)
-These features work out-of-the-box without any optional dependencies:
 
 ### General
 - **Textual TUI interface** with keyboard navigation and mouse support
 - **Configuration management** via `config.toml`
   - Default location: `~/.config/tldw_cli/config.toml`
   - Environment variable support for API keys
+  - AES-256 encryption for sensitive config data - Option to password protect config file, encrypt on program exit, decrypt in memory at launch
 - **Multiple database support**
   - ChaChaNotes DB: Conversations, characters, and notes
   - Media DB: Ingested media files and metadata
-  - Prompts DB: Saved prompt templates
+  - Prompts DB: Saved prompt templates with versioning
+  - Evals DB: LLM evaluation results and benchmarks
+  - Subscriptions DB: Content subscription tracking
   - Default location: `~/.local/share/tldw_cli/`
+
+### Main Application Tabs
+1. **Chat** - Advanced AI conversation interface with streaming support
+2. **Conversations** - Manage, search, and organize chat history
+3. **Character Chat** - Character-based interactions with imported personas
+4. **Notes** - Advanced note-taking with bidirectional file sync
+5. **Search/RAG** - Hybrid search across all content (FTS5 + optional vectors)
+6. **Media Ingestion** - Process documents, videos, audio, and web content
+7. **Prompts** - Template management with versioning
+8. **Coding** - AI-powered coding assistant
+9. **Embeddings** - Create and manage vector embeddings
+10. **Evaluations** - Comprehensive LLM benchmarking system
+11. **Logs** - Application logs and debugging
+12. **LLM Management** - Local model server control
+13. **Tools & Settings** - Configuration and utilities
+14. **Stats** - Usage statistics and metrics
 
 ### LLM Support
 - **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, HuggingFace
-- **Local LLM APIs**: Llama.cpp, Ollama, Kobold.cpp, vLLM, Aphrodite, Custom OpenAI-compatible endpoints
+- **Local LLM APIs**: Llama.cpp, Ollama, Kobold.cpp, vLLM, Aphrodite, MLX-LM, ONNX Runtime, Custom OpenAI-compatible endpoints
 - **Streaming responses** with real-time display
 - **Full conversation management**: Save, load, edit, fork conversations
+- **Model capability detection**: Vision support, tool calling, etc.
+- **Custom tokenizer support** for accurate token counting
 
 ### RAG (Basic - FTS5)
 Even without optional dependencies, you get:
@@ -104,6 +124,13 @@ Even without optional dependencies, you get:
 - **Multi-source search**: Media, conversations, notes
 - **Basic text chunking** for long documents
 - **Dynamic chunking controls** in chat UI
+
+### Tool Calling System (untested)
+- **Built-in tools**: DateTimeTool, CalculatorTool
+- **Extensible framework**: Abstract Tool base class for custom implementations
+- **Safe execution**: Timeouts and concurrency control
+- **UI integration**: Dedicated widgets for tool calls and results
+- **Provider support**: Multiple LLM providers with tool calling capabilities
 
 ## Enhanced Features (With Optional Dependencies)
 
@@ -149,6 +176,29 @@ See `tldw_chatbook/Config_Files/EMBEDDING_DEFAULTS_README.md` for detailed confi
 - **Smart text splitting**: Respects linguistic boundaries
 - **Chunking strategies**: Words, sentences, paragraphs, semantic units
 
+### Evaluation System (WIP)
+A comprehensive LLM benchmarking framework supporting:
+- **27+ evaluation task types**: Including:
+  - Text understanding and generation
+  - Reasoning and logic tasks
+  - Language-specific evaluations
+  - Code understanding and generation
+  - Mathematical reasoning
+- **Advanced metrics**: ROUGE, BLEU, F1, semantic similarity, perplexity
+- **Comparison tools**: Side-by-side model performance analysis
+- **Export capabilities**: Results in various formats
+- **Cost estimation**: Token usage and pricing calculations
+
+### Local File Ingestion
+Programmatic API for ingesting files without UI interaction:
+- **30+ file types supported**: Documents, e-books, text, structured data
+- **Batch processing**: Handle multiple files efficiently
+- **Directory scanning**: Recursive file discovery
+- **Flexible processing**: Chunking, analysis, custom prompts
+- **Full integration**: Uses same processors as UI
+
+See `tldw_chatbook/Local_Ingestion/README.md` for API documentation.
+
 ### Chat Features
 <details>
 <summary>Full Chat Feature List</summary>
@@ -157,9 +207,10 @@ All chat features listed here work with the core installation:
 - **Multi-provider LLM support** (see LLM Support section above)
 - **Conversation Management**
   - Save, load, edit, delete conversations
-  - Fork conversations at any point (Code is in, feature not supported yet)
+  - Fork conversations at any point
   - Search by title, keywords, or content
   - Version history and rollback
+  - Document generation (timeline, study guide, briefing)
 - **Character/Persona System**
   - Import and manage character cards
   - Apply personas to conversations
@@ -170,10 +221,13 @@ All chat features listed here work with the core installation:
   - Auto-generate questions/answers
   - Ephemeral conversations (not saved by default)
   - Strip thinking blocks from responses
+  - Cost estimation widget (WIP)
+  - Tool calling integration
 - **Prompt Management**
   - Save, edit, clone prompts
   - Bulk import/export
   - Search and apply templates
+  - Version tracking
 - **RAG Integration** (enhanced with optional deps)
   - Enable/disable RAG per message
   - Configure chunk size and overlap
@@ -181,18 +235,22 @@ All chat features listed here work with the core installation:
   - View retrieved context
 </details>
 
-### Notes & Media Features
-<details>
-<summary>Notes & Media Features</summary>
-
-**Notes System** (Core feature):
-- Create, edit, and delete notes
+### Notes System
+**Advanced Features**:
+- Create, edit, and delete notes with rich markdown support
+- **Bidirectional file synchronization**: (WIP)
+  - Automatic sync between database and file system
+  - Conflict resolution with backup
+  - File system monitoring for changes
+  - Background sync service
+- **Template system** for structured note creation
 - Search by title, keywords, or content
 - Organize with keywords/tags
 - Load notes into conversations
 - Full-text search with FTS5
 
-**Media Management** (Core feature):
+### Media Management
+**Core features**:
 - Ingest various media types (text, documents, transcripts)
 - Search media by title, content, or metadata
 - Integration with tldw API for processing
@@ -204,7 +262,8 @@ All chat features listed here work with the core installation:
 - Vector search for semantic similarity (`embeddings_rag`)
 - Web content ingestion (`websearch`)
 - Advanced text extraction (`chunker`)
-</details>
+- Document processing (PDF, EPUB, Word, etc.)
+- Audio/video transcription
 
 ### Web Search & Scraping (with `websearch`)
 - **Web content extraction**: Clean text from web pages
@@ -212,18 +271,20 @@ All chat features listed here work with the core installation:
 - **Browser automation**: Playwright for dynamic content
 - **Language detection**: For multi-lingual content
 - **Integration with RAG**: Web content as knowledge source
+- **Multiple search providers**: Google, Bing, DuckDuckGo, Brave, Kagi, Tavily, SearX, Baidu, Yandex
 
 ### Image Support (with `images`)
 - **Image display in TUI**: View images directly in terminal
 - **Rich visual output**: Using rich-pixels
 - **Screenshot viewing**: For debugging and documentation
+- **Vision model support**: For multimodal LLMs
 
 ### Media Processing Features
 
-#### Audio Transcription (with `audio`)
+#### Audio Transcription (with `audio` or `nemo`)
 - **Multiple transcription engines**:
   - **Whisper models** via faster-whisper (default)
-  - **NVIDIA Parakeet** models for low-latency transcription (NEW!)
+  - **NVIDIA Parakeet** models for low-latency transcription (with `nemo`)
   - **Qwen2Audio** for multimodal understanding
 - **Parakeet models** (optimized for real-time):
   - TDT (Transducer): Best for streaming applications
@@ -241,8 +302,9 @@ All chat features listed here work with the core installation:
 - **Batch processing**: Handle multiple videos efficiently
 
 #### Document Processing
-- **PDF extraction** (with `pdf`): Text, layout, and metadata extraction
+- **PDF extraction** (with `pdf`): Text, layout, and metadata extraction using PyMuPDF and Docling
 - **E-book support** (with `ebook`): EPUB, MOBI, AZW processing
+- **Office documents**: Word, PowerPoint, Excel files
 - **Advanced chunking**: Preserve document structure
 - **Metadata preservation**: Author, title, creation date
 
@@ -251,7 +313,7 @@ All chat features listed here work with the core installation:
 <summary>Local LLM Inference Options</summary>
 
 **Core support** (no extra deps):
-- Llama.cpp server integration (User provides local Llama.cpp binary)
+- Llama.cpp server integration
 - Ollama HTTP API
 - Kobold.cpp API
 - Any OpenAI-compatible endpoint
@@ -260,79 +322,41 @@ All chat features listed here work with the core installation:
 - **vLLM** (`local_vllm`): High-performance inference
 - **MLX** (`local_mlx`): Optimized for Apple Silicon
 - **Transformers** (`local_transformers`): HuggingFace models
+- **ONNX Runtime**: Cross-platform inference
 
 **Management features**:
-- Model downloading from HuggingFace (placeholder)
+- Model downloading from HuggingFace
 - Server health monitoring
 - Automatic model loading
 - Performance optimization settings
 </details>
 
+### Subscription System
+- **Content monitoring**: Track updates to subscribed content
+- **Periodic checking**: Automated update detection
+- **Notification system**: Alert on new content
+- **Flexible scheduling**: Configure update frequencies
 
-### Planned Features
-<details>
-<summary> Future Features </summary>
+### Advanced Configuration
+- **Config Encryption**: AES-256 encryption with password protection
+- **Custom Tokenizers**: Support for model-specific tokenizer files
+- **Model Capabilities**: Flexible configuration-based detection
+- **Form Components**: Standardized UI form creation library
+- **Theme System**: Multiple themes with CSS customization
 
-- **General**
-  - Web Search functionality (e.g., ability to search the web for relevant information based on conversation history or notes or query)
-  - Additional LLM provider support (e.g., more local providers, more commercial providers)
-  - More robust configuration options (e.g., more environment variable support, more config.toml options)
+### Splash Screen System
+Customizable splash screens with 20+ animation effects:
+- **Built-in effects**: MatrixRain, Glitch, Typewriter, Fireworks, and more
+- **Custom splash cards**: Create your own with examples provided
+- **Configuration**: Via `[splash_screen]` section in config.toml
+- **Performance**: Async rendering with configurable duration
 
-- **Chat**
-  - Conversation Forking + History Management thereof (Already implemented, but needs more testing/UI buildout)
-  - Enhanced character chat functionality (e.g., ASCII art for pictures, 'Generate Character' functionality, backgrounds)
-  - Improved conversation history management (e.g., exporting conversations, better search functionality)
+For detailed customization, see the [Splash Screen Guide](Docs/Development/SPLASH_SCREEN_GUIDE.md).
 
-- **Notes-related**
-  - Improved notes and keyword management (Support for syncing notes from a local folder/file - think Obsidian)
-
-- **Media-related**
-
-- **Search Related**
-  - Improved search functionality (e.g., more robust search options, better search results)
-  - Support for searching across conversations, notes, characters, and media files (in, but needs to be improved)
-  - Support for websearch (code is in place, but needs more testing/UI buildout)
-
-- **Tools & Settings**
-  - Support for DB backup management/restore
-  - General settings management (e.g., ability to change application settings, like theme, font size, etc.)
-  - Support for user preferences (e.g., ability to set user preferences, like default LLM provider, default character, etc.)
-  - Support for user profiles (e.g., ability to create and manage user profiles, tied into preference sets)
-
-- **LLM Management**
-  - Cleanup and bugfixes
-
-- **Stats**
-  - I imagine this page as a dashboard that shows various statistics about the user's conversations, notes, characters, and media files.
-  - Something fun and lighthearted, but also useful for the user to see how they are using the application.
-  - This data will not be stored in the DB, but rather generated on-the-fly from the existing data.
-  - This data will also not be uploaded to any external service, but rather kept local to the user's machine.
-  - This is not meant for serious analytics, but rather for fun and lighthearted use. (As in it stays local.)
-
-- **Evals**
-  - Self-explanatory
-  - Support for evaluating LLMs based on user-defined criteria.
-  - Support for RAG evals.
-  - Jailbreaks?
-  - Backend exists, front-end does not.
-
-- **Coding**
-    - Why not, right?
-    - Build out a take on the agentic coder, will be a longer-term goal, but will be a fun addition.
-
-- **Workflows**
-  - Workflows - e.g., Ability to create structured workflows, like a task list or a series of steps to follow, with the ability to execute them in order with checkpoints after each step. (Agents?)
-  - Agentic functionality (e.g., ability to create agents that can perform tasks based on conversation history or notes, think workflow automation with checkpoints)
-    - First goal will be the groundwork/framework for building it out more, and then for coding, something like Aider?
-    - Separate from the workflows, which are more like structured task lists or steps to follow. Agentic functionality will be more about creating workflows, but not-fully structured, that adapt based on the 'agents' decisions.
-
-- **Other Features**
-  - Support for Server Syncing (e.g., ability to sync conversations, notes, characters, Media DB and prompts across devices)
-  - Support for audio playback + Generation (e.g., ability to play audio files, generate audio from text - longer term goal, has to run outside of the TUI)
-  - Mindmap functionality (e.g., ability to create mindmaps from conversation history or notes)
-
-</details>
-
+### Coding Assistant
+- **AI-powered code assistance**: In dedicated coding tab
+- **Code mapping**: Analysis and understanding of codebases
+- **Integration ready**: Framework for future enhancements
 
 ## Configuration
 
@@ -348,7 +372,9 @@ Edit `~/.config/tldw_cli/config.toml` to:
 - Configure RAG settings
 - Enable/disable features
 - Set UI preferences
-- Configure embedding models (defaults to e5-small-v2)
+- Configure embedding models
+- Customize splash screens
+- Set up config encryption
 
 Example embedding configuration:
 ```toml
@@ -370,6 +396,16 @@ device = "cuda"  # Use GPU for faster processing
 use_vad_by_default = true  # Voice Activity Detection
 ```
 
+Example splash screen configuration:
+```toml
+[splash_screen]
+enabled = true
+duration = 3.0
+card_selection = "random"  # Options: random, sequential, or specific card name
+active_cards = ["default", "cyberpunk", "minimalist"]
+animation_speed = 1.0
+```
+
 ### Environment Variables
 API keys can also be set via environment variables:
 - `OPENAI_API_KEY`
@@ -383,15 +419,9 @@ Located at `~/.local/share/tldw_cli/`:
 - `media_v2.db`: Ingested media files and metadata
 - `prompts.db`: Saved prompt templates
 - `rag_indexing.db`: RAG indexing state (if using RAG features)
-
-### Splash Screen Customization
-The application includes a customizable splash screen system inspired by Call of Duty's calling cards. Features include:
-- Multiple animation effects (Matrix rain, glitch, retro terminal)
-- Progress tracking during startup
-- Configurable duration and skip options
-- Support for custom splash cards
-
-For detailed information on creating and customizing splash screens, see the [Splash Screen Guide](Docs/Development/SPLASH_SCREEN_GUIDE.md).
+- `evals.db`: Evaluation results and benchmarks
+- `subscriptions.db`: Content subscription tracking
+- `search_history.db`: Search query history
 
 ## Upgrading from requirements.txt
 
@@ -414,55 +444,73 @@ pip install -e .  # or with optional features
         ├── assets
         │   └── Static Assets
         ├── Character_Chat
-        │   └── Libaries relating to character chat functionality/interactions
+        │   └── Libraries relating to character chat functionality/interactions
         ├── Chat
         │   └── Libraries relating to chat functionality/orchestrations
         ├── Chunking
-        │   └── Libaries relating to chunking text for LLMs
+        │   └── Libraries relating to chunking text for LLMs
+        ├── Coding
+        │   └── Code assistance and mapping functionality
+        ├── Config_Files
+        │   └── Configuration templates and defaults
         ├── css
-        │   └── CSS files for the Textual TUI
+        │   ├── core/         # Base styles and variables
+        │   ├── components/   # Component-specific styles
+        │   ├── features/     # Feature-specific styles
+        │   ├── layout/       # Layout and grid systems
+        │   ├── utilities/    # Utility classes
+        │   └── Themes/       # Theme definitions
         ├── DB
-        │   └── Core Database Libraries
+        │   └── Core Database Libraries (7 specialized databases)
         ├── Embeddings
         │   └── Embeddings Generation & ChromaDB Libraries
+        ├── Evals
+        │   └── Comprehensive evaluation system components
         ├── Event_Handlers
         │   ├── Chat_Events
         │   │   └── Handle all chat-related events
         │   ├── LLM_Management_Events
         │   │   └── Handle all LLM management-related events
-        │   └── Event Handling for all pages is done here
+        │   └── Event Handling for all tabs and features
+        ├── Helper_Scripts
+        │   ├── Character_Cards/  # Sample character cards
+        │   └── Prompts/         # Extensive prompt library
         ├── LLM_Calls
         │   └── Libraries for calling LLM APIs (Local and Commercial)
         ├── Local_Inference
-        │   └── Libraries for managing local inference of LLMs (e.g., Llama.cpp, llamafile, vLLM, etc.)
+        │   └── Libraries for managing local inference of LLMs
+        ├── Local_Ingestion
+        │   └── Programmatic file ingestion API
         ├── Metrics
         │   └── Library for instrumentation/tracking (local) metrics
         ├── Notes
-        │   └── Libraries for managing notes interactions and storage
+        │   └── Libraries for notes management and synchronization
         ├── Prompt_Management
-        │   └── Libraries for managing prompts interactions and storage + Prompt Engineering
+        │   └── Libraries for managing prompts interactions and storage
         ├── RAG_Search
-        │   └── Libraries for RAG (Retrieval-Augmented Generation) search functionality
+        │   └── Libraries for RAG (Retrieval-Augmented Generation) search
         ├── Screens
-        │   └── First attempt at Unifying the screens into a single directory
+        │   └── Complex UI screen implementations
         ├── Third_Party
-        │   └── All third-party libraries that are not part of the main application
+        │   └── All third-party libraries integrated
         ├── tldw_api
-        │   └── Code for interacting with the tldw API (e.g., for media ingestion/processing/web search)
+        │   └── Code for interacting with the tldw API
+        ├── Tools
+        │   └── Tool calling system implementation
         ├── TTS
         │   └── Libraries for Text-to-Speech functionality
         ├── UI
-        │   └── Libraries containing all screens and panels for the Textual TUI
+        │   └── Libraries containing all screens and panels for the TUI
         ├── Utils
-        │   └── All utility libraries that are standalone
+        │   └── All utility libraries (encryption, splash, validation, etc.)
         ├── Web_Scraping
-        │   └── Libraries for web scraping functionality (e.g., for web search, RAG, etc.)
+        │   └── Libraries for web scraping and search functionality
         ├── Widgets
         │   └── Reusable TUI components/widgets
-        ├── app.py - Main application entry point (its big...)
+        ├── app.py - Main application entry point
         ├── config.py - Configuration management library
-        ├── Constants.py - Constants used throughout the application (Some default values, Config file template, CSS template)
-        └── Logging_Config.py - Logging configuration for the application
+        ├── Constants.py - Constants used throughout the application
+        └── model_capabilities.py - Model capability detection
 ```
 </details>
 
@@ -476,7 +524,7 @@ https://github.com/darrenburns/elia
 
 ## License
 
-This project is licensed under the GNU Affero General Public License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU Affero General Public License v3.0 or later - see the [LICENSE](LICENSE) file for details.
 
 ### Contact
-For any questions, issues, or feature requests, please open an issue on the [GitHub repository](https://github.com/rmusser01/tldw) or contact me directly on the tldw_Project Discord or via the email in my profile.
+For any questions, issues, or feature requests, please open an issue on the [GitHub repository](https://github.com/rmusser01/tldw_chatbook) or contact me directly on the tldw_Project Discord or via the email in my profile.

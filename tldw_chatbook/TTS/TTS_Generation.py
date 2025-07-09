@@ -8,8 +8,8 @@ from typing import AsyncGenerator, Optional, Dict, Any
 import asyncio # For semaphore
 #
 # Local Imports
-from tldw_Server_API.app.api.v1.schemas.audio_schemas import OpenAISpeechRequest
-from tldw_Server_API.app.core.TTS.tts_backends import TTSBackendManager, TTSBackendBase
+from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager, TTSBackendBase
 #
 #######################################################################################################################
 #

@@ -12,7 +12,7 @@ import numpy as np
 from loguru import logger
 #
 # Local Libraries
-from tldw_Server_API.app.api.v1.schemas.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 #
 #######################################################################################################################
 #
@@ -21,8 +21,7 @@ from tldw_Server_API.app.api.v1.schemas.audio_schemas import OpenAISpeechRequest
 # FIXME - placheolder for TTS backend
 
 # --- Load your existing config for API keys etc. ---
-# from PoC_Version.App_Function_Libraries.Utils.Utils import load_and_log_configs
-# loaded_config_data = load_and_log_configs() # Load once globally or per backend instance
+from tldw_chatbook.config import load_cli_config_and_ensure_existence, get_cli_config_value
 
 # --- Abstract Base Class for TTS Backends ---
 class TTSBackendBase(ABC):
@@ -50,57 +49,6 @@ class TTSBackendBase(ABC):
         await self.client.aclose()
 
 
-# --- Concrete Backend for OpenAI Official API ---
-class OpenAIAPIBackend(TTSBackendBase):
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config)
-        self.api_key = self.config.get("OPENAI_API_KEY") # Or load from your config system
-        self.base_url = "https://api.openai.com/v1/audio/speech"
-        if not self.api_key:
-            logger.error("OpenAIAPIBackend: API key not configured!")
-            # raise ValueError("OpenAI API key is required.") # Or handle gracefully
-
-    async def initialize(self):
-        logger.info("OpenAIAPIBackend initialized.")
-        if not self.api_key:
-             logger.warning("OpenAIAPIBackend: API key is missing. Requests will likely fail.")
-
-
-    async def generate_speech_stream(
-        self, request: OpenAISpeechRequest
-    ) -> AsyncGenerator[bytes, None]:
-        if not self.api_key:
-            logger.error("OpenAIAPIBackend: Cannot generate speech, API key missing.")
-            yield b"ERROR: OpenAI API Key not configured" # Or raise an exception
-            return
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": request.model, # Pass the original model name (e.g., "tts-1")
-            "input": request.input,
-            "voice": request.voice,
-            "response_format": request.response_format,
-            "speed": request.speed,
-        }
-        logger.info(f"OpenAIAPIBackend: Sending request to OpenAI: {payload}")
-
-        try:
-            async with self.client.stream("POST", self.base_url, headers=headers, json=payload) as response:
-                response.raise_for_status() # Raise HTTPStatusError for 4xx/5xx
-                async for chunk in response.aiter_bytes():
-                    yield chunk
-        except httpx.HTTPStatusError as e:
-            error_content = await e.response.aread()
-            logger.error(f"OpenAI API error: {e.response.status_code} - {error_content.decode()}")
-            # You might want to stream back a JSON error or raise HTTPException
-            # For now, we'll let it propagate to the main endpoint handler
-            raise # This will likely become a 500 or be caught by the router
-        except Exception as e:
-            logger.error(f"OpenAIAPIBackend: Unexpected error: {e}", exc_info=True)
-            raise
 
 
 # --- Concrete Backend for Your Local ro ---
@@ -130,8 +78,12 @@ class LocalKokoroBackend(TTSBackendBase):
         logger.info(f"LocalKokoroBackend: Initializing (ONNX: {self.use_onnx}, Device: {self.device})")
         if self.use_onnx:
             try:
-                # FIXME
-                from kokoro_onnx import Kokoro, EspeakConfig # Assuming you have this installed/vendored
+                # Import kokoro_onnx if available
+                try:
+                    from kokoro_onnx import Kokoro, EspeakConfig
+                except ImportError:
+                    logger.error("kokoro_onnx not installed. Please install with: pip install kokoro-onnx")
+                    raise
                 # Ensure model files exist, download if not (like in your TTS_Providers_Local.py)
                 if not os.path.exists(self.kokoro_model_path):
                     logger.error(f"Kokoro ONNX model not found at {self.kokoro_model_path}")
@@ -233,7 +185,6 @@ class LocalKokoroBackend(TTSBackendBase):
                     byte_io = io.BytesIO()
                     # Kokoro ONNX typically outputs float32, scale to int16 for WAV
                     scaled_samples = np.int16(combined_samples * 32767)
-                    # FIXME
                     scipy.io.wavfile.write(byte_io, sample_rate, scaled_samples)
                     yield byte_io.getvalue()
                 else:
@@ -314,7 +265,8 @@ class TTSBackendManager:
             specific_config.update(self.app_config.get("global_tts_settings", {})) # Merge global settings
 
             if backend_id == "openai_official_tts-1" or backend_id == "openai_official_tts-1-hd":
-                self._backends[backend_id] = OpenAIAPIBackend(config=specific_config)
+                from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
+                self._backends[backend_id] = OpenAITTSBackend(config=specific_config)
             elif backend_id == "local_kokoro_default_onnx":
                 # Example specific config for this Kokoro instance
                 kokoro_cfg = {
