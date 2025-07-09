@@ -903,6 +903,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     current_chat_active_character_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
     current_ccp_character_details: reactive[Optional[Dict[str, Any]]] = reactive(None)
     current_ccp_character_image: Optional[Image.Image] = None
+    
+    # Chat Tabs Management (when enable_tabs is True)
+    active_chat_tab_id: reactive[Optional[str]] = reactive(None)
+    chat_sessions: reactive[Dict[str, Dict[str, Any]]] = reactive({})  # tab_id -> session_data dict
 
     # For Chat Sidebar Prompts section
     chat_sidebar_loaded_prompt_id: reactive[Optional[Union[int, str]]] = reactive(None)

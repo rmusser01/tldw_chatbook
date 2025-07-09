@@ -9,7 +9,7 @@ from loguru import logger
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
-from tldw_chatbook.config import get_cli_config_value
+from tldw_chatbook.config import get_cli_setting
 
 #######################################################################################################################
 #
@@ -24,10 +24,10 @@ class OpenAITTSBackend(TTSBackendBase):
         self.api_key = self.config.get("OPENAI_API_KEY")
         if not self.api_key:
             # Try from CLI config
-            self.api_key = get_cli_config_value("API", "openai_api_key")
+            self.api_key = get_cli_setting("API", "openai_api_key")
         if not self.api_key:
             # Try from app_tts config
-            self.api_key = get_cli_config_value("app_tts", "OPENAI_API_KEY_fallback")
+            self.api_key = get_cli_setting("app_tts", "OPENAI_API_KEY_fallback")
         
         self.base_url = "https://api.openai.com/v1/audio/speech"
         

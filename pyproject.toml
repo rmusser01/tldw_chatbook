@@ -140,6 +140,18 @@ media_processing = [
     "yt-dlp",
     "numpy",
 ]
+local_tts = [
+    "kokoro-onnx",
+    "scipy",
+    "numpy",
+    "nltk",
+    "pyaudio",
+    "pydub",
+    "transformers",  # For tokenization
+    "torch",  # For PyTorch-based models
+    "onnxruntime",  # For ONNX models
+    "av",  # pyav for audio format conversion
+]
 nemo = [
     "nemo-toolkit[asr]>=1.20.0",  # For NVIDIA Parakeet and Canary models
     "torch",  # Required by NeMo

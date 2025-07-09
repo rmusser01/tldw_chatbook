@@ -15,7 +15,7 @@ from textual.worker import Worker, WorkerState
 
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
-from tldw_chatbook.config import get_cli_config_value
+from tldw_chatbook.config import get_cli_setting
 
 #######################################################################################################################
 #
@@ -73,11 +73,11 @@ class TTSEventHandler:
         try:
             # Load TTS configuration
             self._tts_config = {
-                "default_provider": get_cli_config_value("app_tts", "default_provider", "openai"),
-                "default_voice": get_cli_config_value("app_tts", "default_voice", "alloy"),
-                "default_model": get_cli_config_value("app_tts", "default_model", "tts-1"),
-                "default_format": get_cli_config_value("app_tts", "default_format", "mp3"),
-                "default_speed": get_cli_config_value("app_tts", "default_speed", 1.0),
+                "default_provider": get_cli_setting("app_tts", "default_provider", "openai"),
+                "default_voice": get_cli_setting("app_tts", "default_voice", "alloy"),
+                "default_model": get_cli_setting("app_tts", "default_model", "tts-1"),
+                "default_format": get_cli_setting("app_tts", "default_format", "mp3"),
+                "default_speed": get_cli_setting("app_tts", "default_speed", 1.0),
             }
             
             # Initialize TTS service

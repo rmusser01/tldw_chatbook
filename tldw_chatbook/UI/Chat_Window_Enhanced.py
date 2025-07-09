@@ -16,6 +16,8 @@ from textual.reactive import reactive
 from ..Widgets.settings_sidebar import create_settings_sidebar
 from ..Widgets.chat_right_sidebar import create_chat_right_sidebar
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
+from ..Widgets.chat_tab_container import ChatTabContainer
+from ..config import get_cli_setting
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
     EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON, EMOJI_STOP, FALLBACK_STOP
@@ -98,6 +100,17 @@ class ChatWindowEnhanced(Container):
             return
 
         logger.debug(f"Button pressed: {button_id}")
+
+        # Check if tabs are enabled and if this is a tab-specific button
+        enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
+        if enable_tabs and hasattr(self, 'tab_container'):
+            # Check if the button is from a chat session
+            # Tab-specific buttons will have IDs like "send-stop-chat-abc123"
+            for session_id, session in self.tab_container.sessions.items():
+                if button_id.endswith(f"-{session_id}"):
+                    # This is a tab-specific button, let the session handle it
+                    logger.debug(f"Tab-specific button detected, delegating to session {session_id}")
+                    return  # The ChatSession will handle this via its own @on decorator
 
         # Map of button IDs to their handler functions
         button_handlers = {
@@ -406,57 +419,67 @@ class ChatWindowEnhanced(Container):
         # Settings Sidebar (Left)
         yield from create_settings_sidebar(TAB_CHAT, self.app_instance.app_config)
 
+        # Check if tabs are enabled
+        enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
+        
         # Main Chat Content Area
         with Container(id="chat-main-content"):
-            yield VerticalScroll(id="chat-log")
-            
-            # Image attachment indicator
-            yield Static(
-                "",
-                id="image-attachment-indicator",
-                classes="hidden"
-            )
-            
-            with Horizontal(id="chat-input-area"):
-                yield Button(
-                    get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
-                    id="toggle-chat-left-sidebar",
-                    classes="sidebar-toggle",
-                    tooltip="Toggle left sidebar (Ctrl+[)"
-                )
-                yield TextArea(id="chat-input", classes="chat-input")
+            if enable_tabs:
+                logger.info("Chat tabs are enabled - using ChatTabContainer in enhanced mode")
+                # Use the tab container for multiple sessions
+                self.tab_container = ChatTabContainer(self.app_instance)
+                self.tab_container.enhanced_mode = True  # Flag for enhanced features
+                yield self.tab_container
+            else:
+                # Legacy single-session mode
+                yield VerticalScroll(id="chat-log")
                 
-                yield Button(
-                    get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
-                            FALLBACK_SEND if self.is_send_button else FALLBACK_STOP),
-                    id="send-stop-chat",
-                    classes="send-button",
-                    tooltip="Send message" if self.is_send_button else "Stop generation"
+                # Image attachment indicator
+                yield Static(
+                    "",
+                    id="image-attachment-indicator",
+                    classes="hidden"
                 )
                 
-                # Check config to see if attach button should be shown
-                from ..config import get_cli_setting
-                show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
-                if show_attach_button:
+                with Horizontal(id="chat-input-area"):
                     yield Button(
-                        "📎", 
-                        id="attach-image", 
-                        classes="action-button attach-button",
-                        tooltip="Attach file"
+                        get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
+                        id="toggle-chat-left-sidebar",
+                        classes="sidebar-toggle",
+                        tooltip="Toggle left sidebar (Ctrl+[)"
                     )
-                yield Button(
-                    "💡", 
-                    id="respond-for-me-button", 
-                    classes="action-button suggest-button",
-                    tooltip="Suggest a response"
-                )
-                logger.debug("'respond-for-me-button' composed.")
-                yield Button(
-                    get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
-                    id="toggle-chat-right-sidebar",
-                    classes="sidebar-toggle",
-                    tooltip="Toggle right sidebar (Ctrl+])"
-                )
+                    yield TextArea(id="chat-input", classes="chat-input")
+                    
+                    yield Button(
+                        get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
+                                FALLBACK_SEND if self.is_send_button else FALLBACK_STOP),
+                        id="send-stop-chat",
+                        classes="send-button",
+                        tooltip="Send message" if self.is_send_button else "Stop generation"
+                    )
+                    
+                    # Check config to see if attach button should be shown
+                    show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
+                    if show_attach_button:
+                        yield Button(
+                            "📎", 
+                            id="attach-image", 
+                            classes="action-button attach-button",
+                            tooltip="Attach file"
+                        )
+                    yield Button(
+                        "💡", 
+                        id="respond-for-me-button", 
+                        classes="action-button suggest-button",
+                        tooltip="Suggest a response"
+                    )
+                    logger.debug("'respond-for-me-button' composed.")
+                    yield Button(
+                        get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
+                        id="toggle-chat-right-sidebar",
+                        classes="sidebar-toggle",
+                        tooltip="Toggle right sidebar (Ctrl+])"
+                    )
 
         # Character Details Sidebar (Right)
         yield from create_chat_right_sidebar(

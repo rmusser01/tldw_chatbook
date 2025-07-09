@@ -403,6 +403,23 @@ class ToolsSettingsWindow(Container):
             )
             yield Static("Enable the enhanced chat window with image support and advanced formatting (requires app restart)", classes="help-text")
             
+            yield Static("", classes="settings-separator")
+            yield Checkbox(
+                "Enable Chat Tabs",
+                value=chat_config.get("enable_tabs", False),
+                id="general-enable-chat-tabs",
+                classes="settings-checkbox"
+            )
+            yield Static("Enable tabbed chat interface for multiple concurrent conversations (requires app restart)", classes="help-text")
+            
+            yield Label("Maximum Chat Tabs:", classes="settings-label")
+            yield Input(
+                value=str(chat_config.get("max_tabs", 10)),
+                id="general-max-chat-tabs",
+                classes="settings-input",
+                placeholder="Maximum number of chat tabs (e.g., 10)"
+            )
+            
             # Character Defaults Section
             yield Static("", classes="settings-separator")
             yield Static("Character Defaults", classes="settings-subsection-title")
@@ -2064,6 +2081,32 @@ Thank you for using tldw-chatbook! 🎉
                         timeout=8
                     )
             
+            # Chat Tabs Settings
+            enable_tabs = self.query_one("#general-enable-chat-tabs", Checkbox).value
+            current_tabs_enabled = self.config_data.get("chat_defaults", {}).get("enable_tabs", False)
+            if enable_tabs != current_tabs_enabled:
+                if save_setting_to_cli_config("chat_defaults", "enable_tabs", enable_tabs):
+                    saved_count += 1
+                    self.app_instance.notify(
+                        "Chat tabs setting changed. Please restart the app for this change to take effect.",
+                        severity="warning",
+                        timeout=8
+                    )
+            
+            max_tabs_str = self.query_one("#general-max-chat-tabs", Input).value
+            try:
+                max_tabs = int(max_tabs_str)
+                if max_tabs < 1:
+                    max_tabs = 1
+                    self.app_instance.notify("Maximum tabs set to minimum value of 1", severity="info")
+                elif max_tabs > 50:
+                    max_tabs = 50
+                    self.app_instance.notify("Maximum tabs set to maximum value of 50", severity="info")
+                if save_setting_to_cli_config("chat_defaults", "max_tabs", max_tabs):
+                    saved_count += 1
+            except ValueError:
+                self.app_instance.notify(f"Invalid max tabs value: {max_tabs_str}. Must be a number.", severity="warning")
+            
             # Character Defaults
             if save_setting_to_cli_config("character_defaults", "provider", self.query_one("#general-character-provider", Select).value):
                 saved_count += 1
@@ -2104,6 +2147,8 @@ Thank you for using tldw-chatbook! 🎉
             self.query_one("#general-chat-model", Input).value = "gpt-4o"
             self.query_one("#general-chat-temperature", Input).value = "0.6"
             self.query_one("#general-enhanced-chat-window", Checkbox).value = False  # Default is disabled
+            self.query_one("#general-enable-chat-tabs", Checkbox).value = False  # Default is disabled
+            self.query_one("#general-max-chat-tabs", Input).value = "10"  # Default is 10 tabs
             
             # Reset Character Defaults
             default_char_provider = "Anthropic" if "Anthropic" in providers else (providers[0] if providers else "Anthropic")

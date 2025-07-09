@@ -43,7 +43,7 @@ ChatMessage.-tool-result > Vertical {
 
 .message-text.tts-generating {
     opacity: 0.8;
-    border-left: 3px solid $accent;
+    border-left: thick $accent;
 }
 .message-actions {
     height: auto;

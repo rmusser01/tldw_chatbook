@@ -15,9 +15,11 @@ from textual.reactive import reactive
 # Local Imports
 from ..Widgets.settings_sidebar import create_settings_sidebar
 from ..Widgets.chat_right_sidebar import create_chat_right_sidebar
+from ..Widgets.chat_tab_container import ChatTabContainer
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
     EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON, EMOJI_STOP, FALLBACK_STOP
+from ..config import get_cli_setting
 
 # Configure logger with context
 logger = logger.bind(module="Chat_Window")
@@ -52,6 +54,7 @@ class ChatWindow(Container):
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.tab_container = None  # Will be set if tabs are enabled
         logger.debug("ChatWindow initialized.")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -112,37 +115,49 @@ class ChatWindow(Container):
         # Settings Sidebar (Left)
         yield from create_settings_sidebar(TAB_CHAT, self.app_instance.app_config)
 
-        # Main Chat Content Area
-        with Container(id="chat-main-content"):
-            yield VerticalScroll(id="chat-log")
-            with Horizontal(id="chat-input-area"):
-                yield Button(
-                    get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
-                    id="toggle-chat-left-sidebar",
-                    classes="sidebar-toggle",
-                    tooltip="Toggle left sidebar (Ctrl+[)"
-                )
-                yield TextArea(id="chat-input", classes="chat-input")
-                yield Button(
-                    get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
-                            FALLBACK_SEND if self.is_send_button else FALLBACK_STOP), 
-                    id="send-stop-chat", 
-                    classes="send-button",
-                    tooltip="Send message" if self.is_send_button else "Stop generation"
-                )
-                yield Button(
-                    "💡", 
-                    id="respond-for-me-button", 
-                    classes="action-button suggest-button",
-                    tooltip="Suggest a response"
-                ) # Suggest button
-                logger.debug("'respond-for-me-button' composed.")
-                yield Button(
-                    get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
-                    id="toggle-chat-right-sidebar",
-                    classes="sidebar-toggle",
-                    tooltip="Toggle right sidebar (Ctrl+])"
-                )
+        # Check if tabs are enabled
+        enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
+        
+        if enable_tabs:
+            # Use tabbed interface
+            logger.info("Chat tabs are enabled - using ChatTabContainer")
+            with Container(id="chat-main-content"):
+                # Store reference for compatibility
+                self.tab_container = ChatTabContainer(self.app_instance)
+                yield self.tab_container
+        else:
+            # Use original single-session interface
+            logger.debug("Chat tabs are disabled - using single session interface")
+            with Container(id="chat-main-content"):
+                yield VerticalScroll(id="chat-log")
+                with Horizontal(id="chat-input-area"):
+                    yield Button(
+                        get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
+                        id="toggle-chat-left-sidebar",
+                        classes="sidebar-toggle",
+                        tooltip="Toggle left sidebar (Ctrl+[)"
+                    )
+                    yield TextArea(id="chat-input", classes="chat-input")
+                    yield Button(
+                        get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
+                                FALLBACK_SEND if self.is_send_button else FALLBACK_STOP), 
+                        id="send-stop-chat", 
+                        classes="send-button",
+                        tooltip="Send message" if self.is_send_button else "Stop generation"
+                    )
+                    yield Button(
+                        "💡", 
+                        id="respond-for-me-button", 
+                        classes="action-button suggest-button",
+                        tooltip="Suggest a response"
+                    ) # Suggest button
+                    logger.debug("'respond-for-me-button' composed.")
+                    yield Button(
+                        get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
+                        id="toggle-chat-right-sidebar",
+                        classes="sidebar-toggle",
+                        tooltip="Toggle right sidebar (Ctrl+])"
+                    )
 
         # Character Details Sidebar (Right)
         yield from create_chat_right_sidebar(

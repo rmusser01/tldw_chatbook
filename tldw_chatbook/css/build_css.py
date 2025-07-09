@@ -36,6 +36,7 @@ CSS_MODULES = [
     
     # 4. Features - Application Specific (depends on all above)
     "features/_chat.tcss",
+    "features/_chat_tabs.tcss",
     "features/_conversations.tcss",
     "features/_notes.tcss",
     "features/_media.tcss",

@@ -913,11 +913,37 @@ OpenRouter = [
 unknown_models_vision = false  # Whether to assume unknown models have vision capabilities
 log_unknown_models = true      # Whether to log when an unknown model is queried
 
-# --- Sections below are placeholders based on config.txt, integrate as needed ---
-# [tts_settings]
-# default_provider = "kokoro"
-# ...
+# --- Text-to-Speech Configuration ---
+[app_tts]
+# Default TTS provider settings
+default_provider = "openai"  # Options: "openai", "kokoro", "elevenlabs"
+default_voice = "alloy"      # Provider-specific voice
+default_model = "tts-1"      # Provider-specific model
+default_format = "mp3"       # Audio output format: mp3, wav, opus, flac, aac, pcm
+default_speed = 1.0          # Speech speed (0.25-4.0)
 
+# OpenAI TTS settings
+OPENAI_API_KEY_fallback = ""  # Fallback if not in environment or API section
+
+# Kokoro local TTS settings
+KOKORO_ONNX_MODEL_PATH_DEFAULT = "~/.config/tldw_cli/models/kokoro/kokoro-v0.19.onnx"
+KOKORO_ONNX_VOICES_JSON_DEFAULT = "~/.config/tldw_cli/models/kokoro/voices.json"
+KOKORO_DEVICE_DEFAULT = "cpu"  # Options: "cpu", "cuda", "cuda:0"
+KOKORO_MAX_TOKENS = 500        # Maximum tokens per chunk
+KOKORO_ENABLE_VOICE_MIXING = false  # Enable voice mixing feature
+KOKORO_TRACK_PERFORMANCE = true     # Track performance metrics
+
+# ElevenLabs TTS settings  
+ELEVENLABS_API_KEY_fallback = ""  # Fallback if not in environment
+ELEVENLABS_DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM"  # Rachel voice ID
+ELEVENLABS_DEFAULT_MODEL = "eleven_multilingual_v2"  # Options: eleven_multilingual_v2, eleven_turbo_v2
+ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_192"  # High quality MP3
+ELEVENLABS_VOICE_STABILITY = 0.5    # Voice consistency (0.0-1.0)
+ELEVENLABS_SIMILARITY_BOOST = 0.8   # Voice clarity (0.0-1.0)
+ELEVENLABS_STYLE = 0.0              # Style exaggeration (0.0-1.0)
+ELEVENLABS_USE_SPEAKER_BOOST = true # Enhanced speaker clarity
+
+# --- Search Settings ---
 # [search_settings]
 # default_provider = "google"
 # ...
