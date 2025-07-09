@@ -966,7 +966,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     note_import_failure_handler: Optional[Callable] = None
 
     # Tools Tab
-    tools_settings_active_view: reactive[Optional[str]] = reactive(None)  # Or a default view ID
+    tools_settings_active_view: reactive[Optional[str]] = reactive("ts-view-general-settings")  # Default to general settings
     _initial_tools_settings_view: Optional[str] = "ts-view-general-settings"
 
     _prompt_search_timer: Optional[Timer] = None
@@ -2160,6 +2160,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             return
         if not self._ui_ready:
             return
+            
+        # Check if the Tools & Settings tab has been created yet
+        try:
+            # First check if the content pane exists
+            self.query_one("#tools-settings-content-pane")
+        except QueryError:
+            # Tools & Settings tab hasn't been created yet, nothing to do
+            self.loguru_logger.debug("Tools & Settings content pane not found, tab not yet created")
+            return
+            
         if not new_view:  # If new_view is None, hide all
             try:
                 for view_area in self.query(".ts-view-area"):  # Query all potential view areas

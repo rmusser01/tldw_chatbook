@@ -16,7 +16,7 @@ from textual.containers import VerticalScroll
 # Local Imports
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError, CharactersRAGDBError
 from ..Utils.note_importers import note_importer_registry, ParsedNote
-from ..Third_Party.textual_fspicker import FileOpen
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from .ingest_utils import (
     NOTE_FILE_FILTERS,
     MAX_NOTE_PREVIEWS,
@@ -199,8 +199,7 @@ async def handle_ingest_notes_select_file_button_pressed(app: 'TldwCli', event: 
             # Handle the case where selection was cancelled (path is None)
             app.call_after_refresh(lambda: _handle_note_file_selected_callback(app, None))
     # The screen you're pushing
-    file_open_screen = FileOpen(
-        location=str(current_dir),
+    file_open_screen = FileOpen(location=str(current_dir, context="note_ingest"),
         title="Select Notes File (.json)",
         filters=NOTE_FILE_FILTERS
     )

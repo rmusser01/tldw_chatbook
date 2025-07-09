@@ -27,7 +27,8 @@ from .Embeddings_Management_Window import EmbeddingsManagementWindow
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Third_Party.textual_fspicker import FileOpen, Filters
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
+from ..Third_Party.textual_fspicker import Filters
 
 # Check if embeddings dependencies are available
 if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):

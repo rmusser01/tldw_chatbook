@@ -15,7 +15,7 @@ from textual.containers import VerticalScroll
 # Local Imports
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError
-from ..Third_Party.textual_fspicker import FileOpen
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from .ingest_utils import (
     CHARACTER_FILE_FILTERS, 
     MAX_CHARACTER_PREVIEWS,
@@ -197,8 +197,7 @@ async def handle_ingest_characters_select_file_button_pressed(app: 'TldwCli', ev
     current_dir = app.last_character_import_dir or Path(".")  # Use new state var
 
     await app.push_screen(
-        FileOpen(
-            location=str(current_dir),
+        FileOpen(location=str(current_dir, context="character_ingest"),
             title="Select Character File (.json, .yaml, .png, .webp, .md)",
             filters=CHARACTER_FILE_FILTERS
         ),

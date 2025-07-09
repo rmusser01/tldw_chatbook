@@ -21,7 +21,8 @@ from textual.css.query import QueryError
 from rich.text import Text # For displaying messages if needed
 #
 # Local Imports
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters # For File Picker
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from ..Third_Party.textual_fspicker import Filters  # For file filtering
 from ..Widgets.chat_message import ChatMessage # If CCP tab displays ChatMessage widgets
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..Character_Chat import Chat_Dictionary_Lib as cdl
@@ -214,7 +215,7 @@ async def handle_ccp_import_character_button_pressed(app: 'TldwCli', event: Butt
         ("YAML files (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
         ("All files (*.*)", lambda p: True)
     )
-    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Character Card", filters=defined_filters),
+    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Character Card", filters=defined_filters, context="character_import"),
                           # Use a lambda to capture `app` for the callback
                           callback=lambda path: _character_import_callback(app, path))
 
@@ -1162,7 +1163,7 @@ async def handle_ccp_import_conversation_button_pressed(app: 'TldwCli', event: B
         ("All files (*.*)", lambda p: True)
     )
     await app.push_screen(
-        FileOpen(location=str(Path.home()), title="Select Conversation File", filters=defined_filters),
+        FileOpen(location=str(Path.home()), title="Select Conversation File", filters=defined_filters, context="character_import"),
         callback=lambda path: _conversation_import_callback(app, path))
 
 ########################################################################################################################
@@ -1344,7 +1345,7 @@ async def handle_ccp_import_prompt_button_pressed(app: 'TldwCli', event: Button.
         ("Markdown files (*.md)", lambda p: p.suffix.lower() == ".md"),
         ("All files (*.*)", lambda p: True)
     )
-    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Prompt File", filters=defined_filters),
+    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Prompt File", filters=defined_filters, context="character_import"),
                           callback=lambda path: _prompt_import_callback(app, path))
 
 ########################################################################################################################
@@ -2088,7 +2089,8 @@ async def handle_ccp_editor_char_image_button_pressed(app: 'TldwCli', event: But
         FileOpen(
             location=str(Path.home() / "Pictures"),
             title="Select Character Image (PNG only)",
-            filters=defined_filters
+            filters=defined_filters,
+            context="character_import"
         ),
         callback=lambda path: _image_upload_callback(app, path)
     )
@@ -2909,7 +2911,7 @@ async def handle_ccp_import_dictionary_button_pressed(app: 'TldwCli', event: But
         ("YAML files (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
         ("All files (*.*)", lambda p: True)
     )
-    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Dictionary File", filters=defined_filters),
+    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Dictionary File", filters=defined_filters, context="character_import"),
                           callback=lambda path: _dictionary_import_callback(app, path))
 
 

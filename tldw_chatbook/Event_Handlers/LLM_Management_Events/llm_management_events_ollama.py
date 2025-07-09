@@ -31,7 +31,8 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events im
 from tldw_chatbook.Local_Inference.ollama_model_mgmt import ollama_list_local_models, ollama_model_info, ollama_delete_model, \
     ollama_copy_model, ollama_create_model, ollama_push_model, ollama_pull_model, ollama_list_running_models, \
     ollama_generate_embeddings
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -130,8 +131,9 @@ async def handle_ollama_browse_exec_button_pressed(app: "TldwCli") -> None:
             location=str(Path.home()),
             title="Select Ollama Executable",
             filters=exec_filters,
+            context="ollama_models"
         ),
-        callback=_make_path_update_callback(app, "ollama-exec-path"),
+        callback=_make_path_update_callback(app, "ollama-exec-path")
     )
 
 
@@ -179,8 +181,7 @@ async def handle_ollama_start_service_button_pressed(app: "TldwCli") -> None:
             name="ollama_serve_process",
             group="ollama_serve",
             exclusive=True,
-            description="Running Ollama service",
-        )
+            description="Running Ollama service")
         
         app.notify("Ollama service starting...", severity="information")
         
@@ -488,11 +489,12 @@ async def handle_ollama_browse_modelfile_button_pressed(app: "TldwCli") -> None:
     )
     await app.push_screen(
         FileOpen(
-            location=str(Path.cwd()), # Start in current working directory or user's preferred location
+            location=str(Path.cwd()),
             title="Select Modelfile",
             filters=modelfile_filters,
+            context="ollama_models"
         ),
-        callback=_make_path_update_callback(app, "ollama-create-modelfile-path"),
+        callback=_make_path_update_callback(app, "ollama-create-modelfile-path")
     )
 
 

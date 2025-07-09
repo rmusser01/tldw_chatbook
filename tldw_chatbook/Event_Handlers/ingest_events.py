@@ -73,7 +73,8 @@ from .media_ingest_workers import (
 # Import local ingestion handlers
 from .local_ingest_events import (
     handle_ingest_local_web_button_pressed,
-    handle_local_pdf_ebook_submit_button_pressed
+    handle_local_pdf_ebook_submit_button_pressed,
+    handle_local_audio_video_submit_button_pressed
 )
 
 # --- Button Handler Map ---
@@ -110,6 +111,9 @@ INGEST_BUTTON_HANDLERS = {
     # Local PDF and Ebook buttons
     "local-submit-pdf": handle_local_pdf_ebook_submit_button_pressed,
     "local-submit-ebook": handle_local_pdf_ebook_submit_button_pressed,
+    # Local Audio and Video buttons
+    "local-submit-audio": handle_local_audio_video_submit_button_pressed,
+    "local-submit-video": handle_local_audio_video_submit_button_pressed,
 }
 
 # Export all symbols for backward compatibility

@@ -57,3 +57,22 @@ async def handle_local_pdf_ebook_submit_button_pressed(app: 'TldwCli', event: 'B
     except Exception as e:
         logger.error(f"Error handling local {media_type} button: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
+
+async def handle_local_audio_video_submit_button_pressed(app: 'TldwCli', event: 'Button.Pressed') -> None:
+    """Handle local audio and video processing button presses."""
+    button_id = event.button.id
+    media_type = "audio" if button_id == "local-submit-audio" else "video"
+    
+    try:
+        ingest_window = app.query_one("#ingest-window", IngestWindow)
+        
+        if media_type == "audio":
+            await ingest_window.handle_local_audio_process()
+        else:  # video
+            await ingest_window.handle_local_video_process()
+            
+    except QueryError:
+        logger.error(f"Could not find IngestWindow to handle button {button_id}")
+    except Exception as e:
+        logger.error(f"Error handling local {media_type} button: {e}")
+        app.notify(f"Error: {str(e)}", severity="error")

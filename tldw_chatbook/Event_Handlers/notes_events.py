@@ -19,7 +19,8 @@ import yaml
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
 from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
-from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
+from ..Third_Party.textual_fspicker import Filters
 from ..config import get_cli_setting
 #
 if TYPE_CHECKING:
@@ -470,7 +471,7 @@ async def handle_notes_import_button_pressed(app: 'TldwCli', event: Button.Press
         ("All files (*.*)", lambda p: True)
     )
     await app.push_screen(
-        FileOpen(location=str(Path.home()), title="Select Note File to Import", filters=defined_filters),
+        FileOpen(location=str(Path.home()), title="Select Note File to Import", filters=defined_filters, context="notes"),
         callback=lambda path: _note_import_callback(app, path))
 
 
@@ -1061,8 +1062,9 @@ async def handle_notes_export_markdown_button_pressed(app: 'TldwCli', event: But
     await app.push_screen(
         FileSave(
             location=str(Path.home()),
-            default_file=default_filename,
-            title="Export Note as Markdown"
+            default_filename=default_filename,
+            title="Export Note as Markdown",
+            context="notes"
         ),
         callback=lambda path: _note_export_callback(app, path, "markdown")
     )
@@ -1090,8 +1092,9 @@ async def handle_notes_export_text_button_pressed(app: 'TldwCli', event: Button.
     await app.push_screen(
         FileSave(
             location=str(Path.home()),
-            default_file=default_filename,
-            title="Export Note as Text"
+            default_filename=default_filename,
+            title="Export Note as Text",
+            context="notes"
         ),
         callback=lambda path: _note_export_callback(app, path, "text")
     )

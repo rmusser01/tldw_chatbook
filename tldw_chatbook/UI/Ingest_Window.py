@@ -28,7 +28,7 @@ from ..Constants import TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_VIDEO_OPTIONS_ID, TL
     TLDW_API_EBOOK_OPTIONS_ID, TLDW_API_DOCUMENT_OPTIONS_ID, TLDW_API_XML_OPTIONS_ID, TLDW_API_MEDIAWIKI_OPTIONS_ID
 #
 # Local Imports
-from ..Third_Party.textual_fspicker.file_open import FileOpen
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from ..tldw_api.schemas import MediaType, ChunkMethod, PdfEngine  # Import Enums
 from ..Widgets.IngestTldwApiVideoWindow import IngestTldwApiVideoWindow
 from ..Widgets.IngestTldwApiAudioWindow import IngestTldwApiAudioWindow
@@ -43,6 +43,8 @@ from ..Widgets.IngestLocalWebArticleWindow import IngestLocalWebArticleWindow
 from ..Widgets.IngestLocalDocumentWindow import IngestLocalDocumentWindow
 from ..Widgets.IngestLocalEbookWindow import IngestLocalEbookWindow
 from ..Widgets.IngestLocalPdfWindow import IngestLocalPdfWindow
+from ..Widgets.IngestLocalAudioWindow import IngestLocalAudioWindow
+from ..Widgets.IngestLocalVideoWindow import IngestLocalVideoWindow
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -738,168 +740,13 @@ class IngestWindow(Container):
     
     def compose_local_video_tab(self) -> ComposeResult:
         """Composes the Video tab content for local media ingestion."""
-        with VerticalScroll(classes="ingest-media-tab-content"):
-            # File Selection Section
-            with Container(classes="ingest-file-section"):
-                yield Static("Video File Selection", classes="sidebar-title")
-                with Horizontal(classes="ingest-controls-row"):
-                    yield Button("Select Video Files", id="ingest-local-video-select-files")
-                    yield Button("Clear Selection", id="ingest-local-video-clear-files")
-                yield Label("Selected Files:", classes="ingest-label")
-                yield ListView(id="ingest-local-video-files-list", classes="ingest-selected-files-list")
-            
-            # Processing Options Section
-            with Container(classes="ingest-options-section"):
-                yield Static("Transcription Options", classes="sidebar-title")
-                yield Label("Transcription Model:")
-                yield Input("deepdml/faster-whisper-large-v3-turbo-ct2", id="ingest-local-video-transcription-model")
-                yield Label("Transcription Language (e.g., 'en'):")
-                yield Input("en", id="ingest-local-video-transcription-language")
-                yield Checkbox("Enable Speaker Diarization", False, id="ingest-local-video-diarize")
-                yield Checkbox("Include Timestamps", True, id="ingest-local-video-timestamp-option")
-                yield Checkbox("Enable VAD (Voice Activity Detection)", False, id="ingest-local-video-vad-use")
-                
-                with Horizontal(classes="ingest-form-row"):
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Start Time (HH:MM:SS or seconds):")
-                        yield Input(id="ingest-local-video-start-time", placeholder="Optional")
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("End Time (HH:MM:SS or seconds):")
-                        yield Input(id="ingest-local-video-end-time", placeholder="Optional")
-            
-            # Analysis Options
-            with Container(classes="ingest-options-section"):
-                yield Static("Analysis Options", classes="sidebar-title")
-                yield Checkbox("Perform Analysis (e.g., Summarization)", True, id="ingest-local-video-perform-analysis")
-                yield Checkbox("Perform Confabulation Check", False, id="ingest-local-video-perform-confabulation-check-of-analysis")
-                yield Label("Custom Prompt (for analysis):")
-                yield TextArea(id="ingest-local-video-custom-prompt", classes="ingest-textarea-medium")
-                yield Label("System Prompt (for analysis):")
-                yield TextArea(id="ingest-local-video-system-prompt", classes="ingest-textarea-medium")
-                
-                with Collapsible(title="Advanced Analysis", collapsed=True):
-                    yield Checkbox("Summarize Recursively", False, id="ingest-local-video-summarize-recursively")
-                    yield Checkbox("Perform Rolling Summarization", False, id="ingest-local-video-perform-rolling-summarization")
-            
-            # Chunking Options
-            with Collapsible(title="Chunking Options", collapsed=True):
-                yield Checkbox("Perform Chunking", True, id="ingest-local-video-perform-chunking")
-                yield Label("Chunk Method:")
-                yield Select(
-                    [("Semantic", "semantic"), ("Tokens", "tokens"), ("Sentences", "sentences"), 
-                     ("Words", "words"), ("Paragraphs", "paragraphs")],
-                    id="ingest-local-video-chunk-method",
-                    prompt="Select chunking method..."
-                )
-                with Horizontal(classes="ingest-form-row"):
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Chunk Size:")
-                        yield Input("500", id="ingest-local-video-chunk-size", type="integer")
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Chunk Overlap:")
-                        yield Input("200", id="ingest-local-video-chunk-overlap", type="integer")
-                yield Checkbox("Use Adaptive Chunking", False, id="ingest-local-video-use-adaptive-chunking")
-                yield Checkbox("Use Multi-level Chunking", False, id="ingest-local-video-use-multi-level-chunking")
-            
-            # Metadata Section
-            with Container(classes="ingest-metadata-section"):
-                yield Static("Metadata", classes="sidebar-title")
-                with Horizontal(classes="title-author-row"):
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Title Override:")
-                        yield Input(id="ingest-local-video-title", placeholder="Optional")
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Author:")
-                        yield Input(id="ingest-local-video-author", placeholder="Optional")
-                yield Label("Keywords (comma-separated):")
-                yield TextArea(id="ingest-local-video-keywords", classes="ingest-textarea-small")
-            
-            # Database Options
-            yield Checkbox("Overwrite if exists in database", False, id="ingest-local-video-overwrite-existing")
-            
-            # Action Section
-            with Container(classes="ingest-action-section"):
-                yield Button("Process Videos", id="ingest-local-video-process", variant="primary")
-                yield LoadingIndicator(id="ingest-local-video-loading", classes="hidden")
-                yield TextArea("", id="ingest-local-video-status", read_only=True, classes="ingest-status-area")
+        window = IngestLocalVideoWindow(self.app_instance)
+        yield from window.compose()
 
     def compose_local_audio_tab(self) -> ComposeResult:
         """Composes the Audio tab content for local media ingestion."""
-        with VerticalScroll(classes="ingest-media-tab-content"):
-            # File Selection Section
-            with Container(classes="ingest-file-section"):
-                yield Static("Audio File Selection", classes="sidebar-title")
-                with Horizontal(classes="ingest-controls-row"):
-                    yield Button("Select Audio Files", id="ingest-local-audio-select-files")
-                    yield Button("Clear Selection", id="ingest-local-audio-clear-files")
-                yield Label("Selected Files:", classes="ingest-label")
-                yield ListView(id="ingest-local-audio-files-list", classes="ingest-selected-files-list")
-            
-            # Processing Options Section
-            with Container(classes="ingest-options-section"):
-                yield Static("Transcription Options", classes="sidebar-title")
-                yield Label("Transcription Model:")
-                yield Input("deepdml/faster-distil-whisper-large-v3.5", id="ingest-local-audio-transcription-model")
-                yield Label("Transcription Language (e.g., 'en'):")
-                yield Input("en", id="ingest-local-audio-transcription-language")
-                yield Checkbox("Enable Speaker Diarization", False, id="ingest-local-audio-diarize")
-                yield Checkbox("Include Timestamps", True, id="ingest-local-audio-timestamp-option")
-                yield Checkbox("Enable VAD (Voice Activity Detection)", False, id="ingest-local-audio-vad-use")
-            
-            # Analysis Options
-            with Container(classes="ingest-options-section"):
-                yield Static("Analysis Options", classes="sidebar-title")
-                yield Checkbox("Perform Analysis (e.g., Summarization)", True, id="ingest-local-audio-perform-analysis")
-                yield Label("Custom Prompt (for analysis):")
-                yield TextArea(id="ingest-local-audio-custom-prompt", classes="ingest-textarea-medium")
-                yield Label("System Prompt (for analysis):")
-                yield TextArea(id="ingest-local-audio-system-prompt", classes="ingest-textarea-medium")
-                
-                with Collapsible(title="Advanced Analysis", collapsed=True):
-                    yield Checkbox("Summarize Recursively", False, id="ingest-local-audio-summarize-recursively")
-                    yield Checkbox("Perform Rolling Summarization", False, id="ingest-local-audio-perform-rolling-summarization")
-            
-            # Chunking Options
-            with Collapsible(title="Chunking Options", collapsed=True):
-                yield Checkbox("Perform Chunking", True, id="ingest-local-audio-perform-chunking")
-                yield Label("Chunk Method:")
-                yield Select(
-                    [("Semantic", "semantic"), ("Tokens", "tokens"), ("Sentences", "sentences"), 
-                     ("Words", "words"), ("Paragraphs", "paragraphs")],
-                    id="ingest-local-audio-chunk-method",
-                    prompt="Select chunking method..."
-                )
-                with Horizontal(classes="ingest-form-row"):
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Chunk Size:")
-                        yield Input("500", id="ingest-local-audio-chunk-size", type="integer")
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Chunk Overlap:")
-                        yield Input("200", id="ingest-local-audio-chunk-overlap", type="integer")
-                yield Checkbox("Use Adaptive Chunking", False, id="ingest-local-audio-use-adaptive-chunking")
-                yield Checkbox("Use Multi-level Chunking", False, id="ingest-local-audio-use-multi-level-chunking")
-            
-            # Metadata Section
-            with Container(classes="ingest-metadata-section"):
-                yield Static("Metadata", classes="sidebar-title")
-                with Horizontal(classes="title-author-row"):
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Title Override:")
-                        yield Input(id="ingest-local-audio-title", placeholder="Optional")
-                    with Vertical(classes="ingest-form-col"):
-                        yield Label("Author/Artist:")
-                        yield Input(id="ingest-local-audio-author", placeholder="Optional")
-                yield Label("Keywords (comma-separated):")
-                yield TextArea(id="ingest-local-audio-keywords", classes="ingest-textarea-small")
-            
-            # Database Options
-            yield Checkbox("Overwrite if exists in database", False, id="ingest-local-audio-overwrite-existing")
-            
-            # Action Section
-            with Container(classes="ingest-action-section"):
-                yield Button("Process Audio", id="ingest-local-audio-process", variant="primary")
-                yield LoadingIndicator(id="ingest-local-audio-loading", classes="hidden")
-                yield TextArea("", id="ingest-local-audio-status", read_only=True, classes="ingest-status-area")
+        window = IngestLocalAudioWindow(self.app_instance)
+        yield from window.compose()
 
     def compose_local_document_tab(self) -> ComposeResult:
         """Composes the Document tab content for local media ingestion."""
@@ -1645,7 +1492,6 @@ class IngestWindow(Container):
     
     async def _handle_import_urls_from_file(self) -> None:
         """Handle importing URLs from a file."""
-        from ..Third_Party.textual_fspicker import FileOpen, Filters
         
         def handle_file_selected(file_path: Path | None) -> None:
             if file_path and file_path.exists():
@@ -1672,7 +1518,8 @@ class IngestWindow(Container):
                 filters=Filters(
                     ("Text Files", lambda p: p.suffix.lower() in (".txt", ".csv")),
                     ("All Files", lambda _: True)
-                )
+                ),
+                context="ingest_urls"
             ),
             handle_file_selected
         )
@@ -3021,6 +2868,369 @@ class IngestWindow(Container):
                     "for implementation details.",
                     classes="warning-notice"
                 )
+
+    async def handle_local_audio_process(self) -> None:
+        """Handle processing of local audio files."""
+        logger.info("Processing local audio files")
+        
+        # Get UI elements
+        try:
+            loading_indicator = self.query_one("#local-loading-indicator-audio", LoadingIndicator)
+            status_area = self.query_one("#local-status-audio", TextArea)
+            process_button = self.query_one("#local-submit-audio", Button)
+        except Exception as e:
+            logger.error(f"Error finding UI elements: {e}")
+            self.app_instance.notify("Error: UI elements not found", severity="error")
+            return
+        
+        # Show loading state
+        loading_indicator.display = True
+        loading_indicator.classes = loading_indicator.classes - {"hidden"}
+        status_area.clear()
+        status_area.load_text("Processing audio files locally...")
+        status_area.display = True
+        status_area.classes = status_area.classes - {"hidden"}
+        process_button.disabled = True
+        
+        try:
+            # Get selected files
+            local_key = "local_audio"
+            selected_files = self.selected_local_files.get(local_key, [])
+            
+            # Also check URLs
+            urls_textarea = self.query_one("#local-urls-audio", TextArea)
+            urls_text = urls_textarea.text.strip()
+            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            
+            # Combine all inputs
+            all_inputs = []
+            if selected_files:
+                all_inputs.extend([str(f) for f in selected_files])
+            if urls:
+                all_inputs.extend(urls)
+            
+            if not all_inputs:
+                self.app_instance.notify("Please select at least one audio file or provide URLs", severity="warning")
+                return
+            
+            # Get metadata
+            title_override = self.query_one("#local-title-audio", Input).value.strip()
+            author = self.query_one("#local-author-audio", Input).value.strip()
+            keywords_text = self.query_one("#local-keywords-audio", TextArea).text.strip()
+            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
+            
+            # Get transcription options
+            transcription_model = self.query_one("#local-transcription-model-audio", Input).value.strip() or "base"
+            transcription_language = self.query_one("#local-transcription-language-audio", Input).value.strip() or "en"
+            vad_filter = self.query_one("#local-vad-filter-audio", Checkbox).value
+            diarize = self.query_one("#local-diarize-audio", Checkbox).value
+            timestamps = self.query_one("#local-timestamps-audio", Checkbox).value
+            
+            # Get processing options
+            perform_analysis = self.query_one("#local-perform-analysis-audio", Checkbox).value
+            custom_prompt = self.query_one("#local-custom-prompt-audio", TextArea).text.strip()
+            system_prompt = self.query_one("#local-system-prompt-audio", TextArea).text.strip()
+            
+            # Get API options for analysis
+            api_name = None
+            api_key = None
+            if perform_analysis:
+                api_name_select = self.query_one("#local-analysis-api-name-audio", Select)
+                if api_name_select.value != Select.BLANK:
+                    api_name = str(api_name_select.value)
+                    api_key_input = self.query_one("#local-analysis-api-key-audio", Input)
+                    api_key = api_key_input.value.strip() if api_key_input.value else None
+                    
+                    # If no API key provided in UI, try to get from config
+                    if not api_key and api_name:
+                        from ..config import get_api_key
+                        api_key = get_api_key(api_name)
+            
+            # Get chunking options
+            perform_chunking = self.query_one("#local-perform-chunking-audio", Checkbox).value
+            chunk_method = self.query_one("#local-chunk-method-audio", Select).value
+            chunk_size = int(self.query_one("#local-chunk-size-audio", Input).value or "500")
+            chunk_overlap = int(self.query_one("#local-chunk-overlap-audio", Input).value or "200")
+            use_adaptive_chunking = self.query_one("#local-use-adaptive-chunking-audio", Checkbox).value
+            use_multi_level_chunking = self.query_one("#local-use-multi-level-chunking-audio", Checkbox).value
+            chunk_language = self.query_one("#local-chunk-language-audio", Input).value.strip()
+            summarize_recursively = self.query_one("#local-summarize-recursively-audio", Checkbox).value
+            
+            # Get cookie options
+            use_cookies = self.query_one("#local-use-cookies-audio", Checkbox).value
+            cookies = self.query_one("#local-cookies-audio", TextArea).text.strip()
+            
+            # Other options
+            keep_original = self.query_one("#local-keep-original-audio", Checkbox).value
+            
+            # Check if media DB is available
+            if not self.app_instance.media_db:
+                logger.error("Media database not initialized")
+                self.app_instance.notify("Error: Media database not available", severity="error")
+                status_area.load_text("Error: Media database not available")
+                return
+            
+            # Import the audio processing function
+            try:
+                from ..Local_Ingestion import LocalAudioProcessor
+            except ImportError as e:
+                logger.error(f"Failed to import audio processing library: {e}")
+                self.app_instance.notify("Error: Audio processing library not available. Please install with: pip install tldw-chatbook[audio]", severity="error")
+                status_area.load_text("Error: Audio processing library not available.\nPlease install with: pip install tldw-chatbook[audio]")
+                return
+            
+            # Create processor instance
+            processor = LocalAudioProcessor(self.app_instance.media_db)
+            
+            # Process audio files
+            status_area.load_text("Processing audio files...\n")
+            
+            results = processor.process_audio_files(
+                inputs=all_inputs,
+                transcription_model=transcription_model,
+                transcription_language=transcription_language,
+                perform_chunking=perform_chunking,
+                chunk_method=chunk_method,
+                max_chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                use_adaptive_chunking=use_adaptive_chunking,
+                use_multi_level_chunking=use_multi_level_chunking,
+                chunk_language=chunk_language or transcription_language,
+                diarize=diarize,
+                vad_use=vad_filter,
+                timestamp_option=timestamps,
+                perform_analysis=perform_analysis,
+                api_name=api_name,
+                api_key=api_key,
+                custom_prompt=custom_prompt,
+                system_prompt=system_prompt,
+                summarize_recursively=summarize_recursively,
+                use_cookies=use_cookies,
+                cookies=cookies,
+                keep_original=keep_original,
+                custom_title=title_override,
+                author=author
+            )
+            
+            # Display results
+            processed_count = results.get("processed_count", 0)
+            errors_count = results.get("errors_count", 0)
+            
+            status_messages = [f"Processing complete: {processed_count} succeeded, {errors_count} failed\n"]
+            
+            for result in results.get("results", []):
+                input_ref = result.get("input_ref", "Unknown")
+                status = result.get("status", "Unknown")
+                title = result.get("metadata", {}).get("title", "Untitled")
+                
+                if status == "Success":
+                    status_messages.append(f"✓ {title} ({input_ref})")
+                else:
+                    error = result.get("error", "Unknown error")
+                    status_messages.append(f"✗ {input_ref}: {error}")
+            
+            status_area.load_text("\n".join(status_messages))
+            
+            if processed_count > 0:
+                self.app_instance.notify(f"Successfully processed {processed_count} audio file(s)", severity="information")
+            if errors_count > 0:
+                self.app_instance.notify(f"{errors_count} file(s) failed to process", severity="warning")
+            
+        except Exception as e:
+            logger.error(f"Error processing audio files: {e}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+            status_area.load_text(f"Error: {str(e)}")
+        finally:
+            # Hide loading state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+
+    async def handle_local_video_process(self) -> None:
+        """Handle processing of local video files."""
+        logger.info("Processing local video files")
+        
+        # Get UI elements
+        try:
+            loading_indicator = self.query_one("#local-loading-indicator-video", LoadingIndicator)
+            status_area = self.query_one("#local-status-video", TextArea)
+            process_button = self.query_one("#local-submit-video", Button)
+        except Exception as e:
+            logger.error(f"Error finding UI elements: {e}")
+            self.app_instance.notify("Error: UI elements not found", severity="error")
+            return
+        
+        # Show loading state
+        loading_indicator.display = True
+        loading_indicator.classes = loading_indicator.classes - {"hidden"}
+        status_area.clear()
+        status_area.load_text("Processing video files locally...")
+        status_area.display = True
+        status_area.classes = status_area.classes - {"hidden"}
+        process_button.disabled = True
+        
+        try:
+            # Get selected files
+            local_key = "local_video"
+            selected_files = self.selected_local_files.get(local_key, [])
+            
+            # Also check URLs
+            urls_textarea = self.query_one("#local-urls-video", TextArea)
+            urls_text = urls_textarea.text.strip()
+            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            
+            # Combine all inputs
+            all_inputs = []
+            if selected_files:
+                all_inputs.extend([str(f) for f in selected_files])
+            if urls:
+                all_inputs.extend(urls)
+            
+            if not all_inputs:
+                self.app_instance.notify("Please select at least one video file or provide URLs", severity="warning")
+                return
+            
+            # Get metadata
+            title_override = self.query_one("#local-title-video", Input).value.strip()
+            author = self.query_one("#local-author-video", Input).value.strip()
+            keywords_text = self.query_one("#local-keywords-video", TextArea).text.strip()
+            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
+            
+            # Get video processing options
+            extract_audio_only = self.query_one("#local-extract-audio-only-video", Checkbox).value
+            download_video = self.query_one("#local-download-video-video", Checkbox).value
+            start_time = self.query_one("#local-start-time-video", Input).value.strip()
+            end_time = self.query_one("#local-end-time-video", Input).value.strip()
+            
+            # Get transcription options
+            transcription_model = self.query_one("#local-transcription-model-video", Input).value.strip() or "base"
+            transcription_language = self.query_one("#local-transcription-language-video", Input).value.strip() or "en"
+            vad_filter = self.query_one("#local-vad-filter-video", Checkbox).value
+            diarize = self.query_one("#local-diarize-video", Checkbox).value
+            timestamps = self.query_one("#local-timestamps-video", Checkbox).value
+            
+            # Get processing options
+            perform_analysis = self.query_one("#local-perform-analysis-video", Checkbox).value
+            custom_prompt = self.query_one("#local-custom-prompt-video", TextArea).text.strip()
+            system_prompt = self.query_one("#local-system-prompt-video", TextArea).text.strip()
+            
+            # Get API options for analysis
+            api_name = None
+            api_key = None
+            if perform_analysis:
+                api_name_select = self.query_one("#local-analysis-api-name-video", Select)
+                if api_name_select.value != Select.BLANK:
+                    api_name = str(api_name_select.value)
+                    api_key_input = self.query_one("#local-analysis-api-key-video", Input)
+                    api_key = api_key_input.value.strip() if api_key_input.value else None
+                    
+                    # If no API key provided in UI, try to get from config
+                    if not api_key and api_name:
+                        from ..config import get_api_key
+                        api_key = get_api_key(api_name)
+            
+            # Get chunking options
+            perform_chunking = self.query_one("#local-perform-chunking-video", Checkbox).value
+            chunk_method = self.query_one("#local-chunk-method-video", Select).value
+            chunk_size = int(self.query_one("#local-chunk-size-video", Input).value or "500")
+            chunk_overlap = int(self.query_one("#local-chunk-overlap-video", Input).value or "200")
+            use_adaptive_chunking = self.query_one("#local-use-adaptive-chunking-video", Checkbox).value
+            use_multi_level_chunking = self.query_one("#local-use-multi-level-chunking-video", Checkbox).value
+            chunk_language = self.query_one("#local-chunk-language-video", Input).value.strip()
+            summarize_recursively = self.query_one("#local-summarize-recursively-video", Checkbox).value
+            
+            # Get cookie options
+            use_cookies = self.query_one("#local-use-cookies-video", Checkbox).value
+            cookies = self.query_one("#local-cookies-video", TextArea).text.strip()
+            
+            # Other options
+            keep_original = self.query_one("#local-keep-original-video", Checkbox).value
+            
+            # Check if media DB is available
+            if not self.app_instance.media_db:
+                logger.error("Media database not initialized")
+                self.app_instance.notify("Error: Media database not available", severity="error")
+                status_area.load_text("Error: Media database not available")
+                return
+            
+            # Import the video processing function
+            try:
+                from ..Local_Ingestion import LocalVideoProcessor
+            except ImportError as e:
+                logger.error(f"Failed to import video processing library: {e}")
+                self.app_instance.notify("Error: Video processing library not available. Please install with: pip install tldw-chatbook[video]", severity="error")
+                status_area.load_text("Error: Video processing library not available.\nPlease install with: pip install tldw-chatbook[video]")
+                return
+            
+            # Create processor instance
+            processor = LocalVideoProcessor(self.app_instance.media_db)
+            
+            # Process video files
+            status_area.load_text("Processing video files...\n")
+            
+            results = processor.process_videos(
+                inputs=all_inputs,
+                download_video_flag=download_video and not extract_audio_only,
+                start_time=start_time,
+                end_time=end_time,
+                transcription_model=transcription_model,
+                transcription_language=transcription_language,
+                perform_chunking=perform_chunking,
+                chunk_method=chunk_method,
+                max_chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                use_adaptive_chunking=use_adaptive_chunking,
+                use_multi_level_chunking=use_multi_level_chunking,
+                chunk_language=chunk_language or transcription_language,
+                diarize=diarize,
+                vad_use=vad_filter,
+                timestamp_option=timestamps,
+                perform_analysis=perform_analysis,
+                api_name=api_name,
+                api_key=api_key,
+                custom_prompt=custom_prompt,
+                system_prompt=system_prompt,
+                summarize_recursively=summarize_recursively,
+                use_cookies=use_cookies,
+                cookies=cookies,
+                keep_original=keep_original,
+                custom_title=title_override,
+                author=author
+            )
+            
+            # Display results
+            processed_count = results.get("processed_count", 0)
+            errors_count = results.get("errors_count", 0)
+            
+            status_messages = [f"Processing complete: {processed_count} succeeded, {errors_count} failed\n"]
+            
+            for result in results.get("results", []):
+                input_ref = result.get("input_ref", "Unknown")
+                status = result.get("status", "Unknown")
+                title = result.get("metadata", {}).get("title", "Untitled")
+                
+                if status == "Success":
+                    status_messages.append(f"✓ {title} ({input_ref})")
+                else:
+                    error = result.get("error", "Unknown error")
+                    status_messages.append(f"✗ {input_ref}: {error}")
+            
+            status_area.load_text("\n".join(status_messages))
+            
+            if processed_count > 0:
+                self.app_instance.notify(f"Successfully processed {processed_count} video file(s)", severity="information")
+            if errors_count > 0:
+                self.app_instance.notify(f"{errors_count} file(s) failed to process", severity="warning")
+            
+        except Exception as e:
+            logger.error(f"Error processing video files: {e}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+            status_area.load_text(f"Error: {str(e)}")
+        finally:
+            # Hide loading state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
 
 #
 # End of Ingest_Window.py

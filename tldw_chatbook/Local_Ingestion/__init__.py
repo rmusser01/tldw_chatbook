@@ -3,7 +3,7 @@
 Local file ingestion module for programmatic access.
 
 This module provides functions to ingest various file types (PDFs, documents, 
-e-books, etc.) into the Media database without using the UI.
+e-books, audio, video, etc.) into the Media database without using the UI.
 """
 
 from .local_file_ingestion import (
@@ -16,6 +16,11 @@ from .local_file_ingestion import (
     FileIngestionError
 )
 
+# Audio/Video processing classes for direct access
+from .audio_processing import LocalAudioProcessor, AudioProcessingError
+from .video_processing import LocalVideoProcessor, VideoProcessingError
+from .transcription_service import TranscriptionService, TranscriptionError
+
 __all__ = [
     'ingest_local_file',
     'batch_ingest_files', 
@@ -23,5 +28,12 @@ __all__ = [
     'quick_ingest',
     'detect_file_type',
     'get_supported_extensions',
-    'FileIngestionError'
+    'FileIngestionError',
+    # Audio/Video processing
+    'LocalAudioProcessor',
+    'LocalVideoProcessor',
+    'TranscriptionService',
+    'AudioProcessingError',
+    'VideoProcessingError',
+    'TranscriptionError'
 ]

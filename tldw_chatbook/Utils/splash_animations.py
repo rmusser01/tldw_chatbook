@@ -4004,11 +4004,15 @@ class MiningEffect(BaseEffect):
                 
             # Mine in expanding pattern from center
             for line_idx, line in enumerate(self.content_lines):
+                # Check line_idx bounds
+                if line_idx >= self.height:
+                    break
                 if abs(line_idx - center_y) <= distance:
                     for char_idx, char in enumerate(line):
                         if revealed_count >= cells_to_reveal:
                             break
-                        if not self.reveal_grid[line_idx][char_idx] and char != ' ':
+                        # Check bounds to prevent IndexError
+                        if char_idx < self.width and not self.reveal_grid[line_idx][char_idx] and char != ' ':
                             self.reveal_grid[line_idx][char_idx] = True
                             # Set mining stage (gradually dig through stone)
                             self.mining_grid[line_idx][char_idx] = min(4, int(self.mining_progress * 8))

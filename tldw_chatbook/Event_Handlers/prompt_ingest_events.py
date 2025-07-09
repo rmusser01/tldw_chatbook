@@ -19,7 +19,7 @@ from ..Prompt_Management.Prompts_Interop import (
     is_initialized as prompts_db_initialized,
     import_prompts_from_files, _get_file_type as _get_prompt_file_type
 )
-from ..Third_Party.textual_fspicker import FileOpen
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
 from .ingest_utils import (
     PROMPT_FILE_FILTERS,
     MAX_PROMPT_PREVIEWS,
@@ -185,8 +185,7 @@ async def handle_ingest_prompts_select_file_button_pressed(app: 'TldwCli', event
     logger.debug("Select Prompt File(s) button pressed. Opening file dialog.")
     current_dir = app.last_prompt_import_dir or Path(".")
     await app.push_screen(
-        FileOpen(
-            location=str(current_dir),
+        FileOpen(location=str(current_dir, context="prompt_ingest"),
             title="Select Prompt File (.md, .json, .yaml, .txt)",
             filters=PROMPT_FILE_FILTERS
         ),

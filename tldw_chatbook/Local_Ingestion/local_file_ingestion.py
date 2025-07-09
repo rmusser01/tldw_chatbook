@@ -16,6 +16,8 @@ from loguru import logger
 from .PDF_Processing_Lib import process_pdf
 from .Document_Processing_Lib import process_document
 from .Book_Ingestion_Lib import process_ebook
+from .audio_processing import LocalAudioProcessor
+from .video_processing import LocalVideoProcessor
 
 # Import database
 from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -66,10 +68,19 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
     elif extension in ['.txt', '.md', '.markdown', '.rst', '.log', '.csv']:
         return 'plaintext'
     
+    # Audio files
+    elif extension in ['.mp3', '.m4a', '.wav', '.flac', '.ogg', '.aac', '.wma', '.opus']:
+        return 'audio'
+    
+    # Video files
+    elif extension in ['.mp4', '.avi', '.mkv', '.mov', '.webm', '.flv', '.wmv', '.m4v', '.mpg', '.mpeg']:
+        return 'video'
+    
     else:
         raise FileIngestionError(
             f"Unsupported file type: {extension}. "
-            f"Supported types: PDF, DOCX, ODT, RTF, EPUB, MOBI, AZW, FB2, XML, HTML, TXT, MD"
+            f"Supported types: PDF, DOCX, ODT, RTF, EPUB, MOBI, AZW, FB2, XML, HTML, TXT, MD, "
+            f"MP3, M4A, WAV, FLAC, OGG, AAC, MP4, AVI, MKV, MOV, WEBM"
         )
 
 
@@ -86,7 +97,9 @@ def get_supported_extensions() -> Dict[str, List[str]]:
         'ebook': ['.epub', '.mobi', '.azw', '.azw3', '.fb2'],
         'xml': ['.xml', '.rss', '.atom'],
         'html': ['.html', '.htm'],
-        'plaintext': ['.txt', '.md', '.markdown', '.rst', '.log', '.csv']
+        'plaintext': ['.txt', '.md', '.markdown', '.rst', '.log', '.csv'],
+        'audio': ['.mp3', '.m4a', '.wav', '.flac', '.ogg', '.aac', '.wma', '.opus'],
+        'video': ['.mp4', '.avi', '.mkv', '.mov', '.webm', '.flv', '.wmv', '.m4v', '.mpg', '.mpeg']
     }
 
 
@@ -185,7 +198,9 @@ def ingest_local_file(
         'ebook': 'ebook',
         'xml': 'xml',
         'plaintext': 'plaintext',
-        'html': 'web_article'  # HTML files map to web_article config
+        'html': 'web_article',  # HTML files map to web_article config
+        'audio': 'audio',
+        'video': 'video'
     }
     
     media_type = file_type_to_media_type.get(file_type, file_type)
@@ -254,6 +269,101 @@ def ingest_local_file(
                 api_name=api_name,
                 api_key=api_key
             )
+            
+        elif file_type == 'audio':
+            # Initialize audio processor
+            audio_processor = LocalAudioProcessor(media_db)
+            
+            # Process single audio file
+            results = audio_processor.process_audio_files(
+                inputs=[str(file_path)],
+                transcription_model=chunk_options.get('transcription_model', 'base'),
+                transcription_language=chunk_options.get('transcription_language', 'en'),
+                perform_chunking=True,
+                chunk_method=chunk_options.get('method', 'sentences'),
+                max_chunk_size=chunk_options.get('size', 500),
+                chunk_overlap=chunk_options.get('overlap', 200),
+                use_adaptive_chunking=chunk_options.get('adaptive', False),
+                use_multi_level_chunking=chunk_options.get('multi_level', False),
+                chunk_language=chunk_options.get('language', 'en'),
+                diarize=chunk_options.get('diarize', False),
+                vad_use=chunk_options.get('vad_filter', False),
+                timestamp_option=True,
+                perform_analysis=perform_analysis,
+                api_name=api_name,
+                api_key=api_key,
+                custom_prompt=custom_prompt,
+                system_prompt=system_prompt,
+                summarize_recursively=chunk_options.get('recursive_summary', False),
+                custom_title=title,
+                author=author
+            )
+            
+            # Extract first (and only) result
+            if results['results']:
+                result_data = results['results'][0]
+                if result_data['status'] == 'Error':
+                    raise FileIngestionError(f"Audio processing failed: {result_data.get('error', 'Unknown error')}")
+                    
+                result = {
+                    'content': result_data.get('content', ''),
+                    'title': result_data.get('metadata', {}).get('title', title),
+                    'author': result_data.get('metadata', {}).get('author', author or 'Unknown'),
+                    'keywords': keywords,
+                    'chunks': result_data.get('chunks', []),
+                    'analysis': result_data.get('analysis', ''),
+                    'metadata': result_data.get('metadata', {})
+                }
+            else:
+                raise FileIngestionError("Audio processing returned no results")
+                
+        elif file_type == 'video':
+            # Initialize video processor
+            video_processor = LocalVideoProcessor(media_db)
+            
+            # Process single video file
+            results = video_processor.process_videos(
+                inputs=[str(file_path)],
+                download_video_flag=False,  # Extract audio only for transcription
+                transcription_model=chunk_options.get('transcription_model', 'base'),
+                transcription_language=chunk_options.get('transcription_language', 'en'),
+                perform_chunking=True,
+                chunk_method=chunk_options.get('method', 'sentences'),
+                max_chunk_size=chunk_options.get('size', 500),
+                chunk_overlap=chunk_options.get('overlap', 200),
+                use_adaptive_chunking=chunk_options.get('adaptive', False),
+                use_multi_level_chunking=chunk_options.get('multi_level', False),
+                chunk_language=chunk_options.get('language', 'en'),
+                diarize=chunk_options.get('diarize', False),
+                vad_use=chunk_options.get('vad_filter', False),
+                timestamp_option=True,
+                perform_analysis=perform_analysis,
+                api_name=api_name,
+                api_key=api_key,
+                custom_prompt=custom_prompt,
+                system_prompt=system_prompt,
+                summarize_recursively=chunk_options.get('recursive_summary', False),
+                custom_title=title,
+                author=author
+            )
+            
+            # Extract first (and only) result
+            if results['results']:
+                result_data = results['results'][0]
+                if result_data['status'] == 'Error':
+                    raise FileIngestionError(f"Video processing failed: {result_data.get('error', 'Unknown error')}")
+                    
+                result = {
+                    'content': result_data.get('content', ''),
+                    'title': result_data.get('metadata', {}).get('title', title),
+                    'author': result_data.get('metadata', {}).get('author', author or 'Unknown'),
+                    'keywords': keywords,
+                    'chunks': result_data.get('chunks', []),
+                    'analysis': result_data.get('analysis', ''),
+                    'metadata': result_data.get('metadata', {})
+                }
+            else:
+                raise FileIngestionError("Video processing returned no results")
             
         elif file_type == 'xml':
             # XML processing not yet implemented in the expected format

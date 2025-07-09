@@ -15,6 +15,7 @@ from textual.reactive import reactive
 # Local Imports
 from ..Widgets.settings_sidebar import create_settings_sidebar
 from ..Widgets.chat_right_sidebar import create_chat_right_sidebar
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
     EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON, EMOJI_STOP, FALLBACK_STOP
@@ -151,7 +152,6 @@ class ChatWindowEnhanced(Container):
             # Normal mode - use file picker dialog
             pass
         
-        from ..Third_Party.textual_fspicker import FileOpen, Filters
         from fnmatch import fnmatch
         from pathlib import Path
         
@@ -184,11 +184,10 @@ class ChatWindowEnhanced(Container):
         
         # Push the FileOpen dialog directly
         self.app_instance.push_screen(
-            FileOpen(
-                location=".",
+            FileOpen(location=".",
                 title="Select File to Attach",
-                filters=file_filters
-            ),
+                filters=file_filters,
+                context="chat_images"),
             callback=on_file_selected
         )
 

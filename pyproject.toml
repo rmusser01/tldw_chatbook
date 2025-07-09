@@ -119,6 +119,27 @@ ebook = [
     "markdownify",
     "defusedxml",
 ]
+audio = [
+    "soundfile",
+    "scipy",
+    "faster-whisper",
+    "yt-dlp",
+    "numpy",
+]
+video = [
+    "soundfile",
+    "scipy",
+    "faster-whisper",
+    "yt-dlp",
+    "numpy",
+]
+media_processing = [
+    "soundfile",
+    "scipy",
+    "faster-whisper",
+    "yt-dlp",
+    "numpy",
+]
 dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests

@@ -17,6 +17,7 @@ from textual.containers import Container, VerticalScroll, Horizontal
 from textual.css.query import QueryError
 from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible
 from textual.worker import Worker
+from textual.widgets import Markdown
 # Local Imports
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, 
@@ -248,6 +249,20 @@ class ToolsSettingsWindow(Container):
     
     .encryption-button-group Button {
         margin-right: 1;
+    }
+    
+    .about-content {
+        padding: 2;
+        margin: 1;
+        background: $boost;
+        border: solid $background;
+    }
+    
+    .about-version {
+        text-align: center;
+        color: $text-muted;
+        margin-top: 2;
+        text-style: italic;
     }
     """
     
@@ -1792,6 +1807,49 @@ class ToolsSettingsWindow(Container):
             classes="section-description"
         )
 
+    def _compose_about(self) -> ComposeResult:
+        """Compose the About section."""
+        yield Static("About tldw-chatbook", classes="section-title")
+        yield Static("Information about the tldw-chatbook project", classes="section-description")
+        
+        about_text = """
+[bold]tldw-chatbook[/bold] is a sophisticated Terminal User Interface (TUI) application for interacting with various Large Language Model APIs.
+
+[italic]Features:[/italic]
+• Multi-provider LLM support (OpenAI, Anthropic, Google, and many more)
+• Advanced conversation management with branching
+• Character-based conversations with personality cards
+• Comprehensive note-taking with bidirectional file sync
+• Media ingestion and analysis (video, audio, documents, PDFs, e-books)
+• RAG (Retrieval-Augmented Generation) for intelligent search
+• Local LLM server management
+• Extensive customization options
+
+[italic]License:[/italic] AGPLv3+
+
+[italic]Links:[/italic]
+• GitHub: [link=https://github.com/rmusser01/tldw]https://github.com/rmusser01/tldw[/link]
+• Documentation: [link=https://github.com/rmusser01/tldw/wiki]https://github.com/rmusser01/tldw/wiki[/link]
+• Issues: [link=https://github.com/rmusser01/tldw/issues]https://github.com/rmusser01/tldw/issues[/link]
+
+[italic]Created by:[/italic] rmusser01 and contributors
+
+Thank you for using tldw-chatbook! 🎉
+        """
+        
+        yield Markdown(about_text.strip(), classes="about-content")
+        
+        # Add some styling
+        yield Static("", classes="settings-separator")
+        
+        # Version info
+        try:
+            import importlib.metadata
+            version = importlib.metadata.version("tldw-chatbook")
+            yield Static(f"Version: {version}", classes="about-version")
+        except Exception:
+            yield Static("Version: Development", classes="about-version")
+
     def compose(self) -> ComposeResult:
         with Container(id="tools-settings-nav-pane", classes="tools-nav-pane"):
             yield Static("Navigation", classes="sidebar-title")
@@ -1799,6 +1857,7 @@ class ToolsSettingsWindow(Container):
             yield Button("Configuration File Settings", id="ts-nav-config-file-settings", classes="ts-nav-button")
             yield Button("Database Tools", id="ts-nav-db-tools", classes="ts-nav-button")
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
+            yield Button("About", id="ts-nav-about", classes="ts-nav-button")
 
         with ContentSwitcher(id="tools-settings-content-pane", classes="tools-content-pane", initial="ts-view-general-settings"):
             yield Container(
@@ -1821,7 +1880,21 @@ class ToolsSettingsWindow(Container):
                 id="ts-view-appearance",
                 classes="ts-view-area",
             )
+            yield Container(
+                *self._compose_about(),
+                id="ts-view-about",
+                classes="ts-view-area",
+            )
 
+    async def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Handle clicks on links in markdown content."""
+        import webbrowser
+        try:
+            webbrowser.open(event.href)
+            self.app_instance.notify(f"Opening {event.href} in browser...", severity="information")
+        except Exception as e:
+            self.app_instance.notify(f"Failed to open link: {e}", severity="error")
+    
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Event handler called when a button is pressed."""
         button_id = event.button.id
@@ -1835,6 +1908,8 @@ class ToolsSettingsWindow(Container):
             await self._show_view("ts-view-db-tools")
         elif button_id == "ts-nav-appearance":
             await self._show_view("ts-view-appearance")
+        elif button_id == "ts-nav-about":
+            await self._show_view("ts-view-about")
             
         # General Settings handlers
         elif button_id == "save-general-settings":

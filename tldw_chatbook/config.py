@@ -167,6 +167,31 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "use_adaptive_chunking": False,
         "use_multi_level_chunking": False,
         "chunk_language": ""
+    },
+    "audio": {
+        "chunk_method": "sentences",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": "",
+        "transcription_model": "base",
+        "transcription_language": "en",
+        "vad_filter": False,
+        "diarize": False
+    },
+    "video": {
+        "chunk_method": "sentences",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": "",
+        "transcription_model": "base",
+        "transcription_language": "en",
+        "vad_filter": False,
+        "diarize": False,
+        "extract_audio_only": True
     }
 }
 
@@ -1970,6 +1995,67 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # [search_settings]
 # default_provider = "google"
 # ...
+
+# ============================================================================
+# Media Processing Configuration
+# ============================================================================
+
+[media_processing]
+# Maximum file sizes for processing
+max_audio_file_size_mb = 500
+max_video_file_size_mb = 2000
+
+# FFmpeg path (optional - will try to find automatically if not set)
+# ffmpeg_path = "/usr/bin/ffmpeg"
+
+# Temporary file cleanup
+cleanup_temp_files = true
+temp_dir = ""  # Empty means use system temp
+
+[transcription]
+# Default transcription provider
+# Options: "faster-whisper", "qwen2audio"
+default_provider = "faster-whisper"
+
+# Default model for transcription
+# For faster-whisper: tiny, base, small, medium, large-v1, large-v2, large-v3, distil-large-v3
+# For qwen2audio: Qwen2-Audio-7B-Instruct
+default_model = "base"
+
+# Default language for transcription (use "auto" for automatic detection)
+default_language = "en"
+
+# Device to use for transcription
+# Options: "cpu", "cuda", "mps" (Apple Silicon)
+device = "cpu"
+
+# Compute type for faster-whisper
+# Options: "int8", "float16", "float32"
+compute_type = "int8"
+
+# Voice Activity Detection
+use_vad_by_default = false
+
+# Speaker diarization (not yet fully implemented)
+use_diarization_by_default = false
+
+[local_ingestion]
+# YouTube/URL download settings
+enable_url_downloads = true
+use_cookies_for_downloads = false
+cookie_file_path = ""
+
+# Audio extraction settings for videos
+extract_audio_format = "mp3"
+audio_bitrate = "192k"
+audio_sample_rate = 44100
+
+# Processing defaults
+keep_original_files = false
+auto_analyze_transcripts = true
+
+# Parallel processing
+max_concurrent_processes = 2
 """
 
 try:
