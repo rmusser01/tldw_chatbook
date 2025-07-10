@@ -66,7 +66,7 @@ class ChatTabBar(Horizontal):
                 tooltip="New chat tab (Ctrl+T)"
             )
     
-    def add_tab(self, session_data: ChatSessionData) -> None:
+    async def add_tab(self, session_data: ChatSessionData) -> None:
         """
         Add a new tab to the tab bar.
         
@@ -74,12 +74,6 @@ class ChatTabBar(Horizontal):
             session_data: The session data for the new tab
         """
         tab_id = session_data.tab_id
-        
-        # Create tab button with close button
-        tab_container = Horizontal(
-            classes="chat-tab-container",
-            id=f"tab-container-{tab_id}"
-        )
         
         # Character icon if assigned
         icon = ""
@@ -102,14 +96,20 @@ class ChatTabBar(Horizontal):
             name=tab_id  # Store tab_id in name for easy access
         )
         
-        # Mount the buttons in the scroll container
+        # Create tab container with buttons already as children
+        tab_container = Horizontal(
+            tab_button,
+            close_button,
+            classes="chat-tab-container",
+            id=f"tab-container-{tab_id}"
+        )
+        
+        # Mount the container in the scroll container
         scroll_container = self.query_one("#chat-tabs-scroll", HorizontalScroll)
         
         # Mount before the new tab button
         new_tab_button = self.query_one("#new-chat-tab-button", Button)
-        tab_container.mount(tab_button)
-        tab_container.mount(close_button)
-        scroll_container.mount(tab_container, before=new_tab_button)
+        await scroll_container.mount(tab_container, before=new_tab_button)
         
         # Store reference
         self.tab_buttons[tab_id] = tab_button

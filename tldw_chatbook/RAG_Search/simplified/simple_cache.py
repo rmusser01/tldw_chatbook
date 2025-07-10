@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from collections import OrderedDict
 import logging
 import sys
+import asyncio
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 
@@ -36,13 +37,14 @@ class CacheEntry:
 
 class SimpleRAGCache:
     """
-    Simple LRU cache for RAG search results.
+    Simple LRU cache for RAG search results with async-safe operations.
     
     Features:
     - LRU eviction policy
     - TTL support
     - Size limits
     - Basic metrics
+    - Async-safe for single-user Textual app
     """
     
     def __init__(self, 
@@ -64,11 +66,16 @@ class SimpleRAGCache:
         # Use OrderedDict for LRU behavior
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         
+        # Use asyncio.Lock for async-safe operations
+        self._lock = asyncio.Lock()
+        
         # Metrics
         self._hits = 0
         self._misses = 0
         self._evictions = 0
         self._total_requests = 0
+        self._last_prune_time = time.time()
+        self._prune_interval = min(ttl_seconds / 2, 1800)  # Prune every half TTL or 30 minutes, whichever is less
         
         # Log initialization
         logger.info(f"Cache initialized: max_size={max_size}, ttl={ttl_seconds}s, enabled={enabled}")
@@ -84,6 +91,8 @@ class SimpleRAGCache:
         """
         Create a cache key from search parameters.
         
+        Uses xxhash for better performance than MD5.
+        
         Args:
             query: The search query
             search_type: Type of search (semantic, hybrid, keyword)
@@ -94,26 +103,29 @@ class SimpleRAGCache:
             A unique cache key
         """
         # Create a stable representation of the parameters
-        key_parts = {
-            "query": query.lower().strip(),
-            "type": search_type,
-            "top_k": top_k,
-            "filters": filters or {}
-        }
+        key_parts = [
+            query.lower().strip(),
+            search_type,
+            str(top_k),
+            json.dumps(filters or {}, sort_keys=True)
+        ]
         
-        # Create a deterministic JSON string
-        key_json = json.dumps(key_parts, sort_keys=True)
-        
-        # Hash it for a compact key
-        return hashlib.md5(key_json.encode()).hexdigest()
+        # Use a faster hash function - fallback to md5 if xxhash not available
+        key_str = "|".join(key_parts)
+        try:
+            import xxhash
+            return xxhash.xxh64(key_str.encode()).hexdigest()
+        except ImportError:
+            # Fallback to builtin hash for performance over cryptographic security
+            return str(hash(key_str))
     
-    def get(self, 
-            query: str,
-            search_type: str,
-            top_k: int,
-            filters: Optional[Dict[str, Any]] = None) -> Optional[Tuple[List[Any], str]]:
+    async def get_async(self, 
+                       query: str,
+                       search_type: str,
+                       top_k: int,
+                       filters: Optional[Dict[str, Any]] = None) -> Optional[Tuple[List[Any], str]]:
         """
-        Get cached search results.
+        Async-safe get cached search results.
         
         Args:
             query: The search query
@@ -127,55 +139,97 @@ class SimpleRAGCache:
         if not self.enabled:
             return None
         
-        self._total_requests += 1
-        key = self._make_key(query, search_type, top_k, filters)
-        log_counter("cache_request", labels={"type": search_type})
-        
-        if key not in self._cache:
-            self._misses += 1
-            log_counter("cache_miss", labels={"type": search_type})
-            logger.debug(f"Cache miss for query: '{query[:50]}...'")
-            return None
-        
-        entry = self._cache[key]
-        
-        # Check TTL
-        age = time.time() - entry.timestamp
-        if age > self.ttl_seconds:
-            # Expired
-            del self._cache[key]
-            self._misses += 1
-            log_counter("cache_expired", labels={"type": search_type})
-            log_histogram("cache_entry_expired_age_seconds", age)
-            logger.debug(f"Cache entry expired for query: '{query[:50]}...' (age: {age:.1f}s)")
-            return None
-        
-        # Move to end (most recently used)
-        self._cache.move_to_end(key)
-        entry.access()
-        
-        self._hits += 1
-        log_counter("cache_hit", labels={"type": search_type})
-        log_histogram("cache_entry_age_seconds", age)
-        log_histogram("cache_entry_access_count", entry.access_count)
-        
-        # Update hit rate metric
-        hit_rate = self._hits / (self._hits + self._misses) if (self._hits + self._misses) > 0 else 0
-        log_gauge("cache_hit_rate", hit_rate)
-        
-        logger.debug(f"Cache hit for query: '{query[:50]}...' (age: {age:.1f}s, accesses: {entry.access_count})")
-        
-        return entry.value
+        async with self._lock:
+            self._total_requests += 1
+            
+            # Check if we need to prune expired entries
+            current_time = time.time()
+            if current_time - self._last_prune_time > self._prune_interval:
+                await self._prune_expired_async()
+                self._last_prune_time = current_time
+            
+            key = self._make_key(query, search_type, top_k, filters)
+            log_counter("cache_request", labels={"type": search_type})
+            
+            if key not in self._cache:
+                self._misses += 1
+                log_counter("cache_miss", labels={"type": search_type})
+                logger.debug(f"Cache miss for query: '{query[:50]}...'")
+                return None
+            
+            entry = self._cache[key]
+            
+            # Check TTL
+            age = time.time() - entry.timestamp
+            if age > self.ttl_seconds:
+                # Expired
+                del self._cache[key]
+                self._misses += 1
+                log_counter("cache_expired", labels={"type": search_type})
+                log_histogram("cache_entry_expired_age_seconds", age)
+                logger.debug(f"Cache entry expired for query: '{query[:50]}...' (age: {age:.1f}s)")
+                return None
+            
+            # Move to end (most recently used)
+            self._cache.move_to_end(key)
+            entry.access()
+            
+            self._hits += 1
+            log_counter("cache_hit", labels={"type": search_type})
+            log_histogram("cache_entry_age_seconds", age)
+            log_histogram("cache_entry_access_count", entry.access_count)
+            
+            # Update hit rate metric
+            hit_rate = self._hits / (self._hits + self._misses) if (self._hits + self._misses) > 0 else 0
+            log_gauge("cache_hit_rate", hit_rate)
+            
+            logger.debug(f"Cache hit for query: '{query[:50]}...' (age: {age:.1f}s, accesses: {entry.access_count})")
+            
+            return entry.value
     
-    def put(self,
+    def get(self, 
             query: str,
             search_type: str,
             top_k: int,
-            results: List[Any],
-            context: str,
-            filters: Optional[Dict[str, Any]] = None) -> None:
+            filters: Optional[Dict[str, Any]] = None) -> Optional[Tuple[List[Any], str]]:
         """
-        Cache search results.
+        Thread-safe synchronous cache get.
+        
+        This method is safe to call from any context and will not cause deadlocks.
+        For better performance in async contexts, use get_async() directly.
+        """
+        if not self.enabled:
+            return None
+        
+        # Use a separate thread to avoid event loop conflicts
+        import concurrent.futures
+        import threading
+        
+        # Check if we're in an async context
+        try:
+            asyncio.get_running_loop()
+            # We're in an async context, use thread pool to avoid blocking
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._sync_get_impl, query, search_type, top_k, filters)
+                return future.result(timeout=1.0)  # 1 second timeout for cache operations
+        except RuntimeError:
+            # No running loop, safe to run directly
+            return self._sync_get_impl(query, search_type, top_k, filters)
+    
+    def _sync_get_impl(self, query: str, search_type: str, top_k: int, 
+                       filters: Optional[Dict[str, Any]]) -> Optional[Tuple[List[Any], str]]:
+        """Internal synchronous implementation using asyncio.run."""
+        return asyncio.run(self.get_async(query, search_type, top_k, filters))
+    
+    async def put_async(self,
+                       query: str,
+                       search_type: str,
+                       top_k: int,
+                       results: List[Any],
+                       context: str,
+                       filters: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Async-safe cache search results.
         
         Args:
             query: The search query
@@ -188,54 +242,110 @@ class SimpleRAGCache:
         if not self.enabled:
             return
         
-        key = self._make_key(query, search_type, top_k, filters)
-        
-        # Check if we need to evict
-        if len(self._cache) >= self.max_size and key not in self._cache:
-            # Evict least recently used
-            oldest_key = next(iter(self._cache))
-            evicted_entry = self._cache[oldest_key]
-            del self._cache[oldest_key]
-            self._evictions += 1
+        async with self._lock:
+            key = self._make_key(query, search_type, top_k, filters)
             
-            # Log eviction details
-            log_counter("cache_eviction", labels={"type": search_type})
-            eviction_age = time.time() - evicted_entry.timestamp
-            log_histogram("cache_evicted_entry_age_seconds", eviction_age)
-            log_histogram("cache_evicted_entry_access_count", evicted_entry.access_count)
-            logger.debug(f"Evicted cache entry (age: {eviction_age:.1f}s, accesses: {evicted_entry.access_count})")
+            # Check if we need to evict
+            if len(self._cache) >= self.max_size and key not in self._cache:
+                # Evict least recently used
+                oldest_key = next(iter(self._cache))
+                evicted_entry = self._cache[oldest_key]
+                del self._cache[oldest_key]
+                self._evictions += 1
+                
+                # Log eviction details
+                log_counter("cache_eviction", labels={"type": search_type})
+                eviction_age = time.time() - evicted_entry.timestamp
+                log_histogram("cache_evicted_entry_age_seconds", eviction_age)
+                log_histogram("cache_evicted_entry_access_count", evicted_entry.access_count)
+                logger.debug(f"Evicted cache entry (age: {eviction_age:.1f}s, accesses: {evicted_entry.access_count})")
+            
+            # Store the entry
+            entry = CacheEntry(
+                key=key,
+                value=(results, context),
+                timestamp=time.time()
+            )
+            
+            self._cache[key] = entry
+            # Move to end (most recently used)
+            self._cache.move_to_end(key)
+            
+            # Log cache statistics
+            log_counter("cache_put", labels={"type": search_type})
+            log_histogram("cache_result_count", len(results))
+            log_histogram("cache_context_size", len(context))
+            log_gauge("cache_current_size", len(self._cache))
+            log_gauge("cache_eviction_count", self._evictions)
+            
+            # Estimate memory usage for this entry
+            entry_size = sys.getsizeof(results) + sys.getsizeof(context)
+            log_histogram("cache_entry_size_bytes", entry_size)
+            
+            logger.debug(f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_size} bytes)")
+    
+    def put(self,
+            query: str,
+            search_type: str,
+            top_k: int,
+            results: List[Any],
+            context: str,
+            filters: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Thread-safe synchronous cache put.
         
-        # Store the entry
-        entry = CacheEntry(
-            key=key,
-            value=(results, context),
-            timestamp=time.time()
-        )
+        This method is safe to call from any context and will not cause deadlocks.
+        For better performance in async contexts, use put_async() directly.
+        """
+        if not self.enabled:
+            return
         
-        self._cache[key] = entry
-        # Move to end (most recently used)
-        self._cache.move_to_end(key)
+        # Use a separate thread to avoid event loop conflicts
+        import concurrent.futures
         
-        # Log cache statistics
-        log_counter("cache_put", labels={"type": search_type})
-        log_histogram("cache_result_count", len(results))
-        log_histogram("cache_context_size", len(context))
-        log_gauge("cache_current_size", len(self._cache))
-        log_gauge("cache_eviction_count", self._evictions)
-        
-        # Estimate memory usage for this entry
-        entry_size = sys.getsizeof(results) + sys.getsizeof(context)
-        log_histogram("cache_entry_size_bytes", entry_size)
-        
-        logger.debug(f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_size} bytes)")
+        # Check if we're in an async context
+        try:
+            asyncio.get_running_loop()
+            # We're in an async context, use thread pool to avoid blocking
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._sync_put_impl, query, search_type, top_k, results, context, filters)
+                future.result(timeout=1.0)  # 1 second timeout for cache operations
+        except RuntimeError:
+            # No running loop, safe to run directly
+            self._sync_put_impl(query, search_type, top_k, results, context, filters)
+    
+    def _sync_put_impl(self, query: str, search_type: str, top_k: int,
+                       results: List[Any], context: str, filters: Optional[Dict[str, Any]]) -> None:
+        """Internal synchronous implementation using asyncio.run."""
+        asyncio.run(self.put_async(query, search_type, top_k, results, context, filters))
+    
+    async def clear_async(self) -> None:
+        """Async-safe clear all cache entries."""
+        async with self._lock:
+            size_before = len(self._cache)
+            self._cache.clear()
+            log_counter("cache_cleared")
+            log_gauge("cache_current_size", 0)
+            logger.info(f"Cache cleared ({size_before} entries removed)")
     
     def clear(self) -> None:
-        """Clear all cache entries."""
-        size_before = len(self._cache)
-        self._cache.clear()
-        log_counter("cache_cleared")
-        log_gauge("cache_current_size", 0)
-        logger.info(f"Cache cleared ({size_before} entries removed)")
+        """Thread-safe synchronous cache clear."""
+        import concurrent.futures
+        
+        # Check if we're in an async context
+        try:
+            asyncio.get_running_loop()
+            # We're in an async context, use thread pool to avoid blocking
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._sync_clear_impl)
+                future.result(timeout=1.0)  # 1 second timeout
+        except RuntimeError:
+            # No running loop, safe to run directly
+            self._sync_clear_impl()
+    
+    def _sync_clear_impl(self) -> None:
+        """Internal synchronous implementation using asyncio.run."""
+        asyncio.run(self.clear_async())
     
     def get_metrics(self) -> Dict[str, Any]:
         """
@@ -285,6 +395,40 @@ class SimpleRAGCache:
             f"memory={metrics['size_bytes']/(1024*1024):.1f}MB, "
             f"evictions={metrics['evictions']}"
         )
+    
+    async def _prune_expired_async(self) -> int:
+        """
+        Internal async method to prune expired entries.
+        Called automatically during cache operations.
+        """
+        if not self.enabled:
+            return 0
+        
+        current_time = time.time()
+        expired_keys = []
+        total_age = 0
+        total_accesses = 0
+        
+        for key, entry in self._cache.items():
+            age = current_time - entry.timestamp
+            if age > self.ttl_seconds:
+                expired_keys.append(key)
+                total_age += age
+                total_accesses += entry.access_count
+        
+        for key in expired_keys:
+            del self._cache[key]
+        
+        if expired_keys:
+            avg_age = total_age / len(expired_keys)
+            avg_accesses = total_accesses / len(expired_keys)
+            log_counter("cache_entries_expired", value=len(expired_keys))
+            log_histogram("cache_pruned_avg_age_seconds", avg_age)
+            log_histogram("cache_pruned_avg_access_count", avg_accesses)
+            log_gauge("cache_current_size", len(self._cache))
+            logger.debug(f"Auto-pruned {len(expired_keys)} expired cache entries")
+        
+        return len(expired_keys)
     
     @timeit("cache_prune_expired")
     def prune_expired(self) -> int:

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The TTS module in tldw_chatbook provides a flexible, extensible system for generating speech from text using multiple providers. It supports both cloud-based APIs (OpenAI, ElevenLabs) and local models (Kokoro), with features like streaming audio generation, format conversion, and text normalization.
+The TTS module in tldw_chatbook provides a flexible, extensible system for generating speech from text using multiple providers. It supports both cloud-based APIs (OpenAI, ElevenLabs) and local models (Kokoro, Chatterbox), with features like streaming audio generation, format conversion, text normalization, and advanced voice cloning capabilities.
 
 ## Architecture
 
@@ -20,7 +20,8 @@ tldw_chatbook/TTS/
 │   ├── __init__.py
 │   ├── openai.py           # OpenAI TTS API
 │   ├── kokoro.py           # Local Kokoro model
-│   └── elevenlabs.py       # ElevenLabs API
+│   ├── elevenlabs.py       # ElevenLabs API
+│   └── chatterbox.py       # Chatterbox TTS (voice cloning)
 └── utils/                   # Utility modules
     ├── __init__.py
     ├── download_models.py   # Model download utilities
@@ -96,6 +97,43 @@ KOKORO_MAX_TOKENS = 500
 - Female: af_bella, af_nicole, af_sarah, af_sky, bf_emma, bf_isabella
 - Male: am_adam, am_michael, bm_george, bm_lewis
 
+### Chatterbox Backend
+
+**Features:**
+- Zero-shot voice cloning with 7-20 seconds of reference audio
+- Emotion exaggeration control
+- Ultra-low latency streaming (< 200ms)
+- Advanced text preprocessing (dot-letter correction, reference removal)
+- Multi-candidate generation with Whisper validation
+- Audio normalization and post-processing
+- Voice library with metadata tracking
+- Fallback strategies for robust generation
+- MIT licensed open-source model
+
+**Configuration:**
+```toml
+[app_tts]
+CHATTERBOX_DEVICE = "cuda"  # or "cpu"
+CHATTERBOX_EXAGGERATION = 0.5  # Emotion control (0.0-1.0)
+CHATTERBOX_CFG_WEIGHT = 0.5    # Pace/style control
+CHATTERBOX_TEMPERATURE = 0.5   # Voice variation (0.0-2.0)
+CHATTERBOX_NUM_CANDIDATES = 1  # Number of candidates (1-5)
+CHATTERBOX_VALIDATE_WHISPER = false  # Enable validation
+CHATTERBOX_PREPROCESS_TEXT = true    # Text preprocessing
+CHATTERBOX_NORMALIZE_AUDIO = true    # Audio normalization
+CHATTERBOX_TARGET_DB = -20.0         # Target volume (dB)
+CHATTERBOX_RANDOM_SEED = null        # For reproducibility
+CHATTERBOX_MAX_CHUNK_SIZE = 500      # Max text chunk size
+CHATTERBOX_VOICE_DIR = "~/.config/tldw_cli/chatterbox_voices"
+```
+
+**Advanced Features:**
+- **Text Preprocessing**: Automatically converts "J.R.R." to "J R R", removes [1] references, URLs
+- **Multi-Candidate Generation**: Generate multiple versions and select the best using Whisper
+- **Voice Cloning**: Upload any 7-20 second audio clip for instant voice cloning
+- **Metadata Tracking**: Save voices with creation time, duration, sample rate
+- **Fallback Strategies**: Three-tier system (high_quality → balanced → safe)
+
 ### ElevenLabs Backend
 
 **Features:**
@@ -132,6 +170,18 @@ For local TTS models like Kokoro, install the optional dependencies:
 pip install tldw_chatbook[local_tts]
 ```
 
+### Chatterbox Support
+For Chatterbox voice cloning capabilities:
+```bash
+pip install tldw_chatbook[chatterbox]
+```
+
+This installs:
+- chatterbox-tts: Core Chatterbox model
+- torchaudio: Audio processing
+- torch: PyTorch runtime
+- faster-whisper: For validation (optional)
+
 This installs:
 - kokoro-onnx: ONNX runtime for Kokoro
 - scipy: Audio processing
@@ -161,6 +211,20 @@ This installs:
    - Use the configured default provider
    - Generate audio with the default voice
    - Play the audio automatically
+
+### TTS Playground (S/TT/S Tab)
+
+The S/TT/S tab provides a comprehensive TTS testing environment:
+
+1. **Text Input**: Enter any text to synthesize
+2. **Provider Selection**: Choose from OpenAI, ElevenLabs, Kokoro, or Chatterbox
+3. **Voice Selection**: Provider-specific voices including custom uploads
+4. **Advanced Settings**:
+   - **Chatterbox**: Exaggeration, CFG weight, temperature, candidates, validation
+   - **ElevenLabs**: Stability, similarity boost, style, speaker boost
+   - **Kokoro**: Language selection
+5. **Audio Controls**: Play, pause, stop, and export generated audio
+6. **Generation Log**: Real-time feedback on TTS processing
 
 ### Programmatic Usage
 
@@ -215,7 +279,7 @@ async def handle_tts_complete(self, event: TTSCompleteEvent):
 ### Global Settings
 ```toml
 [app_tts]
-default_provider = "openai"  # openai, kokoro, elevenlabs
+default_provider = "openai"  # openai, kokoro, elevenlabs, chatterbox
 default_voice = "alloy"      # Provider-specific voice
 default_model = "tts-1"      # Provider-specific model
 default_format = "mp3"       # Audio output format
@@ -227,6 +291,7 @@ The system automatically selects backends based on the model:
 - `tts-1`, `tts-1-hd` → OpenAI backend
 - `kokoro` → Local Kokoro backend
 - `eleven_*` models → ElevenLabs backend
+- `chatterbox` → Chatterbox backend
 
 ### Audio Formats
 Supported formats vary by provider:
@@ -234,6 +299,7 @@ Supported formats vary by provider:
 - **OpenAI**: opus, aac, flac
 - **ElevenLabs**: Various bitrate/quality options
 - **Kokoro**: Best with wav/pcm for quality
+- **Chatterbox**: All formats via audio service conversion
 
 ## Advanced Features
 
@@ -256,6 +322,39 @@ Combine multiple voice characteristics:
 voice = "af_bella:0.6,af_sarah:0.4"  # 60% bella, 40% sarah
 ```
 
+### Voice Cloning (Chatterbox)
+Clone any voice with a reference audio:
+```python
+# Use custom voice
+voice = "custom:/path/to/reference.wav"
+
+# Or save for reuse
+await backend.save_reference_voice_with_metadata(
+    name="my_voice",
+    audio_path="/path/to/reference.wav",
+    metadata={"speaker": "John Doe", "emotion": "neutral"}
+)
+```
+
+### Advanced Text Processing (Chatterbox)
+```python
+# Automatic preprocessing handles:
+# - "Dr. Smith" → "Doctor Smith"
+# - "J.R.R. Tolkien" → "J R R Tolkien"
+# - "See reference [1]" → "See reference"
+# - URLs and email addresses are normalized
+```
+
+### Multi-Candidate Generation (Chatterbox)
+```python
+# Generate multiple candidates and select best
+extra_params = {
+    "num_candidates": 3,
+    "validate_with_whisper": True,
+    "temperature": 0.7
+}
+```
+
 ### Streaming with Chunk Processing
 ```python
 async for chunk in backend.generate_speech_stream(request):
@@ -274,6 +373,15 @@ async for chunk in backend.generate_speech_stream(request):
 - **Generation speed**: 35-100x realtime
 - **Token rate**: ~140 tokens/second
 
+### Chatterbox Performance
+- **CPU**: ~2.0s latency for first generation
+- **GPU**: <200ms latency (ultra-low)
+- **Generation speed**: Real-time to 50x realtime
+- **Multi-candidate overhead**: ~1.5x per additional candidate
+- **Whisper validation**: +0.5-1.0s per candidate
+- **Voice cloning**: 7-20 second reference audio required
+- **Model size**: ~500MB (0.5B parameters)
+
 ### Optimization Tips
 1. **Use streaming** for better perceived performance
 2. **Pre-download models** for Kokoro to avoid first-run delays
@@ -286,8 +394,10 @@ async for chunk in backend.generate_speech_stream(request):
 
 ### Memory Usage
 - Kokoro model: ~300MB when loaded
+- Chatterbox model: ~500MB when loaded
 - Audio buffers: Minimal with streaming
 - Text processing: Negligible
+- Voice library: ~10MB per saved voice
 
 ## Troubleshooting
 
@@ -308,10 +418,22 @@ async for chunk in backend.generate_speech_stream(request):
 - Check file permissions
 - Verify ONNX runtime is installed
 
+#### "Chatterbox voice cloning fails"
+- Ensure reference audio is 7-20 seconds
+- Check audio format (WAV recommended)
+- Verify PyTorch/CUDA installation
+- Check available GPU memory
+
 #### "API key errors"
 - Check key format and validity
 - Verify key has required permissions
 - Check API quotas/limits
+
+#### "Multi-candidate generation slow"
+- Reduce number of candidates
+- Disable Whisper validation
+- Use GPU acceleration
+- Check system resources
 
 ### Debug Logging
 Enable debug logging for detailed information:
@@ -327,11 +449,19 @@ Check logs at: `~/.share/tldw_cli/logs/`
    - Use streaming for better UX
    - Consider using faster models (tts-1 vs tts-1-hd)
    - Check network latency for API calls
+   - For Chatterbox: reduce candidates, disable validation
 
 2. **High memory usage**:
    - Unload models when not in use
    - Use streaming instead of full generation
    - Monitor with Stats tab
+   - Clear voice library cache periodically
+
+3. **Voice quality issues**:
+   - Adjust exaggeration/CFG parameters
+   - Try different reference audio
+   - Enable text preprocessing
+   - Use multi-candidate generation
 
 ## API Reference
 
@@ -348,6 +478,7 @@ class OpenAISpeechRequest(BaseModel):
     stream: bool = True          # Enable streaming
     lang_code: Optional[str]     # Language hint
     normalization_options: Optional[NormalizationOptions]
+    extra_params: Optional[Dict[str, Any]]  # Provider-specific parameters
 ```
 
 ### Backend Methods
@@ -364,12 +495,12 @@ Cleanup method for releasing resources.
 ## Future Enhancements
 
 ### Planned Features
-1. **Voice Cloning**: Support for custom voices
-2. **SSML Support**: Advanced speech markup
-3. **Caching System**: Reduce repeated generations
-4. **Batch Processing**: Multiple texts in one request
-5. **Real-time Streaming**: WebSocket-based streaming
-6. **More Backends**: Edge-TTS, Coqui, Piper
+1. **SSML Support**: Advanced speech markup
+2. **Caching System**: Reduce repeated generations
+3. **Batch Processing**: Multiple texts in one request
+4. **Real-time Streaming**: WebSocket-based streaming
+5. **More Backends**: Edge-TTS, Coqui, Piper
+6. **Cross-provider Voice Transfer**: Use one provider's voice with another
 
 ### Experimental Features
 - **Emotion Control**: Adjust emotional tone
@@ -417,9 +548,15 @@ pytest Tests/TTS/
 3. **File Paths**: Temporary files use secure generation
 4. **Network**: HTTPS only for API calls
 5. **Local Models**: Verify model file integrity
+6. **Voice Cloning**: Be aware of ethical implications
+   - Only clone voices with permission
+   - Chatterbox adds watermarks to generated audio
+   - Store voice metadata securely
+7. **Reference Audio**: Validate file formats and sizes
 
 ## License
 
 The TTS module follows the main project's AGPL-3.0+ license. Individual model licenses:
 - Kokoro: Apache 2.0
+- Chatterbox: MIT License
 - API providers: Subject to their respective terms of service

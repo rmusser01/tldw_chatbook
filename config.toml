@@ -31,12 +31,15 @@ show_progress = true  # Show initialization progress bar
 # Static cards: default, classic, compact, minimal, blueprint
 # Animated cards: matrix, glitch, retro, tech_pulse, code_scroll, minimal_fade, arcade_high_score,
 #                digital_rain, loading_bar, starfield, terminal_boot, glitch_reveal, ascii_morph,
-#                game_of_life, scrolling_credits, spotlight_reveal, sound_bars
+#                game_of_life, scrolling_credits, spotlight_reveal, sound_bars, raindrops_pond,
+#                pixel_zoom, text_explosion, old_film, maze_generator, dwarf_fortress
 active_cards = [
     "default", "matrix", "glitch", "retro", "classic", "compact", "minimal",
     "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
     "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal",
-    "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars"
+    "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars",
+    "raindrops_pond", "pixel_zoom", "text_explosion", "old_film", "maze_generator",
+    "dwarf_fortress"
 ]
 
 [splash_screen.effects]

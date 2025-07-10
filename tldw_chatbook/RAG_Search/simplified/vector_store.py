@@ -518,35 +518,114 @@ class InMemoryVectorStore:
     Implements the same interface as ChromaVectorStore but keeps everything in memory.
     """
     
-    def __init__(self, distance_metric: str = "cosine"):
+    def __init__(self, distance_metric: str = "cosine", max_documents: int = 10000, max_collections: int = 10,
+                 memory_threshold_mb: float = 1024.0):
         """
-        Initialize in-memory vector store.
+        Initialize in-memory vector store with memory limits.
         
         Args:
             distance_metric: Distance metric for similarity (cosine, l2, ip)
+            max_documents: Maximum number of documents to store (default: 10000)
+            max_collections: Maximum number of collections to keep (default: 10)
+            memory_threshold_mb: Memory threshold in MB for triggering eviction (default: 1024MB)
         """
         self.distance_metric = distance_metric
+        self.max_documents = max_documents
+        self.max_collections = max_collections
+        self.memory_threshold_mb = memory_threshold_mb
         self.ids: List[str] = []
         self.embeddings: List[np.ndarray] = []
         self.documents: List[str] = []
         self.metadata: List[dict] = []
         
-        # Collection support (for compatibility)
+        # Track access order for LRU eviction
+        self._access_order: List[str] = []
+        
+        # Collection support (for compatibility) with access tracking
         self._collections: Dict[str, Dict[str, Any]] = {}
+        self._collection_access_time: Dict[str, float] = {}
         self._current_collection = "default"
         
         # Metrics
         self._add_count = 0
         self._search_count = 0
+        self._eviction_count = 0
+        self._collection_eviction_count = 0
+        self._memory_pressure_evictions = 0
+        
+        # Memory monitoring
+        self._last_memory_check = time.time()
+        self._memory_check_interval = 10.0  # Check every 10 seconds
+        
+        logger.info(f"InMemoryVectorStore initialized with max_documents={max_documents}, "
+                   f"max_collections={max_collections}, memory_threshold_mb={memory_threshold_mb}")
+    
+    def _check_memory_pressure(self) -> bool:
+        """
+        Check if memory usage exceeds threshold.
+        
+        Returns:
+            True if memory pressure detected, False otherwise
+        """
+        # Only check periodically to avoid performance impact
+        current_time = time.time()
+        if current_time - self._last_memory_check < self._memory_check_interval:
+            return False
+        
+        self._last_memory_check = current_time
+        
+        try:
+            # Get current process memory usage
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)
+            
+            # Also check system-wide memory if available
+            vm = psutil.virtual_memory()
+            available_mb = vm.available / (1024 * 1024)
+            
+            # Trigger eviction if:
+            # 1. Process memory exceeds threshold, OR
+            # 2. System available memory is very low (< 500MB)
+            if memory_mb > self.memory_threshold_mb or available_mb < 500:
+                logger.warning(f"Memory pressure detected: process={memory_mb:.1f}MB, "
+                             f"available={available_mb:.1f}MB, threshold={self.memory_threshold_mb}MB")
+                return True
+                
+        except Exception as e:
+            logger.debug(f"Could not check memory pressure: {e}")
+        
+        return False
+    
+    def _evict_for_memory_pressure(self, target_reduction_ratio: float = 0.2):
+        """
+        Evict documents to reduce memory pressure.
+        
+        Args:
+            target_reduction_ratio: Fraction of documents to evict (default: 20%)
+        """
+        num_to_evict = max(1, int(len(self.ids) * target_reduction_ratio))
+        logger.info(f"Evicting {num_to_evict} documents due to memory pressure")
+        
+        for _ in range(num_to_evict):
+            if self._access_order:
+                self._evict_lru()
+                self._memory_pressure_evictions += 1
+            else:
+                break
     
     def add(self, 
             ids: List[str], 
             embeddings: np.ndarray, 
             documents: List[str], 
             metadata: List[dict]) -> None:
-        """Add documents to memory."""
+        """Add documents to memory with LRU eviction and memory pressure handling."""
         if len(ids) == 0:
             return
+        
+        # Check memory pressure before adding
+        if self._check_memory_pressure():
+            self._evict_for_memory_pressure()
         
         # Convert embeddings to numpy if needed
         if not isinstance(embeddings, np.ndarray):
@@ -560,28 +639,72 @@ class InMemoryVectorStore:
                 self.embeddings[idx] = embeddings[i]
                 self.documents[idx] = documents[i]
                 self.metadata[idx] = metadata[i]
+                # Update access order
+                if id_val in self._access_order:
+                    self._access_order.remove(id_val)
+                self._access_order.append(id_val)
             else:
+                # Check if we need to evict due to document limit
+                if len(self.ids) >= self.max_documents:
+                    # Evict least recently used
+                    self._evict_lru()
+                
                 # Add new
                 self.ids.append(id_val)
                 self.embeddings.append(embeddings[i])
                 self.documents.append(documents[i])
                 self.metadata.append(metadata[i])
+                self._access_order.append(id_val)
         
         self._add_count += len(ids)
-        logger.debug(f"Added {len(ids)} documents to in-memory store")
+        logger.debug(f"Added {len(ids)} documents to in-memory store (current size: {len(self.ids)})")
+    
+    def _evict_lru(self) -> None:
+        """Evict the least recently used document."""
+        if not self._access_order:
+            return
+            
+        # Get the least recently used ID
+        lru_id = self._access_order.pop(0)
+        
+        # Remove from storage
+        idx = self.ids.index(lru_id)
+        self.ids.pop(idx)
+        self.embeddings.pop(idx)
+        self.documents.pop(idx)
+        self.metadata.pop(idx)
+        
+        self._eviction_count += 1
+        logger.debug(f"Evicted document {lru_id} (total evictions: {self._eviction_count})")
     
     def _compute_similarity(self, 
                           query_embedding: np.ndarray, 
                           doc_embedding: np.ndarray) -> float:
-        """Compute similarity based on distance metric."""
+        """Compute similarity based on distance metric with numerical stability."""
         if self.distance_metric == "cosine":
-            # Cosine similarity
-            query_norm = query_embedding / (np.linalg.norm(query_embedding) + 1e-9)
-            doc_norm = doc_embedding / (np.linalg.norm(doc_embedding) + 1e-9)
-            return float(np.dot(query_norm, doc_norm))
+            # Cosine similarity with proper zero vector handling
+            query_norm = np.linalg.norm(query_embedding)
+            doc_norm = np.linalg.norm(doc_embedding)
+            
+            # Check for zero vectors
+            if query_norm < 1e-6 or doc_norm < 1e-6:
+                # Zero vectors have no meaningful similarity
+                return 0.0
+            
+            # Normalize vectors
+            query_normalized = query_embedding / query_norm
+            doc_normalized = doc_embedding / doc_norm
+            
+            # Compute cosine similarity (clamp to [-1, 1] for numerical stability)
+            similarity = np.dot(query_normalized, doc_normalized)
+            return float(np.clip(similarity, -1.0, 1.0))
+            
         elif self.distance_metric == "l2":
             # Negative L2 distance (so higher is more similar)
-            return -float(np.linalg.norm(query_embedding - doc_embedding))
+            distance = np.linalg.norm(query_embedding - doc_embedding)
+            # Convert to similarity score (bounded between 0 and 1)
+            return float(1.0 / (1.0 + distance))
+            
         elif self.distance_metric == "ip":
             # Inner product
             return float(np.dot(query_embedding, doc_embedding))
@@ -612,6 +735,12 @@ class InMemoryVectorStore:
         # Convert to SearchResult
         results = []
         for idx, score in top_results:
+            # Update access order for LRU
+            id_val = self.ids[idx]
+            if id_val in self._access_order:
+                self._access_order.remove(id_val)
+            self._access_order.append(id_val)
+            
             # Normalize score to [0, 1] range for consistency
             if self.distance_metric == "cosine":
                 normalized_score = (score + 1) / 2  # From [-1, 1] to [0, 1]
@@ -685,6 +814,9 @@ class InMemoryVectorStore:
         self.embeddings.clear()
         self.documents.clear()
         self.metadata.clear()
+        self._access_order.clear()
+        self._eviction_count = 0
+        self._memory_pressure_evictions = 0
         logger.info("Cleared in-memory vector store")
     
     def get_collection_stats(self) -> dict:
@@ -692,14 +824,38 @@ class InMemoryVectorStore:
         stats = {
             "type": "in_memory",
             "count": len(self.ids),
+            "max_documents": self.max_documents,
+            "max_collections": self.max_collections,
             "distance_metric": self.distance_metric,
+            "memory_threshold_mb": self.memory_threshold_mb,
             "add_count": self._add_count,
-            "search_count": self._search_count
+            "search_count": self._search_count,
+            "eviction_count": self._eviction_count,
+            "collection_eviction_count": self._collection_eviction_count,
+            "memory_pressure_evictions": self._memory_pressure_evictions,
+            "collections_count": len(self._collections),
+            "memory_usage_pct": (len(self.ids) / self.max_documents * 100) if self.max_documents > 0 else 0
         }
         
         # Add embedding dimension if we have data
         if self.embeddings:
             stats["embedding_dimension"] = self.embeddings[0].shape[0]
+            # Estimate memory usage in MB
+            embedding_size = self.embeddings[0].nbytes * len(self.embeddings) / (1024 * 1024)
+            text_size = sum(len(doc) for doc in self.documents) / (1024 * 1024)
+            stats["estimated_memory_mb"] = embedding_size + text_size
+        
+        # Add current memory status
+        try:
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            stats["process_memory_mb"] = memory_info.rss / (1024 * 1024)
+            
+            vm = psutil.virtual_memory()
+            stats["system_available_mb"] = vm.available / (1024 * 1024)
+            stats["system_percent_used"] = vm.percent
+        except Exception:
+            pass
         
         return stats
     
@@ -731,6 +887,16 @@ class InMemoryVectorStore:
         
         # Initialize collection if it doesn't exist
         if collection_name not in self._collections:
+            # Check if we need to evict a collection
+            if len(self._collections) >= self.max_collections:
+                # Find and remove least recently used collection
+                lru_collection = min(self._collection_access_time.keys(), 
+                                   key=lambda k: self._collection_access_time.get(k, 0))
+                del self._collections[lru_collection]
+                del self._collection_access_time[lru_collection]
+                self._collection_eviction_count += 1
+                logger.debug(f"Evicted collection '{lru_collection}' (total evictions: {self._collection_eviction_count})")
+            
             self._collections[collection_name] = {
                 "ids": [],
                 "embeddings": [],
@@ -738,11 +904,28 @@ class InMemoryVectorStore:
                 "metadata": []
             }
         
+        # Update access time
+        self._collection_access_time[collection_name] = time.time()
+        
         # Add to the main store (for backward compatibility)
         self.add(ids, embeddings, documents, metadatas)
         
-        # Also track in collections
+        # Also track in collections with size limit per collection
         collection = self._collections[collection_name]
+        
+        # Limit collection size to prevent unbounded growth
+        max_per_collection = self.max_documents // max(len(self._collections), 1)
+        
+        # If adding would exceed limit, remove oldest items
+        total_after_add = len(collection["ids"]) + len(ids)
+        if total_after_add > max_per_collection:
+            items_to_remove = total_after_add - max_per_collection
+            collection["ids"] = collection["ids"][items_to_remove:]
+            collection["embeddings"] = collection["embeddings"][items_to_remove:]
+            collection["documents"] = collection["documents"][items_to_remove:]
+            collection["metadata"] = collection["metadata"][items_to_remove:]
+        
+        # Now add the new items
         collection["ids"].extend(ids)
         collection["embeddings"].extend(embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings)
         collection["documents"].extend(documents)
@@ -795,12 +978,19 @@ def create_vector_store(store_type: str,
         )
     
     elif store_type == "memory" or store_type == "inmemory":
+        max_documents = kwargs.pop('max_documents', 10000)
         return InMemoryVectorStore(
             distance_metric=distance_metric,
+            max_documents=max_documents,
             **kwargs
         )
     
     else:
         # Default to in-memory if unknown type
         logger.warning(f"Unknown vector store type: {store_type}. Using in-memory store.")
-        return InMemoryVectorStore(distance_metric=distance_metric)
+        max_documents = kwargs.pop('max_documents', 10000)
+        return InMemoryVectorStore(
+            distance_metric=distance_metric,
+            max_documents=max_documents,
+            **kwargs
+        )

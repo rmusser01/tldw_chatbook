@@ -72,41 +72,109 @@ class ChunkingService:
             
             # Convert to expected format
             result_chunks = []
-            current_position = 0
             
-            for i, chunk_text in enumerate(chunks):
-                # Handle empty chunks
-                if not chunk_text:
-                    continue
-                    
-                # Find the position of this chunk in the original text
-                start_char = content.find(chunk_text, current_position)
-                if start_char == -1:
-                    start_char = current_position
-                end_char = start_char + len(chunk_text)
-                current_position = max(start_char + 1, start_char + len(chunk_text) - chunk_overlap * 5)  # Approximate char overlap
+            # Calculate approximate character positions based on chunking method
+            if method == "words":
+                # For word-based chunking, calculate positions more accurately
+                words = content.split()
+                word_positions = []
+                current_pos = 0
                 
-                result_chunks.append({
-                    'text': chunk_text,
-                    'start_char': start_char,
-                    'end_char': end_char,
-                    'word_count': len(chunk_text.split()),
-                    'chunk_index': i
-                })
+                # Build word position map efficiently
+                # Instead of O(n²) find operations, use a single pass
+                for i, word in enumerate(words):
+                    # Skip ahead to the next word occurrence
+                    while current_pos < len(content) and content[current_pos:current_pos+1].isspace():
+                        current_pos += 1
+                    
+                    if current_pos < len(content):
+                        # Found start of word
+                        word_start = current_pos
+                        word_end = word_start + len(word)
+                        
+                        # Verify it matches (handle edge cases)
+                        if current_pos + len(word) <= len(content) and content[word_start:word_end] == word:
+                            word_positions.append((word_start, word_end))
+                            current_pos = word_end
+                        else:
+                            # Fallback for mismatched words (rare edge case)
+                            word_start = content.find(word, current_pos)
+                            if word_start != -1:
+                                word_positions.append((word_start, word_start + len(word)))
+                                current_pos = word_start + len(word)
+                
+                # Map chunks to positions
+                for i, chunk_text in enumerate(chunks):
+                    if not chunk_text:
+                        continue
+                    
+                    # Count words to find position
+                    chunk_words = chunk_text.split()
+                    words_before = sum(len(c.split()) for c in chunks[:i])
+                    
+                    # Adjust for overlap
+                    if i > 0:
+                        words_before = max(0, words_before - chunk_overlap)
+                    
+                    # Get start and end positions with proper bounds checking
+                    if word_positions and words_before < len(word_positions):
+                        start_char = word_positions[words_before][0]
+                        end_word_idx = min(words_before + len(chunk_words) - 1, len(word_positions) - 1)
+                        if 0 <= end_word_idx < len(word_positions):
+                            end_char = word_positions[end_word_idx][1]
+                        else:
+                            # Use chunk length as fallback
+                            end_char = start_char + len(chunk_text)
+                    else:
+                        # Fallback for edge cases - use approximate positions
+                        if i == 0:
+                            start_char = 0
+                        else:
+                            # Estimate based on previous chunks
+                            prev_chars = sum(len(chunks[j]) for j in range(i) if chunks[j])
+                            start_char = min(prev_chars, len(content) - 1)
+                        end_char = min(start_char + len(chunk_text), len(content))
+                    
+                    result_chunks.append({
+                        'text': chunk_text,
+                        'start_char': start_char,
+                        'end_char': end_char,
+                        'word_count': len(chunk_words),
+                        'chunk_index': i
+                    })
+            else:
+                # For other methods, use approximate positions
+                total_length = len(content)
+                num_chunks = len([c for c in chunks if c])
+                
+                for i, chunk_text in enumerate(chunks):
+                    if not chunk_text:
+                        continue
+                    
+                    # Approximate position based on chunk index
+                    if num_chunks > 1:
+                        start_ratio = i / num_chunks
+                        start_char = int(total_length * start_ratio)
+                        end_char = min(start_char + len(chunk_text), total_length)
+                    else:
+                        start_char = 0
+                        end_char = len(chunk_text)
+                    
+                    result_chunks.append({
+                        'text': chunk_text,
+                        'start_char': start_char,
+                        'end_char': end_char,
+                        'word_count': len(chunk_text.split()),
+                        'chunk_index': i
+                    })
             
             logger.debug(f"Chunked text into {len(result_chunks)} chunks using method '{method}'")
             return result_chunks
             
         except Exception as e:
-            logger.error(f"Error chunking text: {e}")
-            # Return single chunk as fallback
-            return [{
-                'text': content,
-                'start_char': 0,
-                'end_char': len(content),
-                'word_count': len(content.split()),
-                'chunk_index': 0
-            }]
+            logger.error(f"Error chunking text with method '{method}': {e}", exc_info=True)
+            # Re-raise with more context instead of hiding the error
+            raise ChunkingError(f"Failed to chunk text using method '{method}': {str(e)}") from e
 
 
 def improved_chunking_process(text: str, options: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -136,6 +204,11 @@ def improved_chunking_process(text: str, options: Dict[str, Any]) -> List[Dict[s
         raise InvalidChunkingMethodError(f"Invalid chunking method: {method}. Valid methods are: {valid_methods}")
     
     try:
-        return service.chunk_text(text, options)
+        return service.chunk_text(
+            text, 
+            chunk_size=options.get('max_size', 400),
+            chunk_overlap=options.get('overlap', 100),
+            method=options.get('method', 'words')
+        )
     except Exception as e:
         raise ChunkingError(f"Error during chunking: {str(e)}") from e

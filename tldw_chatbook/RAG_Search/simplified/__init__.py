@@ -31,9 +31,12 @@ from .vector_store import (
 from .rag_service import (
     RAGService,
     RAGConfig,
-    IndexingResult,
     create_and_index,
     create_rag_service
+)
+
+from .data_models import (
+    IndexingResult
 )
 
 from .simple_cache import (

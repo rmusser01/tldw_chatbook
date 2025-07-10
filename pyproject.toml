@@ -55,8 +55,6 @@ dependencies = [
     "keyring",
     "markdownify",
     "aiofiles",
-    # Metrics library
-    "prometheus_client",
 ]
 
 # --- Optional Dependencies ---
@@ -140,6 +138,12 @@ media_processing = [
     "yt-dlp",
     "numpy",
 ]
+chatterbox = [
+    "chatterbox-tts",
+    "torchaudio",
+    "torch",
+    "faster-whisper",  # For validation of generated audio
+]
 local_tts = [
     "kokoro-onnx",
     "scipy",
@@ -157,6 +161,14 @@ nemo = [
     "torch",  # Required by NeMo
     "torchaudio",  # Required for audio processing
 ]
+ocr_docext = [
+    "docext",  # NanoNets document extraction toolkit
+    "gradio_client",  # For API-based usage
+    "transformers>=4.30.0",  # For direct model usage (optional)
+    "torch",  # For direct model usage (optional)
+    "openai",  # For OpenAI-compatible API usage
+    "Pillow",  # For image handling
+]
 dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests
@@ -166,6 +178,14 @@ dev = [
     "build",  # For building distributions
     "twine",  # For uploading to PyPI
     "wheel",  # For building wheel distributions
+    "prometheus_client",  # For metrics collection during development
+]
+debugging = [
+    "prometheus_client",  # For metrics collection and monitoring
+    "opentelemetry-api",  # For advanced telemetry
+    "opentelemetry-sdk",  # OpenTelemetry SDK
+    "opentelemetry-exporter-prometheus",  # Export metrics to Prometheus
+    "opentelemetry-instrumentation-system-metrics",  # System metrics collection
 ]
 
 

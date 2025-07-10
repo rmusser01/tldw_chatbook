@@ -962,6 +962,14 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
 async def populate_llm_help_texts(app: 'TldwCli') -> None:
     """Populates the RichLog widgets with help text for LLM arguments."""
     app.loguru_logger.info("Populating LLM argument help texts...")
+    
+    # Check if LLM Management Window exists first
+    try:
+        llm_window = app.query_one("#llm_management-window")
+    except QueryError:
+        app.loguru_logger.debug("LLM Management Window not found, skipping help text population.")
+        return
+    
     try:
         # Llama.cpp
         llamacpp_help_widget = app.query_one("#llamacpp-args-help-display", RichLog)
@@ -969,7 +977,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
         llamacpp_help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
         app.loguru_logger.debug("Populated Llama.cpp args help.")
     except QueryError:
-        app.loguru_logger.error("Failed to find #llamacpp-args-help-display widget.")
+        app.loguru_logger.debug("Failed to find #llamacpp-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating Llama.cpp help: {e}", exc_info=True)
     try:
@@ -978,7 +986,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
         llamafile_help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)  # Write new content
         app.loguru_logger.debug("Populated Llamafile args help.")
     except QueryError:
-        app.loguru_logger.error("Failed to find #llamafile-args-help-display widget.")
+        app.loguru_logger.debug("Failed to find #llamafile-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating Llamafile help: {e}", exc_info=True)
     try:
@@ -988,7 +996,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
         mlx_help_widget.write(MLX_LM_SERVER_ARGS_HELP_TEXT)  # Write new content
         app.loguru_logger.debug("Populated MLX-LM args help.")
     except QueryError:
-        app.loguru_logger.error("Failed to find #mlx-args-help-display widget.")
+        app.loguru_logger.debug("Failed to find #mlx-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating MLX-LM help: {e}", exc_info=True)
 

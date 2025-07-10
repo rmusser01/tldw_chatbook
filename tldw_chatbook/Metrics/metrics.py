@@ -27,7 +27,29 @@ import time
 import logging
 import psutil#
 # Third-party Imports
-from prometheus_client import Counter, Histogram, Gauge, start_http_server
+try:
+    from prometheus_client import Counter, Histogram, Gauge, start_http_server
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    # Create dummy classes to prevent errors when prometheus_client is not installed
+    class Counter:
+        def __init__(self, *args, **kwargs): pass
+        def inc(self, *args, **kwargs): pass
+        def labels(self, **kwargs): return self
+    
+    class Histogram:
+        def __init__(self, *args, **kwargs): pass
+        def observe(self, *args, **kwargs): pass
+        def labels(self, **kwargs): return self
+    
+    class Gauge:
+        def __init__(self, *args, **kwargs): pass
+        def set(self, *args, **kwargs): pass
+        def labels(self, **kwargs): return self
+    
+    def start_http_server(*args, **kwargs):
+        logging.warning("Prometheus client not installed. Metrics server not started.")
 #
 # Local Imports
 #
@@ -76,6 +98,9 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
     Increments a counter metric. The metric is created on first use.
     Documentation is only used during the initial creation of the metric.
     """
+    if not PROMETHEUS_AVAILABLE:
+        logging.debug(f"Prometheus not available. Would have logged counter: {metric_name}")
+        return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
@@ -93,6 +118,9 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
     Observes a value for a histogram metric. The metric is created on first use.
     Documentation is only used during the initial creation of the metric.
     """
+    if not PROMETHEUS_AVAILABLE:
+        logging.debug(f"Prometheus not available. Would have logged histogram: {metric_name} = {value}")
+        return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
@@ -111,6 +139,9 @@ def log_gauge(metric_name, value, labels=None, documentation=""):
     Sets the value of a gauge metric. The metric is created on first use.
     Documentation is only used during the initial creation of the metric.
     """
+    if not PROMETHEUS_AVAILABLE:
+        logging.debug(f"Prometheus not available. Would have logged gauge: {metric_name} = {value}")
+        return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
@@ -184,6 +215,9 @@ def log_resource_usage(labels=None):
 
 def init_metrics_server(port=8000):
     """Starts the Prometheus HTTP server in a separate thread."""
+    if not PROMETHEUS_AVAILABLE:
+        logging.warning("Prometheus client not installed. Metrics server cannot be started.")
+        return
     start_http_server(port)
     logging.info(f"Prometheus metrics server started on port {port}")
 

@@ -43,6 +43,7 @@ class ChatSessionData:
     # Additional session state
     notes_content: str = ""
     message_count: int = 0
+    has_unsaved_changes: bool = False
     
     # Settings that might vary per session
     system_prompt_override: Optional[str] = None
@@ -51,7 +52,6 @@ class ChatSessionData:
     
     # UI state
     is_active: bool = False
-    has_unsaved_changes: bool = False
     
     # Metadata
     created_at: Optional[str] = None

@@ -2,20 +2,20 @@
 
 /* Tab bar container */
 #chat-tab-bar {
-    height: 3;
+    height: 2;
     background: $panel;
     border-bottom: tall $primary;
 }
 
 /* Tab scroll container */
 .chat-tabs-scroll {
-    height: 3;
+    height: 2;
     width: 100%;
 }
 
 /* Individual tab container */
 .chat-tab-container {
-    height: 3;
+    height: 2;
     layout: horizontal;
     margin: 0 1;
 }
@@ -24,7 +24,7 @@
 .chat-tab {
     min-width: 15;
     max-width: 30;
-    height: 3;
+    height: 2;
     padding: 0 1;
     margin: 0;
     background: $panel;
@@ -47,7 +47,7 @@
 /* Close tab button */
 .close-tab-button {
     width: 3;
-    height: 3;
+    height: 2;
     padding: 0;
     margin-left: 1;
     background: transparent;
@@ -63,7 +63,7 @@
 /* New tab button */
 .new-tab-button {
     width: 5;
-    height: 3;
+    height: 2;
     padding: 0;
     margin: 0 1;
     background: $panel;

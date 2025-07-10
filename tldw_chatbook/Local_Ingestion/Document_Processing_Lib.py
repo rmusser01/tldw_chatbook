@@ -109,7 +109,9 @@ def process_document(
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
     chunk_options: Optional[Dict[str, Any]] = None,
-    processing_method: str = 'auto'
+    processing_method: str = 'auto',
+    enable_ocr: bool = False,  # NEW: Enable OCR for scanned documents
+    ocr_language: str = "en"   # NEW: OCR language code
 ) -> Dict[str, Any]:
     """
     Process a document file and extract its content.
@@ -127,6 +129,8 @@ def process_document(
         api_key: API key for the LLM service
         chunk_options: Chunking configuration
         processing_method: Method to use ('auto', 'docling', 'native')
+        enable_ocr: Enable OCR for scanned documents (only works with 'docling' method)
+        ocr_language: Language code for OCR (e.g., 'en', 'de', 'fr')
         
     Returns:
         Dict containing:
@@ -136,6 +140,7 @@ def process_document(
             - metadata: Additional metadata
             - summary: Summary (if requested)
             - extraction_successful: Success status
+            - ocr_performed: Whether OCR was performed (if applicable)
     """
     logger.info(f"Processing document: {file_path}")
     log_counter("document_processing_attempt", labels={"file_path": file_path})
@@ -172,7 +177,7 @@ def process_document(
         
         # Extract content based on method
         if processing_method == 'docling' and DOCLING_AVAILABLE:
-            result = process_with_docling(file_path, title_override, author_override, keywords)
+            result = process_with_docling(file_path, title_override, author_override, keywords, enable_ocr, ocr_language)
         else:
             # Use native libraries based on file type
             if file_ext == '.docx' and PYTHON_DOCX_AVAILABLE:
@@ -188,7 +193,7 @@ def process_document(
             else:
                 # Fallback to Docling if available
                 if DOCLING_AVAILABLE:
-                    result = process_with_docling(file_path, title_override, author_override, keywords)
+                    result = process_with_docling(file_path, title_override, author_override, keywords, enable_ocr, ocr_language)
                 else:
                     return {
                         'content': '',
@@ -240,15 +245,25 @@ def process_with_docling(
     file_path: str,
     title_override: Optional[str] = None,
     author_override: Optional[str] = None,
-    keywords: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None,
+    enable_ocr: bool = False,  # NEW: Enable OCR for scanned documents
+    ocr_language: str = "en"   # NEW: OCR language code
 ) -> Dict[str, Any]:
     """
     Process a document using Docling.
     
     Docling provides advanced document understanding and can handle
     complex layouts, tables, and various document formats.
+    
+    Args:
+        file_path: Path to the document
+        title_override: Optional title override
+        author_override: Optional author override
+        keywords: Optional keywords list
+        enable_ocr: Whether to enable OCR for scanned content
+        ocr_language: Language code for OCR (e.g., 'en', 'de', 'fr')
     """
-    logger.info(f"Processing document with Docling: {file_path}")
+    logger.info(f"Processing document with Docling: {file_path}, OCR enabled: {enable_ocr}")
     
     try:
         # Initialize Docling converter
@@ -256,8 +271,12 @@ def process_with_docling(
         
         # Configure pipeline options
         pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = False  # Disable OCR for documents (not PDFs)
+        pipeline_options.do_ocr = enable_ocr  # Enable/disable OCR based on parameter
         pipeline_options.do_table_structure = True  # Extract tables
+        
+        # Set OCR language if enabled
+        if enable_ocr and hasattr(pipeline_options, 'ocr_lang'):
+            pipeline_options.ocr_lang = ocr_language
         
         # Convert document
         result = converter.convert(file_path, pipeline_options=pipeline_options)

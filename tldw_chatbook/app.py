@@ -42,7 +42,8 @@ from pathlib import Path
 from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
-from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_gauge, log_resource_usage
+from tldw_chatbook.Metrics.metrics import log_histogram, log_counter, log_gauge, log_resource_usage, init_metrics_server
+from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 #
 # --- Local API library Imports ---
 from .Event_Handlers.LLM_Management_Events import (llm_management_events, llm_management_events_mlx_lm,
@@ -88,6 +89,9 @@ from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSEventHandler
 )
+from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+    STTSEventHandler, STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
+)
 from .Notes.Notes_Library import NotesInteropService
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from .Widgets.chat_message import ChatMessage
@@ -118,6 +122,7 @@ from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Evals_Window import EvalsWindow # Added EvalsWindow
 from .UI.Coding_Window import CodingWindow
+from .UI.STTS_Window import STTSWindow
 from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow import MediaWindow
 from .UI.SearchWindow import SearchWindow
@@ -1489,6 +1494,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("embeddings", EmbeddingsWindow, "embeddings-window"),
+            ("stts", STTSWindow, "stts-window"),
         ]
         
         # Create window widgets and compose them into the container properly
@@ -1565,6 +1571,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("embeddings", EmbeddingsWindow, "embeddings-window"),
+            ("stts", STTSWindow, "stts-window"),
         ]
         
         window_widgets = []
@@ -1702,6 +1709,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handle TTS playback control."""
         if self._tts_handler:
             await self._tts_handler.handle_tts_playback(event)
+    
+    @on(STTSPlaygroundGenerateEvent)
+    async def handle_stts_playground_generate_event(self, event: STTSPlaygroundGenerateEvent) -> None:
+        """Handle S/TT/S playground generation request."""
+        self.loguru_logger.info(f"S/TT/S generation request: provider={event.provider}, model={event.model}")
+        if self._stts_handler:
+            await self._stts_handler.handle_playground_generate(event)
+        else:
+            self.loguru_logger.error("S/TT/S handler not initialized")
+            self.notify("S/TT/S service not available", severity="error")
+    
+    @on(STTSSettingsSaveEvent)
+    async def handle_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:
+        """Handle S/TT/S settings save."""
+        if self._stts_handler:
+            await self._stts_handler.handle_settings_save(event)
+    
+    @on(STTSAudioBookGenerateEvent)
+    async def handle_stts_audiobook_generate_event(self, event: STTSAudioBookGenerateEvent) -> None:
+        """Handle audiobook generation request."""
+        if self._stts_handler:
+            await self._stts_handler.handle_audiobook_generate(event)
 
     def switch_ccp_center_view(self, view_name: str) -> None:
         """Switch the center pane view in the CCP tab."""
@@ -2627,11 +2656,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if self.splash_screen_active and self._splash_screen_widget:
             self._splash_screen_widget.update_progress(0.7, "Configuring providers...")
         
-        # Populate LLM help texts
+        # Removed populate_llm_help_texts from here - it's called when LLM tab is shown instead
         phase_start = time.perf_counter()
-        self.call_later(llm_management_events.populate_llm_help_texts, self)
+        # LLM help texts are populated when the LLM tab is shown
         log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                     labels={"phase": "llm_help_texts"}, 
+                     labels={"phase": "llm_help_texts_skipped"}, 
                      documentation="Duration of post-mount phase in seconds")
 
         # Widget binding
@@ -2671,6 +2700,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self._tts_handler = None
         log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
                      labels={"phase": "tts_init"}, 
+                     documentation="Duration of post-mount phase in seconds")
+        
+        # Initialize S/TT/S service
+        phase_start = time.perf_counter()
+        try:
+            self.loguru_logger.info("Initializing S/TT/S service...")
+            # Create S/TT/S event handler instance
+            self._stts_handler = STTSEventHandler(app=self)
+            await self._stts_handler.initialize_stts()
+            # Copy some methods to app instance for convenience
+            self.play_current_audio = self._stts_handler.play_current_audio
+            self.export_current_audio = self._stts_handler.export_current_audio
+            self.loguru_logger.info("S/TT/S service initialized successfully")
+        except Exception as e:
+            self.loguru_logger.error(f"Failed to initialize S/TT/S service: {e}")
+            self._stts_handler = None
+        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                     labels={"phase": "stts_init"}, 
                      documentation="Duration of post-mount phase in seconds")
 
         # Set initial tab now that other bindings might be ready
@@ -5105,7 +5152,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             notify_before = get_cli_setting("media_cleanup", "notify_before_cleanup", True)
             
             # Check for candidates first
-            candidates = await self.run_in_thread(self.media_db.get_deletion_candidates, cleanup_days)
+            candidates = await asyncio.to_thread(self.media_db.get_deletion_candidates, cleanup_days)
             
             if not candidates:
                 self.loguru_logger.info("No media items eligible for cleanup")
@@ -5126,7 +5173,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 )
             
             # Perform the cleanup
-            deleted_count = await self.run_in_thread(self.media_db.hard_delete_old_media, cleanup_days)
+            deleted_count = await asyncio.to_thread(self.media_db.hard_delete_old_media, cleanup_days)
             
             if deleted_count > 0:
                 self.loguru_logger.info(f"Media cleanup completed: {deleted_count} items permanently deleted")
@@ -5248,6 +5295,27 @@ if __name__ == "__main__":
                 f.write(CONFIG_TOML_CONTENT)
     except Exception as e_cfg_main:
         logging.error(f"Could not ensure creation of default config file: {e_cfg_main}", exc_info=True)
+
+    # --- Initialize Metrics Systems ---
+    # Initialize Prometheus metrics server
+    try:
+        # Start Prometheus metrics server on port 8000 (or configure via env/config)
+        metrics_port = int(os.environ.get('METRICS_PORT', '8000'))
+        init_metrics_server(port=metrics_port)
+        loguru_logger.info(f"Prometheus metrics server started on port {metrics_port}")
+    except Exception as e:
+        loguru_logger.warning(f"Failed to start Prometheus metrics server: {e}")
+        # Continue without metrics server - metrics are still collected
+    
+    # Initialize OpenTelemetry metrics
+    try:
+        # Initialize OpenTelemetry for advanced metrics collection
+        # This complements the existing Prometheus metrics
+        init_otel_metrics()
+        loguru_logger.info("OpenTelemetry metrics initialized successfully")
+    except Exception as e:
+        loguru_logger.warning(f"Failed to initialize OpenTelemetry metrics: {e}")
+        # Continue without OpenTelemetry - the app still has Prometheus metrics
 
     # --- Emoji Check ---
     emoji_is_supported = supports_emoji() # Call it once

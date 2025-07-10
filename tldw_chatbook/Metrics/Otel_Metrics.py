@@ -27,11 +27,16 @@ import time
 import logging
 #
 # Third-Party Libraries
-from opentelemetry import metrics, trace
-from opentelemetry.exporter.prometheus import PrometheusMetricReader
-from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
+try:
+    from opentelemetry import metrics, trace
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
+    OTEL_AVAILABLE = True
+except ImportError:
+    OTEL_AVAILABLE = False
+    logging.warning("OpenTelemetry not installed. Advanced metrics features will be disabled.")
 #
 # Local Imports
 #
@@ -58,6 +63,10 @@ def init_metrics():
     which are attached to all emitted metrics. Configuration is read from
     standard OTel environment variables.
     """
+    if not OTEL_AVAILABLE:
+        logging.warning("OpenTelemetry not available. Metrics initialization skipped.")
+        return
+        
     global _meter
 
     # Use standard OTel env vars for configuration.
@@ -88,6 +97,8 @@ def init_metrics():
 
 def _get_meter():
     """Returns the global meter, initializing if necessary."""
+    if not OTEL_AVAILABLE:
+        return None
     if not _meter:
         logging.warning("Metrics not explicitly initialized. Calling init_metrics() with defaults.")
         init_metrics()
@@ -99,6 +110,9 @@ def _get_or_create_instrument(instrument_type, name, unit="", description=""):
     Internal function to get an instrument or create it if it doesn't exist.
     Uses a double-checked lock for thread safety and performance.
     """
+    if not OTEL_AVAILABLE:
+        return None
+        
     if name in _instrument_registry:
         return _instrument_registry[name]
 
@@ -107,6 +121,9 @@ def _get_or_create_instrument(instrument_type, name, unit="", description=""):
             return _instrument_registry[name]
 
         meter = _get_meter()
+        if not meter:
+            return None
+            
         instrument = None
         if instrument_type == 'counter':
             instrument = meter.create_counter(name, unit=unit, description=description)
@@ -124,11 +141,15 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
     Increments a counter. Documentation is used only on first creation.
     In OTel, 'labels' are called 'attributes'.
     """
+    if not OTEL_AVAILABLE:
+        logging.debug(f"OpenTelemetry not available. Would have logged counter: {metric_name}")
+        return
     try:
         counter = _get_or_create_instrument(
             'counter', metric_name, unit="1", description=documentation
         )
-        counter.add(value, attributes=(labels or {}))
+        if counter:
+            counter.add(value, attributes=(labels or {}))
     except Exception as e:
         logging.error(f"Failed to log OTel counter {metric_name}: {e}")
 
@@ -137,11 +158,15 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
     """
     Records a value in a histogram. Documentation is used only on first creation.
     """
+    if not OTEL_AVAILABLE:
+        logging.debug(f"OpenTelemetry not available. Would have logged histogram: {metric_name} = {value}")
+        return
     try:
         histogram = _get_or_create_instrument(
             'histogram', metric_name, unit="s", description=documentation
         )
-        histogram.record(value, attributes=(labels or {}))
+        if histogram:
+            histogram.record(value, attributes=(labels or {}))
     except Exception as e:
         logging.error(f"Failed to log OTel histogram {metric_name}: {e}")
 
@@ -162,7 +187,9 @@ def timeit(metric_name=None, documentation="Execution time and call count of a f
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             # Get current span from the context. It's a no-op if no tracer is configured.
-            span = trace.get_current_span()
+            span = None
+            if OTEL_AVAILABLE:
+                span = trace.get_current_span()
             start_time = time.time()
             status = "error"
 
@@ -188,13 +215,14 @@ def timeit(metric_name=None, documentation="Execution time and call count of a f
                 )
 
                 # 2. Add a precise event to the active trace for debugging
-                span.add_event(
-                    name=f"finished {func.__name__}",
-                    attributes={
-                        "duration_sec": round(elapsed_time, 4),
-                        "status": status,
-                    }
-                )
+                if span and OTEL_AVAILABLE:
+                    span.add_event(
+                        name=f"finished {func.__name__}",
+                        attributes={
+                            "duration_sec": round(elapsed_time, 4),
+                            "status": status,
+                        }
+                    )
 
         return wrapper
 

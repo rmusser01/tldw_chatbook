@@ -134,7 +134,12 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "chunk_overlap": 200,
         "use_adaptive_chunking": False,
         "use_multi_level_chunking": False,
-        "chunk_language": ""
+        "chunk_language": "",
+        # OCR settings
+        "enable_ocr": False,  # Default to disabled for performance
+        "ocr_language": "en",  # Default OCR language
+        "ocr_backend": "docling",  # Default OCR backend
+        "ocr_confidence_threshold": 0.8  # Minimum confidence score
     },
     "ebook": {
         "chunk_method": "ebook_chapters",
@@ -150,7 +155,12 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "chunk_overlap": 100,
         "use_adaptive_chunking": False,
         "use_multi_level_chunking": False,
-        "chunk_language": ""
+        "chunk_language": "",
+        # OCR settings
+        "enable_ocr": False,  # Default to disabled for performance
+        "ocr_language": "en",  # Default OCR language
+        "ocr_backend": "docling",  # Default OCR backend
+        "ocr_confidence_threshold": 0.8  # Minimum confidence score
     },
     "plaintext": {
         "chunk_method": "paragraphs",
@@ -192,6 +202,51 @@ DEFAULT_MEDIA_INGESTION_CONFIG = {
         "vad_filter": False,
         "diarize": False,
         "extract_audio_only": True
+    },
+    "image": {
+        "chunk_method": "visual_blocks",
+        "chunk_size": 1000,
+        "chunk_overlap": 100,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": "",
+        # OCR settings
+        "enable_ocr": True,  # Default to enabled for images
+        "ocr_backend": "auto",  # Auto-select best available backend
+        "ocr_language": "en",
+        "ocr_confidence_threshold": 0.8,
+        # Visual processing settings
+        "extract_visual_features": True,
+        "visual_feature_model": "basic",
+        "image_preprocessing": True,
+        "max_image_size": 4096  # Max dimension in pixels
+    }
+}
+
+# OCR Backend Configurations
+DEFAULT_OCR_BACKEND_CONFIG = {
+    "docext": {
+        "mode": "api",  # "api", "model", or "openai"
+        "api_url": "http://localhost:7860",
+        "model_name": "nanonets/Nanonets-OCR-s",
+        "username": "admin",
+        "password": "admin",
+        "max_new_tokens": 4096,
+        # For OpenAI mode
+        "openai_base_url": "http://localhost:8000/v1",
+        "openai_api_key": "123"
+    },
+    "tesseract": {
+        "config": "",  # Additional tesseract config options
+        "lang": "eng"  # Default language
+    },
+    "easyocr": {
+        "use_gpu": True,
+        "languages": ["en"]
+    },
+    "paddleocr": {
+        "use_gpu": True,
+        "lang": "en"
     }
 }
 
@@ -2325,6 +2380,32 @@ def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
     })
 
 
+def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
+    """
+    Get configuration for a specific OCR backend.
+    
+    Args:
+        backend_name: Name of the OCR backend (e.g., 'docext', 'tesseract')
+        
+    Returns:
+        Dictionary containing backend configuration
+    """
+    # First check if user has custom settings in config
+    config = load_cli_config_and_ensure_existence()
+    ocr_backend_config = config.get("ocr_backends", {})
+    
+    # Get backend-specific config if it exists
+    if backend_name in ocr_backend_config and isinstance(ocr_backend_config[backend_name], dict):
+        # Use deep merge to combine with defaults, allowing partial overrides
+        return deep_merge_dicts(
+            DEFAULT_OCR_BACKEND_CONFIG.get(backend_name, {}),
+            ocr_backend_config[backend_name]
+        )
+    
+    # Fall back to hardcoded defaults
+    return DEFAULT_OCR_BACKEND_CONFIG.get(backend_name, {})
+
+
 # --- CLI Providers and Models Getter ---
 def get_cli_providers_and_models() -> Dict[str, List[str]]:
     config = load_settings()
@@ -2566,6 +2647,13 @@ def get_cli_log_file_path() -> Path:
     except OSError as e:
         logger.error(f"Could not create log directory {log_file_path.parent}: {e}", exc_info=True)
     return log_file_path
+
+
+def get_cli_data_dir() -> Path:
+    """Get the CLI data directory for storing application data."""
+    # Create directory if it doesn't exist
+    BASE_DATA_DIR_CLI.mkdir(parents=True, exist_ok=True)
+    return BASE_DATA_DIR_CLI
 
 # --- Global CLI Database Instances ---
 chachanotes_db: Optional[CharactersRAGDB] = None

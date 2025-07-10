@@ -3,19 +3,20 @@
 #
 # Imports
 from typing import AsyncGenerator, Optional, Dict, Any
+import json
 import httpx
 from loguru import logger
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
-from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
+from tldw_chatbook.TTS.base_backends import APITTSBackend
 from tldw_chatbook.config import get_cli_setting
 
 #######################################################################################################################
 #
 # OpenAI TTS Backend Implementation
 
-class OpenAITTSBackend(TTSBackendBase):
+class OpenAITTSBackend(APITTSBackend):
     """OpenAI Text-to-Speech API backend"""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -52,10 +53,16 @@ class OpenAITTSBackend(TTSBackendBase):
         Yields:
             Audio bytes in the requested format
         """
-        if not self.api_key:
-            logger.error("OpenAITTSBackend: Cannot generate speech without API key")
-            yield b"ERROR: OpenAI API key not configured"
-            return
+        # Use base class method to validate API key
+        self._validate_api_key()
+        
+        # Validate input text
+        if not request.input:
+            raise ValueError("Text input is required.")
+        
+        # Input length validation (OpenAI has a 4096 character limit)
+        if len(request.input) > 4096:
+            raise ValueError("Text input exceeds maximum length of 4096 characters.")
         
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -72,51 +79,94 @@ class OpenAITTSBackend(TTSBackendBase):
             logger.warning(f"Unknown model '{model}', defaulting to 'tts-1'")
             model = "tts-1"
         
+        # Validate voice selection
+        valid_voices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+        if request.voice not in valid_voices:
+            logger.warning(f"Invalid voice '{request.voice}', defaulting to 'alloy'")
+            voice = "alloy"
+        else:
+            voice = request.voice
+        
+        # Validate response format
+        valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
+        if request.response_format not in valid_formats:
+            logger.warning(f"Invalid format '{request.response_format}', defaulting to 'mp3'")
+            response_format = "mp3"
+        else:
+            response_format = request.response_format
+        
+        # Validate speed (0.25 to 4.0)
+        speed = max(0.25, min(4.0, request.speed))
+        if speed != request.speed:
+            logger.warning(f"Speed {request.speed} clamped to {speed}")
+        
         payload = {
             "model": model,
             "input": request.input,
-            "voice": request.voice,
-            "response_format": request.response_format,
-            "speed": request.speed,
+            "voice": voice,
+            "response_format": response_format,
+            "speed": speed,
         }
         
         logger.info(f"OpenAITTSBackend: Requesting TTS for {len(request.input)} characters")
-        logger.debug(f"OpenAITTSBackend: Request params: model={model}, voice={request.voice}, "
-                    f"format={request.response_format}, speed={request.speed}")
+        logger.debug(f"OpenAITTSBackend: Request params: model={model}, voice={voice}, "
+                    f"format={response_format}, speed={speed}")
         
         try:
             async with self.client.stream("POST", self.base_url, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 
                 # Stream the audio data
-                async for chunk in response.aiter_bytes(chunk_size=8192):
+                chunk_size = 1024 if response_format == "pcm" else 8192
+                async for chunk in response.aiter_bytes(chunk_size=chunk_size):
                     yield chunk
                     
             logger.info("OpenAITTSBackend: Successfully completed TTS generation")
             
         except httpx.HTTPStatusError as e:
-            error_content = await e.response.aread()
-            error_msg = error_content.decode('utf-8', errors='ignore')
-            logger.error(f"OpenAI API HTTP error {e.response.status_code}: {error_msg}")
+            # Try to read error content safely
+            error_msg = f"HTTP {e.response.status_code}"
+            error_details = None
             
-            # Try to extract meaningful error message
-            try:
-                import json
-                error_data = json.loads(error_msg)
-                if 'error' in error_data and 'message' in error_data['error']:
-                    error_msg = error_data['error']['message']
-            except:
-                pass
+            # Check if response can still be read
+            if hasattr(e.response, 'is_closed') and not e.response.is_closed:
+                try:
+                    error_content = await e.response.aread()
+                    error_details = error_content.decode('utf-8', errors='ignore')
+                    
+                    # Try to extract meaningful error message
+                    try:
+                        error_data = json.loads(error_details)
+                        if 'error' in error_data and 'message' in error_data['error']:
+                            error_msg = error_data['error']['message']
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        # Keep the status code message if JSON parsing fails
+                        pass
+                except Exception as read_error:
+                    logger.debug(f"Could not read error response body: {read_error}")
             
-            yield f"ERROR: OpenAI API error - {error_msg}".encode('utf-8')
+            # Log error without exposing sensitive information
+            logger.error(f"OpenAI API error {e.response.status_code}: {error_msg}")
+            
+            # Provide user-friendly error messages
+            if e.response.status_code == 401:
+                raise ValueError("Authentication failed. Please check your API configuration.")
+            elif e.response.status_code == 429:
+                raise ValueError("Rate limit exceeded. Please try again later.")
+            elif e.response.status_code >= 500:
+                raise ValueError("TTS service temporarily unavailable. Please try again later.")
+            else:
+                raise ValueError(f"TTS request failed: {error_msg}")
             
         except httpx.RequestError as e:
-            logger.error(f"OpenAITTSBackend: Request error: {e}")
-            yield f"ERROR: Failed to connect to OpenAI API - {str(e)}".encode('utf-8')
+            # Log without exposing connection details
+            logger.error(f"OpenAITTSBackend: Network request failed")
+            raise ValueError("Unable to connect to TTS service. Please check your internet connection.")
             
         except Exception as e:
-            logger.error(f"OpenAITTSBackend: Unexpected error: {e}", exc_info=True)
-            yield f"ERROR: Unexpected error - {str(e)}".encode('utf-8')
+            # Log error without stack trace that might contain sensitive data
+            logger.error(f"OpenAITTSBackend: Unexpected error during TTS generation")
+            raise ValueError("An unexpected error occurred during TTS generation.")
 
 #
 # End of openai.py

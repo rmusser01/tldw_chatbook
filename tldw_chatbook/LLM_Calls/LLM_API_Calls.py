@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatAuthenticationError, 
     ChatBadRequestError, ChatProviderError, ChatConfigurationError
 from tldw_chatbook.config import load_settings, settings
 from tldw_chatbook.Utils.Utils import logging
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
 # Provider Parameter Support Documentation
@@ -297,6 +298,10 @@ def chat_with_openai(
     logging.debug(f"OpenAI Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
 
     api_url = openai_config.get('api_base_url', 'https://api.openai.com/v1').rstrip('/') + '/chat/completions'
+    
+    start_time = time.time()
+    log_counter("openai_api_request", labels={"model": final_model, "streaming": str(final_streaming)})
+    
     try:
         if final_streaming:
             logging.debug("OpenAI: Posting request (streaming)")
@@ -351,12 +356,43 @@ def chat_with_openai(
             logging.debug(f"OpenAI: Full API response status: {response.status_code}")
             response.raise_for_status()  # Raise HTTPError for 4xx/5xx AFTER retries
             response_data = response.json()
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("openai_api_response_time", duration, labels={
+                "model": final_model, 
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("openai_api_success", labels={"model": final_model, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = response_data.get("usage", {})
+            if usage:
+                log_histogram("openai_api_prompt_tokens", usage.get("prompt_tokens", 0), labels={"model": final_model})
+                log_histogram("openai_api_completion_tokens", usage.get("completion_tokens", 0), labels={"model": final_model})
+                log_histogram("openai_api_total_tokens", usage.get("total_tokens", 0), labels={"model": final_model})
+            
             logging.debug("OpenAI: Non-streaming request successful.")
             return response_data
 
     except requests.exceptions.HTTPError as e:
         error_content_text = "No response text"
         error_content_json = None
+        status_code = e.response.status_code if e.response is not None else 0
+        
+        # Log error metrics
+        duration = time.time() - start_time
+        log_counter("openai_api_error", labels={
+            "model": final_model, 
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("openai_api_error_response_time", duration, labels={
+            "model": final_model,
+            "status_code": str(status_code)
+        })
+        
         if e.response is not None:
             logging.error(f"OpenAI Full Error Response (status {e.response.status_code}): {e.response.text}")
         else:
@@ -373,9 +409,25 @@ def chat_with_openai(
         #     exc_info=True)
         # raise
     except requests.exceptions.RequestException as e:
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("openai_api_error", labels={
+            "model": final_model,
+            "error_type": "network_error"
+        })
+        log_histogram("openai_api_error_response_time", duration, labels={
+            "model": final_model,
+            "error_type": "network"
+        })
         logging.error(f"OpenAI RequestException: {e}", exc_info=True)
         raise
     except Exception as e: # Catch any other unexpected error
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("openai_api_error", labels={
+            "model": final_model,
+            "error_type": "unexpected"
+        })
         logging.error(f"OpenAI: Unexpected error in chat_with_openai: {e}", exc_info=True)
         raise ChatProviderError(provider="openai", message=f"Unexpected error: {e}")
 

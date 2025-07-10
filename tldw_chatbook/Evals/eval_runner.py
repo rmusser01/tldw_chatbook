@@ -931,6 +931,13 @@ class ClassificationRunner(BaseEvalRunner):
         """Run classification evaluation on a single sample."""
         start_time = time.time()
         
+        # Log sample processing start
+        log_counter("eval_sample_processing_started", labels={
+            "task_type": "classification",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        
         async def _run_classification_operation():
             # Format multiple choice prompt
             prompt = self._format_classification_prompt(sample)
@@ -961,6 +968,33 @@ class ClassificationRunner(BaseEvalRunner):
             
             processing_time = time.time() - start_time
             
+            # Log successful sample processing
+            log_histogram("eval_sample_processing_duration", processing_time, labels={
+                "task_type": "classification",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "success"
+            })
+            log_counter("eval_sample_processing_success", labels={
+                "task_type": "classification",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            if retry_count > 0:
+                log_histogram("eval_sample_retry_count", retry_count, labels={
+                    "task_type": "classification",
+                    "provider": self.model_config.get('provider', 'unknown')
+                })
+            
+            # Log metric values
+            for metric_name, metric_value in result_data['metrics'].items():
+                if isinstance(metric_value, (int, float)):
+                    log_histogram(f"eval_metric_{metric_name}", metric_value, labels={
+                        "task_type": "classification",
+                        "provider": self.model_config.get('provider', 'unknown'),
+                        "model": self.model_config.get('model_id', 'unknown')
+                    })
+            
             return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
@@ -983,6 +1017,21 @@ class ClassificationRunner(BaseEvalRunner):
             
             logger.error(f"Error processing classification sample {sample.id} after retries: {e}")
             logger.error(f"Error classification: {error_info}")
+            
+            # Log error metrics
+            log_histogram("eval_sample_processing_duration", processing_time, labels={
+                "task_type": "classification",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "error"
+            })
+            log_counter("eval_sample_processing_error", labels={
+                "task_type": "classification",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_category": error_info.get('error_category', 'unknown'),
+                "error_type": error_info.get('error_type', 'unknown')
+            })
             
             return EvalSampleResult(
                 sample_id=sample.id,
@@ -1046,6 +1095,7 @@ class ClassificationRunner(BaseEvalRunner):
     
     async def _generate_response(self, prompt: str) -> str:
         """Generate response from LLM for classification."""
+        generation_start = time.time()
         try:
             config = self.model_config.copy()
             config.update(self.task_config.generation_kwargs)
@@ -1059,9 +1109,33 @@ class ClassificationRunner(BaseEvalRunner):
                 **config
             )
             
+            # Log generation metrics
+            generation_duration = time.time() - generation_start
+            log_histogram("eval_llm_generation_duration", generation_duration, labels={
+                "task_type": "classification",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            log_histogram("eval_llm_response_length", len(response), labels={
+                "task_type": "classification",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            
             return response
             
         except Exception as e:
+            generation_duration = time.time() - generation_start
+            log_counter("eval_llm_generation_error", labels={
+                "task_type": "classification",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_type": type(e).__name__
+            })
+            log_histogram("eval_llm_generation_error_duration", generation_duration, labels={
+                "task_type": "classification",
+                "provider": self.model_config.get('provider', 'unknown')
+            })
             logger.error(f"LLM generation failed: {e}")
             raise
 
@@ -1427,10 +1501,49 @@ class EvalRunner:
         logger.info(f"Evaluation completed: {len(results)} results")
         logger.info(f"Success rate: {success_rate:.1f}% | Errors: {error_count} | Total retries: {retry_count}")
         
+        # Log evaluation run completion metrics
+        eval_run_duration = time.time() - eval_run_start
+        log_histogram("eval_runner_run_duration", eval_run_duration, labels={
+            "task_type": self.task_config.task_type,
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown'),
+            "status": "completed" if error_count < len(samples) else "failed"
+        })
+        log_counter("eval_runner_run_completed", labels={
+            "task_type": self.task_config.task_type,
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        log_histogram("eval_runner_sample_count", len(results), labels={
+            "task_type": self.task_config.task_type,
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        log_histogram("eval_runner_error_count", error_count, labels={
+            "task_type": self.task_config.task_type,
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        log_histogram("eval_runner_total_retries", retry_count, labels={
+            "task_type": self.task_config.task_type,
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        
+        # Calculate and log success rate
+        if len(results) > 0:
+            log_histogram("eval_runner_success_rate", success_rate / 100.0, labels={
+                "task_type": self.task_config.task_type,
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+        
         return results
     
     def calculate_aggregate_metrics(self, results: List[EvalSampleResult]) -> Dict[str, float]:
         """Calculate aggregate metrics across all results."""
+        start_time = time.time()
+        
         if not results:
             return {}
         
@@ -1453,5 +1566,19 @@ class EvalRunner:
         aggregate_metrics['total_samples'] = len(results)
         aggregate_metrics['error_count'] = sum(1 for r in results if 'error' in r.metrics)
         aggregate_metrics['success_rate'] = (len(results) - aggregate_metrics['error_count']) / len(results)
+        
+        # Log aggregation metrics
+        duration = time.time() - start_time
+        log_histogram("eval_aggregation_duration", duration, labels={
+            "result_count": str(len(results)),
+            "metric_count": str(len(aggregate_metrics))
+        })
+        
+        # Log aggregate metric values
+        for metric_name, metric_value in aggregate_metrics.items():
+            if isinstance(metric_value, (int, float)):
+                log_histogram(f"eval_aggregate_{metric_name}", metric_value, labels={
+                    "sample_count": str(len(results))
+                })
         
         return aggregate_metrics

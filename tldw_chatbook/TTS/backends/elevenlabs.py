@@ -9,14 +9,14 @@ from loguru import logger
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
-from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
+from tldw_chatbook.TTS.base_backends import APITTSBackend
 from tldw_chatbook.config import get_cli_setting
 
 #######################################################################################################################
 #
 # ElevenLabs TTS Backend Implementation
 
-class ElevenLabsTTSBackend(TTSBackendBase):
+class ElevenLabsTTSBackend(APITTSBackend):
     """ElevenLabs Text-to-Speech API backend"""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -75,19 +75,29 @@ class ElevenLabsTTSBackend(TTSBackendBase):
         Yields:
             Audio bytes in the requested format
         """
-        if not self.api_key:
-            logger.error("ElevenLabsTTSBackend: Cannot generate speech without API key")
-            yield b"ERROR: ElevenLabs API key not configured"
-            return
+        # Use base class method to validate API key
+        self._validate_api_key()
         
-        # Use request voice or default
-        voice_id = request.voice if request.voice != "alloy" else self.default_voice
+        # Validate input text
+        if not request.input:
+            raise ValueError("Text input is required.")
+        
+        # Input length validation (ElevenLabs has a 5000 character limit per request)
+        if len(request.input) > 5000:
+            raise ValueError("Text input exceeds maximum length of 5000 characters.")
+        
+        # Map voice to ElevenLabs voice ID
+        voice_id = get_elevenlabs_voice_id(request.voice)
+        if voice_id == request.voice and len(voice_id) < 15:
+            # Not a valid voice ID, use default
+            voice_id = self.default_voice
+            logger.warning(f"Voice '{request.voice}' not recognized, using default voice ID")
         
         # Map OpenAI format to ElevenLabs format if needed
         output_format = self._map_output_format(request.response_format)
         
-        # Construct URL
-        url = f"{self.base_url}/text-to-speech/{voice_id}/stream"
+        # Construct URL with output format parameter
+        url = f"{self.base_url}/text-to-speech/{voice_id}/stream?output_format={output_format}"
         
         headers = {
             "Accept": "application/json",
@@ -134,36 +144,51 @@ class ElevenLabsTTSBackend(TTSBackendBase):
             logger.info("ElevenLabsTTSBackend: Successfully completed TTS generation")
             
         except httpx.HTTPStatusError as e:
-            error_content = await e.response.aread()
-            error_msg = error_content.decode('utf-8', errors='ignore')
-            logger.error(f"ElevenLabs API HTTP error {e.response.status_code}: {error_msg}")
-            
-            # Try to extract meaningful error message
+            # Try to read error content safely
+            error_msg = f"HTTP {e.response.status_code}"
             try:
-                import json
-                error_data = json.loads(error_msg)
-                if 'detail' in error_data:
-                    if isinstance(error_data['detail'], dict) and 'message' in error_data['detail']:
-                        error_msg = error_data['detail']['message']
-                    else:
-                        error_msg = str(error_data['detail'])
-            except:
-                pass
+                error_content = await e.response.aread()
+                error_msg = error_content.decode('utf-8', errors='ignore')
+                logger.error(f"ElevenLabs API HTTP error {e.response.status_code}: {error_msg}")
+                
+                # Try to extract meaningful error message
+                try:
+                    import json
+                    error_data = json.loads(error_msg)
+                    if 'detail' in error_data:
+                        if isinstance(error_data['detail'], dict) and 'message' in error_data['detail']:
+                            error_msg = error_data['detail']['message']
+                        else:
+                            error_msg = str(error_data['detail'])
+                except:
+                    pass
+            except Exception as read_error:
+                logger.error(f"Failed to read error response: {read_error}")
+                # Use basic error message
             
-            yield f"ERROR: ElevenLabs API error - {error_msg}".encode('utf-8')
+            # Raise proper exceptions instead of yielding error text
+            if e.response.status_code == 401:
+                raise ValueError("Authentication failed. Please check your API configuration.")
+            elif e.response.status_code == 429:
+                raise ValueError("Rate limit exceeded. Please try again later.")
+            elif e.response.status_code >= 500:
+                raise ValueError("TTS service temporarily unavailable. Please try again later.")
+            else:
+                raise ValueError(f"TTS request failed: {error_msg}")
             
         except httpx.RequestError as e:
             logger.error(f"ElevenLabsTTSBackend: Request error: {e}")
-            yield f"ERROR: Failed to connect to ElevenLabs API - {str(e)}".encode('utf-8')
+            raise ValueError("Unable to connect to TTS service. Please check your internet connection.")
             
         except Exception as e:
             logger.error(f"ElevenLabsTTSBackend: Unexpected error: {e}", exc_info=True)
-            yield f"ERROR: Unexpected error - {str(e)}".encode('utf-8')
+            raise ValueError("An unexpected error occurred during TTS generation.")
     
     def _map_output_format(self, format: str) -> str:
         """Map common format names to ElevenLabs format strings"""
-        format_map = {
-            "mp3": self.output_format,  # Use configured default
+        # Simple format to ElevenLabs format mapping
+        simple_format_map = {
+            "mp3": "mp3_44100_192",  # High quality MP3
             "opus": "opus",
             "aac": "aac",
             "flac": "flac",
@@ -171,11 +196,21 @@ class ElevenLabsTTSBackend(TTSBackendBase):
             "pcm": "pcm_44100",
         }
         
-        # If format is already an ElevenLabs format string, use it directly
+        # If format is already an ElevenLabs format string, validate it
         if "_" in format:  # e.g., "mp3_44100_192"
-            return format
+            valid_elevenlabs_formats = [
+                "mp3_44100_32", "mp3_44100_64", "mp3_44100_96", "mp3_44100_128", "mp3_44100_192",
+                "pcm_16000", "pcm_22050", "pcm_24000", "pcm_44100",
+                "ulaw_8000"
+            ]
+            if format in valid_elevenlabs_formats:
+                return format
+            else:
+                logger.warning(f"Invalid ElevenLabs format '{format}', using default")
+                return self.output_format
         
-        return format_map.get(format.lower(), self.output_format)
+        # Map simple format or use default
+        return simple_format_map.get(format.lower(), self.output_format)
 
 # Voice ID mapping for common names
 ELEVENLABS_VOICE_MAP = {

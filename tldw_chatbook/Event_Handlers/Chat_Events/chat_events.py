@@ -42,6 +42,7 @@ from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Widgets.file_extraction_dialog import FileExtractionDialog
 from tldw_chatbook.Widgets.document_generation_modal import DocumentGenerationModal
 from tldw_chatbook.Chat.document_generator import DocumentGenerator
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -98,11 +99,16 @@ async def handle_chat_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) 
 async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the send button press for the main chat tab."""
     prefix = "chat"  # This handler is specific to the main chat tab's send button
+    start_time = time.time()
+    
+    # Log button click event
+    log_counter("chat_ui_send_button_clicked", labels={"tab": prefix})
     
     # Check if there's an active chat generation running
     if hasattr(app, 'current_chat_worker') and app.current_chat_worker and app.current_chat_worker.is_running:
         # Stop the generation instead of sending
         loguru_logger.info("Send button pressed - stopping active generation")
+        log_counter("chat_ui_generation_cancelled", labels={"tab": prefix})
         await handle_stop_chat_generation_pressed(app, event)
         return
     
@@ -144,6 +150,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
 
     except QueryError as e:
         loguru_logger.error(f"Send Button: Could not find UI widgets for '{prefix}': {e}")
+        log_counter("chat_ui_widget_error", labels={"tab": prefix, "error": "query_error"})
         try:
             container_for_error = chat_container if 'chat_container' in locals() and chat_container.is_mounted else app.query_one(
                 f"#{prefix}-log", VerticalScroll) # Re-query if initial one failed
@@ -161,10 +168,12 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         if not validate_text_input(message_text_from_input, max_length=100000, allow_html=False):
             await chat_container.mount(ChatMessage(Text.from_markup("Error: Message contains invalid content or is too long."), role="System", classes="-error"))
             loguru_logger.warning(f"Invalid user message input rejected")
+            log_counter("chat_ui_message_validation_failed", labels={"tab": prefix, "reason": "invalid_content"})
             return
         
         # Sanitize the message text to remove dangerous characters
         message_text_from_input = sanitize_string(message_text_from_input, max_length=100000)
+        log_histogram("chat_ui_message_length", len(message_text_from_input), labels={"tab": prefix})
     
     reuse_last_user_bubble = False
     resend_conversation = False  # New flag specifically for resending the entire conversation
@@ -859,6 +868,20 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             loguru_logger.debug("Cleared pending attachment/image after sending")
         except Exception as e:
             loguru_logger.debug(f"Could not clear pending attachment UI: {e}")
+    
+    # Log UI response time metrics
+    ui_response_time = time.time() - start_time
+    log_histogram("chat_ui_send_response_time", ui_response_time, labels={
+        "tab": prefix,
+        "provider": selected_provider or "none",
+        "streaming": str(should_stream),
+        "has_image": str(bool(pending_image)),
+        "has_character": str(bool(app.current_chat_active_character_data))
+    })
+    log_counter("chat_ui_message_sent", labels={
+        "tab": prefix,
+        "provider": selected_provider or "none"
+    })
 
 
 async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, action_widget: Union[ChatMessage, ChatMessageEnhanced]) -> None:

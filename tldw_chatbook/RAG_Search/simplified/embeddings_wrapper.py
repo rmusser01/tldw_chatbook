@@ -12,9 +12,11 @@ import logging
 import os
 import time
 import psutil
+import hashlib
 
 from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
+from .circuit_breaker import get_circuit_breaker, CircuitBreakerConfig, CircuitBreakerOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +71,8 @@ class EmbeddingsServiceWrapper:
                 self.device = "cpu"
             logger.info(f"Auto-detected device: {self.device}")
         
-        # Log API key usage (without revealing the key)
-        if api_key:
-            logger.info("Using provided API key for embeddings")
-        elif os.environ.get("OPENAI_API_KEY"):
-            logger.info("Using OPENAI_API_KEY from environment")
+        # Note API key source without logging sensitive info
+        self._has_api_key = bool(api_key or os.environ.get("OPENAI_API_KEY"))
         
         # Determine provider and model configuration
         config_dict = self._build_config(model_name, self.device, api_key, base_url, cache_dir)
@@ -109,6 +108,15 @@ class EmbeddingsServiceWrapper:
         self._errors_count = 0
         self._cache_hits = 0
         self._cache_misses = 0
+        self._embedding_dimension = None  # Cache the dimension after first use
+        
+        # Circuit breaker for resilience
+        breaker_config = CircuitBreakerConfig(
+            failure_threshold=3,
+            recovery_timeout=30.0,
+            success_threshold=2
+        )
+        self._circuit_breaker = get_circuit_breaker(f"embeddings_{model_name}", breaker_config)
     
     def _build_config(self, model_name: str, device: Optional[str], 
                      api_key: Optional[str], base_url: Optional[str], 
@@ -210,7 +218,10 @@ class EmbeddingsServiceWrapper:
             # Check if embeddings are cached (simplified check)
             # In reality, the factory handles caching internally
             # This is a simplified representation for metrics
-            cache_key = str(hash(tuple(texts[:5])))  # Sample for cache detection
+            # Use deterministic hash for cache key based on all texts
+            # Include text count and total length to avoid collisions
+            cache_content = f"{len(texts)}:{sum(len(t) for t in texts)}:{hashlib.sha256('|'.join(texts).encode('utf-8')).hexdigest()}"
+            cache_key = hashlib.sha256(cache_content.encode('utf-8')).hexdigest()[:32]
             is_cached = hasattr(self.factory, '_cache') and cache_key in getattr(self.factory, '_cache', {})
             
             if is_cached:
@@ -222,16 +233,33 @@ class EmbeddingsServiceWrapper:
                 log_counter("embeddings_cache_miss")
                 logger.debug(f"Cache miss for embedding batch")
             
-            # Use the factory's embed method
+            # Use the factory's embed method with circuit breaker protection
             logger.debug(f"Calling factory.embed with {len(texts)} texts")
-            embeddings = self.factory.embed(texts, as_list=False)
-            logger.debug(f"Factory returned embeddings of type {type(embeddings)}, shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'N/A'}")
+            
+            # Define the embedding function for circuit breaker
+            def embed_with_factory():
+                return self.factory.embed(texts, as_list=False)
+            
+            try:
+                embeddings = self._circuit_breaker.call_sync(embed_with_factory)
+                logger.debug(f"Factory returned embeddings of type {type(embeddings)}, shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'N/A'}")
+            except CircuitBreakerOpenError as e:
+                # Circuit is open, fail fast
+                self._errors_count += 1
+                log_counter("embeddings_circuit_breaker_open")
+                logger.error(f"Embeddings service unavailable: {e}")
+                raise RuntimeError(f"Embeddings service temporarily unavailable: {e}") from e
             
             # Ensure embeddings is a numpy array
             if not isinstance(embeddings, np.ndarray):
                 logger.debug(f"Converting embeddings from {type(embeddings)} to numpy array")
                 embeddings = np.array(embeddings)
                 logger.debug(f"After conversion: shape={embeddings.shape}")
+            
+            # Cache the embedding dimension if not already cached
+            if self._embedding_dimension is None and embeddings.shape[0] > 0 and embeddings.shape[1] > 0:
+                self._embedding_dimension = embeddings.shape[1]
+                logger.info(f"Cached embedding dimension from first use: {self._embedding_dimension}")
             
             # Get memory usage after
             memory_after = process.memory_info().rss / (1024 * 1024)  # MB
@@ -276,8 +304,17 @@ class EmbeddingsServiceWrapper:
         logger.info(f"Creating embeddings asynchronously for batch of {len(texts)} texts")
         
         try:
-            # Use the factory's async embed method
-            embeddings = await self.factory.async_embed(texts, as_list=False)
+            # Use the factory's async embed method with circuit breaker protection
+            try:
+                embeddings = await self._circuit_breaker.call_async(
+                    self.factory.async_embed, texts, as_list=False
+                )
+            except CircuitBreakerOpenError as e:
+                # Circuit is open, fail fast
+                self._errors_count += 1
+                log_counter("embeddings_circuit_breaker_open")
+                logger.error(f"Embeddings service unavailable: {e}")
+                raise RuntimeError(f"Embeddings service temporarily unavailable: {e}") from e
             
             # Ensure embeddings is a numpy array
             if not isinstance(embeddings, np.ndarray):
@@ -332,12 +369,18 @@ class EmbeddingsServiceWrapper:
         Returns:
             Embedding dimension or None if it cannot be determined
         """
+        # Return cached dimension if available
+        if self._embedding_dimension is not None:
+            return self._embedding_dimension
+            
         try:
             # Create a dummy embedding to get dimension
             dummy_embedding = self.create_embedding("test")
-            return int(dummy_embedding.shape[0])
-        except Exception:
-            logger.warning("Could not determine embedding dimension")
+            self._embedding_dimension = int(dummy_embedding.shape[0])
+            logger.info(f"Detected and cached embedding dimension: {self._embedding_dimension}")
+            return self._embedding_dimension
+        except Exception as e:
+            logger.warning(f"Could not determine embedding dimension: {e}")
             return None
     
     @timeit("embeddings_prefetch_models")
@@ -507,9 +550,12 @@ class EmbeddingsServiceWrapper:
     def __del__(self):
         """Destructor - attempt cleanup if not already done."""
         try:
-            self.close()
-        except:
-            pass
+            # Only attempt cleanup if factory exists and hasn't been cleaned up
+            if hasattr(self, 'factory') and self.factory is not None:
+                self.close()
+        except Exception as e:
+            # Log the error but don't raise - destructors shouldn't throw
+            logger.error(f"Error during embeddings wrapper cleanup: {e}")
 
 
 # Convenience function for creating service with common configurations

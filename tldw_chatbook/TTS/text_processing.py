@@ -1,39 +1,66 @@
 # text_processing.py
-# Description: Text processing utilities for TTS including normalization, chunking, and language detection
+# Description: Text processing utilities for TTS including chunking, normalization, and language detection
 #
 # Imports
 import re
-from typing import List, Tuple, Optional, AsyncGenerator
+from typing import List, Tuple, Optional, Dict, Any, AsyncGenerator
+from dataclasses import dataclass
+import unicodedata
 from loguru import logger
-
-# Third-party imports
-try:
-    import nltk
-    NLTK_AVAILABLE = True
-except ImportError:
-    NLTK_AVAILABLE = False
-    logger.warning("nltk not available. Text chunking will use simple splitting.")
-
-try:
-    from transformers import AutoTokenizer
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-    logger.warning("transformers not available. Token counting will use approximation.")
 
 #######################################################################################################################
 #
-# Functions:
+# Text Processing Classes
+
+@dataclass
+class TextChunk:
+    """Represents a chunk of text for TTS processing"""
+    text: str
+    token_count: int
+    is_sentence_end: bool = True
+    metadata: Optional[Dict[str, Any]] = None
+
 
 class TextNormalizer:
-    """Handles text normalization for TTS processing"""
+    """Text normalization for TTS processing"""
     
-    def __init__(self, options: Optional[dict] = None):
+    # Regex patterns for various text elements
+    URL_PATTERN = re.compile(
+        r'https?://(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b'
+        r'(?:[-a-zA-Z0-9()@:%_\+.~#?&/=]*)'
+    )
+    EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+    PHONE_PATTERN = re.compile(r'(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}')
+    
+    # Unit patterns
+    UNIT_PATTERNS = {
+        # Storage units
+        r'\b(\d+)\s*KB\b': r'\1 kilobytes',
+        r'\b(\d+)\s*MB\b': r'\1 megabytes',
+        r'\b(\d+)\s*GB\b': r'\1 gigabytes',
+        r'\b(\d+)\s*TB\b': r'\1 terabytes',
+        # Time units
+        r'\b(\d+)\s*ms\b': r'\1 milliseconds',
+        r'\b(\d+)\s*s\b(?![\w])': r'\1 seconds',
+        r'\b(\d+)\s*min\b': r'\1 minutes',
+        r'\b(\d+)\s*hr?s?\b': r'\1 hours',
+        # Common abbreviations
+        r'\betc\.': 'et cetera',
+        r'\be\.g\.': 'for example',
+        r'\bi\.e\.': 'that is',
+        r'\bvs\.': 'versus',
+        r'\bDr\.': 'Doctor',
+        r'\bMr\.': 'Mister',
+        r'\bMs\.': 'Miss',
+        r'\bMrs\.': 'Missus',
+    }
+    
+    def __init__(self, options: Optional[Dict[str, bool]] = None):
         """
         Initialize normalizer with options.
         
         Args:
-            options: Dict with normalization options (normalize, unit_normalization, etc.)
+            options: Dictionary of normalization options
         """
         self.options = options or {}
         self.normalize = self.options.get('normalize', True)
@@ -45,7 +72,7 @@ class TextNormalizer:
     
     def normalize_text(self, text: str) -> str:
         """
-        Apply all enabled normalizations to the text.
+        Normalize text for TTS processing.
         
         Args:
             text: Input text to normalize
@@ -56,10 +83,13 @@ class TextNormalizer:
         if not self.normalize:
             return text
         
-        # Basic normalization - always apply
-        text = self._basic_normalization(text)
+        # Remove excessive whitespace
+        text = ' '.join(text.split())
         
-        # Apply specific normalizations based on options
+        # Normalize unicode characters
+        text = unicodedata.normalize('NFKC', text)
+        
+        # Apply specific normalizations
         if self.url_normalization:
             text = self._normalize_urls(text)
         
@@ -75,252 +105,372 @@ class TextNormalizer:
         if self.optional_pluralization:
             text = self._normalize_optional_plurals(text)
         
+        # Clean up punctuation spacing
+        text = self._fix_punctuation_spacing(text)
+        
         return text
-    
-    def _basic_normalization(self, text: str) -> str:
-        """Basic text normalization"""
-        # Replace special quotes and punctuation
-        text = text.replace("'", "'").replace(""", '"').replace(""", '"')
-        text = text.replace("–", "-").replace("—", "-")
-        
-        # Remove non-printable characters except newlines and spaces
-        text = re.sub(r"[^\S \n]", " ", text)
-        
-        # Normalize whitespace
-        text = re.sub(r"\s+", " ", text)
-        text = re.sub(r"\n+", " ", text)
-        
-        return text.strip()
     
     def _normalize_urls(self, text: str) -> str:
         """Convert URLs to speakable format"""
-        # Simple URL pattern
-        url_pattern = r'https?://(?:www\.)?([a-zA-Z0-9-]+)\.([a-zA-Z]{2,})(?:/[^\s]*)?'
+        def replace_url(match):
+            url = match.group(0)
+            # Extract domain for simpler speech
+            domain_match = re.search(r'(?:https?://)?(?:www\.)?([^/]+)', url)
+            if domain_match:
+                domain = domain_match.group(1)
+                # Remove common TLDs for cleaner speech
+                domain = re.sub(r'\.(com|org|net|io|co|uk|edu|gov)$', '', domain)
+                return f"website {domain.replace('.', ' dot ')}"
+            return "website"
         
-        def url_replacer(match):
-            domain = match.group(1)
-            tld = match.group(2)
-            # Convert to speakable format
-            domain = domain.replace('-', ' dash ')
-            return f"{domain} dot {tld}"
-        
-        return re.sub(url_pattern, url_replacer, text)
+        return self.URL_PATTERN.sub(replace_url, text)
     
     def _normalize_emails(self, text: str) -> str:
         """Convert emails to speakable format"""
-        email_pattern = r'([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+)\.([a-zA-Z]{2,})'
+        def replace_email(match):
+            email = match.group(0)
+            local, domain = email.split('@')
+            # Make email more speakable
+            local = local.replace('.', ' dot ').replace('_', ' underscore ')
+            domain = domain.replace('.', ' dot ')
+            return f"{local} at {domain}"
         
-        def email_replacer(match):
-            user = match.group(1).replace('.', ' dot ').replace('_', ' underscore ')
-            domain = match.group(2).replace('-', ' dash ')
-            tld = match.group(3)
-            return f"{user} at {domain} dot {tld}"
-        
-        return re.sub(email_pattern, email_replacer, text)
+        return self.EMAIL_PATTERN.sub(replace_email, text)
     
     def _normalize_phone_numbers(self, text: str) -> str:
         """Convert phone numbers to speakable format"""
-        # US phone number pattern
-        us_phone = r'\b(?:1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b'
-        
-        def phone_replacer(match):
+        def replace_phone(match):
+            phone = match.group(0)
             # Remove all non-digits
-            digits = re.sub(r'\D', '', match.group())
-            # Add spaces between digits for better pronunciation
-            return ' '.join(digits)
+            digits = re.sub(r'\D', '', phone)
+            # Format as speakable
+            if len(digits) == 10:
+                return f"{digits[0:3]} {digits[3:6]} {digits[6:]}"
+            elif len(digits) == 11 and digits[0] == '1':
+                return f"{digits[1:4]} {digits[4:7]} {digits[7:]}"
+            else:
+                # Just space out the digits
+                return ' '.join(digits)
         
-        return re.sub(us_phone, phone_replacer, text)
+        return self.PHONE_PATTERN.sub(replace_phone, text)
     
     def _normalize_units(self, text: str) -> str:
-        """Convert units to full words"""
-        replacements = {
-            r'\b(\d+)\s*KB\b': r'\1 kilobytes',
-            r'\b(\d+)\s*MB\b': r'\1 megabytes',
-            r'\b(\d+)\s*GB\b': r'\1 gigabytes',
-            r'\b(\d+)\s*TB\b': r'\1 terabytes',
-            r'\b(\d+)\s*km\b': r'\1 kilometers',
-            r'\b(\d+)\s*m\b': r'\1 meters',
-            r'\b(\d+)\s*cm\b': r'\1 centimeters',
-            r'\b(\d+)\s*mm\b': r'\1 millimeters',
-            r'\b(\d+)\s*kg\b': r'\1 kilograms',
-            r'\b(\d+)\s*g\b': r'\1 grams',
-            r'\b(\d+)\s*mg\b': r'\1 milligrams',
-        }
-        
-        for pattern, replacement in replacements.items():
+        """Expand unit abbreviations"""
+        for pattern, replacement in self.UNIT_PATTERNS.items():
             text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-        
         return text
     
     def _normalize_optional_plurals(self, text: str) -> str:
         """Replace (s) with s for better pronunciation"""
         return re.sub(r'\(s\)', 's', text)
+    
+    def _fix_punctuation_spacing(self, text: str) -> str:
+        """Fix spacing around punctuation"""
+        # Remove space before punctuation
+        text = re.sub(r'\s+([.,!?;:])', r'\1', text)
+        # Add space after punctuation if missing
+        text = re.sub(r'([.,!?;:])([A-Za-z])', r'\1 \2', text)
+        # Fix multiple punctuation
+        text = re.sub(r'([.!?])\1+', r'\1', text)
+        return text
 
 
 class TextChunker:
-    """Handles text chunking for TTS processing"""
+    """Text chunking for TTS with token limits"""
     
-    def __init__(self, max_tokens: int = 500, tokenizer_name: Optional[str] = None):
+    # Sentence ending patterns
+    SENTENCE_ENDINGS = re.compile(r'[.!?]+[\s\n]+|[.!?]+$')
+    
+    # Approximate tokens per word (conservative estimate)
+    TOKENS_PER_WORD = 1.3
+    
+    def __init__(self, max_tokens: int = 500):
         """
         Initialize text chunker.
         
         Args:
             max_tokens: Maximum tokens per chunk
-            tokenizer_name: Name of tokenizer to use (if transformers available)
         """
         self.max_tokens = max_tokens
-        self.tokenizer = None
-        
-        if TRANSFORMERS_AVAILABLE and tokenizer_name:
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-            except Exception as e:
-                logger.warning(f"Failed to load tokenizer {tokenizer_name}: {e}")
+        self.min_chunk_size = max(10, int(max_tokens * 0.1))  # At least 10% of max
     
-    def chunk_text(self, text: str) -> List[str]:
+    def chunk_text(self, text: str) -> List[TextChunk]:
         """
-        Split text into chunks suitable for TTS processing.
+        Split text into chunks suitable for TTS.
         
         Args:
             text: Input text to chunk
             
         Returns:
-            List of text chunks
+            List of TextChunk objects
         """
-        if NLTK_AVAILABLE:
-            try:
-                sentences = nltk.sent_tokenize(text)
-                return self._chunk_by_sentences(sentences)
-            except Exception as e:
-                logger.warning(f"NLTK sentence tokenization failed: {e}")
+        if not text.strip():
+            return []
         
-        # Fallback to simple splitting
-        return self._simple_chunk(text)
-    
-    def _chunk_by_sentences(self, sentences: List[str]) -> List[str]:
-        """Chunk text by sentences while respecting token limits"""
+        # Split into sentences first
+        sentences = self._split_sentences(text)
+        
+        # Group sentences into chunks
         chunks = []
         current_chunk = []
-        current_length = 0
+        current_tokens = 0
         
         for sentence in sentences:
-            sentence_length = self._estimate_tokens(sentence)
+            sentence_tokens = self._estimate_tokens(sentence)
             
-            if current_length + sentence_length > self.max_tokens:
+            # If single sentence exceeds limit, split it
+            if sentence_tokens > self.max_tokens:
+                # Flush current chunk if any
                 if current_chunk:
-                    chunks.append(" ".join(current_chunk))
+                    chunk_text = ' '.join(current_chunk)
+                    chunks.append(TextChunk(
+                        text=chunk_text,
+                        token_count=current_tokens,
+                        is_sentence_end=True
+                    ))
+                    current_chunk = []
+                    current_tokens = 0
+                
+                # Split long sentence
+                sub_chunks = self._split_long_sentence(sentence)
+                chunks.extend(sub_chunks)
+            
+            # Check if adding sentence exceeds limit
+            elif current_tokens + sentence_tokens > self.max_tokens:
+                # Flush current chunk
+                if current_chunk:
+                    chunk_text = ' '.join(current_chunk)
+                    chunks.append(TextChunk(
+                        text=chunk_text,
+                        token_count=current_tokens,
+                        is_sentence_end=True
+                    ))
+                
+                # Start new chunk
                 current_chunk = [sentence]
-                current_length = sentence_length
+                current_tokens = sentence_tokens
+            
             else:
+                # Add to current chunk
                 current_chunk.append(sentence)
-                current_length += sentence_length
+                current_tokens += sentence_tokens
         
+        # Flush final chunk
         if current_chunk:
-            chunks.append(" ".join(current_chunk))
+            chunk_text = ' '.join(current_chunk)
+            chunks.append(TextChunk(
+                text=chunk_text,
+                token_count=current_tokens,
+                is_sentence_end=True
+            ))
         
         return chunks
     
-    def _simple_chunk(self, text: str) -> List[str]:
-        """Simple text chunking by character count"""
-        # Approximate 4 characters per token
-        max_chars = self.max_tokens * 4
+    def _split_sentences(self, text: str) -> List[str]:
+        """Split text into sentences"""
+        # Use regex to find sentence boundaries
+        sentences = []
+        last_end = 0
         
-        # Split by periods first
-        sentences = text.split('. ')
+        for match in self.SENTENCE_ENDINGS.finditer(text):
+            sentence = text[last_end:match.end()].strip()
+            if sentence:
+                sentences.append(sentence)
+            last_end = match.end()
+        
+        # Add remaining text if any
+        if last_end < len(text):
+            remaining = text[last_end:].strip()
+            if remaining:
+                sentences.append(remaining)
+        
+        return sentences
+    
+    def _split_long_sentence(self, sentence: str) -> List[TextChunk]:
+        """Split a long sentence that exceeds token limit"""
         chunks = []
-        current_chunk = []
-        current_length = 0
         
-        for sentence in sentences:
-            sentence_with_period = sentence + ('. ' if not sentence.endswith('.') else ' ')
+        # Try splitting by commas first
+        parts = sentence.split(',')
+        if len(parts) > 1:
+            return self._group_parts(parts, ',')
+        
+        # Try splitting by semicolons
+        parts = sentence.split(';')
+        if len(parts) > 1:
+            return self._group_parts(parts, ';')
+        
+        # Try splitting by conjunctions
+        conjunctions = [' and ', ' or ', ' but ', ' because ', ' although ', ' while ']
+        for conj in conjunctions:
+            if conj in sentence:
+                parts = sentence.split(conj)
+                if len(parts) > 1:
+                    # Reconstruct with conjunction
+                    reconstructed_parts = []
+                    for i, part in enumerate(parts[:-1]):
+                        reconstructed_parts.append(part + conj.rstrip())
+                    reconstructed_parts.append(parts[-1])
+                    return self._group_parts(reconstructed_parts, '')
+        
+        # Last resort: split by words
+        words = sentence.split()
+        words_per_chunk = int(self.max_tokens / self.TOKENS_PER_WORD)
+        
+        for i in range(0, len(words), words_per_chunk):
+            chunk_words = words[i:i + words_per_chunk]
+            chunk_text = ' '.join(chunk_words)
+            chunks.append(TextChunk(
+                text=chunk_text,
+                token_count=self._estimate_tokens(chunk_text),
+                is_sentence_end=(i + words_per_chunk >= len(words))
+            ))
+        
+        return chunks
+    
+    def _group_parts(self, parts: List[str], separator: str) -> List[TextChunk]:
+        """Group parts into chunks respecting token limits"""
+        chunks = []
+        current_parts = []
+        current_tokens = 0
+        
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
             
-            if current_length + len(sentence_with_period) > max_chars:
-                if current_chunk:
-                    chunks.append(''.join(current_chunk).strip())
-                current_chunk = [sentence_with_period]
-                current_length = len(sentence_with_period)
+            part_tokens = self._estimate_tokens(part)
+            
+            if current_tokens + part_tokens > self.max_tokens and current_parts:
+                # Create chunk
+                chunk_text = (separator + ' ').join(current_parts)
+                if separator and not chunk_text.endswith(separator):
+                    chunk_text += separator
+                
+                chunks.append(TextChunk(
+                    text=chunk_text,
+                    token_count=current_tokens,
+                    is_sentence_end=False
+                ))
+                
+                current_parts = [part]
+                current_tokens = part_tokens
             else:
-                current_chunk.append(sentence_with_period)
-                current_length += len(sentence_with_period)
+                current_parts.append(part)
+                current_tokens += part_tokens
         
-        if current_chunk:
-            chunks.append(''.join(current_chunk).strip())
+        # Final chunk
+        if current_parts:
+            chunk_text = (separator + ' ').join(current_parts)
+            chunks.append(TextChunk(
+                text=chunk_text,
+                token_count=current_tokens,
+                is_sentence_end=True
+            ))
         
         return chunks
     
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count for text"""
-        if self.tokenizer:
-            return len(self.tokenizer.encode(text, add_special_tokens=False))
-        else:
-            # Rough approximation: 4 characters = 1 token
-            return len(text) // 4
+        # Simple estimation based on words
+        # Could be replaced with actual tokenizer if available
+        word_count = len(text.split())
+        return int(word_count * self.TOKENS_PER_WORD)
 
 
-async def smart_split(
-    text: str,
-    lang_code: Optional[str] = None,
-    normalization_options: Optional[dict] = None,
-    max_tokens: int = 500
-) -> AsyncGenerator[Tuple[str, Optional[str]], None]:
+def detect_language(text: str, voice_code: Optional[str] = None) -> str:
     """
-    Smart text splitting with normalization for TTS.
+    Detect language from text or voice code.
     
     Args:
-        text: Input text to process
-        lang_code: Language code for language-specific processing
-        normalization_options: Text normalization options
-        max_tokens: Maximum tokens per chunk
-        
-    Yields:
-        Tuples of (normalized_text, phonemes) - phonemes currently None
-    """
-    # Initialize processors
-    normalizer = TextNormalizer(normalization_options)
-    chunker = TextChunker(max_tokens)
-    
-    # Normalize text
-    normalized_text = normalizer.normalize_text(text)
-    
-    # Chunk text
-    chunks = chunker.chunk_text(normalized_text)
-    
-    # Yield chunks
-    for chunk in chunks:
-        # In the future, could add phoneme generation here
-        yield chunk, None
-
-
-def detect_language(text: str, voice: str) -> str:
-    """
-    Simple language detection based on voice name.
-    
-    Args:
-        text: Input text (currently unused)
-        voice: Voice identifier
+        text: Input text
+        voice_code: Optional voice code (e.g., 'af' for American Female)
         
     Returns:
-        Language code (e.g., 'en-us', 'en-gb')
+        Language code (e.g., 'en', 'ja', 'zh')
     """
-    # Simple heuristic based on voice prefix
-    # This should be replaced with proper language detection
-    voice_lower = voice.lower()
+    # If voice code provided, use first letter as language hint
+    if voice_code and len(voice_code) >= 1:
+        lang_prefix = voice_code[0].lower()
+        language_map = {
+            'a': 'en',  # American English
+            'b': 'en',  # British English
+            'j': 'ja',  # Japanese
+            'z': 'zh',  # Chinese (Mandarin)
+            'e': 'es',  # Spanish
+            'f': 'fr',  # French
+            'h': 'hi',  # Hindi
+            'i': 'it',  # Italian
+            'p': 'pt',  # Portuguese
+            'k': 'ko',  # Korean
+            'r': 'ru',  # Russian
+            'g': 'de',  # German
+        }
+        
+        if lang_prefix in language_map:
+            return language_map[lang_prefix]
     
-    if voice_lower.startswith('a'):
-        return 'en-us'
-    elif voice_lower.startswith('b'):
-        return 'en-gb'
-    else:
-        return 'en-us'  # Default
+    # Simple heuristic based on character sets
+    # This is a basic implementation - could be enhanced with proper language detection
+    
+    # Check for CJK characters
+    if re.search(r'[\u4e00-\u9fff]', text):  # Chinese characters
+        return 'zh'
+    if re.search(r'[\u3040-\u309f\u30a0-\u30ff]', text):  # Japanese kana
+        return 'ja'
+    if re.search(r'[\uac00-\ud7af]', text):  # Korean hangul
+        return 'ko'
+    
+    # Check for other scripts
+    if re.search(r'[\u0400-\u04ff]', text):  # Cyrillic
+        return 'ru'
+    if re.search(r'[\u0900-\u097f]', text):  # Devanagari (Hindi)
+        return 'hi'
+    if re.search(r'[\u0600-\u06ff]', text):  # Arabic
+        return 'ar'
+    
+    # Default to English
+    return 'en'
 
 
-# Ensure NLTK data is downloaded if available
-if NLTK_AVAILABLE:
-    try:
-        nltk.data.find('tokenizers/punkt')
-    except LookupError:
-        logger.info("Downloading NLTK punkt tokenizer...")
-        nltk.download('punkt', quiet=True)
+async def process_text_stream(
+    text: str,
+    normalizer: TextNormalizer,
+    chunker: TextChunker,
+    language: Optional[str] = None
+) -> AsyncGenerator[TextChunk, None]:
+    """
+    Process text and yield chunks for TTS streaming.
+    
+    Args:
+        text: Input text
+        normalizer: Text normalizer instance
+        chunker: Text chunker instance
+        language: Optional language code
+        
+    Yields:
+        TextChunk objects ready for TTS
+    """
+    # Normalize entire text first
+    normalized_text = normalizer.normalize_text(text)
+    
+    # Detect language if not provided
+    if not language:
+        language = detect_language(normalized_text)
+    
+    # Chunk the text
+    chunks = chunker.chunk_text(normalized_text)
+    
+    # Yield chunks with metadata
+    for i, chunk in enumerate(chunks):
+        chunk.metadata = {
+            'language': language,
+            'chunk_index': i,
+            'total_chunks': len(chunks),
+            'is_first': i == 0,
+            'is_last': i == len(chunks) - 1
+        }
+        yield chunk
 
 #
 # End of text_processing.py

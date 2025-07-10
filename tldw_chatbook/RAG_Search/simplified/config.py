@@ -75,6 +75,8 @@ class SearchConfig:
     enable_cache: bool = True
     cache_size: int = 100
     cache_ttl: float = 3600  # 1 hour in seconds
+    # Database connection settings
+    fts5_connection_pool_size: int = 3  # Connection pool size for FTS5 searches
 
 
 @dataclass
@@ -396,6 +398,19 @@ class RAGConfig:
             processor_section.get('reranker_top_k', config.search.reranker_top_k)
         )
         
+        # Cache and database connection settings
+        config.search.cache_size = int(
+            search_section.get('cache_size', config.search.cache_size)
+        )
+        
+        config.search.cache_ttl = float(
+            search_section.get('cache_ttl', config.search.cache_ttl)
+        )
+        
+        config.search.fts5_connection_pool_size = int(
+            search_section.get('fts5_connection_pool_size', config.search.fts5_connection_pool_size)
+        )
+        
         # === Query Expansion Configuration ===
         query_expansion_section = rag_config.get('query_expansion', {})
         
@@ -600,6 +615,9 @@ default_search_mode = "semantic"  # "plain", "semantic", or "hybrid"
 fts_top_k = 10
 vector_top_k = 10
 hybrid_alpha = 0.5
+cache_size = 100
+cache_ttl = 3600  # 1 hour
+fts5_connection_pool_size = 3  # Adjust based on concurrent search load
 
 # Legacy configuration locations (still supported)
 [AppRAGSearchConfig.rag.retriever]

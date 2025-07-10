@@ -28,9 +28,10 @@ import pymupdf
 import pymupdf4llm
 #
 # Import Local
-from ..config import get_cli_setting
+from ..config import get_cli_setting, get_ocr_backend_config
 from ..LLM_Calls.Summarization_General_Lib import analyze
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from .OCR_Backends import ocr_manager
 from loguru import logger
 
 
@@ -125,24 +126,40 @@ def extract_text_and_format_from_pdf(pdf_path):
         raise
 
 
-def docling_parse_pdf(pdf_path: str):
+def docling_parse_pdf(pdf_path: str, enable_ocr: bool = False, ocr_language: str = "en"):
     """
     Extract text using the Docling library (if available).
+    
+    Args:
+        pdf_path: Path to the PDF file
+        enable_ocr: Whether to enable OCR for scanned documents
+        ocr_language: Language code for OCR (e.g., 'en', 'de', 'fr')
     """
     parser_name = "docling"
     DOCLING_AVAILABLE = False
     try:
         from docling.document_converter import DocumentConverter
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        DOCLING_AVAILABLE = True
     except:
         DOCLING_AVAILABLE = False
     if not DOCLING_AVAILABLE:
         raise ImportError("Docling library is not installed.")
     try:
-        log_counter("pdf_text_extraction_attempt", labels={"file_path": pdf_path, "parser": parser_name})
+        log_counter("pdf_text_extraction_attempt", labels={"file_path": pdf_path, "parser": parser_name, "ocr_enabled": str(enable_ocr)})
         start_time = datetime.now()
 
+        # Configure pipeline options with OCR settings
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_ocr = enable_ocr
+        pipeline_options.do_table_structure = True  # Extract table structure
+        
+        # Set OCR language if enabled
+        if enable_ocr and hasattr(pipeline_options, 'ocr_lang'):
+            pipeline_options.ocr_lang = ocr_language
+
         converter = DocumentConverter()
-        parsed_pdf = converter.convert(pdf_path)
+        parsed_pdf = converter.convert(pdf_path, pipeline_options=pipeline_options)
         markdown_text = parsed_pdf.document.export_to_markdown() # Or other formats if needed
 
         end_time = datetime.now()
@@ -195,6 +212,56 @@ def extract_metadata_from_pdf(pdf_path):
         return {}
 
 
+def docext_parse_pdf(pdf_path: str, ocr_backend: str = "docext", language: str = "en") -> str:
+    """
+    Extract text from PDF using docext OCR backend.
+    
+    Args:
+        pdf_path: Path to the PDF file
+        ocr_backend: OCR backend to use (default: docext)
+        language: Language code for OCR
+        
+    Returns:
+        Extracted text as markdown
+    """
+    try:
+        log_counter("pdf_text_extraction_attempt", labels={"file_path": pdf_path, "parser": "docext"})
+        start_time = datetime.now()
+        
+        # Get backend configuration
+        backend_config = get_ocr_backend_config(ocr_backend)
+        
+        # Get OCR backend
+        backend = ocr_manager.get_backend(ocr_backend)
+        if not backend._initialized:
+            backend.config = backend_config
+            backend.initialize()
+        
+        # Process PDF
+        results = backend.process_pdf(pdf_path, language=language)
+        
+        # Combine results from all pages
+        markdown_parts = []
+        for i, result in enumerate(results):
+            if i > 0:
+                markdown_parts.append(f"\n\n---\n\n## Page {i + 1}\n\n")
+            markdown_parts.append(result.text)
+        
+        markdown_text = ''.join(markdown_parts)
+        
+        end_time = datetime.now()
+        processing_time = (end_time - start_time).total_seconds()
+        log_histogram("pdf_text_extraction_duration", processing_time, labels={"file_path": pdf_path, "parser": "docext"})
+        log_counter("pdf_text_extraction_success", labels={"file_path": pdf_path, "parser": "docext"})
+        
+        return markdown_text
+        
+    except Exception as e:
+        logger.error(f"Error extracting text with docext from PDF {pdf_path}: {str(e)}", exc_info=True)
+        log_counter("pdf_text_extraction_error", labels={"file_path": pdf_path, "parser": "docext", "error": str(e)})
+        raise
+
+
 def process_pdf(
     file_input: Union[str, bytes, Path], # Can be path, bytes, or Path object
     filename: str, # Original filename for reference and metadata fallback
@@ -210,6 +277,9 @@ def process_pdf(
     custom_prompt: Optional[str] = None,
     system_prompt: Optional[str] = None,
     summarize_recursively: bool = False,
+    enable_ocr: bool = False,  # NEW: Enable OCR for scanned documents
+    ocr_language: str = "en",  # NEW: OCR language code
+    ocr_backend: str = "auto",  # NEW: OCR backend selection
     # write_to_temp_file: bool = False # This param seems unused/obsolete now
 ) -> dict[str, Any] | None:
     """
@@ -219,7 +289,7 @@ def process_pdf(
     Parameters:
       - file_input (Union[str, bytes, Path]): Path to the PDF file or bytes content.
       - filename (str): Original filename for reference.
-      - parser (str): Parser to use ('pymupdf4llm', 'pymupdf', 'docling').
+      - parser (str): Parser to use ('pymupdf4llm', 'pymupdf', 'docling', 'docext').
       - title_override (str, optional): User-provided title.
       - author_override (str, optional): User-provided author.
       - keywords (List[str], optional): Keywords.
@@ -231,6 +301,9 @@ def process_pdf(
       - custom_prompt (str, optional): Custom user prompt for summarization.
       - system_prompt (str, optional): System prompt for summarization.
       - summarize_recursively (bool): Whether to perform recursive summarization.
+      - enable_ocr (bool): Enable OCR for scanned documents (works with 'docling' and 'docext' parsers).
+      - ocr_language (str): Language code for OCR (e.g., 'en', 'de', 'fr').
+      - ocr_backend (str): OCR backend to use when parser is 'docext' (default: 'auto').
       - write_to_temp_file (bool): If True and input is bytes, write to a temp file
                                   (needed for parsers that only accept paths).
 
@@ -271,6 +344,12 @@ def process_pdf(
             "custom_prompt_used": custom_prompt if perform_analysis else None,
             "system_prompt_used": system_prompt if perform_analysis else None,
             "summarized_recursively": summarize_recursively if perform_analysis else False,
+        },
+        "ocr_details": {
+            "ocr_enabled": enable_ocr,
+            "ocr_language": ocr_language if enable_ocr else None,
+            "ocr_backend": ocr_backend if parser == "docext" else None,
+            "ocr_supported": parser in ["docling", "docext"]  # Both docling and docext support OCR
         }
     }
     log_counter("pdf_processing_attempt", labels={"file_name": filename, "parser": parser})
@@ -338,7 +417,19 @@ def process_pdf(
                     DOCLING_AVAILABLE = False
                 if not DOCLING_AVAILABLE:
                     raise ImportError("Docling parser selected, but library is not installed.")
-                content = docling_parse_pdf(path_for_processing)
+                content = docling_parse_pdf(path_for_processing, enable_ocr=enable_ocr, ocr_language=ocr_language)
+            elif parser == "docext":
+                # Check if docext backend is available
+                if not ocr_manager.get_available_backends():
+                    raise ImportError("No OCR backends available. Install docext with: pip install docext")
+                
+                # Use specified backend or auto-select
+                backend_name = ocr_backend if ocr_backend != "auto" else None
+                if backend_name and backend_name not in ocr_manager.get_available_backends():
+                    raise ValueError(f"OCR backend '{backend_name}' not available. Available: {ocr_manager.get_available_backends()}")
+                
+                # Always enable OCR for docext parser (it's vision-based)
+                content = docext_parse_pdf(path_for_processing, ocr_backend=backend_name or "docext", language=ocr_language)
             else:
                 # This case should ideally be caught by Pydantic validation in the endpoint
                 logger.warning(f"Unsupported PDF parser specified: {parser}. Attempting fallback to pymupdf4llm.")
@@ -793,7 +884,10 @@ async def process_pdf_task(
     api_key: Optional[str] = None,
     custom_prompt: Optional[str] = None,
     system_prompt: Optional[str] = None,
-    summarize_recursively: bool = False
+    summarize_recursively: bool = False,
+    enable_ocr: bool = False,  # NEW: Enable OCR
+    ocr_language: str = "en",  # NEW: OCR language
+    ocr_backend: str = "auto"  # NEW: OCR backend selection
 ) -> Dict[str, Any]:
     """
     Async wrapper task to process a single PDF (provided as bytes)
@@ -830,6 +924,9 @@ async def process_pdf_task(
             custom_prompt=custom_prompt,
             system_prompt=system_prompt,
             summarize_recursively=summarize_recursively,
+            enable_ocr=enable_ocr,  # Pass OCR setting
+            ocr_language=ocr_language,  # Pass OCR language
+            ocr_backend=ocr_backend,  # Pass OCR backend
             # No need to pass write_to_temp_file
         )
 

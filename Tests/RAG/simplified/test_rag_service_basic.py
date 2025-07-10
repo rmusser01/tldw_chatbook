@@ -383,8 +383,8 @@ class TestRAGServiceCache:
         )
         await service.search("test", search_type="semantic")
         
-        # Clear cache - this is a sync method
-        service.clear_cache()
+        # Clear cache - use async version since we're in async context
+        await service.clear_cache_async()
         
         # Cache should be empty
         metrics = service.get_metrics()

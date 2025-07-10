@@ -6,7 +6,7 @@ import asyncio
 import random
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Tuple
 
 from textual.app import ComposeResult
 from textual.containers import Container, Center, Vertical
@@ -580,15 +580,41 @@ class SplashScreen(Container):
         logger.debug(f"Scheduling auto-close in {self.duration} seconds")
         self.auto_close_timer = self.set_timer(self.duration, self._request_close)
     
+    def _get_terminal_size(self) -> Tuple[int, int]:
+        """Get the terminal size for animations."""
+        # Try to get the app's size first
+        if hasattr(self, 'app') and self.app:
+            width = self.app.size.width
+            height = self.app.size.height
+            # Account for progress bar if shown
+            if self.show_progress:
+                height = max(1, height - 4)  # Reserve space for progress text and bar
+            return width, height
+        
+        # Fallback to content size
+        try:
+            main_widget = self.query_one("#splash-main", Static)
+            width, height = main_widget.content_size
+            if width > 0 and height > 0:
+                return width, height
+        except:
+            pass
+        
+        # Default fallback
+        return 80, 24
+    
     def _start_card_animation(self) -> None:
         """Start animation based on card type and effect."""
         effect_type = self.card_data.get("effect")
         
         if effect_type == "matrix_rain":
+            width, height = self._get_terminal_size()
             self.effect_handler = MatrixRainEffect(
                 self,
                 title=self.card_data.get("title", "TLDW CLI"),
                 subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
                 speed=self.card_data.get("animation_speed", 0.05)
             )
             self.animation_timer = self.set_interval(
@@ -629,16 +655,13 @@ class SplashScreen(Container):
             # Use a reasonable interval for smooth animation, effect handles timing by elapsed time
             self.animation_timer = self.set_interval(0.05, self._update_animation)
         elif effect_type == "code_scroll":
-            # Get width and height from the splash screen main area if possible, else default
-            main_widget = self.query_one("#splash-main", Static)
-            width, height = main_widget.content_size
-
+            width, height = self._get_terminal_size()
             self.effect_handler = CodeScrollEffect(
                 self,
                 title=self.card_data.get("title", "TLDW Chatbook"),
                 subtitle=self.card_data.get("subtitle", splashscreen_message_selection),
-                width=width if width > 0 else 80,
-                height=height if height > 0 else 24,
+                width=width,
+                height=height,
                 scroll_speed=self.card_data.get("scroll_speed", 0.1),
                 num_code_lines=self.card_data.get("num_code_lines", 15),
                 code_line_style=self.card_data.get("code_line_style", "dim cyan"),
@@ -664,14 +687,13 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "digital_rain":
-            main_widget = self.query_one("#splash-main", Static)
-            width, height = main_widget.content_size
+            width, height = self._get_terminal_size()
             self.effect_handler = DigitalRainEffect(
                 self,
                 title=self.card_data.get("title", "Digital Rain"),
                 subtitle=self.card_data.get("subtitle", splashscreen_message_selection),
-                width=width if width > 0 else 80,
-                height=height if height > 0 else 24,
+                width=width,
+                height=height,
                 speed=self.card_data.get("animation_speed", 0.05),
                 base_chars=self.card_data.get("base_chars", "abc0123"),
                 highlight_chars=self.card_data.get("highlight_chars", "!@#$"),
@@ -686,8 +708,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "loading_bar":
-            main_widget = self.query_one("#splash-main", Static)
-            width, _ = main_widget.content_size # Only width needed for centering text
+            width, _ = self._get_terminal_size() # Only width needed for centering text
             self.effect_handler = LoadingBarEffect(
                 self, # Pass SplashScreen instance as parent
                 bar_frame_content=self.card_data.get("content", "[----------]"),
@@ -703,8 +724,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "starfield":
-            main_widget = self.query_one("#splash-main", Static)
-            width, height = main_widget.content_size
+            width, height = self._get_terminal_size()
             self.effect_handler = StarfieldEffect(
                 self,
                 title=self.card_data.get("title", "Warping..."),
@@ -713,8 +733,8 @@ class SplashScreen(Container):
                 max_depth=self.card_data.get("max_depth", 50.0),
                 star_chars=self.card_data.get("star_chars", ["."]),
                 star_styles=self.card_data.get("star_styles", ["white"]),
-                width=width if width > 0 else 80,
-                height=height if height > 0 else 24,
+                width=width,
+                height=height,
                 title_style=self.card_data.get("title_style", "bold yellow")
             )
             self.animation_timer = self.set_interval(
@@ -722,13 +742,12 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "terminal_boot":
-            main_widget = self.query_one("#splash-main", Static)
-            width, height = main_widget.content_size
+            width, height = self._get_terminal_size()
             self.effect_handler = TerminalBootEffect(
                 self,
                 boot_sequence=self.card_data.get("boot_sequence", [{"text": "Booting..."}]),
-                width=width if width > 0 else 80,
-                height=height if height > 0 else 24,
+                width=width,
+                height=height,
                 cursor=self.card_data.get("cursor", "_")
             )
             # The effect's internal timing is driven by elapsed time,
@@ -765,8 +784,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "game_of_life":
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
             self.effect_handler = GameOfLifeEffect(
                 self,
                 title=self.card_data.get("title", "Evolving..."),
@@ -787,8 +805,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "scrolling_credits":
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
             self.effect_handler = ScrollingCreditsEffect(
                 self,
                 title=self.card_data.get("title", "Credits"),
@@ -807,8 +824,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "spotlight":
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
             background_art = get_ascii_art(self.card_data.get("background_art_name", "default"))
             self.effect_handler = SpotlightEffect(
                 self,
@@ -826,8 +842,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "sound_bars":
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
             self.effect_handler = SoundBarsEffect(
                 self,
                 title=self.card_data.get("title", "Visualizing..."),
@@ -846,8 +861,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "raindrops": # Matches card_data effect name
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
             self.effect_handler = RaindropsEffect(
                 self,
                 title=self.card_data.get("title", "Rainy Day"),
@@ -879,8 +893,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "text_explosion":
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
             self.effect_handler = TextExplosionEffect(
                 self,
                 text=self.card_data.get("text_to_animate", "BOOM!"),
@@ -896,8 +909,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "old_film":
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
 
             frame_names = self.card_data.get("frames_art_names", ["film_generic_frame"])
             frames_content_list = [get_ascii_art(name) for name in frame_names]
@@ -920,8 +932,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "maze_generator":
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
             self.effect_handler = MazeGeneratorEffect(
                 self,
                 title=self.card_data.get("title", "Generating..."),
@@ -943,8 +954,7 @@ class SplashScreen(Container):
                 self._update_animation
             )
         elif effect_type == "mining":
-            main_widget = self.query_one("#splash-main", Static)
-            display_width, display_height = main_widget.content_size
+            display_width, display_height = self._get_terminal_size()
             self.effect_handler = MiningEffect(
                 self,
                 content=self.card_data.get("content", self.DEFAULT_SPLASH),

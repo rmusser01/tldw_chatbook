@@ -18,45 +18,16 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 #
 # Functions
 
-# FIXME - placheolder for TTS backend
-
 # --- Load your existing config for API keys etc. ---
 from tldw_chatbook.config import load_cli_config_and_ensure_existence, get_cli_setting
 
-# --- Abstract Base Class for TTS Backends ---
-class TTSBackendBase(ABC):
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
-        self.client = httpx.AsyncClient(timeout=60.0) # Shared client for API backends
-
-    @abstractmethod
-    async def initialize(self):
-        """Async initialization for the backend (e.g., load models)."""
-        pass
-
-    @abstractmethod
-    async def generate_speech_stream(
-        self, request: OpenAISpeechRequest
-    ) -> AsyncGenerator[bytes, None]:
-        """
-        Generates audio for the given text and streams it.
-        Should yield bytes of the audio in the request.response_format.
-        """
-        pass
-
-    async def close(self):
-        """Clean up resources, like closing the httpx client."""
-        await self.client.aclose()
+# Import new base classes
+from tldw_chatbook.TTS.base_backends import TTSBackendBase, APITTSBackend, LocalTTSBackend
 
 
 
 
 
-# --- Add more backends: ElevenLabsBackend, AllTalkBackend etc. ---
-# FIXME
-# class ElevenLabsBackend(TTSBackendBase):
-#// ... implementation using your generate_audio_elevenlabs logic ...
-# Remember to adapt it to be async and yield bytes. Httpx can stream responses.
 
 
 # --- Backend Registry ---
@@ -120,6 +91,12 @@ class TTSBackendManager:
             BackendRegistry.register("elevenlabs_*", ElevenLabsTTSBackend)
         except ImportError:
             logger.warning("ElevenLabs TTS backend not available")
+        
+        try:
+            from tldw_chatbook.TTS.backends.chatterbox import ChatterboxTTSBackend
+            BackendRegistry.register("local_chatterbox_*", ChatterboxTTSBackend)
+        except ImportError:
+            logger.warning("Chatterbox TTS backend not available")
     
     async def get_backend(self, backend_id: str) -> Optional[TTSBackendBase]:
         if backend_id not in self._backends:
@@ -150,31 +127,34 @@ class TTSBackendManager:
     
     def _prepare_backend_config(self, backend_id: str) -> Dict[str, Any]:
         """Prepare configuration for a specific backend"""
-        # Get backend-specific config
-        specific_config = self.app_config.get(backend_id, {})
+        # Start with global TTS settings as base
+        config = self.app_config.get("global_tts_settings", {}).copy()
         
-        # Merge with global TTS settings
-        specific_config.update(self.app_config.get("global_tts_settings", {}))
-        
-        # Add app_tts config section
+        # Add app_tts config section (general TTS settings)
         if "app_tts" in self.app_config:
-            specific_config.update(self.app_config["app_tts"])
+            config.update(self.app_config["app_tts"])
         
-        # Special handling for specific backends
+        # Special handling for specific backends - set defaults first
         if backend_id.startswith("local_kokoro"):
+            # Get Kokoro-specific paths from environment or config
+            import os
             kokoro_defaults = {
                 "KOKORO_USE_ONNX": True,
-                "KOKORO_MODEL_PATH": self.app_config.get("KOKORO_ONNX_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.onnx"),
-                "KOKORO_VOICES_JSON_PATH": self.app_config.get("KOKORO_ONNX_VOICES_JSON_DEFAULT", "models/voices.json"),
+                "KOKORO_MODEL_PATH": os.getenv("KOKORO_MODEL_PATH", 
+                    self.app_config.get("KOKORO_ONNX_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.onnx")),
+                "KOKORO_VOICES_JSON_PATH": os.getenv("KOKORO_VOICES_PATH",
+                    self.app_config.get("KOKORO_ONNX_VOICES_JSON_DEFAULT", "models/voices.json")),
                 "KOKORO_DEVICE": self.app_config.get("KOKORO_DEVICE_DEFAULT", "cpu"),
                 "KOKORO_MAX_TOKENS": self.app_config.get("KOKORO_MAX_TOKENS", 500),
                 "KOKORO_ENABLE_VOICE_MIXING": self.app_config.get("KOKORO_ENABLE_VOICE_MIXING", False),
             }
-            # Let specific config override defaults
-            kokoro_defaults.update(specific_config)
-            specific_config = kokoro_defaults
+            config.update(kokoro_defaults)
         
-        return specific_config
+        # Finally, apply backend-specific config overrides (highest priority)
+        backend_specific = self.app_config.get(backend_id, {})
+        config.update(backend_specific)
+        
+        return config
     
     def list_available_backends(self) -> List[str]:
         """List all available backend IDs"""

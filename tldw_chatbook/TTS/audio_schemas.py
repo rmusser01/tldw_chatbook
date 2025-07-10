@@ -8,7 +8,7 @@
 # Local Imports
 #
 #######################################################################################################################
-from typing import Literal, Optional
+from typing import Literal, Optional, Dict, Any
 
 from pydantic import Field, BaseModel
 
@@ -84,6 +84,10 @@ class OpenAISpeechRequest(BaseModel):
     normalization_options: Optional[NormalizationOptions] = Field(
         default=NormalizationOptions(),
         description="Options for the normalization system",
+    )
+    extra_params: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Additional provider-specific parameters (e.g., temperature, num_candidates for Chatterbox)",
     )
 
 #

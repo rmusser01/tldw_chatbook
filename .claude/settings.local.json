@@ -89,7 +89,12 @@
       "WebFetch(domain:textual.textualize.io)",
       "Bash(rm:*)",
       "Bash(/usr/bin/grep -n \"on_button_pressed\\|nav_handlers\\|button_handlers\\|Unhandled button press\" tldw_chatbook/app.py)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "deny": []
   }

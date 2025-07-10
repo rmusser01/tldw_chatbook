@@ -43,6 +43,10 @@ class ChatSession(Container):
     _last_send_stop_click = 0
     DEBOUNCE_MS = 300
     
+    # Lifecycle state
+    _is_active: bool = True
+    _streaming_check_timer = None
+    
     def __init__(self, app_instance: 'TldwCli', session_data: ChatSessionData, **kwargs):
         """
         Initialize a chat session.
@@ -110,8 +114,9 @@ class ChatSession(Container):
     async def on_mount(self) -> None:
         """Called when the widget is mounted."""
         # Set up periodic state checking for streaming
-        self.set_interval(0.5, self._check_streaming_state)
+        self._streaming_check_timer = self.set_interval(0.5, self._check_streaming_state)
         self._update_button_state()
+        logger.debug(f"ChatSession mounted for tab: {self.session_data.tab_id}")
     
     def _update_button_state(self) -> None:
         """Update the send/stop button based on streaming state."""
@@ -139,7 +144,9 @@ class ChatSession(Container):
     
     def _check_streaming_state(self) -> None:
         """Periodically check streaming state and update button."""
-        self._update_button_state()
+        # Only update if this session is active
+        if self._is_active:
+            self._update_button_state()
     
     async def handle_send_stop_button(self, event):
         """Handle send/stop button press with debouncing."""
@@ -229,6 +236,143 @@ class ChatSession(Container):
             await self.handle_suggest_button(event)
         elif button_id == f"attach-image-{self.session_data.tab_id}":
             await self.handle_attach_button(event)
+    
+    # Lifecycle management methods
+    
+    async def suspend(self) -> None:
+        """
+        Suspend this session when it becomes inactive.
+        
+        This stops timers and cleans up resources to prevent memory leaks.
+        """
+        try:
+            logger.debug(f"Suspending chat session: {self.session_data.tab_id}")
+            
+            # Mark as inactive
+            self._is_active = False
+            
+            # Stop the streaming check timer
+            if self._streaming_check_timer:
+                try:
+                    self._streaming_check_timer.stop()
+                    logger.debug(f"Stopped streaming timer for tab: {self.session_data.tab_id}")
+                except Exception as e:
+                    logger.warning(f"Error stopping timer for tab {self.session_data.tab_id}: {e}")
+            
+            # Cancel any active workers
+            if self.session_data.current_worker and self.session_data.current_worker.is_running:
+                logger.info(f"Cancelling active worker for suspended tab: {self.session_data.tab_id}")
+                try:
+                    await self.session_data.current_worker.cancel()
+                except Exception as e:
+                    logger.error(f"Error cancelling worker for tab {self.session_data.tab_id}: {e}")
+                finally:
+                    self.session_data.current_worker = None
+            
+            # Clear streaming state
+            self.session_data.is_streaming = False
+            self._update_button_state()
+            
+        except Exception as e:
+            logger.error(f"Unexpected error suspending session {self.session_data.tab_id}: {e}")
+            # Ensure we're in a safe state even if there's an error
+            self._is_active = False
+            self.session_data.is_streaming = False
+    
+    async def resume(self) -> None:
+        """
+        Resume this session when it becomes active again.
+        
+        This restarts timers and refreshes the UI state.
+        """
+        try:
+            logger.debug(f"Resuming chat session: {self.session_data.tab_id}")
+            
+            # Mark as active
+            self._is_active = True
+            
+            # Restart the streaming check timer if it was stopped
+            try:
+                if not self._streaming_check_timer or not getattr(self._streaming_check_timer, '_running', False):
+                    self._streaming_check_timer = self.set_interval(0.5, self._check_streaming_state)
+                    logger.debug(f"Restarted streaming timer for tab: {self.session_data.tab_id}")
+            except Exception as e:
+                logger.warning(f"Error restarting timer for tab {self.session_data.tab_id}: {e}")
+                # Try to create a new timer as fallback
+                try:
+                    self._streaming_check_timer = self.set_interval(0.5, self._check_streaming_state)
+                except Exception as e2:
+                    logger.error(f"Failed to create new timer: {e2}")
+            
+            # Update UI state
+            try:
+                self._update_button_state()
+            except Exception as e:
+                logger.warning(f"Error updating button state on resume: {e}")
+            
+            # Focus input area
+            try:
+                input_area = self.get_chat_input()
+                input_area.focus()
+            except Exception as e:
+                logger.debug(f"Could not focus input on resume: {e}")
+                
+        except Exception as e:
+            logger.error(f"Unexpected error resuming session {self.session_data.tab_id}: {e}")
+            # Ensure we're in a consistent state
+            self._is_active = True
+    
+    async def cleanup(self) -> None:
+        """
+        Clean up all resources when this session is being destroyed.
+        
+        This is called when a tab is closed.
+        """
+        try:
+            logger.info(f"Cleaning up chat session: {self.session_data.tab_id}")
+            
+            # Suspend first to stop timers and workers
+            try:
+                await self.suspend()
+            except Exception as e:
+                logger.error(f"Error during suspend in cleanup: {e}")
+                # Continue with cleanup even if suspend fails
+            
+            # Clear the timer reference
+            self._streaming_check_timer = None
+            
+            # Clear widget references in session data
+            try:
+                self.session_data.current_ai_message_widget = None
+            except Exception as e:
+                logger.warning(f"Error clearing widget reference: {e}")
+            
+            # Clear any heavy data
+            try:
+                self.session_data.notes_content = ""
+                # Clear any other potentially large data
+                if hasattr(self.session_data, 'metadata'):
+                    self.session_data.metadata.clear()
+            except Exception as e:
+                logger.warning(f"Error clearing session data: {e}")
+            
+            logger.debug(f"Cleanup complete for tab: {self.session_data.tab_id}")
+            
+        except Exception as e:
+            logger.error(f"Unexpected error during cleanup for session {self.session_data.tab_id}: {e}")
+            # Even with errors, ensure critical cleanup happens
+            self._is_active = False
+            self._streaming_check_timer = None
+    
+    def mark_unsaved_changes(self, has_changes: bool = True) -> None:
+        """
+        Mark whether this session has unsaved changes.
+        
+        Args:
+            has_changes: Whether there are unsaved changes
+        """
+        self.session_data.has_unsaved_changes = has_changes
+        logger.debug(f"Tab {self.session_data.tab_id} unsaved changes: {has_changes}")
 
 #
 # End of chat_session.py

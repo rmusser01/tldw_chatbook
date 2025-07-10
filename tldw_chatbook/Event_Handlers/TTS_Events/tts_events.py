@@ -3,9 +3,13 @@
 #
 # Imports
 import asyncio
+import os
+import platform
+import subprocess
 from typing import Optional, Dict, Any
 from pathlib import Path
 import tempfile
+from datetime import datetime
 from loguru import logger
 
 # Third-party imports
@@ -16,6 +20,7 @@ from textual.worker import Worker, WorkerState
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
 from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
 
 #######################################################################################################################
 #
@@ -56,17 +61,56 @@ class TTSPlaybackEvent(Message):
         self.action = action  # "play", "pause", "stop"
         self.message_id = message_id
 
+
+class TTSExportEvent(Message):
+    """Event to export TTS audio with custom naming"""
+    
+    def __init__(self, message_id: str, output_path: Path, include_metadata: bool = True):
+        super().__init__()
+        self.message_id = message_id
+        self.output_path = output_path
+        self.include_metadata = include_metadata
+
+
+class TTSProgressEvent(Message):
+    """Event for TTS generation progress updates"""
+    
+    def __init__(self, message_id: str, progress: float, status: str, 
+                 estimated_time_remaining: Optional[float] = None):
+        super().__init__()
+        self.message_id = message_id
+        self.progress = progress  # 0.0 to 1.0
+        self.status = status  # e.g., "Processing", "Generating", "Finalizing"
+        self.estimated_time_remaining = estimated_time_remaining  # seconds
+
 #######################################################################################################################
 #
 # TTS Event Handler Mixin
 
 class TTSEventHandler:
-    """Mixin class for handling TTS events"""
+    """
+    Mixin class for handling TTS events.
+    
+    Note: Rate limiting is handled by the TTSService itself with a global
+    semaphore of 4 concurrent requests. This handler only implements
+    cooldown periods to prevent rapid repeated requests for the same message.
+    """
+    
+    # Cooldown tracking to prevent rapid repeated requests
+    _request_cooldown: Dict[str, float] = {}  # Track last request time per message
+    COOLDOWN_SECONDS = 2.0  # Minimum time between requests for same message
+    COOLDOWN_CLEANUP_INTERVAL = 300.0  # Clean up old entries every 5 minutes
+    MAX_COOLDOWN_ENTRIES = 1000  # Maximum entries to keep in memory
     
     def __init__(self):
-        self._tts_workers: Dict[str, Worker] = {}
         self._tts_config = None
         self._tts_service = None
+        self._temp_manager = get_temp_manager()
+        self._audio_files: Dict[str, Path] = {}  # Track audio files by message_id
+        self._audio_files_lock = asyncio.Lock()  # Lock for audio files dictionary
+        self._active_tasks: set[asyncio.Task] = set()  # Track active async tasks
+        self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
+        self._last_cooldown_cleanup = 0.0  # Track last cleanup time
     
     async def initialize_tts(self) -> None:
         """Initialize TTS service"""
@@ -93,6 +137,20 @@ class TTSEventHandler:
             logger.error(f"Failed to initialize TTS service: {e}")
             self._tts_service = None
     
+    def _cleanup_cooldown_dict(self, current_time: float) -> None:
+        """Clean up old entries from cooldown dictionary"""
+        # Remove entries older than 5 minutes
+        cutoff_time = current_time - 300.0
+        keys_to_remove = [
+            key for key, timestamp in self._request_cooldown.items()
+            if timestamp < cutoff_time
+        ]
+        for key in keys_to_remove:
+            del self._request_cooldown[key]
+        
+        if keys_to_remove:
+            logger.debug(f"Cleaned up {len(keys_to_remove)} old cooldown entries")
+    
     async def handle_tts_request(self, event: TTSRequestEvent) -> None:
         """Handle TTS generation request"""
         if not self._tts_service:
@@ -105,26 +163,93 @@ class TTSEventHandler:
             )
             return
         
-        # Create worker for this TTS request
-        worker_name = f"tts_{event.message_id or 'adhoc'}"
+        # Validate input text
+        if not event.text:
+            await self.post_message(
+                TTSCompleteEvent(
+                    message_id=event.message_id or "unknown",
+                    error="No text provided for TTS generation"
+                )
+            )
+            return
         
-        # Cancel existing worker if any
-        if worker_name in self._tts_workers:
-            existing_worker = self._tts_workers[worker_name]
-            if existing_worker.state == WorkerState.RUNNING:
-                existing_worker.cancel()
+        # Check text length limits
+        MAX_TTS_LENGTH = 5000  # Maximum characters for TTS
+        if len(event.text) > MAX_TTS_LENGTH:
+            logger.warning(f"TTS text too long: {len(event.text)} characters")
+            await self.post_message(
+                TTSCompleteEvent(
+                    message_id=event.message_id or "unknown",
+                    error=f"Text is too long for TTS. Maximum {MAX_TTS_LENGTH} characters allowed."
+                )
+            )
+            return
         
-        # Start new worker
-        worker = self.run_worker(
-            self._generate_tts,
-            event.text,
-            event.message_id,
-            event.voice,
-            name=worker_name,
-            thread=True
+        # Basic sanitization - remove excessive whitespace
+        text = ' '.join(event.text.split())
+        if len(text) < 1:
+            await self.post_message(
+                TTSCompleteEvent(
+                    message_id=event.message_id or "unknown",
+                    error="Text contains only whitespace"
+                )
+            )
+            return
+        
+        # Check rate limiting for this message
+        message_id = event.message_id or "adhoc"
+        current_time = asyncio.get_event_loop().time()
+        
+        # Clean up old cooldown entries if needed
+        if current_time - self._last_cooldown_cleanup > self.COOLDOWN_CLEANUP_INTERVAL:
+            self._cleanup_cooldown_dict(current_time)
+            self._last_cooldown_cleanup = current_time
+        
+        if message_id in self._request_cooldown:
+            time_since_last = current_time - self._request_cooldown[message_id]
+            if time_since_last < self.COOLDOWN_SECONDS:
+                logger.warning(f"TTS request too soon for message {message_id}. Please wait {self.COOLDOWN_SECONDS - time_since_last:.1f}s")
+                await self.post_message(
+                    TTSCompleteEvent(
+                        message_id=message_id,
+                        error=f"Please wait {self.COOLDOWN_SECONDS - time_since_last:.1f} seconds before requesting TTS again"
+                    )
+                )
+                return
+        
+        # Update cooldown tracker
+        self._request_cooldown[message_id] = current_time
+        
+        # Check if we need to evict old entries (LRU style)
+        if len(self._request_cooldown) > self.MAX_COOLDOWN_ENTRIES:
+            # Remove oldest entries
+            sorted_entries = sorted(self._request_cooldown.items(), key=lambda x: x[1])
+            for key, _ in sorted_entries[:len(sorted_entries) // 2]:
+                del self._request_cooldown[key]
+        
+        # Start TTS generation task
+        task = asyncio.create_task(
+            self._generate_tts_with_rate_limit(
+                text,  # Use sanitized text
+                event.message_id,
+                event.voice
+            )
         )
-        
-        self._tts_workers[worker_name] = worker
+        # Track the task
+        asyncio.create_task(self._add_active_task(task))
+    
+    async def _generate_tts_with_rate_limit(
+        self,
+        text: str,
+        message_id: Optional[str],
+        voice: Optional[str]
+    ) -> None:
+        """Generate TTS audio (rate limiting handled by TTSService)"""
+        try:
+            await self._generate_tts(text, message_id, voice)
+        except asyncio.CancelledError:
+            logger.info(f"TTS generation cancelled for message {message_id}")
+            raise
     
     async def _generate_tts(
         self,
@@ -132,8 +257,21 @@ class TTSEventHandler:
         message_id: Optional[str],
         voice: Optional[str]
     ) -> None:
-        """Generate TTS audio (runs in worker thread)"""
+        """Generate TTS audio"""
         try:
+            # Import cost tracker
+            from tldw_chatbook.TTS.cost_tracker import get_cost_tracker
+            cost_tracker = get_cost_tracker()
+            
+            # Send initial progress
+            if message_id:
+                await self.post_message(
+                    TTSProgressEvent(
+                        message_id=message_id,
+                        progress=0.0,
+                        status="Initializing TTS generation"
+                    )
+                )
             # Prepare request
             request = OpenAISpeechRequest(
                 model=self._tts_config["default_model"],
@@ -146,47 +284,118 @@ class TTSEventHandler:
             # Determine backend based on model
             if request.model in ["tts-1", "tts-1-hd"]:
                 internal_model_id = f"openai_official_{request.model}"
+                provider = "openai"
             elif request.model == "kokoro":
                 internal_model_id = "local_kokoro_default_onnx"
+                provider = "local"
             else:
                 internal_model_id = request.model
+                provider = "unknown"
             
-            # Create temporary file for audio
-            temp_file = tempfile.NamedTemporaryFile(
-                suffix=f".{request.response_format}",
-                delete=False
-            )
-            temp_path = Path(temp_file.name)
+            # Estimate cost before generation
+            estimated_cost = cost_tracker.estimate_cost(provider, request.model, len(text))
+            if message_id and estimated_cost > 0:
+                await self.post_message(
+                    TTSProgressEvent(
+                        message_id=message_id,
+                        progress=0.1,
+                        status=f"Estimated cost: ${estimated_cost:.4f}"
+                    )
+                )
+            
+            # Collect audio chunks first
+            audio_chunks = []
+            total_size = 0
+            chunk_count = 0
+            start_time = asyncio.get_event_loop().time()
             
             try:
-                # Stream audio and write to file
+                # Stream audio and collect chunks
                 async for chunk in self._tts_service.generate_audio_stream(request, internal_model_id):
-                    temp_file.write(chunk)
+                    audio_chunks.append(chunk)
+                    total_size += len(chunk)
+                    chunk_count += 1
+                    
+                    # Calculate progress based on typical chunk patterns
+                    # Most providers send chunks progressively
+                    progress = min(0.9, 0.1 + (chunk_count * 0.05))
+                    
+                    # Estimate time remaining based on current rate
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    if elapsed > 0 and progress > 0.1:
+                        estimated_total = elapsed / progress
+                        remaining = estimated_total - elapsed
+                    else:
+                        remaining = None
+                    
+                    # Post progress update every 5 chunks
+                    if message_id and chunk_count % 5 == 0:
+                        await self.post_message(
+                            TTSProgressEvent(
+                                message_id=message_id,
+                                progress=progress,
+                                status=f"Generating audio... ({total_size / 1024:.1f} KB)",
+                                estimated_time_remaining=remaining
+                            )
+                        )
                     
                     # Post streaming event for real-time playback (optional)
                     if message_id:
-                        await self.call_from_thread(
-                            self.post_message,
+                        await self.post_message(
                             TTSStreamingEvent(chunk, message_id, is_final=False)
                         )
                 
-                temp_file.close()
+                # Create secure temporary file with all audio data
+                audio_data = b''.join(audio_chunks)
+                temp_path = self._temp_manager.create_temp_file(
+                    content=audio_data,
+                    suffix=f".{request.response_format}",
+                    prefix="tts_audio_"
+                )
+                
+                # Track the audio file with lock
+                if message_id:
+                    async with self._audio_files_lock:
+                        self._audio_files[message_id] = Path(temp_path)
+                
+                # Final progress update
+                if message_id:
+                    await self.post_message(
+                        TTSProgressEvent(
+                            message_id=message_id,
+                            progress=1.0,
+                            status="Audio generation complete"
+                        )
+                    )
+                
+                # Track usage for cost tracking
+                generation_time = asyncio.get_event_loop().time() - start_time
+                cost_tracker.track_usage(
+                    provider=provider,
+                    model=request.model,
+                    text=text,
+                    voice=request.voice,
+                    format=request.response_format,
+                    duration_seconds=generation_time
+                )
                 
                 # Post completion event
-                await self.call_from_thread(
-                    self.post_message,
-                    TTSCompleteEvent(message_id=message_id or "adhoc", audio_file=temp_path)
+                await self.post_message(
+                    TTSCompleteEvent(message_id=message_id or "adhoc", audio_file=Path(temp_path))
                 )
                 
             except Exception as e:
-                temp_file.close()
-                temp_path.unlink(missing_ok=True)
+                # Clean up any partial file if created (with lock)
+                if message_id:
+                    async with self._audio_files_lock:
+                        if message_id in self._audio_files:
+                            secure_delete_file(self._audio_files[message_id])
+                            del self._audio_files[message_id]
                 raise
                 
         except Exception as e:
             logger.error(f"TTS generation failed: {e}")
-            await self.call_from_thread(
-                self.post_message,
+            await self.post_message(
                 TTSCompleteEvent(
                     message_id=message_id or "adhoc",
                     error=str(e)
@@ -195,20 +404,141 @@ class TTSEventHandler:
     
     async def handle_tts_playback(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control"""
-        # This would integrate with an audio player
-        # For now, just log the action
         logger.info(f"TTS playback action: {event.action} for message {event.message_id}")
         
-        # TODO: Implement actual audio playback control
-        # This could use pygame, pyaudio, or system audio players
+        if event.action == "play" and event.message_id:
+            # Get audio file with lock
+            async with self._audio_files_lock:
+                audio_file = self._audio_files.get(event.message_id)
+            
+            if audio_file and audio_file.exists():
+                # Play the audio file
+                play_audio_file(audio_file)
+                # Schedule cleanup after playback
+                asyncio.create_task(self._cleanup_audio_file(event.message_id, delay=5.0))
+            else:
+                logger.warning(f"Audio file not found for message {event.message_id}")
+        
+        elif event.action == "stop" and event.message_id:
+            # Clean up immediately if stopped
+            await self._cleanup_audio_file(event.message_id)
+    
+    async def handle_tts_export(self, event: TTSExportEvent) -> None:
+        """Handle TTS audio export"""
+        import shutil
+        import json
+        
+        # Get audio file
+        async with self._audio_files_lock:
+            source_file = self._audio_files.get(event.message_id)
+        
+        if not source_file or not source_file.exists():
+            logger.error(f"No audio file found for message {event.message_id}")
+            self.notify("No audio file found to export", severity="error")
+            return
+        
+        try:
+            # Validate output path
+            output_path = event.output_path
+            if not output_path.suffix:
+                # Add extension from source file
+                output_path = output_path.with_suffix(source_file.suffix)
+            
+            # Create parent directory if needed
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Copy audio file
+            shutil.copy2(source_file, output_path)
+            logger.info(f"Exported audio to {output_path}")
+            
+            # Add metadata if requested
+            if event.include_metadata:
+                metadata = {
+                    "message_id": event.message_id,
+                    "export_time": datetime.now().isoformat(),
+                    "format": source_file.suffix[1:],  # Remove dot
+                    "source": "tldw_chatbook_tts"
+                }
+                
+                # Save metadata as JSON sidecar file
+                metadata_path = output_path.with_suffix(output_path.suffix + ".json")
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata, f, indent=2)
+                
+                logger.info(f"Saved metadata to {metadata_path}")
+            
+            self.notify(f"Audio exported to {output_path.name}", severity="success")
+            
+        except Exception as e:
+            logger.error(f"Failed to export audio: {e}")
+            self.notify(f"Failed to export audio: {str(e)}", severity="error")
+    
+    async def _cleanup_audio_file(self, message_id: str, delay: float = 0) -> None:
+        """Clean up audio file after playback"""
+        if delay > 0:
+            await asyncio.sleep(delay)
+        
+        async with self._audio_files_lock:
+            if message_id in self._audio_files:
+                audio_file = self._audio_files[message_id]
+                if secure_delete_file(audio_file):
+                    logger.debug(f"Cleaned up audio file for message {message_id}")
+                del self._audio_files[message_id]
     
     def on_tts_request_event(self, event: TTSRequestEvent) -> None:
         """Handle TTS request event"""
-        asyncio.create_task(self.handle_tts_request(event))
+        task = asyncio.create_task(self.handle_tts_request(event))
+        # Use create_task to add task safely
+        asyncio.create_task(self._add_active_task(task))
     
     def on_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback event"""
-        asyncio.create_task(self.handle_tts_playback(event))
+        task = asyncio.create_task(self.handle_tts_playback(event))
+        # Use create_task to add task safely
+        asyncio.create_task(self._add_active_task(task))
+    
+    def on_tts_export_event(self, event: TTSExportEvent) -> None:
+        """Handle TTS export event"""
+        task = asyncio.create_task(self.handle_tts_export(event))
+        asyncio.create_task(self._add_active_task(task))
+    
+    async def _add_active_task(self, task: asyncio.Task) -> None:
+        """Add task to active tasks set with lock"""
+        async with self._active_tasks_lock:
+            self._active_tasks.add(task)
+            task.add_done_callback(lambda t: asyncio.create_task(self._remove_active_task(t)))
+    
+    async def _remove_active_task(self, task: asyncio.Task) -> None:
+        """Remove task from active tasks set with lock"""
+        async with self._active_tasks_lock:
+            self._active_tasks.discard(task)
+    
+    async def cleanup_tts_resources(self) -> None:
+        """Clean up all TTS resources"""
+        # Cancel all active tasks with lock
+        async with self._active_tasks_lock:
+            tasks_to_cancel = list(self._active_tasks)
+        
+        for task in tasks_to_cancel:
+            if not task.done():
+                task.cancel()
+        
+        # Wait for tasks to complete cancellation
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        
+        # Clean up audio files with lock
+        async with self._audio_files_lock:
+            files_to_clean = list(self._audio_files.items())
+            self._audio_files.clear()
+        
+        for message_id, audio_file in files_to_clean:
+            secure_delete_file(audio_file)
+            logger.debug(f"Cleaned up audio file for message {message_id}")
+        
+        # Clear active tasks with lock
+        async with self._active_tasks_lock:
+            self._active_tasks.clear()
 
 #######################################################################################################################
 #
@@ -216,30 +546,13 @@ class TTSEventHandler:
 
 def play_audio_file(file_path: Path) -> None:
     """Play an audio file using system default player"""
-    import platform
-    import subprocess
+    # Use the centralized audio player from audio_player module
+    from tldw_chatbook.TTS.audio_player import play_audio_file as play_audio
     
-    system = platform.system()
-    
-    try:
-        if system == "Darwin":  # macOS
-            subprocess.run(["afplay", str(file_path)], check=True)
-        elif system == "Linux":
-            # Try different players
-            for player in ["aplay", "paplay", "ffplay"]:
-                try:
-                    subprocess.run([player, str(file_path)], check=True)
-                    break
-                except FileNotFoundError:
-                    continue
-        elif system == "Windows":
-            # Windows Media Player
-            subprocess.run(["start", "", str(file_path)], shell=True, check=True)
-        else:
-            logger.warning(f"Unsupported platform for audio playback: {system}")
-            
-    except Exception as e:
-        logger.error(f"Failed to play audio file: {e}")
+    # Delegate to the secure implementation
+    success = play_audio(file_path)
+    if not success:
+        logger.error(f"Failed to play audio file: {file_path}")
 
 #
 # End of tts_events.py

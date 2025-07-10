@@ -26,6 +26,7 @@ from .task_loader import TaskLoader, TaskConfig
 from .eval_runner import EvalRunner, EvalSampleResult
 from .llm_interface import LLMInterface
 from tldw_chatbook.DB.Evals_DB import EvalsDB
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 class EvaluationOrchestrator:
     """Orchestrates evaluation runs from start to finish."""
@@ -63,27 +64,59 @@ class EvaluationOrchestrator:
             Task ID
         """
         logger.info(f"Creating task from file: {task_file_path}")
+        start_time = time.time()
         
-        # Load task configuration
-        task_config = self.task_loader.load_task(task_file_path, format_type)
+        log_counter("eval_task_creation_attempt", labels={
+            "format_type": format_type,
+            "source": "file"
+        })
         
-        # Validate task
-        validation_issues = self.task_loader.validate_task(task_config)
-        if validation_issues:
-            raise ValueError(f"Task validation failed: {validation_issues}")
-        
-        # Store in database
-        task_id = self.db.create_task(
-            name=task_config.name,
-            description=task_config.description,
-            task_type=task_config.task_type,
-            config_format=task_config.metadata.get('format', 'custom'),
-            config_data=task_config.__dict__,
-            dataset_id=None  # Will be handled separately if needed
-        )
-        
-        logger.info(f"Created task: {task_config.name} ({task_id})")
-        return task_id
+        try:
+            # Load task configuration
+            task_config = self.task_loader.load_task(task_file_path, format_type)
+            
+            # Validate task
+            validation_issues = self.task_loader.validate_task(task_config)
+            if validation_issues:
+                log_counter("eval_task_validation_failed", labels={
+                    "format_type": format_type,
+                    "task_type": task_config.task_type if task_config else "unknown"
+                })
+                raise ValueError(f"Task validation failed: {validation_issues}")
+            
+            # Store in database
+            task_id = self.db.create_task(
+                name=task_config.name,
+                description=task_config.description,
+                task_type=task_config.task_type,
+                config_format=task_config.metadata.get('format', 'custom'),
+                config_data=task_config.__dict__,
+                dataset_id=None  # Will be handled separately if needed
+            )
+            
+            duration = time.time() - start_time
+            log_histogram("eval_task_creation_duration", duration, labels={
+                "format_type": format_type,
+                "task_type": task_config.task_type
+            })
+            log_counter("eval_task_creation_success", labels={
+                "format_type": format_type,
+                "task_type": task_config.task_type
+            })
+            
+            logger.info(f"Created task: {task_config.name} ({task_id})")
+            return task_id
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            log_counter("eval_task_creation_error", labels={
+                "format_type": format_type,
+                "error_type": type(e).__name__
+            })
+            log_histogram("eval_task_creation_error_duration", duration, labels={
+                "format_type": format_type
+            })
+            raise
     
     def create_model_config(self, name: str, provider: str, model_id: str, 
                           config: Dict[str, Any] = None) -> str:
@@ -172,6 +205,14 @@ class EvaluationOrchestrator:
             run_name = f"{task_data['name']}_{model_data['name']}_{timestamp}"
         
         logger.info(f"Starting evaluation run: {run_name}")
+        eval_start_time = time.time()
+        
+        # Log evaluation start metrics
+        log_counter("eval_run_started", labels={
+            "task_type": task_config.task_type,
+            "provider": model_data['provider'],
+            "model": model_data['model_id']
+        })
         
         # Create evaluation run record
         run_id = self.db.create_run(
@@ -207,6 +248,24 @@ class EvaluationOrchestrator:
                     metadata=result.metadata
                 )
                 
+                # Log sample metrics
+                log_counter("eval_sample_processed", labels={
+                    "task_type": task_config.task_type,
+                    "provider": model_data['provider'],
+                    "model": model_data['model_id'],
+                    "success": "true" if result.success else "false"
+                })
+                
+                # Log individual metric values
+                if result.metrics:
+                    for metric_name, metric_value in result.metrics.items():
+                        if isinstance(metric_value, (int, float)):
+                            log_histogram(f"eval_sample_metric_{metric_name}", metric_value, labels={
+                                "task_type": task_config.task_type,
+                                "provider": model_data['provider'],
+                                "model": model_data['model_id']
+                            })
+                
                 # Call user progress callback if provided
                 if progress_callback:
                     progress_callback(completed, total, result)
@@ -214,6 +273,11 @@ class EvaluationOrchestrator:
                 # Log progress
                 if completed % 10 == 0 or completed == total:
                     logger.info(f"Evaluation progress: {completed}/{total} samples completed")
+                    log_histogram("eval_run_progress_percentage", (completed / total) * 100, labels={
+                        "task_type": task_config.task_type,
+                        "provider": model_data['provider'],
+                        "model": model_data['model_id']
+                    })
             
             # Run evaluation
             results = await eval_runner.run_evaluation(
@@ -236,11 +300,37 @@ class EvaluationOrchestrator:
                     metric_type = 'bleu'
                 
                 db_metrics[metric_name] = (value, metric_type)
+                
+                # Log aggregate metrics
+                log_histogram(f"eval_run_metric_{metric_name}", value, labels={
+                    "task_type": task_config.task_type,
+                    "provider": model_data['provider'],
+                    "model": model_data['model_id']
+                })
             
             self.db.store_run_metrics(run_id, db_metrics)
             
             # Update run status to completed
             self.db.update_run_status(run_id, 'completed')
+            
+            # Log completion metrics
+            eval_duration = time.time() - eval_start_time
+            log_histogram("eval_run_duration", eval_duration, labels={
+                "task_type": task_config.task_type,
+                "provider": model_data['provider'],
+                "model": model_data['model_id'],
+                "status": "completed"
+            })
+            log_counter("eval_run_completed", labels={
+                "task_type": task_config.task_type,
+                "provider": model_data['provider'],
+                "model": model_data['model_id']
+            })
+            log_histogram("eval_run_total_samples", len(results), labels={
+                "task_type": task_config.task_type,
+                "provider": model_data['provider'],
+                "model": model_data['model_id']
+            })
             
             logger.info(f"Evaluation completed successfully: {run_name} ({run_id})")
             logger.info(f"Results summary: {aggregate_metrics}")
@@ -249,6 +339,21 @@ class EvaluationOrchestrator:
             
         except Exception as e:
             logger.error(f"Evaluation failed: {e}")
+            
+            # Log failure metrics
+            eval_duration = time.time() - eval_start_time
+            log_histogram("eval_run_duration", eval_duration, labels={
+                "task_type": task_config.task_type,
+                "provider": model_data['provider'],
+                "model": model_data['model_id'],
+                "status": "failed"
+            })
+            log_counter("eval_run_failed", labels={
+                "task_type": task_config.task_type,
+                "provider": model_data['provider'],
+                "model": model_data['model_id'],
+                "error_type": type(e).__name__
+            })
             
             # Update run status to failed
             self.db.update_run_status(run_id, 'failed', str(e))

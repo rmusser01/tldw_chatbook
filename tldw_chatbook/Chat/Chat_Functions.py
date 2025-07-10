@@ -939,9 +939,13 @@ def chat(
         # Process message with Chat Dictionary (text only for now)
         processed_text_message = message
         if chatdict_entries and message:
+            dict_start_time = time.time()
             processed_text_message = process_user_input(
                 message, chatdict_entries, max_tokens=max_tokens, strategy=strategy
             )
+            dict_duration = time.time() - dict_start_time
+            log_histogram("chat_dictionary_processing_duration", dict_duration, labels={"api_endpoint": api_endpoint})
+            log_counter("chat_dictionary_applied", labels={"api_endpoint": api_endpoint})
 
         # --- Construct messages payload for the LLM API (OpenAI format) ---
         llm_messages_payload: List[Dict[str, Any]] = []
@@ -963,6 +967,10 @@ def chat(
 
         # 2. Process History (now expecting list of OpenAI message dicts)
         last_user_image_url_from_history: Optional[str] = None
+        
+        history_start_time = time.time()
+        history_message_count = len(history)
+        history_image_count = 0
 
         for hist_msg_obj in history:
             role = hist_msg_obj.get("role")
@@ -977,6 +985,7 @@ def chat(
                     if part.get("type") == "text":
                         processed_hist_content_parts.append(part)
                     elif part.get("type") == "image_url":
+                        history_image_count += 1
                         image_url_data = part.get("image_url", {}).get("url", "") # data URI
                         if image_history_mode == "send_all":
                             processed_hist_content_parts.append(part)
@@ -1014,16 +1023,30 @@ def chat(
                     break
             if not appended_to_last: # No user message in history, or image already there
                  logging.debug(f"Could not append last_user_image_from_history, no suitable prior user message or already present. Image: {last_user_image_url_from_history[:60]}...")
+        
+        # Log history processing metrics
+        history_duration = time.time() - history_start_time
+        log_histogram("chat_history_processing_duration", history_duration, labels={"api_endpoint": api_endpoint})
+        log_histogram("chat_history_message_count", history_message_count, labels={"api_endpoint": api_endpoint})
+        log_histogram("chat_history_image_count", history_image_count, labels={
+            "api_endpoint": api_endpoint, 
+            "image_mode": image_history_mode
+        })
 
 
         # 3. Add RAG Content (prepended to current user's text)
         rag_text_prefix = ""
         if media_content and selected_parts:
+            rag_start_time = time.time()
             rag_text_prefix = "\n\n".join(
                 [f"{part.capitalize()}: {media_content.get(part, '')}" for part in selected_parts if media_content.get(part)]
             ).strip()
             if rag_text_prefix:
                 rag_text_prefix += "\n\n---\n\n"
+                rag_duration = time.time() - rag_start_time
+                log_histogram("chat_rag_processing_duration", rag_duration, labels={"api_endpoint": api_endpoint})
+                log_histogram("chat_rag_content_length", len(rag_text_prefix), labels={"api_endpoint": api_endpoint})
+                log_counter("chat_rag_content_added", labels={"api_endpoint": api_endpoint})
 
         # 4. Construct Current User Message (text + optional new image)
         current_user_content_parts: List[Dict[str, Any]] = []

@@ -24,29 +24,23 @@ from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig
 from ..chunking_service import ChunkingService
 from .simple_cache import SimpleRAGCache, get_rag_cache
+from .db_connection_pool import get_connection_pool
+from .indexing_helpers import chunk_documents_batch, generate_embeddings_batch, store_documents_batch
+from .health_check import init_health_checker, get_health_status
+from .data_models import IndexingResult
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
+from tldw_chatbook.Utils.path_validation import validate_path
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class IndexingResult:
-    """Result of indexing operation."""
-    doc_id: str
-    chunks_created: int
-    time_taken: float
-    success: bool
-    error: Optional[str] = None
-    
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return {
-            "doc_id": self.doc_id,
-            "chunks_created": self.chunks_created,
-            "time_taken": self.time_taken,
-            "success": self.success,
-            "error": self.error
-        }
+# Constants
+DEFAULT_EMBEDDING_DIM = 768  # Default dimension if detection fails
+KEYWORD_SEARCH_SCORE = 0.8  # Fixed score for keyword search results
+MAX_CITATION_MATCHES = 3  # Maximum keyword matches to show as citations
+CITATION_CONTEXT_CHARS = 50  # Characters of context around keyword matches
+KEYWORD_BATCH_SIZE = 10  # Batch size for processing keyword results
+FTS5_CONNECTION_POOL_SIZE = 3  # Connection pool size for FTS5 searches
+CACHE_TIMEOUT_SECONDS = 3600.0  # Cache timeout: 1 hour for better performance
 
 
 class RAGService:
@@ -127,6 +121,13 @@ class RAGService:
         self._last_index_time = None
         self._total_chunks_created = 0
         self._search_type_counts = {"semantic": 0, "keyword": 0, "hybrid": 0}
+        
+        # Get and store embedding dimension
+        self._embedding_dim = self._get_embedding_dimension()
+        logger.info(f"Detected embedding dimension: {self._embedding_dim}")
+        
+        # Initialize health checker
+        init_health_checker(self)
     
     # === Indexing Methods ===
     
@@ -160,8 +161,28 @@ class RAGService:
         
         # Create correlation ID for tracking
         correlation_id = str(uuid.uuid4())
-        # Use standard logger - bind() is a loguru feature
-        logger = logging.getLogger(__name__)
+        
+        # Input validation
+        if not doc_id or not isinstance(doc_id, str):
+            raise ValueError("doc_id must be a non-empty string")
+        
+        if not content or not isinstance(content, str):
+            raise ValueError("content must be a non-empty string")
+        
+        # Document size limit: 10MB (configurable)
+        max_doc_size = getattr(self.config, 'max_document_size', 10 * 1024 * 1024)  # 10MB default
+        if len(content) > max_doc_size:
+            raise ValueError(f"Document too large: {len(content)} bytes exceeds limit of {max_doc_size} bytes")
+        
+        # Validate chunk parameters if provided
+        if chunk_size is not None and (not isinstance(chunk_size, int) or chunk_size < 1):
+            raise ValueError("chunk_size must be a positive integer")
+        
+        if chunk_overlap is not None and (not isinstance(chunk_overlap, int) or chunk_overlap < 0):
+            raise ValueError("chunk_overlap must be a non-negative integer")
+        
+        if chunk_overlap is not None and chunk_size is not None and chunk_overlap >= chunk_size:
+            raise ValueError("chunk_overlap must be less than chunk_size")
         
         # Log document metrics
         log_counter("rag_document_index_attempt")
@@ -319,6 +340,82 @@ class RAGService:
         
         return results
     
+    async def index_batch_optimized(self, 
+                                   documents: List[Dict[str, Any]],
+                                   show_progress: bool = True,
+                                   batch_size: int = 32) -> List[IndexingResult]:
+        """
+        Optimized batch indexing with batched embeddings for better performance.
+        
+        This method processes multiple documents more efficiently by:
+        1. Chunking all documents first
+        2. Creating embeddings in batches
+        3. Storing all results together
+        
+        Args:
+            documents: List of documents to index
+            show_progress: Whether to show progress
+            batch_size: Batch size for embedding generation
+            
+        Returns:
+            List of IndexingResult for each document
+        """
+        total = len(documents)
+        if not documents:
+            return []
+        
+        logger.info(f"Starting optimized batch indexing for {total} documents")
+        batch_start_time = time.time()
+        
+        # Phase 1: Chunk all documents
+        chunk_start = time.time()
+        all_chunks, doc_chunk_info, failed_results = await chunk_documents_batch(
+            self, documents, show_progress
+        )
+        chunk_time = time.time() - chunk_start
+        logger.info(f"Chunking completed in {chunk_time:.2f}s, total chunks: {len(all_chunks)}")
+        
+        if not all_chunks:
+            logger.warning("No chunks created from any documents")
+            return failed_results
+        
+        # Phase 2: Generate embeddings in batches
+        embed_start = time.time()
+        chunk_texts = [chunk['text'] for chunk in all_chunks]
+        all_embeddings = await generate_embeddings_batch(
+            self, chunk_texts, batch_size, show_progress
+        )
+        embed_time = time.time() - embed_start
+        logger.info(f"Embedding generation completed in {embed_time:.2f}s")
+        
+        # Phase 3: Store documents with their embeddings
+        store_start = time.time()
+        storage_results = await store_documents_batch(
+            self, documents, doc_chunk_info, all_embeddings, batch_start_time
+        )
+        store_time = time.time() - store_start
+        
+        # Combine results
+        results = failed_results + storage_results
+        total_time = time.time() - batch_start_time
+        
+        # Summary
+        successful = sum(1 for r in results if r and r.success)
+        logger.info(
+            f"Batch indexing completed: {successful}/{total} documents, "
+            f"total time: {total_time:.2f}s "
+            f"(chunk: {chunk_time:.2f}s, embed: {embed_time:.2f}s, store: {store_time:.2f}s)"
+        )
+        
+        # Update metrics
+        log_counter("rag_batch_index_completed", value=successful)
+        log_histogram("rag_batch_index_total_time", total_time)
+        log_histogram("rag_batch_chunk_time", chunk_time)
+        log_histogram("rag_batch_embed_time", embed_time)
+        log_histogram("rag_batch_store_time", store_time)
+        
+        return results
+    
     # === Search Methods ===
     
     @timeit("rag_search_operation")
@@ -350,8 +447,6 @@ class RAGService:
         
         # Create correlation ID for tracking
         correlation_id = str(uuid.uuid4())
-        # Standard Python logger doesn't have bind(), so we'll just use the regular logger
-        logger_ctx = logger
         
         # Log search metrics
         log_counter("rag_search_attempt", labels={"type": search_type})
@@ -359,11 +454,11 @@ class RAGService:
         self._search_type_counts[search_type] += 1
         
         # Check cache first
-        cached_result = self.cache.get(query, search_type, top_k, filter_metadata)
+        cached_result = await self.cache.get_async(query, search_type, top_k, filter_metadata)
         if cached_result is not None:
             results, context = cached_result
             log_counter("rag_search_cache_hit", labels={"type": search_type})
-            logger_ctx.info(f"Cache hit for query: '{query[:50]}...'")
+            logger.info(f"[{correlation_id}] Cache hit for query: '{query[:50]}...'")
             return results
         
         log_counter("rag_search_cache_miss", labels={"type": search_type})
@@ -373,7 +468,7 @@ class RAGService:
         results_before_filter = 0
         
         try:
-            logger_ctx.info(f"Performing {search_type} search with top_k={top_k}, threshold={score_threshold}")
+            logger.info(f"[{correlation_id}] Performing {search_type} search with top_k={top_k}, threshold={score_threshold}")
             
             if search_type == "semantic":
                 results = await self._semantic_search(
@@ -416,18 +511,18 @@ class RAGService:
                 log_gauge(f"rag_search_type_{stype}_ratio", 
                          count / total_searches if total_searches > 0 else 0)
             
-            logger_ctx.info(f"Search completed in {elapsed:.2f}s, found {len(results)} results")
+            logger.info(f"[{correlation_id}] Search completed in {elapsed:.2f}s, found {len(results)} results")
             
             # Cache the results
             # For caching, we need to extract a simple context string
             context = self._extract_context_from_results(results)
-            self.cache.put(query, search_type, top_k, results, context, filter_metadata)
+            await self.cache.put_async(query, search_type, top_k, results, context, filter_metadata)
             
             return results
             
         except Exception as e:
             log_counter("rag_search_error", labels={"type": search_type, "error": type(e).__name__})
-            logger_ctx.error(f"Search failed: {e}", exc_info=True)
+            logger.error(f"[{correlation_id}] Search failed: {e}", exc_info=True)
             raise
     
     def search_sync(self, query: str, **kwargs) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
@@ -471,13 +566,80 @@ class RAGService:
                              filter_metadata: Optional[Dict[str, Any]] = None,
                              include_citations: bool = True) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
-        Perform keyword search using FTS5.
+        Perform keyword search using FTS5 from the media database.
         
-        TODO: Implement actual FTS5 integration.
-        For now, returns empty results.
+        This implementation leverages the existing FTS5 index in the MediaDatabase
+        for efficient keyword-based search with proper connection pooling.
         """
-        logger.warning("Keyword search not yet implemented in simplified version")
-        return []
+        try:
+            # Get database path from vector store persist directory
+            db_path = None
+            base_dir = Path.home() / ".local" / "share" / "tldw_cli"
+            
+            if self.config.persist_directory:
+                # Try common locations for the media database
+                possible_paths = [
+                    self.config.persist_directory.parent / "media_db.db",
+                    self.config.persist_directory.parent / "chacha_notes.db",
+                    base_dir / "chacha_notes.db"
+                ]
+                
+                for path in possible_paths:
+                    # Validate path to prevent traversal attacks
+                    try:
+                        validated_path = validate_path(str(path), str(base_dir))
+                        validated_path_obj = Path(validated_path)
+                        
+                        # Check if path exists and is not a symlink (security check)
+                        if validated_path_obj.exists() and not validated_path_obj.is_symlink():
+                            # Additional check: ensure it's a regular file
+                            if validated_path_obj.is_file():
+                                db_path = validated_path
+                                logger.debug(f"Found media database at: {db_path}")
+                                break
+                            else:
+                                logger.warning(f"Path {validated_path} is not a regular file")
+                        elif validated_path_obj.is_symlink():
+                            logger.warning(f"Skipping symlink at {validated_path} for security reasons")
+                    except ValueError as e:
+                        logger.warning(f"Invalid path {path}: {e}")
+                        continue
+            
+            if not db_path:
+                logger.warning("Could not find media database for keyword search")
+                return []
+            
+            # Get connection pool for this database
+            pool_size = getattr(self.config.search, 'fts5_connection_pool_size', FTS5_CONNECTION_POOL_SIZE)
+            pool = get_connection_pool(db_path, pool_size=pool_size)
+            
+            # Perform FTS5 search directly using connection pool
+            loop = asyncio.get_event_loop()
+            search_results = await loop.run_in_executor(
+                None,
+                self._perform_fts5_search,
+                pool,
+                query,
+                top_k * 2  # Get extra for filtering
+            )
+            
+            # Process results in batches for better performance
+            if include_citations:
+                results = await self._process_keyword_results_with_citations(
+                    search_results, query, filter_metadata, top_k
+                )
+            else:
+                results = self._process_keyword_results_basic(
+                    search_results, filter_metadata, top_k
+                )
+            
+            logger.info(f"Keyword search found {len(results)} results for query: '{query}'")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Keyword search failed: {e}", exc_info=True)
+            # Return empty list on error to maintain compatibility
+            return []
     
     async def _hybrid_search(self,
                             query: str,
@@ -573,6 +735,19 @@ class RAGService:
     
     # === Helper Methods ===
     
+    def _get_embedding_dimension(self) -> int:
+        """Get the embedding dimension from the model."""
+        try:
+            dim = self.embeddings.get_embedding_dimension()
+            if dim is None:
+                # Default if we can't determine
+                logger.warning(f"Could not determine embedding dimension, defaulting to {DEFAULT_EMBEDDING_DIM}")
+                return DEFAULT_EMBEDDING_DIM
+            return dim
+        except Exception as e:
+            logger.warning(f"Error getting embedding dimension: {e}, defaulting to {DEFAULT_EMBEDDING_DIM}")
+            return DEFAULT_EMBEDDING_DIM
+    
     @timeit("rag_chunking_operation")
     async def _chunk_document(self, 
                             content: str,
@@ -621,6 +796,261 @@ class RAGService:
     
     # === Management Methods ===
     
+    def _process_keyword_results_basic(self, search_results: List[Dict], 
+                                      filter_metadata: Optional[Dict[str, Any]], 
+                                      top_k: int) -> List[SearchResult]:
+        """Process keyword search results without citations."""
+        results = []
+        
+        for item in search_results:
+            # Apply metadata filters if provided
+            if filter_metadata:
+                item_meta = {
+                    'media_type': item.get('type'),
+                    'source': 'media',
+                    'author': item.get('author')
+                }
+                if not all(item_meta.get(k) == v for k, v in filter_metadata.items() if k in item_meta):
+                    continue
+            
+            # Create base SearchResult
+            content = item.get('content', '')[:1000]  # Limit content size
+            
+            base_result = SearchResult(
+                id=f"media_{item['id']}",
+                score=KEYWORD_SEARCH_SCORE,  # FTS5 doesn't provide normalized scores
+                document=content,
+                metadata={
+                    'doc_id': str(item['id']),
+                    'doc_title': item.get('title', 'Untitled'),
+                    'media_type': item.get('type'),
+                    'url': item.get('url'),
+                    'author': item.get('author'),
+                    'ingestion_date': item.get('ingestion_date'),
+                    'text_preview': content[:200]
+                }
+            )
+            results.append(base_result)
+            
+            if len(results) >= top_k:
+                break
+                
+        return results
+    
+    async def _process_keyword_results_with_citations(self, search_results: List[Dict],
+                                                     query: str,
+                                                     filter_metadata: Optional[Dict[str, Any]],
+                                                     top_k: int) -> List[SearchResultWithCitations]:
+        """Process keyword search results with citations - batch processing for efficiency."""
+        import re
+        import asyncio
+        
+        results = []
+        
+        # Process in batches for efficiency
+        batch_size = KEYWORD_BATCH_SIZE
+        
+        for i in range(0, len(search_results), batch_size):
+            batch = search_results[i:i + batch_size]
+            
+            # Process batch concurrently
+            batch_results = await asyncio.gather(*[
+                self._create_keyword_result_with_citations(item, query, filter_metadata)
+                for item in batch
+            ])
+            
+            # Filter out None results and add to results
+            for result in batch_results:
+                if result is not None:
+                    results.append(result)
+                    if len(results) >= top_k:
+                        return results
+        
+        return results
+    
+    async def _create_keyword_result_with_citations(self, item: Dict, query: str,
+                                                   filter_metadata: Optional[Dict[str, Any]]) -> Optional[SearchResultWithCitations]:
+        """Create a single keyword result with citations."""
+        import re
+        
+        # Apply metadata filters
+        if filter_metadata:
+            item_meta = {
+                'media_type': item.get('type'),
+                'source': 'media',
+                'author': item.get('author')
+            }
+            if not all(item_meta.get(k) == v for k, v in filter_metadata.items() if k in item_meta):
+                return None
+        
+        # Create base result
+        content = item.get('content', '')[:1000]
+        base_metadata = {
+            'doc_id': str(item['id']),
+            'doc_title': item.get('title', 'Untitled'),
+            'media_type': item.get('type'),
+            'url': item.get('url'),
+            'author': item.get('author'),
+            'ingestion_date': item.get('ingestion_date'),
+            'text_preview': content[:200]
+        }
+        
+        # Find citations
+        escaped_query = re.escape(query)
+        pattern = re.compile(escaped_query, re.IGNORECASE)
+        
+        full_content = item.get('content', '')
+        matches = list(pattern.finditer(full_content))
+        
+        citations = []
+        
+        # Create citations for limited number of matches
+        for match in matches[:MAX_CITATION_MATCHES]:
+            start_context = max(0, match.start() - CITATION_CONTEXT_CHARS)
+            end_context = min(len(full_content), match.end() + CITATION_CONTEXT_CHARS)
+            
+            citation = Citation(
+                document_id=str(item['id']),
+                document_title=item.get('title', 'Untitled'),
+                chunk_id=f"media_{item['id']}_kw_{match.start()}",
+                text=full_content[start_context:end_context],
+                start_char=match.start(),
+                end_char=match.end(),
+                confidence=1.0,
+                match_type=CitationType.EXACT,
+                metadata={
+                    'query': query,
+                    'match_text': match.group(),
+                    'media_type': item.get('type')
+                }
+            )
+            citations.append(citation)
+        
+        # If no exact matches, create general citation
+        if not citations and query.lower() in full_content.lower():
+            citation = Citation(
+                document_id=str(item['id']),
+                document_title=item.get('title', 'Untitled'),
+                chunk_id=f"media_{item['id']}_general",
+                text=content,
+                start_char=0,
+                end_char=len(content),
+                confidence=0.7,
+                match_type=CitationType.KEYWORD,
+                metadata={
+                    'query': query,
+                    'media_type': item.get('type')
+                }
+            )
+            citations.append(citation)
+        
+        return SearchResultWithCitations(
+            id=f"media_{item['id']}",
+            score=KEYWORD_SEARCH_SCORE,
+            document=content,
+            metadata=base_metadata,
+            citations=citations
+        )
+    
+    def _escape_fts5_query(self, query: str) -> str:
+        """
+        Properly escape FTS5 query to prevent SQL injection.
+        
+        FTS5 special characters that need escaping:
+        - Double quotes (") for phrase queries
+        - Parentheses for grouping
+        - Operators: OR, AND, NOT, NEAR
+        - Wildcards: *
+        - Column filters: :
+        
+        For safety, we'll use FTS5 phrase query syntax which treats
+        the entire query as a literal phrase.
+        
+        Args:
+            query: Raw search query
+            
+        Returns:
+            Safely escaped query for FTS5
+        """
+        # Escape any double quotes within the query by doubling them
+        # This is the proper way to escape quotes in FTS5 phrase queries
+        escaped_query = query.replace('"', '""')
+        
+        # Validate query length to prevent DoS
+        MAX_QUERY_LENGTH = 1000
+        if len(escaped_query) > MAX_QUERY_LENGTH:
+            logger.warning(f"Query truncated from {len(escaped_query)} to {MAX_QUERY_LENGTH} characters")
+            escaped_query = escaped_query[:MAX_QUERY_LENGTH]
+        
+        # For safety, treat entire query as a phrase by wrapping in quotes
+        # This prevents any FTS5 operators or special syntax from being interpreted
+        # The phrase query syntax is the safest approach for user input
+        return f'"{escaped_query}"'
+    
+    def _perform_fts5_search(self, pool, query: str, limit: int) -> List[Dict[str, Any]]:
+        """
+        Perform FTS5 search using connection pool with proper SQL injection prevention.
+        
+        Args:
+            pool: Connection pool instance
+            query: Search query
+            limit: Maximum number of results
+            
+        Returns:
+            List of search results
+        """
+        # Properly escape the query for FTS5
+        escaped_query = self._escape_fts5_query(query)
+        
+        # Validate limit parameter
+        if not isinstance(limit, int) or limit < 1:
+            limit = 100  # Safe default
+        limit = min(limit, 1000)  # Cap maximum results
+        
+        sql = """
+        SELECT 
+            m.id,
+            m.title,
+            m.content,
+            m.url,
+            m.type,
+            m.author,
+            m.ingestion_date,
+            m.tags,
+            rank
+        FROM Media m
+        JOIN MediaSearchIndex msi ON m.id = msi.media_id
+        WHERE MediaSearchIndex MATCH ?
+        AND m.is_trash = 0
+        ORDER BY rank
+        LIMIT ?
+        """
+        
+        results = []
+        try:
+            with pool.get_connection() as conn:
+                cursor = conn.cursor()
+                # Use parameterized query - the escaped_query is already safe
+                cursor.execute(sql, (escaped_query, limit))
+                
+                for row in cursor:
+                    results.append({
+                        'id': row['id'],
+                        'title': row['title'],
+                        'content': row['content'],
+                        'url': row['url'],
+                        'type': row['type'],
+                        'author': row['author'],
+                        'ingestion_date': row['ingestion_date'],
+                        'tags': row['tags']
+                    })
+        except Exception as e:
+            logger.error(f"FTS5 search failed for query '{query}': {e}")
+            # Re-raise with more context
+            raise RuntimeError(f"Database search failed: {str(e)}") from e
+        
+        return results
+    
     def _extract_context_from_results(self, results: List[Union[SearchResult, SearchResultWithCitations]], 
                                      max_length: int = 10000) -> str:
         """Extract a context string from search results for caching."""
@@ -660,6 +1090,12 @@ class RAGService:
         self.cache.clear()
         logger.info("Cleared embeddings and search result caches")
     
+    async def clear_cache_async(self):
+        """Clear all caches asynchronously."""
+        self.embeddings.clear_cache()
+        await self.cache.clear_async()
+        logger.info("Cleared embeddings and search result caches")
+    
     def clear_index(self):
         """Clear the vector store index."""
         self.vector_store.clear()
@@ -689,6 +1125,15 @@ class RAGService:
         }
         return metrics
     
+    def get_health_status(self) -> Dict[str, Any]:
+        """
+        Get health status of the RAG service.
+        
+        Returns:
+            Dictionary with health status information
+        """
+        return get_health_status()
+    
     def get_document_count(self) -> int:
         """Get the number of indexed documents."""
         return self._docs_indexed
@@ -699,9 +1144,19 @@ class RAGService:
         return stats.get("count", 0)
     
     def close(self):
-        """Clean up resources."""
+        """Clean up all resources including connection pools."""
         try:
+            # Close embeddings service
             self.embeddings.close()
+            
+            # Close all database connection pools
+            from .db_connection_pool import close_all_pools
+            close_all_pools()
+            
+            # Clear cache
+            if hasattr(self, 'cache'):
+                self.cache.clear()
+            
             logger.info("RAG service closed successfully")
         except Exception as e:
             logger.error(f"Error closing RAG service: {e}")
