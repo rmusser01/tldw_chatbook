@@ -33,6 +33,7 @@ CSS_MODULES = [
     "components/_status.tcss",
     "components/_widgets.tcss",
     "components/stats_screen.css",
+    "components/splash_viewer.css",
     
     # 4. Features - Application Specific (depends on all above)
     "features/_chat.tcss",

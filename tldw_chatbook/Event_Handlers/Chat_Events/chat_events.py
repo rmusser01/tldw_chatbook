@@ -7,6 +7,7 @@ import json
 import os
 import time
 from datetime import datetime
+import uuid
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 #
 # 3rd-Party Imports
@@ -289,6 +290,10 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # Initialize world info processor
     world_info_processor = None
     
+    # Get DB and conversation ID early (needed for world info loading)
+    active_conversation_id = app.current_chat_conversation_id
+    db = app.chachanotes_db # Use the correct instance from app
+    
     if active_char_data:
         loguru_logger.info(
             f"Active character data found: {active_char_data.get('name', 'Unnamed')}. Checking for system prompt override.")
@@ -319,6 +324,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             
             # Check character's embedded world info
             has_character_book = False
+            extensions = active_char_data.get('extensions', {}) if active_char_data else {}
             if isinstance(extensions, dict) and extensions.get('character_book'):
                 has_character_book = True
             
@@ -469,9 +475,8 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         await chat_container.mount(ChatMessage(Text.from_markup("Internal Error: Could not retrieve chat history."), role="System", classes="-error"))
         return
 
-    # --- 5. DB and Conversation ID Setup ---
-    active_conversation_id = app.current_chat_conversation_id
-    db = app.chachanotes_db # Use the correct instance from app
+    # --- 5. User Message Widget Instance ---
+    # DB and conversation ID were already set up earlier
     user_msg_widget_instance: Optional[Union[ChatMessage, ChatMessageEnhanced]] = None
 
     # --- 6. Mount User Message to UI ---
@@ -1562,10 +1567,9 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
         button_event = Button.Pressed(button)
         # Call the continue response handler
         await handle_continue_response_button_pressed(app, button_event, action_widget)
-
-
-async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    loguru_logger.info("New Chat button pressed.")
+async def handle_chat_new_temp_chat_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle New Temp Chat button - creates an ephemeral chat."""
+    loguru_logger.info("New Temp Chat button pressed.")
     try:
         chat_log_widget = app.query_one("#chat-log", VerticalScroll)
         await chat_log_widget.remove_children()
@@ -1573,19 +1577,18 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
         loguru_logger.error("Failed to find #chat-log to clear.")
 
     app.current_chat_conversation_id = None
-    app.current_chat_is_ephemeral = True  # This triggers watcher to update UI elements
+    app.current_chat_is_ephemeral = True
     app.current_chat_active_character_data = None
     
-    # Clear world books for new conversation
     await chat_events_worldbooks.refresh_active_worldbooks(app)
-    # Clear dictionaries for new conversation
     await chat_events_dictionaries.refresh_active_dictionaries(app)
+    
     try:
         default_system_prompt = app.app_config.get("chat_defaults", {}).get("system_prompt", "You are a helpful AI assistant.")
         app.query_one("#chat-system-prompt", TextArea).text = default_system_prompt
-        loguru_logger.debug("Reset main system prompt to default on new chat.")
     except QueryError:
-        loguru_logger.error("Could not find #chat-system-prompt to reset on new chat.")
+        pass
+    
     try:
         app.query_one("#chat-character-name-edit", Input).value = ""
         app.query_one("#chat-character-description-edit", TextArea).text = ""
@@ -1593,30 +1596,114 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
         app.query_one("#chat-character-scenario-edit", TextArea).text = ""
         app.query_one("#chat-character-system-prompt-edit", TextArea).text = ""
         app.query_one("#chat-character-first-message-edit", TextArea).text = ""
-        # Optionally clear the character search and list
-        # app.query_one("#chat-character-search-input", Input).value = ""
-        # await app.query_one("#chat-character-search-results-list", ListView).clear()
-        loguru_logger.debug("Cleared character editing fields on new chat.")
-    except QueryError as e:
-        loguru_logger.warning(f"Could not clear all character edit fields on new chat: {e}")
+    except QueryError:
+        pass
     
-    # Update token counter to show empty state
     try:
         from .chat_token_events import update_chat_token_counter
         await update_chat_token_counter(app)
-    except Exception as e:
-        loguru_logger.debug(f"Could not update token counter: {e}")
-
+    except Exception:
+        pass
+    
     try:
-        # Watcher should handle most of this, but explicit clearing is safer
         app.query_one("#chat-conversation-title-input", Input).value = ""
         app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
         app.query_one("#chat-conversation-uuid-display", Input).value = "Ephemeral Chat"
         app.query_one(TitleBar).reset_title()
         app.query_one("#chat-input", TextArea).focus()
-    except QueryError as e:
-        loguru_logger.error(f"UI component not found during new chat setup: {e}")
+    except QueryError:
+        pass
+    
+    app.notify("Created new temporary chat", severity="information")
 
+
+
+
+async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle New Chat button - creates a new saved conversation."""
+    loguru_logger.info("New Chat button pressed.")
+    
+    # Clear chat log
+    try:
+        chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+        await chat_log_widget.remove_children()
+    except QueryError:
+        loguru_logger.error("Failed to find #chat-log to clear.")
+    
+    # Clear character data
+    app.current_chat_active_character_data = None
+    
+    # Clear world books and dictionaries
+    await chat_events_worldbooks.refresh_active_worldbooks(app)
+    await chat_events_dictionaries.refresh_active_dictionaries(app)
+    
+    # Reset system prompt
+    try:
+        default_system_prompt = app.app_config.get("chat_defaults", {}).get("system_prompt", "You are a helpful AI assistant.")
+        app.query_one("#chat-system-prompt", TextArea).text = default_system_prompt
+    except QueryError:
+        pass
+    
+    # Clear character fields
+    try:
+        app.query_one("#chat-character-name-edit", Input).value = ""
+        app.query_one("#chat-character-description-edit", TextArea).text = ""
+        app.query_one("#chat-character-personality-edit", TextArea).text = ""
+        app.query_one("#chat-character-scenario-edit", TextArea).text = ""
+        app.query_one("#chat-character-system-prompt-edit", TextArea).text = ""
+        app.query_one("#chat-character-first-message-edit", TextArea).text = ""
+    except QueryError:
+        pass
+    
+    # Update token counter
+    try:
+        from .chat_token_events import update_chat_token_counter
+        await update_chat_token_counter(app)
+    except Exception:
+        pass
+    
+    # Create new conversation in database
+    if not app.chachanotes_db:
+        app.notify("Database service not available.", severity="error")
+        app.current_chat_conversation_id = None
+        app.current_chat_is_ephemeral = True
+        return
+    
+    db = app.chachanotes_db
+    new_conversation_id = str(uuid.uuid4())
+    default_title = f"New Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}"  
+    
+    try:
+        character_id = ccl.DEFAULT_CHARACTER_ID
+        conv_data = {
+            'id': new_conversation_id,
+            'title': default_title,
+            'keywords': "",
+            'character_id': character_id
+        }
+        
+        # Add conversation to database
+        db.add_conversation(conv_data)        
+        app.current_chat_conversation_id = new_conversation_id
+        app.current_chat_is_ephemeral = False
+        
+        try:
+            app.query_one("#chat-conversation-title-input", Input).value = default_title
+            app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
+            app.query_one("#chat-conversation-uuid-display", Input).value = new_conversation_id
+            app.query_one(TitleBar).update_title(default_title)
+            app.query_one("#chat-input", TextArea).focus()
+        except QueryError:
+            pass
+        
+        app.notify(f"Created new conversation: {default_title}", severity="information")
+        loguru_logger.info(f"Created new conversation with ID: {new_conversation_id}")
+        
+    except Exception as e:
+        loguru_logger.error(f"Failed to create new conversation: {e}")
+        app.notify("Failed to create new conversation", severity="error")
+        app.current_chat_conversation_id = None
+        app.current_chat_is_ephemeral = True
 
 async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     loguru_logger.info("Save Current Chat button pressed.")
@@ -1719,7 +1806,22 @@ async def handle_chat_convert_to_note_button_pressed(app: 'TldwCli', event: Butt
     """Convert the entire current conversation to a note."""
     loguru_logger.info("Convert to note button pressed.")
     
-    if not app.current_chat_conversation_id and not app.current_chat_messages:
+    # Get chat container to query messages
+    try:
+        chat_container = app.query_one("#chat-scrollable-content", VerticalScroll)
+    except QueryError:
+        app.notify("Chat container not found.", severity="error")
+        return
+    
+    # Collect all messages from the UI
+    all_chat_messages = list(chat_container.query(ChatMessage))
+    all_enhanced_messages = list(chat_container.query(ChatMessageEnhanced))
+    all_ui_messages = sorted(
+        all_chat_messages + all_enhanced_messages,
+        key=lambda w: chat_container.children.index(w) if w in chat_container.children else float('inf')
+    )
+    
+    if not app.current_chat_conversation_id and not all_ui_messages:
         app.notify("No conversation to convert to note.", severity="warning")
         return
     
@@ -1752,13 +1854,21 @@ async def handle_chat_convert_to_note_button_pressed(app: 'TldwCli', event: Butt
         ]
         
         # Add each message to the note
-        for msg in app.current_chat_messages:
-            msg_timestamp = msg.get('timestamp', 'Unknown time')
-            msg_sender = msg.get('sender', 'Unknown')
-            msg_content = msg.get('message', '')
+        for msg_widget in all_ui_messages:
+            # Skip incomplete messages
+            if hasattr(msg_widget, 'generation_complete') and not msg_widget.generation_complete:
+                continue
+                
+            msg_role = msg_widget.role
+            msg_content = msg_widget.message_text
+            
+            # Try to get timestamp if available
+            msg_timestamp = "Unknown time"
+            if hasattr(msg_widget, 'created_at') and msg_widget.created_at:
+                msg_timestamp = msg_widget.created_at
             
             note_content_parts.extend([
-                f"[{msg_timestamp}] {msg_sender}:",
+                f"[{msg_timestamp}] {msg_role}:",
                 msg_content,
                 "",
                 "-" * 30,
@@ -1965,31 +2075,35 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
         db = app.notes_service._get_db(app.notes_user_id)
         conversations: List[Dict[str, Any]] = []
 
-        # The DB query `search_conversations_by_title` uses character_id=None for "all characters"
-        # or a specific character_id. It doesn't have a separate flag for "regular chats only".
-        # The `include_character_chats` checkbox logic might need client-side filtering if
-        # "regular chats" mean `character_id IS NULL` specifically.
-
-        # Simplified logic: if a specific character is chosen, filter by it. Otherwise, search all.
-        # The `include_character_chats` primarily acts as a conceptual filter for now,
-        # unless `search_conversations_by_title` is enhanced.
-
+        # Determine the filtering logic based on checkbox states
+        # Logic:
+        # 1. If "Include Character Chats" is unchecked: Show only regular chats (character_id = DEFAULT_CHARACTER_ID or NULL)
+        # 2. If "Include Character Chats" is checked:
+        #    a. If "All Characters" is checked: Show all conversations regardless of character
+        #    b. If a specific character is selected: Show only that character's conversations
+        #    c. If no character is selected and "All Characters" is unchecked: Show all conversations
+        
+        filter_regular_chats_only = not include_character_chats
         effective_character_id_for_search = None
+        
         if include_character_chats:
+            # Character chats are included
             if not search_all_characters and selected_character_id_filter:
+                # A specific character is selected
                 effective_character_id_for_search = selected_character_id_filter
-            # if search_all_characters or selected_character_id_filter is None, effective_character_id_for_search remains None (search all)
-        else:  # Only "regular" (non-character) chats. This requires DB support or client filter.
-            loguru_logger.info(
-                "Searching for regular chats only (character_id is NULL). This may require DB method enhancement or client-side filter.")
-            # For now, let's assume search_conversations_by_title with character_id=ccl.DEFAULT_CHARACTER_ID
-            # or some other marker for "regular" if your DB is structured that way.
-            # Or if DEFAULT_CHARACTER_ID implies non-specific character chats
-            effective_character_id_for_search = ccl.DEFAULT_CHARACTER_ID  # Placeholder assumption
-            # A more robust way for "character_id IS NULL" would be a dedicated DB method or flag.
+                loguru_logger.debug(f"Filtering for specific character ID: {effective_character_id_for_search}")
+            else:
+                # Either "All Characters" is checked or no specific character selected
+                effective_character_id_for_search = None  # This will search all conversations
+                loguru_logger.debug("Searching all conversations (character chats included)")
+        else:
+            # Only regular (non-character) chats should be shown
+            # We'll need to filter client-side since the DB doesn't have a direct "regular chats only" query
+            effective_character_id_for_search = None  # Get all, then filter client-side
+            loguru_logger.debug("Will filter for regular chats only (client-side filtering)")
 
         loguru_logger.debug(
-            f"Searching conversations. Term: '{search_term}', CharID for DB: {effective_character_id_for_search}, IncludeCharFlag: {include_character_chats}")
+            f"Searching conversations. Term: '{search_term}', CharID for DB: {effective_character_id_for_search}, IncludeCharFlag: {include_character_chats}, FilterRegularOnly: {filter_regular_chats_only}")
         
         # Handle different search scenarios
         if not search_term:
@@ -2020,14 +2134,15 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
                 limit=100
             )
 
-        # If include_character_chats is False, and the DB query couldn't filter by "IS NULL"
-        # we might need to filter here:
-        if not include_character_chats and conversations:
-            # This assumes regular chats are those associated with DEFAULT_CHARACTER_ID
-            # or if your DB uses NULL for truly "no character" chats. Adjust as needed.
-            # conversations = [conv for conv in conversations if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
-            # For now, we assume the DB call with DEFAULT_CHARACTER_ID handled this.
-            pass
+        # If include_character_chats is False, we need to filter client-side for regular chats only
+        if filter_regular_chats_only and conversations:
+            # Regular chats are those with character_id = DEFAULT_CHARACTER_ID or NULL
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations 
+                           if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                loguru_logger.debug(f"Filtered out {filtered_count} character conversations, keeping {len(conversations)} regular chats")
 
         if not conversations:
             await results_list_view.append(ListItem(Label("No conversations found.")))
@@ -3812,6 +3927,7 @@ CHAT_BUTTON_HANDLERS = {
     "send-chat": handle_chat_send_button_pressed,
     "respond-for-me-button": handle_respond_for_me_button_pressed,
     "stop-chat-generation": handle_stop_chat_generation_pressed,
+    "chat-new-temp-chat-button": handle_chat_new_temp_chat_button_pressed,
     "chat-new-conversation-button": handle_chat_new_conversation_button_pressed,
     "chat-save-current-chat-button": handle_chat_save_current_chat_button_pressed,
     "chat-save-conversation-details-button": handle_chat_save_details_button_pressed,

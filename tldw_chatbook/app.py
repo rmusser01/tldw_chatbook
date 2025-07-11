@@ -1002,6 +1002,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _conversation_search_timer: Optional[Timer] = None
     _notes_search_timer: Optional[Timer] = None
     _chat_sidebar_prompt_search_timer: Optional[Timer] = None # New timer
+    
+    # Flag to track if character filter has been populated
+    _chat_character_filter_populated: bool = False
 
     # Make API_IMPORTS_SUCCESSFUL accessible if needed by old methods or directly
     API_IMPORTS_SUCCESSFUL = API_IMPORTS_SUCCESSFUL
@@ -3468,7 +3471,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 # Or, more simply for now, we can rely on on_chat_notes_collapsible_toggle to refresh the whole list
                 # which will then pick up the new note from the DB.
                 # For immediate feedback without full list refresh:
-                await notes_list_view.prepend(new_list_item) # Prepend to show at top
+                # ListView doesn't have prepend, so we'll append and let the list refresh handle ordering
+                await notes_list_view.append(new_list_item)
 
                 # 5. Set Focus
                 title_input.focus()
@@ -3528,7 +3532,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
                 self.notify(f"{len(listed_notes)} notes found.", severity="information")
                 self.loguru_logger.info(f"Populated notes list with {len(listed_notes)} search results.")
-                self.loguru_logger.debug(f"ListView child count after search population: {notes_list_view.child_count}") # Added log
+                self.loguru_logger.debug(f"ListView child count after search population: {len(notes_list_view.children)}") # Fixed: use len(children) instead of child_count
             else:
                 msg = "No notes match your search." if search_term else "No notes found."
                 self.notify(msg, severity="information")
@@ -3762,6 +3766,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await chat_events._populate_chat_character_search_list(self)
         else:
             self.loguru_logger.info("Active Character Info collapsible closed in chat sidebar.")
+
+    @on(Collapsible.Toggled, "#chat-conversations")
+    async def on_chat_conversations_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
+        """Handles the expansion/collapse of the Conversations collapsible section in the chat sidebar."""
+        if not event.collapsible.collapsed:  # If the collapsible was just expanded
+            self.loguru_logger.info("Conversations collapsible opened in chat sidebar.")
+            
+            # Populate the character filter dropdown only once when the collapsible is first opened
+            # This avoids the database connection conflicts that occur during startup
+            if not self._chat_character_filter_populated:
+                self.loguru_logger.info("Populating character filter for the first time.")
+                from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
+                await chat_events.populate_chat_conversation_character_filter_select(self)
+                self._chat_character_filter_populated = True
+            else:
+                self.loguru_logger.debug("Character filter already populated, skipping.")
+        else:
+            self.loguru_logger.info("Conversations collapsible closed in chat sidebar.")
 
     ########################################################################
     #

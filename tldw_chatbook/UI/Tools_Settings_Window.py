@@ -16,6 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
 from textual.css.query import QueryError
 from textual.widgets import Static, Button, TextArea, Label, Input, Select, Checkbox, TabbedContent, TabPane, Switch, ContentSwitcher, Collapsible
+from textual.screen import Screen
 from textual.worker import Worker
 from textual.widgets import Markdown
 # Local Imports
@@ -25,6 +26,7 @@ from tldw_chatbook.config import (
     enable_config_encryption, disable_config_encryption, change_encryption_password,
     get_encryption_password, get_cli_setting
 )
+from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
@@ -1741,6 +1743,11 @@ class ToolsSettingsWindow(Container):
                 id="appearance-smooth-scrolling"
             )
             
+            # Splash Screen Gallery
+            yield Static("Splash Screen Customization", classes="form-section-title")
+            yield Static("View and customize splash screen animations", classes="section-description")
+            yield Button("Open Splash Screen Gallery", id="appearance-splash-gallery", variant="primary")
+            
             # Color Customization
             yield Static("Color Customization", classes="form-section-title")
             
@@ -2029,6 +2036,10 @@ Thank you for using tldw-chatbook! 🎉
             await self._clear_notes()
         elif button_id == "db-reset-all":
             await self._reset_databases()
+        
+        # Appearance handlers
+        elif button_id == "appearance-splash-gallery":
+            await self._open_splash_gallery()
 
     async def _save_general_settings(self) -> None:
         """Save General Settings to the configuration file."""
@@ -3303,6 +3314,35 @@ Thank you for using tldw-chatbook! 🎉
                 return f"{size_bytes:.1f} {unit}"
             size_bytes /= 1024.0
         return f"{size_bytes:.1f} TB"
+    
+    async def _open_splash_gallery(self) -> None:
+        """Open the splash screen gallery viewer."""
+        from ..Widgets.splash_screen_viewer import SplashScreenViewer
+        
+        try:
+            # Create a modal screen with the splash viewer
+            class SplashGalleryScreen(Screen):
+                """Modal screen for splash screen gallery."""
+                
+                BINDINGS = [
+                    ("escape", "dismiss", "Close"),
+                ]
+                
+                def compose(self) -> ComposeResult:
+                    """Compose the modal layout."""
+                    with Container(classes="modal-container"):
+                        yield SplashScreenViewer(classes="splash-gallery-modal")
+                
+                def action_dismiss(self) -> None:
+                    """Close the modal."""
+                    self.dismiss()
+            
+            # Push the modal screen
+            await self.app_instance.push_screen(SplashGalleryScreen())
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error opening splash gallery: {e}", severity="error")
+            logger.error(f"Failed to open splash gallery: {e}")
     
     async def on_mount(self) -> None:
         """Called when the widget is mounted. Set initial view."""

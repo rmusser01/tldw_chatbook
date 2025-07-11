@@ -49,7 +49,22 @@ from ..Utils.splash_animations import (
     TextExplosionEffect,
     OldFilmEffect,
     MazeGeneratorEffect,
-    MiningEffect
+    MiningEffect,
+    NeuralNetworkEffect,
+    QuantumParticlesEffect,
+    ASCIIWaveEffect,
+    BinaryMatrixEffect,
+    ConstellationMapEffect,
+    TypewriterNewsEffect,
+    DNASequenceEffect,
+    CircuitTraceEffect,
+    PlasmaFieldEffect,
+    ASCIIFireEffect,
+    RubiksCubeEffect,
+    DataStreamEffect,
+    FractalZoomEffect,
+    ASCIISpinnerEffect,
+    HackerTerminalEffect
 )
 
 class SplashScreen(Container):
@@ -143,7 +158,11 @@ class SplashScreen(Container):
                 "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal", # Batch 2
                 "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars", # Batch 3
                 "raindrops_pond", "pixel_zoom", "text_explosion", "old_film", "maze_generator", # Batch 4 ("Crazy")
-                "dwarf_fortress" # Batch 5 ("Fantasy")
+                "dwarf_fortress", # Batch 5 ("Fantasy")
+                # New 15 animated effects
+                "neural_network", "quantum_particles", "ascii_wave", "binary_matrix", "constellation_map",
+                "typewriter_news", "dna_sequence", "circuit_trace", "plasma_field", "ascii_fire",
+                "rubiks_cube", "data_stream", "fractal_zoom", "ascii_spinner", "hacker_terminal"
             ]
         }
 
@@ -517,6 +536,99 @@ class SplashScreen(Container):
                 "style": "rgb(139,69,19) on black", # Brown stone color
                 "animation_speed": 0.08,
                 "dig_speed": 0.6, # How fast the mining progresses
+            },
+            # New Animation Effects
+            "neural_network": {
+                "type": "animated",
+                "effect": "neural_network",
+                "title": "TLDW Chatbook",
+                "subtitle": splashscreen_message_selection,
+                "animation_speed": 0.1
+            },
+            "quantum_particles": {
+                "type": "animated",
+                "effect": "quantum_particles",
+                "title": "TLDW Chatbook",
+                "subtitle": "Quantum Computing Interface",
+                "animation_speed": 0.05
+            },
+            "ascii_wave": {
+                "type": "animated",
+                "effect": "ascii_wave",
+                "title": "TLDW Chatbook",
+                "subtitle": "Riding the Wave of AI",
+                "animation_speed": 0.1
+            },
+            "binary_matrix": {
+                "type": "animated",
+                "effect": "binary_matrix",
+                "title": "TLDW",
+                "animation_speed": 0.05
+            },
+            "constellation_map": {
+                "type": "animated",
+                "effect": "constellation_map",
+                "title": "TLDW Chatbook",
+                "animation_speed": 0.1
+            },
+            "typewriter_news": {
+                "type": "animated",
+                "effect": "typewriter_news",
+                "animation_speed": 0.05
+            },
+            "dna_sequence": {
+                "type": "animated",
+                "effect": "dna_sequence",
+                "title": "TLDW Chatbook",
+                "animation_speed": 0.05
+            },
+            "circuit_trace": {
+                "type": "animated",
+                "effect": "circuit_trace",
+                "title": "TLDW Chatbook",
+                "animation_speed": 0.02
+            },
+            "plasma_field": {
+                "type": "animated",
+                "effect": "plasma_field",
+                "title": "TLDW Chatbook",
+                "animation_speed": 0.05
+            },
+            "ascii_fire": {
+                "type": "animated",
+                "effect": "ascii_fire",
+                "title": "TLDW Chatbook",
+                "animation_speed": 0.05
+            },
+            "rubiks_cube": {
+                "type": "animated",
+                "effect": "rubiks_cube",
+                "title": "TLDW",
+                "animation_speed": 0.5
+            },
+            "data_stream": {
+                "type": "animated",
+                "effect": "data_stream",
+                "title": "TLDW Chatbook",
+                "animation_speed": 0.02
+            },
+            "fractal_zoom": {
+                "type": "animated",
+                "effect": "fractal_zoom",
+                "title": "TLDW Chatbook",
+                "animation_speed": 0.05
+            },
+            "ascii_spinner": {
+                "type": "animated",
+                "effect": "ascii_spinner",
+                "title": "Loading TLDW Chatbook",
+                "animation_speed": 0.1
+            },
+            "hacker_terminal": {
+                "type": "animated",
+                "effect": "hacker_terminal",
+                "title": "TLDW Chatbook",
+                "animation_speed": 0.05
             }
         }
 
@@ -966,11 +1078,223 @@ class SplashScreen(Container):
                 self.card_data.get("animation_speed", 0.08),
                 self._update_animation
             )
+        elif effect_type == "neural_network":
+            width, height = self._get_terminal_size()
+            self.effect_handler = NeuralNetworkEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "quantum_particles":
+            width, height = self._get_terminal_size()
+            self.effect_handler = QuantumParticlesEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "ascii_wave":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ASCIIWaveEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "binary_matrix":
+            width, height = self._get_terminal_size()
+            self.effect_handler = BinaryMatrixEffect(
+                self,
+                title=self.card_data.get("title", "TLDW"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "constellation_map":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ConstellationMapEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "typewriter_news":
+            width, height = self._get_terminal_size()
+            self.effect_handler = TypewriterNewsEffect(
+                self,
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "dna_sequence":
+            width, height = self._get_terminal_size()
+            self.effect_handler = DNASequenceEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "circuit_trace":
+            width, height = self._get_terminal_size()
+            self.effect_handler = CircuitTraceEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.02)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.02),
+                self._update_animation
+            )
+        elif effect_type == "plasma_field":
+            width, height = self._get_terminal_size()
+            self.effect_handler = PlasmaFieldEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "ascii_fire":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ASCIIFireEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "rubiks_cube":
+            width, height = self._get_terminal_size()
+            self.effect_handler = RubiksCubeEffect(
+                self,
+                title=self.card_data.get("title", "TLDW"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.5)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.5),
+                self._update_animation
+            )
+        elif effect_type == "data_stream":
+            width, height = self._get_terminal_size()
+            self.effect_handler = DataStreamEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.02)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.02),
+                self._update_animation
+            )
+        elif effect_type == "fractal_zoom":
+            width, height = self._get_terminal_size()
+            self.effect_handler = FractalZoomEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "ascii_spinner":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ASCIISpinnerEffect(
+                self,
+                title=self.card_data.get("title", "Loading TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.1)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.1),
+                self._update_animation
+            )
+        elif effect_type == "hacker_terminal":
+            width, height = self._get_terminal_size()
+            self.effect_handler = HackerTerminalEffect(
+                self,
+                title=self.card_data.get("title", "TLDW Chatbook"),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
 
     def _update_animation(self) -> None:
         """Update animation frame."""
         if self.effect_handler and hasattr(self.effect_handler, "update"):
-            content = self.effect_handler.update()
+            # Calculate elapsed time since start
+            elapsed_time = time.time() - self.start_time
+            
+            # Check if the update method expects elapsed_time parameter
+            import inspect
+            sig = inspect.signature(self.effect_handler.update)
+            # Check if there are any parameters besides 'self'
+            params = list(sig.parameters.keys())
+            if 'self' in params:
+                params.remove('self')
+            
+            if len(params) > 0:  # Has parameters besides 'self'
+                content = self.effect_handler.update(elapsed_time)
+            else:
+                content = self.effect_handler.update()
+                
             if content:
                 try:
                     main_widget = self.query_one("#splash-main", Static)

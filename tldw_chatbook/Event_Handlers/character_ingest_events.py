@@ -347,6 +347,8 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
         app.notify(f"Character import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
         logger.info(summary)
 
+        # Set the flag to True since we're populating the filter after character import
+        app._chat_character_filter_populated = True
         app.call_later(populate_chat_conversation_character_filter_select, app)
         app.call_later(ccp_handlers.populate_ccp_character_select, app)
 

@@ -534,7 +534,7 @@ def load_character_and_image(
             if field in char_data and char_data[field] and isinstance(char_data[field], str):
                 char_data[field] = replace_placeholders(char_data[field], char_name_from_card, user_name)
 
-        if 'alternate_greetings' in char_data and isinstance(char_data['alternate_greetings'], list):
+        if 'alternate_greetings' in char_data and char_data['alternate_greetings'] is not None and isinstance(char_data['alternate_greetings'], list):
             char_data['alternate_greetings'] = [
                 replace_placeholders(ag, char_name_from_card, user_name)
                 for ag in char_data['alternate_greetings'] if isinstance(ag, str)

@@ -149,7 +149,16 @@ class ChatWindowEnhanced(Container):
             # Stop the event from propagating
             event.stop()
         else:
-            logger.warning(f"No handler found for button: {button_id}")
+            # These buttons are handled at the app level via @on decorators, so don't warn
+            app_level_buttons = {
+                "chat-notes-search-button",
+                "chat-notes-load-button",
+                "chat-notes-create-button",
+                "chat-notes-delete-button",
+                "chat-notes-save-button"
+            }
+            if button_id not in app_level_buttons:
+                logger.warning(f"No handler found for button: {button_id}")
 
     async def handle_attach_image_button(self, app_instance, event):
         """Show file picker dialog for attachments or legacy file input."""

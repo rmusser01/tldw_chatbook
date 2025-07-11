@@ -21,7 +21,7 @@ from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
 from ..Third_Party.textual_fspicker import Filters
-from ..config import get_cli_setting
+from ..config import get_cli_setting, load_cli_config_and_ensure_existence
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -1325,7 +1325,8 @@ async def handle_notes_editor_changed(app: 'TldwCli', event) -> None:
     # Handle auto-save functionality
     if app.current_selected_note_id and hasattr(app, 'notes_unsaved_changes') and app.notes_unsaved_changes:
         # Get auto-save settings from config
-        notes_settings = get_cli_setting('notes', {})
+        config = load_cli_config_and_ensure_existence()
+        notes_settings = config.get('notes', {})
         auto_save_enabled = notes_settings.get('auto_save_enabled', True)
         auto_save_delay_ms = notes_settings.get('auto_save_delay_ms', 3000)
         auto_save_on_every_key = notes_settings.get('auto_save_on_every_key', False)
@@ -1370,7 +1371,8 @@ async def handle_notes_title_changed(app: 'TldwCli', event) -> None:
     # Handle auto-save functionality for title changes
     if app.current_selected_note_id and hasattr(app, 'notes_unsaved_changes') and app.notes_unsaved_changes:
         # Get auto-save settings from config
-        notes_settings = get_cli_setting('notes', {})
+        config = load_cli_config_and_ensure_existence()
+        notes_settings = config.get('notes', {})
         auto_save_enabled = notes_settings.get('auto_save_enabled', True)
         auto_save_delay_ms = notes_settings.get('auto_save_delay_ms', 3000)
         

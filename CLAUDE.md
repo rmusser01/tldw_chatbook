@@ -786,6 +786,48 @@ feature/
 - **Temporary Files**: Use `secure_temp_files.py`
 - **External Content**: Sanitize HTML/Markdown
 
+### Pre-commit Hooks and Code Review Automation
+
+#### Auto Review Hook
+The project supports an automatic code review system via the `auto_review.py` hook that integrates with Claude Code:
+
+**Purpose**: Automatically reviews code changes before they're applied using an LLM (DeepSeek or Google Gemini)
+
+**Setup**:
+1. Install the hook in `~/.claude/hooks/auto_review.py`
+2. Set environment variables:
+   - `DEEPSEEK_API_KEY` - Required for DeepSeek provider
+   - `GOOGLE_API_KEY` - Required for Google provider
+   - `REVIEW_PROVIDER` - Choose "deepseek" (default) or "google"
+   - Optional: `DEEPSEEK_MODEL`, `GOOGLE_MODEL`, temperature settings
+
+**How it works**:
+1. Intercepts Edit, Write, and MultiEdit tool calls from Claude Code
+2. Generates a unified diff of proposed changes
+3. Sends the diff, user's request, and optional Claude comment to the reviewing LLM
+4. Returns exit codes:
+   - `0` - Review passed, changes proceed
+   - `2` - Review failed, changes blocked with feedback
+
+**Claude Code Integration**:
+- Claude Code can pass a `comment` field in the event JSON to provide additional context
+- The comment appears in the review prompt as "Claude's comment"
+- This allows Claude to explain complex changes or provide rationale
+
+**Example event structure with comment**:
+```json
+{
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/path/to/file.py",
+    "old_string": "...",
+    "new_string": "..."
+  },
+  "comment": "Refactoring to improve error handling as requested",
+  "transcript_path": "/path/to/transcript"
+}
+```
+
 ### Debugging Tools
 - **Logging**:
   - Use loguru for structured logging

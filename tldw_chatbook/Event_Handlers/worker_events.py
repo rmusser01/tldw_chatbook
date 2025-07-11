@@ -248,7 +248,31 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
 
                     if isinstance(worker_result_content, dict) and 'choices' in worker_result_content:
                         try:
-                            original_text_for_storage = worker_result_content['choices'][0]['message']['content']
+                            # Extract main content
+                            message_content = worker_result_content['choices'][0]['message']['content']
+                            
+                            # Check for DeepSeek reasoning_content field
+                            reasoning_content = None
+                            logger.info(f"DeepSeek response structure: {json.dumps(worker_result_content['choices'][0], indent=2)[:500]}...")
+                            if 'reasoning_content' in worker_result_content['choices'][0]['message']:
+                                reasoning_content = worker_result_content['choices'][0]['message']['reasoning_content']
+                                logger.info(f"Found reasoning_content in message: {reasoning_content[:200]}...")
+                            elif 'reasoning_content' in worker_result_content['choices'][0]:
+                                reasoning_content = worker_result_content['choices'][0]['reasoning_content']
+                                logger.info(f"Found reasoning_content in choice: {reasoning_content[:200]}...")
+                            
+                            # Combine content with reasoning if present and strip_thinking_tags is False
+                            if reasoning_content and hasattr(app, 'app_config'):
+                                strip_tags_setting = app.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                                if not strip_tags_setting:
+                                    # Include reasoning content wrapped in thinking tags
+                                    original_text_for_storage = f"<thinking>\n{reasoning_content}\n</thinking>\n\n{message_content}"
+                                else:
+                                    # Just use the main content
+                                    original_text_for_storage = message_content
+                            else:
+                                original_text_for_storage = message_content
+                                
                             final_display_text_obj = Text(original_text_for_storage)  # Use Text() for plain text
                         except (KeyError, IndexError, TypeError) as e_parse:
                             logger.error(
@@ -432,6 +456,7 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
         if isinstance(result, Generator):  # Streaming case
             logger.info(f"Core chat function returned a generator for '{api_endpoint}' (model '{model_name}', strip_tags={strip_thinking_tags}). Processing stream in worker.")
             accumulated_full_text = ""
+            accumulated_reasoning_text = ""  # Separate accumulator for reasoning content
             error_message_if_any = None
             chunk_count = 0
             stream_start_time = time.time()
@@ -472,12 +497,19 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                         try:
                             json_data = json.loads(json_str)
                             actual_text_chunk = ""
+                            reasoning_chunk = ""
                             # Standard OpenAI SSE structure, adapt if providers differ or if pre-parsed objects are yielded
                             choices = json_data.get("choices")
                             if choices and isinstance(choices, list) and len(choices) > 0:
                                 delta = choices[0].get("delta", {})
                                 if "content" in delta and delta["content"] is not None:
                                     actual_text_chunk = delta["content"]
+                                # Check for DeepSeek reasoning content in delta
+                                if "reasoning_content" in delta and delta["reasoning_content"] is not None:
+                                    reasoning_chunk = delta["reasoning_content"]
+                                    logger.debug(f"Found reasoning_content in streaming delta: {reasoning_chunk[:100]}...")
+                                    # Accumulate reasoning content separately
+                                    accumulated_reasoning_text += reasoning_chunk
 
                             if actual_text_chunk:
                                 app_instance.post_message(StreamingChunk(actual_text_chunk))
@@ -530,7 +562,16 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                         "model": model_name
                     })
                 
-                app_instance.post_message(StreamDone(full_text=accumulated_full_text, error=error_message_if_any))
+                # Combine reasoning and regular content if needed
+                final_text = accumulated_full_text
+                if accumulated_reasoning_text and hasattr(app_instance, 'app_config'):
+                    strip_tags_setting = app_instance.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                    if not strip_tags_setting:
+                        # Prepend all accumulated reasoning wrapped in a single pair of thinking tags
+                        final_text = f"<thinking>\n{accumulated_reasoning_text}\n</thinking>\n\n{accumulated_full_text}"
+                        logger.info(f"Combined reasoning content with main content (reasoning length: {len(accumulated_reasoning_text)})")
+                
+                app_instance.post_message(StreamDone(full_text=final_text, error=error_message_if_any))
 
             return "STREAMING_HANDLED_BY_EVENTS"  # Signal that streaming was handled via events
 

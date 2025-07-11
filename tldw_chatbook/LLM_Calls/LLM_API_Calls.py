@@ -2074,7 +2074,7 @@ def chat_with_mistral(
     if current_top_p is not None: data["top_p"] = current_top_p
     if current_max_tokens is not None: data["max_tokens"] = current_max_tokens
     if random_seed is not None: data["random_seed"] = random_seed  # Mistral uses random_seed
-    if top_k is not None: data["top_k"] = top_k  # Mistral has top_k
+    # Note: Mistral API does not support top_k parameter
     if current_safe_prompt is not None: data["safe_prompt"] = current_safe_prompt  # Mistral specific
     if tools is not None: data["tools"] = tools
     if tool_choice is not None: data["tool_choice"] = tool_choice  # "auto", "any", "none"
