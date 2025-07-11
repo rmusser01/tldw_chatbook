@@ -85,6 +85,7 @@ API_CALL_HANDLERS = {
     'openrouter': chat_with_openrouter,
     'deepseek': chat_with_deepseek,
     'mistral': chat_with_mistral,
+    'mistralai': chat_with_mistral,  # Handle both 'mistral' and 'MistralAI' API types
     'google': chat_with_google,
     'huggingface': chat_with_huggingface,
     'llama_cpp': chat_with_llama,
@@ -194,7 +195,7 @@ PROVIDER_PARAM_MAP = {
         'streaming': 'streaming',
         'topp': 'top_p',
         'topk': 'top_k',
-        'minp': 'minp',
+        'minp': 'min_p',  # OpenRouter expects min_p not minp
         'model':'model',
         'max_tokens': 'max_tokens',
         'seed': 'seed',
@@ -228,6 +229,21 @@ PROVIDER_PARAM_MAP = {
         'frequency_penalty': 'frequency_penalty',
     },
     'mistral': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt_arg',
+        'temperature': 'temp',
+        'system_message': 'system_message',
+        'streaming': 'streaming',
+        'topp': 'topp',
+        'tools': 'tools',
+        'tool_choice': 'tool_choice',
+        'model': 'model',
+        'max_tokens': 'max_tokens',
+        'seed': 'random_seed',  # Mistral uses random_seed
+        'topk': 'top_k',  # Mistral uses top_k
+    },
+    'mistralai': {  # Same mapping as 'mistral'
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'prompt': 'custom_prompt_arg',
@@ -1208,9 +1224,11 @@ def chat(
                 else:
                     logging.warning("Post-gen replacement enabled but dict file not found/configured.")
             # For non-streaming, apply stripping logic if enabled
+            logging.info(f"Non-streaming response - strip_thinking_tags setting: {strip_thinking_tags}")
             if not streaming and isinstance(response, str) and strip_thinking_tags:
                 # Regex to find all <think>...</think> blocks, non-greedy
-                think_blocks = list(re.finditer(r"<think>.*?</think>", response, re.DOTALL))
+                # Match both <think> and <thinking> tags
+                think_blocks = list(re.finditer(r"<think(?:ing)?>.*?</think(?:ing)?>", response, re.DOTALL))
 
                 if len(think_blocks) > 1:
                     logging.debug(f"Processing thinking tags for non-streaming. Found {len(think_blocks)} blocks.")
@@ -1226,7 +1244,9 @@ def chat(
                     response = "".join(text_parts)
                     logging.debug(f"Response after stripping all but last think block: {response[:200]}...")
                 elif think_blocks: # Only one block, or stripping not needed / done
-                    logging.debug(f"Thinking tags: {len(think_blocks)} block(s) found, no stripping needed or already processed if only one.")
+                    logging.info(f"Thinking tags: {len(think_blocks)} block(s) found, no stripping needed or already processed if only one.")
+            elif not streaming and isinstance(response, str) and not strip_thinking_tags:
+                logging.info(f"Not stripping thinking tags from non-streaming response - setting is disabled")
 
             # For streaming=True, stripping logic should be applied by the receiver
             # of the stream (e.g., in app.py's on_stream_done event handler).

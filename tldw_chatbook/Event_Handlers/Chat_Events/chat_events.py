@@ -5,6 +5,7 @@
 import logging
 import json
 import os
+import time
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 #
@@ -144,6 +145,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         try:
             strip_tags_checkbox = app.query_one("#chat-strip-thinking-tags-checkbox", Checkbox)
             strip_thinking_tags_value = strip_tags_checkbox.value
+            loguru_logger.info(f"Read strip_thinking_tags checkbox value: {strip_thinking_tags_value}")
         except QueryError:
             loguru_logger.warning("Could not find '#chat-strip-thinking-tags-checkbox'. Defaulting to True for strip_thinking_tags.")
             strip_thinking_tags_value = True

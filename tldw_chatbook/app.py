@@ -1031,7 +1031,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
-        self.loguru_logger = loguru_logger # Make loguru_logger an instance variable for handlers
+        self.loguru_logger = loguru_logger
+        self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
         self._startup_phases["basic_init"] = time.perf_counter() - phase_start
         log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
@@ -4141,11 +4142,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Persist the change
         try:
-            # save_setting_to_cli_config is not defined, assuming this is a placeholder
-            # You would need to implement this function to write to your config file.
-            # Example implementation:
-            # from .config import save_setting_to_cli_config
-            # save_setting_to_cli_config("chat_defaults", "strip_thinking_tags", new_value)
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("chat_defaults", "strip_thinking_tags", new_value)
             self.notify(f"Thinking tag stripping {'enabled' if new_value else 'disabled'}.", timeout=2)
         except Exception as e:
             self.loguru_logger.error(f"Failed to save 'strip_thinking_tags' setting: {e}", exc_info=True)

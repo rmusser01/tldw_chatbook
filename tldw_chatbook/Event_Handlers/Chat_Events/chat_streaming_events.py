@@ -122,8 +122,10 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             # Apply thinking tag stripping if enabled
             if event.full_text:  # Check if there's any text to process
                 strip_tags_setting = self.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                self.loguru_logger.info(f"Strip thinking tags setting: {strip_tags_setting} (from config: {self.app_config.get('chat_defaults', {})})")
                 if strip_tags_setting:
-                    think_blocks = list(re.finditer(r"<think>.*?</think>", event.full_text, re.DOTALL))
+                    # Match both <think> and <thinking> tags
+                    think_blocks = list(re.finditer(r"<think(?:ing)?>.*?</think(?:ing)?>", event.full_text, re.DOTALL))
                     if len(think_blocks) > 1:
                         self.loguru_logger.debug(
                             f"Stripping thinking tags from streamed response. Found {len(think_blocks)} blocks.")
@@ -137,7 +139,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                         event.full_text = "".join(text_parts)  # Modify the event's full_text
                         self.loguru_logger.debug(f"Streamed response after stripping: {event.full_text[:200]}...")
                     else:
-                        self.loguru_logger.debug(
+                        self.loguru_logger.info(
                             f"Not stripping tags from stream: {len(think_blocks)} block(s) found (need >1), setting is {strip_tags_setting}.")
                 else:
                     self.loguru_logger.debug("Not stripping tags from stream: strip_thinking_tags setting is disabled.")
