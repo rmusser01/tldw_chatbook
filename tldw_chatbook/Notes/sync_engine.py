@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ from loguru import logger
 # Local Imports
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, ConflictError
 from .Notes_Library import NotesInteropService
+from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 ########################################################################################################################
 #
@@ -141,17 +143,35 @@ class NotesSyncEngine:
         Returns:
             Dictionary mapping relative paths to file info
         """
+        start_time = time.time()
+        log_counter("sync_engine_scan_directory_attempt", labels={"extensions_count": str(len(extensions) if extensions else 2)})
+        
         if extensions is None:
             extensions = ['.md', '.txt']
         
         files_map = {}
+        files_scanned = 0
+        files_failed = 0
         
         for ext in extensions:
             for file_path in root_path.rglob(f'*{ext}'):
                 if file_path.is_file():
+                    files_scanned += 1
                     file_info = self._get_file_info(file_path, root_path)
                     if file_info:
                         files_map[file_info.relative_path] = file_info
+                    else:
+                        files_failed += 1
+        
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("sync_engine_scan_directory_duration", duration)
+        log_histogram("sync_engine_scan_files_found", len(files_map))
+        log_histogram("sync_engine_scan_files_failed", files_failed)
+        log_counter("sync_engine_scan_directory_success", labels={
+            "files_found": str(len(files_map)),
+            "files_failed": str(files_failed)
+        })
         
         logger.info(f"Scanned {len(files_map)} files in {root_path}")
         return files_map
@@ -330,6 +350,13 @@ class NotesSyncEngine:
         Returns:
             Tuple of (session_id, progress)
         """
+        start_time = time.time()
+        log_counter("sync_engine_sync_attempt", labels={
+            "direction": direction.value,
+            "conflict_resolution": conflict_resolution.value,
+            "post_sync_cleanup": str(post_sync_cleanup)
+        })
+        
         session_id = self._create_sync_session(root_path, direction, conflict_resolution, user_id)
         progress = self._active_sessions[session_id]
         
@@ -370,9 +397,38 @@ class NotesSyncEngine:
             if session_id in self._cancelled_sessions:
                 self._cancelled_sessions.remove(session_id)
             
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("sync_engine_sync_duration", duration, labels={
+                "status": "success",
+                "direction": direction.value
+            })
+            log_counter("sync_engine_sync_complete", labels={
+                "direction": direction.value,
+                "created_notes": str(summary['created_notes']),
+                "updated_notes": str(summary['updated_notes']),
+                "created_files": str(summary['created_files']),
+                "updated_files": str(summary['updated_files']),
+                "conflicts": str(summary['conflicts']),
+                "errors": str(summary['errors'])
+            })
+            log_histogram("sync_engine_sync_conflicts", len(progress.conflicts))
+            log_histogram("sync_engine_sync_errors", len(progress.errors))
+            
             logger.info(f"Sync session {session_id} completed: {summary}")
             
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("sync_engine_sync_duration", duration, labels={
+                "status": "error",
+                "direction": direction.value
+            })
+            log_counter("sync_engine_sync_error", labels={
+                "direction": direction.value,
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Sync session {session_id} failed: {e}", exc_info=True)
             self._update_sync_session(session_id, progress, SyncStatus.FAILED)
             raise

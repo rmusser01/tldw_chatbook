@@ -14,6 +14,7 @@ Uses configurable prompts and LLM APIs to generate content based on conversation
 """
 
 import json
+import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Generator, Union
 import pyperclip
@@ -21,6 +22,7 @@ from loguru import logger
 
 # Local imports
 from ..config import get_cli_setting
+from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..LLM_Calls.LLM_API_Calls import chat_with_openai, chat_with_anthropic, chat_with_cohere, \
     chat_with_groq, chat_with_openrouter, chat_with_deepseek, chat_with_mistral, \
     chat_with_huggingface, chat_with_google
@@ -161,7 +163,14 @@ class DocumentGenerator:
         Returns:
             Generated timeline content or stream generator
         """
+        start_time = time.time()
         logger.info(f"Generating timeline for conversation {conversation_id}")
+        log_counter("document_generator_request", labels={
+            "document_type": "timeline",
+            "provider": provider,
+            "model": model,
+            "streaming": str(stream)
+        })
         
         # Get conversation context
         messages = self.get_conversation_context(conversation_id)
@@ -172,13 +181,43 @@ class DocumentGenerator:
         user_prompt = f"{self.timeline_config['prompt']}\n\nConversation Context:\n{context}"
         
         # Call LLM
-        return self._call_llm(
-            provider, model, api_key,
-            system_prompt, user_prompt,
-            temperature=self.timeline_config.get('temperature', 0.3),
-            max_tokens=self.timeline_config.get('max_tokens', 2000),
-            stream=stream
-        )
+        try:
+            result = self._call_llm(
+                provider, model, api_key,
+                system_prompt, user_prompt,
+                temperature=self.timeline_config.get('temperature', 0.3),
+                max_tokens=self.timeline_config.get('max_tokens', 2000),
+                stream=stream
+            )
+            
+            # Log success metrics (only for non-streaming)
+            if not stream:
+                duration = time.time() - start_time
+                log_histogram("document_generator_duration", duration, labels={
+                    "document_type": "timeline",
+                    "provider": provider,
+                    "model": model
+                })
+                log_counter("document_generator_success", labels={
+                    "document_type": "timeline",
+                    "provider": provider
+                })
+                
+            return result
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("document_generator_duration", duration, labels={
+                "document_type": "timeline",
+                "provider": provider,
+                "model": model
+            })
+            log_counter("document_generator_error", labels={
+                "document_type": "timeline",
+                "provider": provider,
+                "error_type": type(e).__name__
+            })
+            raise
     
     def generate_study_guide(self, conversation_id: str, provider: str, model: str,
                                   api_key: str, specific_message: Optional[str] = None,
@@ -197,7 +236,14 @@ class DocumentGenerator:
         Returns:
             Generated study guide content or stream generator
         """
+        start_time = time.time()
         logger.info(f"Generating study guide for conversation {conversation_id}")
+        log_counter("document_generator_request", labels={
+            "document_type": "study_guide",
+            "provider": provider,
+            "model": model,
+            "streaming": str(stream)
+        })
         
         # Get conversation context
         messages = self.get_conversation_context(conversation_id)
@@ -208,13 +254,43 @@ class DocumentGenerator:
         user_prompt = f"{self.study_guide_config['prompt']}\n\nConversation Context:\n{context}"
         
         # Call LLM
-        return self._call_llm(
-            provider, model, api_key,
-            system_prompt, user_prompt,
-            temperature=self.study_guide_config.get('temperature', 0.5),
-            max_tokens=self.study_guide_config.get('max_tokens', 3000),
-            stream=stream
-        )
+        try:
+            result = self._call_llm(
+                provider, model, api_key,
+                system_prompt, user_prompt,
+                temperature=self.study_guide_config.get('temperature', 0.5),
+                max_tokens=self.study_guide_config.get('max_tokens', 3000),
+                stream=stream
+            )
+            
+            # Log success metrics (only for non-streaming)
+            if not stream:
+                duration = time.time() - start_time
+                log_histogram("document_generator_duration", duration, labels={
+                    "document_type": "study_guide",
+                    "provider": provider,
+                    "model": model
+                })
+                log_counter("document_generator_success", labels={
+                    "document_type": "study_guide",
+                    "provider": provider
+                })
+                
+            return result
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("document_generator_duration", duration, labels={
+                "document_type": "study_guide",
+                "provider": provider,
+                "model": model
+            })
+            log_counter("document_generator_error", labels={
+                "document_type": "study_guide",
+                "provider": provider,
+                "error_type": type(e).__name__
+            })
+            raise
     
     def generate_briefing(self, conversation_id: str, provider: str, model: str,
                                api_key: str, specific_message: Optional[str] = None,
@@ -233,7 +309,14 @@ class DocumentGenerator:
         Returns:
             Generated briefing content or stream generator
         """
+        start_time = time.time()
         logger.info(f"Generating briefing for conversation {conversation_id}")
+        log_counter("document_generator_request", labels={
+            "document_type": "briefing",
+            "provider": provider,
+            "model": model,
+            "streaming": str(stream)
+        })
         
         # Get conversation context
         messages = self.get_conversation_context(conversation_id)
@@ -244,13 +327,43 @@ class DocumentGenerator:
         user_prompt = f"{self.briefing_config['prompt']}\n\nConversation Context:\n{context}"
         
         # Call LLM
-        return self._call_llm(
-            provider, model, api_key,
-            system_prompt, user_prompt,
-            temperature=self.briefing_config.get('temperature', 0.4),
-            max_tokens=self.briefing_config.get('max_tokens', 2500),
-            stream=stream
-        )
+        try:
+            result = self._call_llm(
+                provider, model, api_key,
+                system_prompt, user_prompt,
+                temperature=self.briefing_config.get('temperature', 0.4),
+                max_tokens=self.briefing_config.get('max_tokens', 2500),
+                stream=stream
+            )
+            
+            # Log success metrics (only for non-streaming)
+            if not stream:
+                duration = time.time() - start_time
+                log_histogram("document_generator_duration", duration, labels={
+                    "document_type": "briefing",
+                    "provider": provider,
+                    "model": model
+                })
+                log_counter("document_generator_success", labels={
+                    "document_type": "briefing",
+                    "provider": provider
+                })
+                
+            return result
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("document_generator_duration", duration, labels={
+                "document_type": "briefing",
+                "provider": provider,
+                "model": model
+            })
+            log_counter("document_generator_error", labels={
+                "document_type": "briefing",
+                "provider": provider,
+                "error_type": type(e).__name__
+            })
+            raise
     
     def _call_llm(self, provider: str, model: str, api_key: str,
                        system_prompt: str, user_prompt: str,

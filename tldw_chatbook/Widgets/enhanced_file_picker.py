@@ -175,20 +175,35 @@ class PathBreadcrumbs(Horizontal):
     DEFAULT_CSS = """
     PathBreadcrumbs {
         height: 3;
-        padding: 1;
+        padding: 0 1;
         background: $surface;
+        border-bottom: tall $primary-lighten-1;
         overflow: hidden;
     }
     
-    PathBreadcrumbs Button {
+    PathBreadcrumbs .breadcrumb-button {
         min-width: 0;
         padding: 0 1;
         margin: 0;
         height: 1;
+        background: transparent;
+        border: none;
+        color: $text;
+        text-style: none;
+    }
+    
+    PathBreadcrumbs .breadcrumb-button:hover {
+        background: $primary 20%;
+        text-style: underline;
+    }
+    
+    PathBreadcrumbs .breadcrumb-button:focus {
+        background: $primary 30%;
     }
     
     PathBreadcrumbs .breadcrumb-separator {
-        margin: 0 1;
+        margin: 0;
+        padding: 0 1;
         color: $text-muted;
     }
     """
@@ -220,7 +235,7 @@ class PathBreadcrumbs(Horizontal):
             partial_path = Path(*parts[:i+1])
             
             # Create button for each part
-            btn = Button(part, variant="subtle")
+            btn = Button(part, variant="default", classes="breadcrumb-button")
             btn.data = partial_path  # Store the path in the button
             await self.mount(btn)
             
@@ -243,14 +258,16 @@ class DirectorySearch(Horizontal):
         height: 3;
         padding: 0 1;
         background: $surface;
+        border-bottom: tall $primary-lighten-1;
     }
     
     DirectorySearch Input {
         width: 1fr;
+        margin-right: 1;
     }
     
     DirectorySearch Button {
-        margin-left: 1;
+        min-width: 7;
     }
     """
     
@@ -264,7 +281,7 @@ class DirectorySearch(Horizontal):
     
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search files...", id="search-input")
-        yield Button("Clear", id="clear-search", variant="subtle")
+        yield Button("Clear", id="clear-search", variant="default")
     
     @on(Input.Changed, "#search-input")
     def handle_search_change(self, event: Input.Changed):
@@ -289,6 +306,15 @@ class EnhancedFileDialog(BaseFileDialog):
             width: 90%;
         }
         
+        #top-panels {
+            height: auto;
+            display: none;
+        }
+        
+        #top-panels.has-content {
+            display: block;
+        }
+        
         #recent-locations, #bookmarks-panel {
             height: 10;
             border: solid $primary;
@@ -310,6 +336,27 @@ class EnhancedFileDialog(BaseFileDialog):
             padding: 0 1;
         }
         
+        #bookmarks-list {
+            layout: grid;
+            grid-size: 2;
+            grid-columns: 1fr 1fr;
+            grid-gutter: 1;
+            height: 8;
+            overflow-y: auto;
+        }
+        
+        #bookmarks-list ListItem {
+            height: 3;
+            margin: 0;
+            padding: 0 1;
+        }
+        
+        .bookmark-item {
+            padding: 0 1;
+            height: 3;
+            overflow: hidden;
+        }
+        
         .bookmark-item-icon {
             margin-right: 1;
         }
@@ -319,10 +366,37 @@ class EnhancedFileDialog(BaseFileDialog):
             padding: 0 1;
         }
         
-        .bookmark-button {
-            min-width: 3;
+        .bookmark-button, #add-bookmark {
+            min-width: 1;
+            width: 3;
             height: 1;
             margin: 0;
+            padding: 0;
+            text-align: center;
+        }
+        
+        .bookmark-container {
+            width: 100%;
+            height: 100%;
+            align: left middle;
+        }
+        
+        #navigation-section {
+            height: auto;
+            margin-bottom: 1;
+        }
+        
+        #browser-section {
+            height: 1fr;
+        }
+        
+        #browser-section Horizontal {
+            height: 100%;
+        }
+        
+        DirectoryNavigation {
+            width: 1fr;
+            height: 100%;
         }
         
         .search-active {
@@ -333,6 +407,10 @@ class EnhancedFileDialog(BaseFileDialog):
         .section-title {
             width: 1fr;
             text-style: bold;
+        }
+        
+        .hidden {
+            display: none;
         }
     }
     """
@@ -391,31 +469,39 @@ class EnhancedFileDialog(BaseFileDialog):
         with Dialog() as dialog:
             dialog.border_title = self._title
             
-            # Recent locations panel (hidden by default)
-            with Container(id="recent-locations"):
-                yield Label("📋 Recent Locations", classes="section-title")
-                yield ListView(id="recent-list")
+            # Hidden element required by parent class
+            yield Label("", id="current_path_display", classes="hidden")
             
-            # Bookmarks panel (hidden by default)
-            with Container(id="bookmarks-panel"):
-                with Horizontal(classes="bookmarks-header"):
-                    yield Label("⭐ Bookmarks", classes="section-title")
-                    yield Button("➕", id="add-bookmark", classes="bookmark-button")
-                yield ListView(id="bookmarks-list")
+            # Top section with panels
+            with Container(id="top-panels"):
+                # Recent locations panel (hidden by default)
+                with Container(id="recent-locations"):
+                    yield Label("📋 Recent Locations", classes="section-title")
+                    yield ListView(id="recent-list")
+                
+                # Bookmarks panel (hidden by default)
+                with Container(id="bookmarks-panel"):
+                    with Horizontal(classes="bookmarks-header"):
+                        yield Label("⭐ Bookmarks", classes="section-title")
+                        yield Button("➕", id="add-bookmark", classes="bookmark-button")
+                    yield ListView(id="bookmarks-list")
             
-            # Breadcrumb navigation
-            yield PathBreadcrumbs(initial_location)
+            # Navigation section
+            with Container(id="navigation-section"):
+                # Breadcrumb navigation
+                yield PathBreadcrumbs(initial_location)
+                
+                # Search bar
+                yield DirectorySearch()
             
-            # Search bar
-            yield DirectorySearch()
+            # Main file browser section
+            with Container(id="browser-section"):
+                with Horizontal():
+                    if sys.platform == "win32":
+                        yield DriveNavigation(str(initial_location))
+                    yield DirectoryNavigation(str(initial_location))
             
-            # Main file browser
-            with Horizontal():
-                if sys.platform == "win32":
-                    yield DriveNavigation(str(initial_location))
-                yield DirectoryNavigation(str(initial_location))
-            
-            # Input bar with buttons
+            # Bottom section with input and buttons
             with InputBar():
                 yield from self._input_bar()
                 yield Button(self._label(self._select_button, "Select"), id="select")
@@ -443,6 +529,8 @@ class EnhancedFileDialog(BaseFileDialog):
             # Hide bookmarks if showing recent
             if show:
                 self.show_bookmarks = False
+            # Update top panels visibility
+            self._update_top_panels_visibility()
         except Exception:
             pass
     
@@ -454,6 +542,17 @@ class EnhancedFileDialog(BaseFileDialog):
             # Hide recent if showing bookmarks
             if show:
                 self.show_recent = False
+            # Update top panels visibility
+            self._update_top_panels_visibility()
+        except Exception:
+            pass
+    
+    def _update_top_panels_visibility(self):
+        """Update top-panels container visibility based on content"""
+        try:
+            top_panels = self.query_one("#top-panels")
+            has_content = self.show_recent or self.show_bookmarks
+            top_panels.set_class(has_content, "has-content")
         except Exception:
             pass
     
@@ -500,10 +599,14 @@ class EnhancedFileDialog(BaseFileDialog):
                 path = bookmark["path"]
                 name = bookmark["name"]
                 icon = bookmark.get("icon", "📁")
+                # Truncate name if too long for grid layout
+                if len(name) > 15:
+                    name = name[:12] + "..."
                 list_item = ListItem(
                     Horizontal(
                         Label(icon, classes="bookmark-item-icon"),
-                        Label(name, classes="bookmark-item")
+                        Label(name, classes="bookmark-item"),
+                        classes="bookmark-container"
                     )
                 )
                 list_item.data = path
@@ -716,7 +819,7 @@ class EnhancedFileOpen(EnhancedFileDialog):
         yield Input(placeholder="File name...")
         if self.filters:
             yield Select(
-                [(f.name, i) for i, f in enumerate(self.filters.filters)],
+                self.filters.selections,
                 prompt="File type",
                 value=0,
                 id="file-filter"

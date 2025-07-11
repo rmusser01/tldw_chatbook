@@ -58,9 +58,13 @@ import sqlite3
 import struct
 import sys
 import tempfile
+import time
 #
 # Third-Party Imports
 from loguru import logger
+#
+# Local Imports
+from ...Metrics.metrics_logger import log_counter, log_histogram
 #
 ########################################################################################################################
 #
@@ -108,6 +112,9 @@ def get_chrome_cookies(domain_name):
     Note:
         Requires browser to be closed for database access
     """
+    start_time = time.time()
+    log_counter("cookie_cloner_chrome_attempt", labels={"platform": sys.platform})
+    
     global win32crypt
     if sys.platform == 'win32':
         import win32crypt
@@ -158,36 +165,74 @@ def get_chrome_cookies(domain_name):
     # Copy the Cookies file to a secure temporary location to avoid locking the database
     temp_fd, temp_cookie_path = tempfile.mkstemp(prefix='chrome_cookies_', suffix='.db')
     os.close(temp_fd)  # Close the file descriptor as we'll use the path
-    shutil.copyfile(cookie_path, temp_cookie_path)
+    
+    try:
+        shutil.copyfile(cookie_path, temp_cookie_path)
+    except Exception as e:
+        duration = time.time() - start_time
+        log_histogram("cookie_cloner_chrome_duration", duration, labels={"status": "error"})
+        log_counter("cookie_cloner_chrome_error", labels={"error_type": "file_copy_failed", "platform": sys.platform})
+        raise
 
     conn = sqlite3.connect(temp_cookie_path)
     cursor = conn.cursor()
 
     cookies = {}
+    total_cookies = 0
+    expired_cookies = 0
+    decryption_errors = 0
+    
     try:
         # Escape the domain name to prevent SQL injection in LIKE pattern
         safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
         cursor.execute("SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE ? ESCAPE '\\'",
                        (safe_pattern,))
-        for host_key, name, path, encrypted_value, expires_utc in cursor.fetchall():
-            if sys.platform == 'win32':
-                try:
-                    decrypted_value = win32crypt.CryptUnprotectData(encrypted_value, None, None, None, 0)[1]
-                except:
+        
+        rows = cursor.fetchall()
+        total_cookies = len(rows)
+        
+        for host_key, name, path, encrypted_value, expires_utc in rows:
+            try:
+                if sys.platform == 'win32':
+                    try:
+                        decrypted_value = win32crypt.CryptUnprotectData(encrypted_value, None, None, None, 0)[1]
+                    except:
+                        decrypted_value = decrypt_edge_cookie(encrypted_value, key)
+                else:
                     decrypted_value = decrypt_edge_cookie(encrypted_value, key)
-            else:
-                decrypted_value = decrypt_edge_cookie(encrypted_value, key)
 
-            expires = datetime.datetime(1601, 1, 1) + datetime.timedelta(microseconds=expires_utc)
-            if expires < datetime.datetime.now():
-                continue  # Skip expired cookies
+                expires = datetime.datetime(1601, 1, 1) + datetime.timedelta(microseconds=expires_utc)
+                if expires < datetime.datetime.now():
+                    expired_cookies += 1
+                    continue  # Skip expired cookies
 
-            cookies[name] = decrypted_value.decode('utf-8', 'ignore')
+                cookies[name] = decrypted_value.decode('utf-8', 'ignore')
+            except Exception as e:
+                decryption_errors += 1
+                logger.debug(f"Failed to decrypt cookie {name}: {e}")
+                
+    except Exception as e:
+        duration = time.time() - start_time
+        log_histogram("cookie_cloner_chrome_duration", duration, labels={"status": "error"})
+        log_counter("cookie_cloner_chrome_error", labels={"error_type": "database_error", "platform": sys.platform})
+        raise
     finally:
         cursor.close()
         conn.close()
         os.remove(temp_cookie_path)
 
+    # Log success metrics
+    duration = time.time() - start_time
+    log_histogram("cookie_cloner_chrome_duration", duration, labels={"status": "success", "platform": sys.platform})
+    log_histogram("cookie_cloner_chrome_cookies_found", len(cookies))
+    log_counter("cookie_cloner_chrome_success", labels={
+        "platform": sys.platform,
+        "total_cookies": str(total_cookies),
+        "valid_cookies": str(len(cookies)),
+        "expired": str(expired_cookies),
+        "decryption_errors": str(decryption_errors)
+    })
+    
     return cookies
 
 def decrypt_chrome_cookie(encrypted_value, key):
@@ -227,6 +272,8 @@ def get_firefox_cookies(domain_name):
     Note:
         Searches for default-release profile
     """
+    start_time = time.time()
+    log_counter("cookie_cloner_firefox_attempt", labels={"platform": sys.platform})
     if sys.platform == 'win32':
         appdata_path = os.getenv('APPDATA')
         profile_path = os.path.join(appdata_path, 'Mozilla', 'Firefox', 'Profiles')

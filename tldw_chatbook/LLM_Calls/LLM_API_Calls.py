@@ -526,6 +526,9 @@ def chat_with_anthropic(
     api_url = anthropic_config.get('api_base_url', 'https://api.anthropic.com/v1').rstrip('/') + '/messages'
     logging.debug(f"Anthropic Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
 
+    start_time = time.time()
+    log_counter("anthropic_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
+    
     try:
         retry_count = int(anthropic_config.get('api_retries', 3))
         retry_delay = float(anthropic_config.get('api_retry_delay', 1))
@@ -634,19 +637,70 @@ def chat_with_anthropic(
                              "finish_reason": openai_finish_reason}],
                 "usage": response_data.get("usage")
             }
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("anthropic_api_response_time", duration, labels={
+                "model": current_model, 
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("anthropic_api_success", labels={"model": current_model, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = response_data.get("usage", {})
+            if usage:
+                log_histogram("anthropic_api_input_tokens", usage.get("input_tokens", 0), labels={"model": current_model})
+                log_histogram("anthropic_api_output_tokens", usage.get("output_tokens", 0), labels={"model": current_model})
+                total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                log_histogram("anthropic_api_total_tokens", total_tokens, labels={"model": current_model})
+            
             return normalized_response
 
     except requests.exceptions.HTTPError as e:
         # ... (error handling from your file, ensure provider is "anthropic") ...
         status_code = e.response.status_code if e.response is not None else 500
         error_text = e.response.text if e.response is not None else "No response text"
+        
+        # Log error metrics
+        duration = time.time() - start_time
+        log_counter("anthropic_api_error", labels={
+            "model": current_model, 
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("anthropic_api_error_response_time", duration, labels={
+            "model": current_model,
+            "status_code": str(status_code)
+        })
+        
         if status_code == 401: raise ChatAuthenticationError(provider="anthropic", message=f"Auth failed. Detail: {error_text[:200]}") from e
         elif status_code == 429: raise ChatRateLimitError(provider="anthropic", message=f"Rate limit. Detail: {error_text[:200]}") from e
         elif 400 <= status_code < 500: raise ChatBadRequestError(provider="anthropic", message=f"Bad request ({status_code}). Detail: {error_text[:200]}") from e
         else: raise ChatProviderError(provider="anthropic", message=f"API error ({status_code}). Detail: {error_text[:200]}", status_code=status_code) from e
     except requests.exceptions.RequestException as e:
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("anthropic_api_error", labels={
+            "model": current_model, 
+            "error_type": "network_error"
+        })
+        log_histogram("anthropic_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "network_error"
+        })
         raise ChatProviderError(provider="anthropic", message=f"Network error: {str(e)}", status_code=504) from e
     except Exception as e:
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("anthropic_api_error", labels={
+            "model": current_model, 
+            "error_type": "unexpected_error"
+        })
+        log_histogram("anthropic_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
         logging.error(f"Anthropic: Unexpected error: {e}", exc_info=True)
         raise ChatProviderError(provider="anthropic", message=f"Unexpected error: {e}")
 
@@ -669,6 +723,7 @@ def chat_with_cohere(
         tools: Optional[List[Dict[str, Any]]] = None,
         custom_prompt_arg: Optional[str] = None # Kept for legacy, but focus on structured input
 ):
+    start_time = time.time()
     logging.debug(f"Cohere Chat: Request process starting for model '{model}' (Streaming: {streaming})")
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
     cohere_config = cli_api_settings.get('cohere', {})  # Get the [api_settings.cohere] sub-table
@@ -679,6 +734,9 @@ def chat_with_cohere(
     logging.debug(f"Cohere: Using API Key: {final_api_key[:5]}...{final_api_key[-5:]}")
 
     final_model = model or cohere_config.get('model', 'command-r')
+    
+    # Log request metrics
+    log_counter("cohere_api_request", labels={"model": final_model, "streaming": str(streaming)})
     api_base_url = cohere_config.get('api_base_url', 'https://api.cohere.com').rstrip('/')
     # Using /v1/chat is standard for Cohere's current Chat API
     COHERE_CHAT_URL = f"{api_base_url}/v1/chat"
@@ -807,6 +865,15 @@ def chat_with_cohere(
             response = session.post(COHERE_CHAT_URL, headers=headers, json=payload, stream=True, timeout=timeout_seconds)
             response.raise_for_status() # Check for HTTP errors on initial connection
             logging.debug("Cohere: Streaming response connection established.")
+            
+            # Log streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("cohere_api_response_time", duration, labels={
+                "model": final_model,
+                "streaming": "true",
+                "status_code": str(response.status_code)
+            })
+            log_counter("cohere_api_success", labels={"model": final_model, "streaming": "true"})
 
             def stream_generator_cohere_sse(response_iterator):
                 completion_id = f"chatcmpl-cohere-{time.time_ns()}"
@@ -951,12 +1018,40 @@ def chat_with_cohere(
                 "model": final_model, "choices": choices_payload,
             }
             if usage_data: openai_compatible_response["usage"] = usage_data
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("cohere_api_response_time", duration, labels={
+                "model": final_model,
+                "streaming": "false", 
+                "status_code": str(response.status_code)
+            })
+            log_counter("cohere_api_success", labels={"model": final_model, "streaming": "false"})
+            
+            # Log token usage if available
+            if usage_data:
+                log_histogram("cohere_api_input_tokens", usage_data.get("prompt_tokens", 0), labels={"model": final_model})
+                log_histogram("cohere_api_output_tokens", usage_data.get("completion_tokens", 0), labels={"model": final_model})
+                log_histogram("cohere_api_total_tokens", usage_data.get("total_tokens", 0), labels={"model": final_model})
+            
             return openai_compatible_response
 
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
         logging.error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}", exc_info=False)
+        
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        log_counter("cohere_api_error", labels={
+            "model": final_model,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("cohere_api_error_response_time", duration, labels={
+            "model": final_model,
+            "status_code": str(status_code)
+        })
         if status_code == 401:
             raise ChatAuthenticationError(provider="cohere", message=f"Authentication failed. Detail: {error_text[:200]}")
         elif status_code == 429:
@@ -967,10 +1062,32 @@ def chat_with_cohere(
             raise ChatProviderError(provider="cohere", message=f"Server error (Status {status_code}). Detail: {error_text[:200]}", status_code=status_code)
     except requests.exceptions.RequestException as e: # Includes ReadTimeout, ConnectionError etc.
         logging.error(f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}", exc_info=True)
+        
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("cohere_api_error", labels={
+            "model": final_model,
+            "error_type": "network_error"
+        })
+        log_histogram("cohere_api_error_response_time", duration, labels={
+            "model": final_model,
+            "error_type": "network_error"
+        })
         # This will catch the ReadTimeout after retries are exhausted
         raise ChatProviderError(provider="cohere", message=f"Network error after retries: {e}", status_code=504) # 504 for gateway timeout like
     except Exception as e:
         logging.error(f"Cohere API call: Unexpected error: {e}", exc_info=True)
+        
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("cohere_api_error", labels={
+            "model": final_model,
+            "error_type": "unexpected_error"
+        })
+        log_histogram("cohere_api_error_response_time", duration, labels={
+            "model": final_model,
+            "error_type": "unexpected_error"
+        })
         if not isinstance(e, ChatAPIError):
             raise ChatAPIError(provider="cohere", message=f"Unexpected error in Cohere API call: {e}")
         else:
@@ -1004,6 +1121,7 @@ def chat_with_deepseek(
         logit_bias: Optional[Dict[str, float]] = None,  # If supported
         custom_prompt_arg: Optional[str] = None  # Legacy
 ):
+    start_time = time.time()
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
     deepseek_config = cli_api_settings.get('deepseek', {})  # Get the [api_settings.deepseek] sub-table
     final_api_key = api_key or deepseek_config.get('api_key')
@@ -1021,6 +1139,9 @@ def chat_with_deepseek(
     current_streaming = streaming if streaming is not None else \
         (str(current_streaming_cfg).lower() == 'true' if isinstance(current_streaming_cfg, str) else bool(
             current_streaming_cfg))
+    
+    # Log request metrics
+    log_counter("deepseek_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
 
     current_max_tokens = max_tokens if max_tokens is not None else _safe_cast(deepseek_config.get('max_tokens'), int)
 
@@ -1059,6 +1180,15 @@ def chat_with_deepseek(
             with requests.Session() as session:
                 response = session.post(api_url, headers=headers, json=data, stream=True, timeout=180)
                 response.raise_for_status()  # Check for HTTP errors on initial connection
+                
+                # Log streaming success metrics
+                duration = time.time() - start_time
+                log_histogram("deepseek_api_response_time", duration, labels={
+                    "model": current_model,
+                    "streaming": "true",
+                    "status_code": str(response.status_code)
+                })
+                log_counter("deepseek_api_success", labels={"model": current_model, "streaming": "true"})
 
                 def stream_generator():
                     try:
@@ -1083,10 +1213,50 @@ def chat_with_deepseek(
                 session.mount("https://", adapter)
                 response = session.post(api_url, headers=headers, json=data, timeout=120)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("mistral_api_response_time", duration, labels={
+                "model": current_model,
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("mistral_api_success", labels={"model": current_model, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = result.get("usage", {})
+            if usage:
+                log_histogram("mistral_api_input_tokens", usage.get("prompt_tokens", 0), labels={"model": current_model})
+                log_histogram("mistral_api_output_tokens", usage.get("completion_tokens", 0), labels={"model": current_model})
+                log_histogram("mistral_api_total_tokens", usage.get("total_tokens", 0), labels={"model": current_model})
+            
+            return result
     except requests.exceptions.HTTPError as e:  # ... error handling ...
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        status_code = e.response.status_code if e.response is not None else 500
+        log_counter("deepseek_api_error", labels={
+            "model": current_model,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("deepseek_api_error_response_time", duration, labels={
+            "model": current_model,
+            "status_code": str(status_code)
+        })
         raise
     except Exception as e:  # ... error handling ...
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("deepseek_api_error", labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
+        log_histogram("deepseek_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
         raise ChatProviderError(provider="deepseek", message=f"Unexpected error: {e}")
 
 
@@ -1106,6 +1276,7 @@ def chat_with_google(
         tools: Optional[List[Dict[str, Any]]] = None,  # Gemini 'tools' config
         custom_prompt_arg: Optional[str] = None
 ):
+    start_time = time.time()
     loaded_config_data = settings.get('api_settings', {})
     google_config = loaded_config_data.get('google_api', {})
     final_api_key = api_key or google_config.get('api_key')
@@ -1116,6 +1287,9 @@ def chat_with_google(
     current_streaming_cfg = google_config.get('streaming', False)
     current_streaming = streaming if streaming is not None else \
         (str(current_streaming_cfg).lower() == 'true' if isinstance(current_streaming_cfg, str) else bool(current_streaming_cfg))
+    
+    # Log request metrics
+    log_counter("google_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
 
     gemini_contents = []
     for msg in input_data:
@@ -1173,6 +1347,15 @@ def chat_with_google(
 
         if current_streaming:
             logging.debug("Google Gemini: Streaming response received.")
+            
+            # Log streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("google_api_response_time", duration, labels={
+                "model": current_model,
+                "streaming": "true",
+                "status_code": str(response.status_code)
+            })
+            log_counter("google_api_success", labels={"model": current_model, "streaming": "true"})
 
             def stream_generator():
                 # response object is from the outer scope
@@ -1284,12 +1467,40 @@ def chat_with_google(
                     "completion_tokens": usage_meta.get("candidatesTokenCount"),
                     "total_tokens": usage_meta.get("totalTokenCount")
                 }
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("google_api_response_time", duration, labels={
+                "model": current_model,
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("google_api_success", labels={"model": current_model, "streaming": "false"})
+            
+            # Log token usage if available
+            if usage_meta:
+                log_histogram("google_api_input_tokens", usage_meta.get("promptTokenCount", 0), labels={"model": current_model})
+                log_histogram("google_api_output_tokens", usage_meta.get("candidatesTokenCount", 0), labels={"model": current_model})
+                log_histogram("google_api_total_tokens", usage_meta.get("totalTokenCount", 0), labels={"model": current_model})
+            
             return normalized_response
 
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
         error_text = e.response.text if e.response is not None else "No response text"
         logging.error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}", exc_info=False)
+        
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        log_counter("google_api_error", labels={
+            "model": current_model,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("google_api_error_response_time", duration, labels={
+            "model": current_model,
+            "status_code": str(status_code)
+        })
         if status_code == 400:
             try:
                 error_json = e.response.json()
@@ -1303,9 +1514,30 @@ def chat_with_google(
         elif status_code == 429: raise ChatRateLimitError(provider="google", message=f"Rate limit. Detail: {error_text[:200]}") from e
         else: raise ChatProviderError(provider="google", message=f"API error ({status_code}). Detail: {error_text[:200]}", status_code=status_code) from e
     except requests.exceptions.RequestException as e:
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("google_api_error", labels={
+            "model": current_model,
+            "error_type": "network_error"
+        })
+        log_histogram("google_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "network_error"
+        })
         raise ChatProviderError(provider="google", message=f"Network error: {str(e)}", status_code=504) from e
     except Exception as e:
         logging.error(f"Google Gemini: Unexpected error: {e}", exc_info=True)
+        
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("google_api_error", labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
+        log_histogram("google_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
         # Ensure it's a ChatAPIError subtype before raising, or wrap it
         if isinstance(e, ChatAPIError):
             raise
@@ -1328,8 +1560,6 @@ def chat_with_google(
                 pass
             except Exception as e_close:
                 logging.warning(f"Google Gemini: Error during explicit response.close in outer finally: {e_close}")
-
-
 
 
 # https://console.groq.com/docs/quickstart
@@ -1356,6 +1586,7 @@ def chat_with_groq(
         top_logprobs: Optional[int] = None,
         custom_prompt_arg: Optional[str] = None  # Legacy
 ):
+    start_time = time.time()
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
     groq_config = cli_api_settings.get('groq', {})  # Get the [api_settings.cohere] sub-table
     final_api_key = api_key or groq_config.get('api_key')
@@ -1374,6 +1605,9 @@ def chat_with_groq(
     current_streaming = streaming if streaming is not None else \
         (str(current_streaming_cfg).lower() == 'true' if isinstance(current_streaming_cfg, str) else bool(
             current_streaming_cfg))
+    
+    # Log request metrics
+    log_counter("groq_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
 
     current_max_tokens = max_tokens if max_tokens is not None else _safe_cast(groq_config.get('max_tokens'), int)
 
@@ -1410,6 +1644,15 @@ def chat_with_groq(
             with requests.Session() as session:
                 response = session.post(api_url, headers=headers, json=data, stream=True, timeout=180)
                 response.raise_for_status()
+                
+                # Log streaming success metrics
+                duration = time.time() - start_time
+                log_histogram("openrouter_api_response_time", duration, labels={
+                    "model": current_model,
+                    "streaming": "true",
+                    "status_code": str(response.status_code)
+                })
+                log_counter("openrouter_api_success", labels={"model": current_model, "streaming": "true"})
 
                 def stream_generator():
                     try:
@@ -1436,10 +1679,50 @@ def chat_with_groq(
                 session.mount("https://", adapter)
                 response = session.post(api_url, headers=headers, json=data, timeout=120)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("mistral_api_response_time", duration, labels={
+                "model": current_model,
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("mistral_api_success", labels={"model": current_model, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = result.get("usage", {})
+            if usage:
+                log_histogram("mistral_api_input_tokens", usage.get("prompt_tokens", 0), labels={"model": current_model})
+                log_histogram("mistral_api_output_tokens", usage.get("completion_tokens", 0), labels={"model": current_model})
+                log_histogram("mistral_api_total_tokens", usage.get("total_tokens", 0), labels={"model": current_model})
+            
+            return result
     except requests.exceptions.HTTPError as e:  # ... error handling ...
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        status_code = e.response.status_code if e.response is not None else 500
+        log_counter("groq_api_error", labels={
+            "model": current_model,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("groq_api_error_response_time", duration, labels={
+            "model": current_model,
+            "status_code": str(status_code)
+        })
         raise
     except Exception as e:  # ... error handling ...
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("groq_api_error", labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
+        log_histogram("groq_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
         raise ChatProviderError(provider="groq", message=f"Unexpected error: {e}")
 
 
@@ -1467,6 +1750,7 @@ def chat_with_huggingface(
         top_logprobs: Optional[int] = None, # OpenAI compatible name
         custom_prompt_arg: Optional[str] = None  # Legacy
 ):
+    start_time = time.time()
     logging.debug(f"HuggingFace Chat: Request process starting for model '{model}' (Streaming: {streaming})")
     loaded_config_data = load_settings()
     hf_config = loaded_config_data.get('huggingface_api', loaded_config_data.get('API', {}).get('huggingface', {}))
@@ -1538,6 +1822,9 @@ def chat_with_huggingface(
     final_max_val = max_tokens
     if final_max_val is None:
         final_max_val = _safe_cast(hf_config.get('max_tokens', hf_config.get('max_new_tokens')), int)
+    
+    # Log request metrics
+    log_counter("huggingface_api_request", labels={"model": final_model_for_payload, "streaming": str(final_streaming_payload_val)})
 
 
     api_messages = []
@@ -1592,6 +1879,15 @@ def chat_with_huggingface(
             # Session might not be strictly necessary for a single streaming POST, but good for potential keep-alive
             response = requests.post(api_url, headers=headers, json=payload, stream=True, timeout=timeout_seconds)
             response.raise_for_status()
+            
+            # Log streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("huggingface_api_response_time", duration, labels={
+                "model": final_model_for_payload,
+                "streaming": "true",
+                "status_code": str(response.status_code)
+            })
+            log_counter("huggingface_api_success", labels={"model": final_model_for_payload, "streaming": "true"})
 
             def stream_generator_huggingface():
                 try:
@@ -1639,12 +1935,42 @@ def chat_with_huggingface(
 
             response = session.post(api_url, headers=headers, json=payload, timeout=timeout_seconds)
             response.raise_for_status()
-            return response.json() # This should be an OpenAI compatible JSON response
+            result = response.json() # This should be an OpenAI compatible JSON response
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("huggingface_api_response_time", duration, labels={
+                "model": final_model_for_payload,
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("huggingface_api_success", labels={"model": final_model_for_payload, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = result.get("usage", {})
+            if usage:
+                log_histogram("huggingface_api_input_tokens", usage.get("prompt_tokens", 0), labels={"model": final_model_for_payload})
+                log_histogram("huggingface_api_output_tokens", usage.get("completion_tokens", 0), labels={"model": final_model_for_payload})
+                log_histogram("huggingface_api_total_tokens", usage.get("total_tokens", 0), labels={"model": final_model_for_payload})
+            
+            return result
 
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
         logging.error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}", exc_info=False)
+        
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        log_counter("huggingface_api_error", labels={
+            "model": final_model_for_payload,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("huggingface_api_error_response_time", duration, labels={
+            "model": final_model_for_payload,
+            "status_code": str(status_code)
+        })
         if status_code == 401:
             raise ChatAuthenticationError(provider="huggingface", message=f"Authentication failed. Detail: {error_text[:200]}")
         elif status_code == 404: # Specifically handle 404 for URL/model issues
@@ -1657,9 +1983,31 @@ def chat_with_huggingface(
             raise ChatProviderError(provider="huggingface", message=f"Server error (Status {status_code}) from {api_url}. Detail: {error_text[:200]}", status_code=status_code)
     except requests.exceptions.RequestException as e: # Covers DNS, Connection, Timeout errors
         logging.error(f"HuggingFace API request failed to {api_url} (network error): {e}", exc_info=True)
+        
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("huggingface_api_error", labels={
+            "model": final_model_for_payload,
+            "error_type": "network_error"
+        })
+        log_histogram("huggingface_api_error_response_time", duration, labels={
+            "model": final_model_for_payload,
+            "error_type": "network_error"
+        })
         raise ChatProviderError(provider="huggingface", message=f"Network error connecting to {api_url}: {e}", status_code=504) # 504 for timeout/gateway like
     except Exception as e:
         logging.error(f"HuggingFace API call to {api_url}: Unexpected error: {e}", exc_info=True)
+        
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("huggingface_api_error", labels={
+            "model": final_model_for_payload,
+            "error_type": "unexpected_error"
+        })
+        log_histogram("huggingface_api_error_response_time", duration, labels={
+            "model": final_model_for_payload,
+            "error_type": "unexpected_error"
+        })
         if not isinstance(e, ChatAPIError): # Avoid re-wrapping known chat errors
             raise ChatAPIError(provider="huggingface", message=f"Unexpected error in HuggingFace API call: {e}")
         else:
@@ -1683,6 +2031,7 @@ def chat_with_mistral(
         response_format: Optional[Dict[str, str]] = None,
         custom_prompt_arg: Optional[str] = None
 ):
+    start_time = time.time()
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
     mistral_config = cli_api_settings.get('mistral', {})  # Get the [api_settings.mistral] sub-table
     final_api_key = api_key or mistral_config.get('api_key')
@@ -1704,6 +2053,9 @@ def chat_with_mistral(
 
     current_max_tokens = max_tokens if max_tokens is not None else _safe_cast(mistral_config.get('max_tokens'), int)
     current_safe_prompt = safe_prompt if safe_prompt is not None else bool(mistral_config.get('safe_prompt', False))
+    
+    # Log request metrics
+    log_counter("mistral_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
 
     api_messages = []
     # Mistral expects system message as the first message with role: system if provided
@@ -1737,6 +2089,15 @@ def chat_with_mistral(
             with requests.Session() as session:
                 response = session.post(api_url, headers=headers, json=data, stream=True, timeout=180)
                 response.raise_for_status()
+                
+                # Log streaming success metrics
+                duration = time.time() - start_time
+                log_histogram("openrouter_api_response_time", duration, labels={
+                    "model": current_model,
+                    "streaming": "true",
+                    "status_code": str(response.status_code)
+                })
+                log_counter("openrouter_api_success", labels={"model": current_model, "streaming": "true"})
 
                 def stream_generator():
                     try:
@@ -1758,10 +2119,50 @@ def chat_with_mistral(
                 session.mount("https://", adapter)
                 response = session.post(api_url, headers=headers, json=data, timeout=120)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("mistral_api_response_time", duration, labels={
+                "model": current_model,
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("mistral_api_success", labels={"model": current_model, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = result.get("usage", {})
+            if usage:
+                log_histogram("mistral_api_input_tokens", usage.get("prompt_tokens", 0), labels={"model": current_model})
+                log_histogram("mistral_api_output_tokens", usage.get("completion_tokens", 0), labels={"model": current_model})
+                log_histogram("mistral_api_total_tokens", usage.get("total_tokens", 0), labels={"model": current_model})
+            
+            return result
     except requests.exceptions.HTTPError as e:  # ... error handling ...
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        status_code = e.response.status_code if e.response is not None else 500
+        log_counter("mistral_api_error", labels={
+            "model": current_model,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("mistral_api_error_response_time", duration, labels={
+            "model": current_model,
+            "status_code": str(status_code)
+        })
         raise
     except Exception as e:  # ... error handling ...
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("mistral_api_error", labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
+        log_histogram("mistral_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
         raise ChatProviderError(provider="mistral", message=f"Unexpected error: {e}")
 
 
@@ -1791,6 +2192,7 @@ def chat_with_openrouter(
         top_logprobs: Optional[int] = None,
         custom_prompt_arg: Optional[str] = None
 ):
+    start_time = time.time()
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
     openrouter_config = cli_api_settings.get('openrouter', {})  # Get the [api_settings.cohere] sub-table
     # ... (api key, model, temp, streaming setup) ...
@@ -1802,6 +2204,9 @@ def chat_with_openrouter(
     current_streaming = streaming if streaming is not None else \
         (str(current_streaming_cfg).lower() == 'true' if isinstance(current_streaming_cfg, str) else bool(
             current_streaming_cfg))
+    
+    # Log request metrics
+    log_counter("openrouter_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
 
     api_messages = []
     if system_message: api_messages.append({"role": "system", "content": system_message})
@@ -1842,6 +2247,15 @@ def chat_with_openrouter(
             with requests.Session() as session:
                 response = session.post(api_url, headers=headers, json=data, stream=True, timeout=180)
                 response.raise_for_status()
+                
+                # Log streaming success metrics
+                duration = time.time() - start_time
+                log_histogram("openrouter_api_response_time", duration, labels={
+                    "model": current_model,
+                    "streaming": "true",
+                    "status_code": str(response.status_code)
+                })
+                log_counter("openrouter_api_success", labels={"model": current_model, "streaming": "true"})
 
                 def stream_generator():
                     try:
@@ -1864,10 +2278,50 @@ def chat_with_openrouter(
                 session.mount("https://", adapter)
                 response = session.post(api_url, headers=headers, json=data, timeout=120)
             response.raise_for_status()
-            return response.json()  # OpenRouter usually returns OpenAI compatible JSON
+            result = response.json()  # OpenRouter usually returns OpenAI compatible JSON
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("openrouter_api_response_time", duration, labels={
+                "model": current_model,
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("openrouter_api_success", labels={"model": current_model, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = result.get("usage", {})
+            if usage:
+                log_histogram("openrouter_api_input_tokens", usage.get("prompt_tokens", 0), labels={"model": current_model})
+                log_histogram("openrouter_api_output_tokens", usage.get("completion_tokens", 0), labels={"model": current_model})
+                log_histogram("openrouter_api_total_tokens", usage.get("total_tokens", 0), labels={"model": current_model})
+            
+            return result
     except requests.exceptions.HTTPError as e:  # ... error handling ...
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        status_code = e.response.status_code if e.response is not None else 500
+        log_counter("openrouter_api_error", labels={
+            "model": current_model,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("openrouter_api_error_response_time", duration, labels={
+            "model": current_model,
+            "status_code": str(status_code)
+        })
         raise
     except Exception as e:  # ... error handling ...
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("openrouter_api_error", labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
+        log_histogram("openrouter_api_error_response_time", duration, labels={
+            "model": current_model,
+            "error_type": "unexpected_error"
+        })
         raise ChatProviderError(provider="openrouter", message=f"Unexpected error: {e}")
 
 #

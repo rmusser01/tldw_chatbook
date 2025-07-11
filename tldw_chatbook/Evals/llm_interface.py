@@ -10,11 +10,13 @@ Supports both commercial and local LLM providers with async operations.
 """
 
 import asyncio
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from loguru import logger
 
 from tldw_chatbook.config import load_settings
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 # Import functions at runtime to avoid circular imports
 def _get_llm_functions():
@@ -79,6 +81,46 @@ class LLMProvider(ABC):
     def __init__(self, model_id: str, config: Dict[str, Any]):
         self.model_id = model_id
         self.config = config
+        self.provider_name = self.__class__.__name__.replace('Provider', '').lower()
+    
+    async def _log_api_call_metrics(self, method: str, prompt: str, duration: float, status: str, error_category: str = None, result: Any = None):
+        """Common method to log API call metrics."""
+        # Log call status
+        if status == "success":
+            log_counter("eval_llm_api_call_success", labels={
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "method": method
+            })
+        else:
+            log_counter("eval_llm_api_call_error", labels={
+                "provider": self.provider_name,
+                "model": self.model_id,
+                "method": method,
+                "error_category": error_category or "unknown"
+            })
+        
+        # Log duration
+        log_histogram("eval_llm_api_call_duration", duration, labels={
+            "provider": self.provider_name,
+            "model": self.model_id,
+            "method": method,
+            "status": status
+        })
+        
+        # Log prompt length
+        if prompt:
+            log_histogram("eval_llm_prompt_length", len(prompt), labels={
+                "provider": self.provider_name,
+                "model": self.model_id
+            })
+        
+        # Log response length for generation
+        if method == "generate" and result and isinstance(result, str):
+            log_histogram("eval_llm_response_length", len(result), labels={
+                "provider": self.provider_name,
+                "model": self.model_id
+            })
     
     @abstractmethod
     async def generate_async(self, prompt: str, **kwargs) -> str:
@@ -113,6 +155,15 @@ class OpenAIProvider(LLMProvider):
     
     async def generate_async(self, prompt: str, **kwargs) -> str:
         """Generate text using OpenAI API."""
+        start_time = time.time()
+        
+        # Log API call start
+        log_counter("eval_llm_api_call_started", labels={
+            "provider": "openai",
+            "model": self.model_id,
+            "method": "generate"
+        })
+        
         try:
             # Run synchronous function in thread pool
             loop = asyncio.get_event_loop()
@@ -124,18 +175,80 @@ class OpenAIProvider(LLMProvider):
                 kwargs
             )
             
+            # Log successful generation
+            duration = time.time() - start_time
+            log_histogram("eval_llm_api_call_duration", duration, labels={
+                "provider": "openai",
+                "model": self.model_id,
+                "method": "generate",
+                "status": "success"
+            })
+            log_counter("eval_llm_api_call_success", labels={
+                "provider": "openai",
+                "model": self.model_id,
+                "method": "generate"
+            })
+            log_histogram("eval_llm_prompt_length", len(prompt), labels={
+                "provider": "openai",
+                "model": self.model_id
+            })
+            log_histogram("eval_llm_response_length", len(result), labels={
+                "provider": "openai",
+                "model": self.model_id
+            })
+            
             return result
             
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_category = "unknown"
+            
             # Handle known API errors
             if 'authentication' in str(e).lower() or 'api key' in str(e).lower():
+                error_category = "authentication"
                 logger.error(f"OpenAI authentication error: {e}")
+                log_counter("eval_llm_api_call_error", labels={
+                    "provider": "openai",
+                    "model": self.model_id,
+                    "method": "generate",
+                    "error_category": error_category
+                })
+                log_histogram("eval_llm_api_call_error_duration", duration, labels={
+                    "provider": "openai",
+                    "model": self.model_id,
+                    "error_category": error_category
+                })
                 raise EvalAuthenticationError(f"OpenAI authentication failed: {e}", provider="openai")
             elif 'rate limit' in str(e).lower():
+                error_category = "rate_limit"
                 logger.error(f"OpenAI rate limit error: {e}")
+                log_counter("eval_llm_api_call_error", labels={
+                    "provider": "openai",
+                    "model": self.model_id,
+                    "method": "generate",
+                    "error_category": error_category
+                })
+                log_histogram("eval_llm_api_call_error_duration", duration, labels={
+                    "provider": "openai",
+                    "model": self.model_id,
+                    "error_category": error_category
+                })
                 raise EvalRateLimitError(f"OpenAI rate limit exceeded: {e}", provider="openai")
             else:
+                error_category = "api_error"
                 logger.error(f"OpenAI generation failed: {e}")
+                log_counter("eval_llm_api_call_error", labels={
+                    "provider": "openai",
+                    "model": self.model_id,
+                    "method": "generate",
+                    "error_category": error_category
+                })
+                log_histogram("eval_llm_api_call_error_duration", duration, labels={
+                    "provider": "openai",
+                    "model": self.model_id,
+                    "error_category": error_category
+                })
                 raise EvalProviderError(f"OpenAI generation failed: {e}", provider="openai")
     
     def _call_openai_sync(self, prompt: str, kwargs: Dict[str, Any]) -> str:
@@ -146,6 +259,13 @@ class OpenAIProvider(LLMProvider):
         
         # Prepare message format expected by OpenAI API
         messages = [{"role": "user", "content": prompt}]
+        
+        # Log token estimation
+        if 'max_tokens' in kwargs:
+            log_histogram("eval_llm_max_tokens_requested", kwargs['max_tokens'], labels={
+                "provider": "openai",
+                "model": self.model_id
+            })
         
         result = chat_with_openai(
             input_data=messages,
@@ -158,6 +278,25 @@ class OpenAIProvider(LLMProvider):
             top_logprobs=kwargs.get('top_logprobs'),
             streaming=False
         )
+        
+        # Extract text from response and log usage
+        if isinstance(result, dict) and 'usage' in result:
+            usage = result['usage']
+            if 'prompt_tokens' in usage:
+                log_histogram("eval_llm_prompt_tokens", usage['prompt_tokens'], labels={
+                    "provider": "openai",
+                    "model": self.model_id
+                })
+            if 'completion_tokens' in usage:
+                log_histogram("eval_llm_completion_tokens", usage['completion_tokens'], labels={
+                    "provider": "openai",
+                    "model": self.model_id
+                })
+            if 'total_tokens' in usage:
+                log_histogram("eval_llm_total_tokens", usage['total_tokens'], labels={
+                    "provider": "openai",
+                    "model": self.model_id
+                })
         
         # Extract text from response
         if isinstance(result, str):
@@ -179,6 +318,15 @@ class OpenAIProvider(LLMProvider):
     
     async def get_logprobs_async(self, text: str, **kwargs) -> Dict[str, Any]:
         """Get log probabilities from OpenAI API."""
+        start_time = time.time()
+        
+        # Log logprobs call start
+        log_counter("eval_llm_api_call_started", labels={
+            "provider": "openai",
+            "model": self.model_id,
+            "method": "logprobs"
+        })
+        
         try:
             loop = asyncio.get_event_loop()
             
@@ -189,10 +337,49 @@ class OpenAIProvider(LLMProvider):
                 kwargs
             )
             
+            # Log successful logprobs call
+            duration = time.time() - start_time
+            log_histogram("eval_llm_api_call_duration", duration, labels={
+                "provider": "openai",
+                "model": self.model_id,
+                "method": "logprobs",
+                "status": "success"
+            })
+            log_counter("eval_llm_api_call_success", labels={
+                "provider": "openai",
+                "model": self.model_id,
+                "method": "logprobs"
+            })
+            
+            # Log logprobs metrics
+            if 'logprobs' in result and isinstance(result['logprobs'], list):
+                log_histogram("eval_llm_logprobs_count", len(result['logprobs']), labels={
+                    "provider": "openai",
+                    "model": self.model_id
+                })
+                if result['logprobs']:
+                    avg_logprob = sum(result['logprobs']) / len(result['logprobs'])
+                    log_histogram("eval_llm_avg_logprob", avg_logprob, labels={
+                        "provider": "openai",
+                        "model": self.model_id
+                    })
+            
             return result
             
         except Exception as e:
+            duration = time.time() - start_time
             logger.error(f"OpenAI logprobs failed: {e}")
+            log_counter("eval_llm_api_call_error", labels={
+                "provider": "openai",
+                "model": self.model_id,
+                "method": "logprobs",
+                "error_category": "api_error"
+            })
+            log_histogram("eval_llm_api_call_error_duration", duration, labels={
+                "provider": "openai",
+                "model": self.model_id,
+                "error_category": "api_error"
+            })
             return {'logprobs': [], 'tokens': [], 'error': str(e)}
     
     async def get_completion_logprobs_async(self, prompt: str, completion: str, **kwargs) -> Dict[str, Any]:
@@ -379,6 +566,15 @@ class AnthropicProvider(LLMProvider):
     
     async def generate_async(self, prompt: str, **kwargs) -> str:
         """Generate text using Anthropic API."""
+        start_time = time.time()
+        
+        # Log API call start
+        log_counter("eval_llm_api_call_started", labels={
+            "provider": "anthropic",
+            "model": self.model_id,
+            "method": "generate"
+        })
+        
         try:
             loop = asyncio.get_event_loop()
             
@@ -389,18 +585,32 @@ class AnthropicProvider(LLMProvider):
                 kwargs
             )
             
+            # Log successful generation
+            duration = time.time() - start_time
+            await self._log_api_call_metrics("generate", prompt, duration, "success", result=result)
+            
             return result
             
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_category = "unknown"
+            
             # Handle known API errors
             if 'authentication' in str(e).lower() or 'api key' in str(e).lower():
+                error_category = "authentication"
                 logger.error(f"Anthropic authentication error: {e}")
+                await self._log_api_call_metrics("generate", prompt, duration, "error", error_category)
                 raise EvalAuthenticationError(f"Anthropic authentication failed: {e}", provider="anthropic")
             elif 'rate limit' in str(e).lower():
+                error_category = "rate_limit"
                 logger.error(f"Anthropic rate limit error: {e}")
+                await self._log_api_call_metrics("generate", prompt, duration, "error", error_category)
                 raise EvalRateLimitError(f"Anthropic rate limit exceeded: {e}", provider="anthropic")
             else:
+                error_category = "api_error"
                 logger.error(f"Anthropic generation failed: {e}")
+                await self._log_api_call_metrics("generate", prompt, duration, "error", error_category)
                 raise EvalProviderError(f"Anthropic generation failed: {e}", provider="anthropic")
     
     def _call_anthropic_sync(self, prompt: str, kwargs: Dict[str, Any]) -> str:
@@ -444,9 +654,22 @@ class AnthropicProvider(LLMProvider):
     
     async def get_logprobs_async(self, text: str, **kwargs) -> Dict[str, Any]:
         """Get log probabilities from Anthropic API."""
+        start_time = time.time()
+        
+        # Log logprobs call start
+        log_counter("eval_llm_api_call_started", labels={
+            "provider": "anthropic",
+            "model": self.model_id,
+            "method": "logprobs"
+        })
+        
         # Note: Anthropic Claude models don't directly support logprobs like OpenAI
         # This is a placeholder for future implementation if they add this feature
         logger.warning("Log probabilities not directly supported by Anthropic API")
+        
+        duration = time.time() - start_time
+        await self._log_api_call_metrics("logprobs", text, duration, "unsupported", "feature_not_available")
+        
         return {'logprobs': [], 'tokens': [], 'note': 'Anthropic does not support logprobs'}
 
 class CohereProvider(LLMProvider):
@@ -1837,19 +2060,31 @@ class LLMInterface:
     
     def __init__(self, provider_name: str, model_id: str, config: Dict[str, Any]):
         self.provider = get_llm_provider(provider_name, model_id, config)
+        self.provider_name = provider_name
+        self.model_id = model_id
+        
+        # Log interface creation
+        log_counter("eval_llm_interface_created", labels={
+            "provider": provider_name,
+            "model": model_id
+        })
     
     async def generate(self, prompt: str, **kwargs) -> str:
         """Generate text."""
+        # Metrics are handled by the provider implementation
         return await self.provider.generate_async(prompt, **kwargs)
     
     async def generate_with_system(self, prompt: str, system_prompt: str = None, **kwargs) -> str:
         """Generate text with optional system prompt."""
+        # Metrics are handled by the provider implementation
         return await self.provider.generate_with_system_async(prompt, system_prompt, **kwargs)
     
     async def get_logprobs(self, text: str, **kwargs) -> Dict[str, Any]:
         """Get log probabilities."""
+        # Metrics are handled by the provider implementation
         return await self.provider.get_logprobs_async(text, **kwargs)
     
     async def get_completion_logprobs(self, prompt: str, completion: str, **kwargs) -> Dict[str, Any]:
         """Get log probabilities for a specific completion given a prompt."""
+        # Metrics are handled by the provider implementation
         return await self.provider.get_completion_logprobs_async(prompt, completion, **kwargs)

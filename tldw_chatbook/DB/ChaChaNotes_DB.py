@@ -37,6 +37,7 @@ changes in the `sync_log` and in individual records.
 import sqlite3
 import json
 import uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 import threading
@@ -44,6 +45,7 @@ import logging
 from typing import List, Dict, Optional, Any, Union, Set
 
 from loguru import logger
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
 #
@@ -1643,6 +1645,9 @@ UPDATE db_schema_version
             ConflictError: If an SQLite IntegrityError due to a "unique constraint failed" occurs.
             CharactersRAGDBError: For other SQLite errors or general query execution failures.
         """
+        start_time = time.time()
+        operation_type = "script" if script else "query"
+        
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
@@ -1657,8 +1662,32 @@ UPDATE db_schema_version
             if commit and not conn.in_transaction:  # Only commit if not already in a transaction handled by the context manager
                 conn.commit()
                 logger.debug("Committed directly by execute_query.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_query_duration", duration, labels={
+                "operation": operation_type,
+                "success": "true"
+            })
+            log_counter("chachanotes_db_query_count", labels={
+                "operation": operation_type,
+                "status": "success"
+            })
+            
             return cursor
         except sqlite3.IntegrityError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_query_duration", duration, labels={
+                "operation": operation_type,
+                "success": "false"
+            })
+            log_counter("chachanotes_db_query_count", labels={
+                "operation": operation_type,
+                "status": "error",
+                "error_type": "integrity_error"
+            })
+            
             logger.warning(f"Integrity constraint violation: {query[:300]}... Error: {e}")
             # Distinguish unique constraint from other integrity errors if possible
             if "unique constraint failed" in str(e).lower():
@@ -1666,6 +1695,18 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(
                 f"Database constraint violation: {e}") from e  # Broader for other integrity issues
         except sqlite3.Error as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_query_duration", duration, labels={
+                "operation": operation_type,
+                "success": "false"
+            })
+            log_counter("chachanotes_db_query_count", labels={
+                "operation": operation_type,
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Query execution failed: {query[:300]}... Error: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Query execution failed: {e}") from e
 
@@ -2332,19 +2373,57 @@ UPDATE db_schema_version
             card_data.get('creator'), card_data.get('character_version'), extensions_json,
             now, now, self.client_id, # created_at, last_modified, client_id
         )
+        
+        start_time = time.time()
         try:
             with self.transaction() as conn:
                 cursor = conn.execute(query, params)  # execute_query not needed due to conn from context
                 char_id = cursor.lastrowid
                 logger.info(f"Added character card '{card_data['name']}' with ID: {char_id}.")
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("chachanotes_db_operation_duration", duration, labels={
+                    "operation": "add_character_card",
+                    "status": "success"
+                })
+                log_counter("chachanotes_db_operation_count", labels={
+                    "operation": "add_character_card",
+                    "status": "success"
+                })
+                
                 return char_id
         except sqlite3.IntegrityError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_operation_duration", duration, labels={
+                "operation": "add_character_card",
+                "status": "error"
+            })
+            log_counter("chachanotes_db_operation_count", labels={
+                "operation": "add_character_card",
+                "status": "error",
+                "error_type": "integrity_error"
+            })
+            
             if "UNIQUE constraint failed: character_cards.name" in str(e):
                 logger.warning(f"Character card with name '{card_data['name']}' already exists.")
                 raise ConflictError(f"Character card with name '{card_data['name']}' already exists.",
                                     entity="character_cards", entity_id=card_data['name']) from e
             raise CharactersRAGDBError(f"Database integrity error adding character card: {e}") from e
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_operation_duration", duration, labels={
+                "operation": "add_character_card",
+                "status": "error"
+            })
+            log_counter("chachanotes_db_operation_count", labels={
+                "operation": "add_character_card",
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Database error adding character card '{card_data.get('name')}': {e}")
             raise
         return None # Should not be reached
@@ -2367,12 +2446,39 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during fetching.
         """
+        start_time = time.time()
         query = "SELECT * FROM character_cards WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (character_id,))
             row = cursor.fetchone()
-            return self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            result = self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "true" if result else "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "success",
+                "found": "true" if result else "false"
+            })
+            
+            return result
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Database error fetching character card ID {character_id}: {e}")
             raise
 
@@ -2394,12 +2500,39 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during fetching.
         """
+        start_time = time.time()
         query = "SELECT * FROM character_cards WHERE name = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (name,))
             row = cursor.fetchone()
-            return self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            result = self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "get_by_name",
+                "found": "true" if result else "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "get_by_name",
+                "status": "success",
+                "found": "true" if result else "false"
+            })
+            
+            return result
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "get_by_name",
+                "found": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "get_by_name",
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Database error fetching character card by name '{name}': {e}")
             raise
 
@@ -2421,12 +2554,39 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during listing.
         """
+        start_time = time.time()
         query = "SELECT * FROM character_cards WHERE deleted = 0 ORDER BY name LIMIT ? OFFSET ?"
         try:
             cursor = self.execute_query(query, (limit, offset))
             rows = cursor.fetchall()
-            return [self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS) for row in rows if row]
+            results = [self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS) for row in rows if row]
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "list",
+                "found": "true" if results else "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "list",
+                "status": "success",
+                "result_count": str(len(results))
+            })
+            
+            return results
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "list",
+                "found": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "list",
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Database error listing character cards: {e}")
             raise
 
@@ -2467,6 +2627,7 @@ UPDATE db_schema_version
                            'name' violates its unique constraint.
             CharactersRAGDBError: For other database-related errors.
         """
+        start_time = time.time()
         logger.debug(
             f"Starting update_character_card for ID {character_id}, expected_version {expected_version} (SINGLE UPDATE STRATEGY)")
 
@@ -2474,6 +2635,11 @@ UPDATE db_schema_version
         # No version check, no transaction, no version bump.
         if not card_data:
             logger.info(f"No data provided in card_data for character card update ID {character_id}. No-op.")
+            # Log metrics for no-op
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "update",
+                "status": "no_op"
+            })
             return True
 
         now = self._get_current_utc_timestamp_iso()
@@ -2565,20 +2731,63 @@ UPDATE db_schema_version
                 log_msg_fields_updated = f"Fields from payload processed: {fields_updated_log if fields_updated_log else 'None'}."
                 logger.info(
                     f"Updated character card ID {character_id} (SINGLE UPDATE) from client-expected version {expected_version} to final DB version {next_version_val}. {log_msg_fields_updated}")
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                    "operation": "update",
+                    "fields_updated": str(len(fields_updated_log))
+                })
+                log_counter("chachanotes_db_character_card_operation_count", labels={
+                    "operation": "update",
+                    "status": "success",
+                    "fields_updated": str(len(fields_updated_log))
+                })
+                
                 return True
 
         except sqlite3.IntegrityError as e: # Catch unique constraint violation for name
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "update",
+                "fields_updated": "0"
+            })
+            
             if "UNIQUE constraint failed: character_cards.name" in str(e):
                 updated_name = card_data.get("name", "[name not in update_data]")
                 logger.warning(f"Update for character card ID {character_id} failed: name '{updated_name}' already exists.")
+                log_counter("chachanotes_db_character_card_operation_count", labels={
+                    "operation": "update",
+                    "status": "error",
+                    "error_type": "unique_constraint"
+                })
                 raise ConflictError(f"Cannot update character card ID {character_id}: name '{updated_name}' already exists.",
                                     entity="character_cards", entity_id=updated_name) from e # Use name as entity_id for this specific conflict
+            
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "update",
+                "status": "error",
+                "error_type": "integrity_error"
+            })
             logger.critical(f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Database integrity error during single update: {e}") from e
         except sqlite3.DatabaseError as e:
             logger.critical(f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Database error during single update: {e}") from e
         except ConflictError:  # Re-raise ConflictErrors from _get_current_db_version or manual checks
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "update",
+                "fields_updated": "0"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "update",
+                "status": "error",
+                "error_type": "version_conflict"
+            })
+            
             logger.warning(f"ConflictError during update_character_card for ID {character_id}.",
                            exc_info=False)  # exc_info=True if needed
             raise
@@ -2670,10 +2879,43 @@ UPDATE db_schema_version
 
                 logger.info(
                     f"Soft-deleted character card ID {character_id} (was version {expected_version}), new version {next_version_val}.")
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                    "operation": "soft_delete",
+                    "idempotent": "false"
+                })
+                log_counter("chachanotes_db_character_card_operation_count", labels={
+                    "operation": "soft_delete",
+                    "status": "success",
+                    "concurrent": "false"
+                })
                 return True
         except ConflictError:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "idempotent": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "error",
+                "error_type": "version_conflict"
+            })
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error from conn.execute
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "idempotent": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "error",
+                "error_type": "database_error"
+            })
             logger.error(
                 f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}",
                 exc_info=True)
@@ -2780,6 +3022,7 @@ UPDATE db_schema_version
             ConflictError: If a conversation with the provided 'id' already exists.
             CharactersRAGDBError: For other database-related errors.
         """
+        start_time = time.time()
         conv_id = conv_data.get('id') or self._generate_uuid()
         root_id = conv_data.get('root_id') or conv_id  # If root_id not given, this is a new root.
 
@@ -2807,13 +3050,54 @@ UPDATE db_schema_version
             with self.transaction() as conn:
                 conn.execute(query, params)
             logger.info(f"Added conversation ID: {conv_id}.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "add",
+                "has_title": "true" if conv_data.get('title') else "false"
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "add",
+                "status": "success",
+                "is_forked": "true" if conv_data.get('forked_from_message_id') else "false"
+            })
+            
             return conv_id
         except sqlite3.IntegrityError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "add",
+                "has_title": "false"
+            })
+            
             if "UNIQUE constraint failed: conversations.id" in str(e):
-                 raise ConflictError(f"Conversation with ID '{conv_id}' already exists.", entity="conversations", entity_id=conv_id) from e
+                log_counter("chachanotes_db_conversation_operation_count", labels={
+                    "operation": "add",
+                    "status": "error",
+                    "error_type": "unique_constraint"
+                })
+                raise ConflictError(f"Conversation with ID '{conv_id}' already exists.", entity="conversations", entity_id=conv_id) from e
             # Could also be FK violation for character_id, etc.
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "add",
+                "status": "error",
+                "error_type": "integrity_error"
+            })
             raise CharactersRAGDBError(f"Database integrity error adding conversation: {e}") from e
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "add",
+                "has_title": "false"
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "add",
+                "status": "error",
+                "error_type": "database_error"
+            })
             logger.error(f"Database error adding conversation: {e}")
             raise
         return None # Should not be reached
@@ -2838,6 +3122,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database query errors.
         """
+        start_time = time.time()
         logger.debug(f"Listing all active conversations: limit={limit}, offset={offset}")
         query = """
                 SELECT id, \
@@ -2858,6 +3143,19 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (limit, offset))
             conversations = [dict(row) for row in cursor.fetchall()]
             logger.info(f"Found {len(conversations)} active conversations (limit {limit}, offset {offset}).")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "list_active",
+                "result_count": str(len(conversations))
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "list_active",
+                "status": "success",
+                "result_count": str(len(conversations))
+            })
+            
             return conversations
         except CharactersRAGDBError as e:
             logger.error(f"Database error listing all active conversations: {e}", exc_info=True)
@@ -2882,11 +3180,26 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during fetching.
         """
+        start_time = time.time()
         query = "SELECT * FROM conversations WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (conversation_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            result = dict(row) if row else None
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "true" if result else "false"
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "success",
+                "found": "true" if result else "false"
+            })
+            
+            return result
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching conversation ID {conversation_id}: {e}")
             raise
@@ -2909,10 +3222,25 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
+        start_time = time.time()
         query = "SELECT * FROM conversations WHERE character_id = ? AND deleted = 0 ORDER BY last_modified DESC LIMIT ? OFFSET ?"
         try:
             cursor = self.execute_query(query, (character_id, limit, offset))
-            return [dict(row) for row in cursor.fetchall()]
+            results = [dict(row) for row in cursor.fetchall()]
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "get_for_character",
+                "result_count": str(len(results))
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "get_for_character",
+                "status": "success",
+                "result_count": str(len(results))
+            })
+            
+            return results
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching conversations for character ID {character_id}: {e}")
             raise

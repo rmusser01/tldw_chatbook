@@ -1769,6 +1769,7 @@ class MediaDatabase:
             ConflictError: If the media item's version has changed since being read.
             DatabaseError: For other database errors during the operation or sync logging.
         """
+        start_time = time.time()
         current_time = self._get_current_utc_timestamp_str()  # Get time
         client_id = self.client_id
         logger.info(f"Attempting soft delete for Media ID: {media_id} [Client: {client_id}, Cascade: {cascade}]")
@@ -1780,6 +1781,17 @@ class MediaDatabase:
                 media_info = cursor.fetchone()
                 if not media_info:
                     logger.warning(f"Cannot soft delete: Media ID {media_id} not found or already deleted.")
+                    # Log metrics for not found
+                    duration = time.time() - start_time
+                    log_histogram("client_media_db_media_operation_duration", duration, labels={
+                        "operation": "soft_delete",
+                        "cascade": str(cascade)
+                    })
+                    log_counter("client_media_db_media_operation_count", labels={
+                        "operation": "soft_delete",
+                        "status": "not_found",
+                        "cascade": str(cascade)
+                    })
                     return False
                 media_uuid, current_media_version = media_info['uuid'], media_info['version']
                 new_media_version = current_media_version + 1
@@ -1846,14 +1858,52 @@ class MediaDatabase:
                         logger.debug(f"Cascade deleted {processed_children_count}/{len(children)} records in {table}.")
 
             logger.info(f"Soft delete successful for Media ID: {media_id}.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "cascade": str(cascade)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "success",
+                "cascade": str(cascade)
+            })
+            
             return True
         except (ConflictError, DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "conflict" if isinstance(e, ConflictError) else "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "cascade": str(cascade)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "error",
+                "error_type": error_type,
+                "cascade": str(cascade)
+            })
             logger.error(f"Error soft deleting media ID {media_id}: {e}", exc_info=True)
             if isinstance(e, (ConflictError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed to soft delete media: {e}") from e
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "cascade": str(cascade)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "error",
+                "error_type": "unexpected",
+                "cascade": str(cascade)
+            })
             logger.error(f"Unexpected error soft deleting media ID {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during soft delete: {e}") from e
 
@@ -2099,6 +2149,8 @@ class MediaDatabase:
             chunks: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Optional[int], Optional[str], str]:
         """Add or update a media record, handle keyword links, optional chunks and full-text sync."""
+        
+        start_time = time.time()
 
         # ---------------------------------------------------------------------
         # 1. Fast‑fail validation & normalisation
@@ -2269,8 +2321,34 @@ class MediaDatabase:
                                 if metadata_changed:
                                     self._update_fts_media(conn, media_id, title, content)
 
+                                # Log metrics for metadata update
+                                duration = time.time() - start_time
+                                log_histogram("client_media_db_media_operation_duration", duration, labels={
+                                    "operation": "add_media",
+                                    "path": "update_metadata_only",
+                                    "has_chunks": str(chunks is not None)
+                                })
+                                log_counter("client_media_db_media_operation_count", labels={
+                                    "operation": "add_media",
+                                    "path": "update_metadata_only",
+                                    "status": "success"
+                                })
+                                
                                 return media_id, media_uuid, f"Media '{title}' metadata updated."
                             else:
+                                # Log metrics for no-op (already up-to-date)
+                                duration = time.time() - start_time
+                                log_histogram("client_media_db_media_operation_duration", duration, labels={
+                                    "operation": "add_media",
+                                    "path": "no_op",
+                                    "has_chunks": "false"
+                                })
+                                log_counter("client_media_db_media_operation_count", labels={
+                                    "operation": "add_media",
+                                    "path": "no_op",
+                                    "status": "success"
+                                })
+                                
                                 return media_id, media_uuid, f"Media '{title}' is already up-to-date."
 
                         # Case A.1.b: Content is different. Proceed with a full versioned update.
@@ -2296,6 +2374,19 @@ class MediaDatabase:
                             media_id=media_id, content=content, prompt=prompt, analysis_content=analysis_content
                         )
                         _persist_chunks(conn, media_id)
+                        # Log metrics for content update
+                        duration = time.time() - start_time
+                        log_histogram("client_media_db_media_operation_duration", duration, labels={
+                            "operation": "add_media",
+                            "path": "update_content",
+                            "has_chunks": str(chunks is not None)
+                        })
+                        log_counter("client_media_db_media_operation_count", labels={
+                            "operation": "add_media",
+                            "path": "update_content",
+                            "status": "success"
+                        })
+                        
                         return media_id, media_uuid, f"Media '{title}' updated to new version."
 
                     # Case A.2: Overwrite is FALSE.
@@ -2318,8 +2409,34 @@ class MediaDatabase:
                             self._log_sync_event(
                                 conn, "Media", media_uuid, "update", new_ver, {"url": url, "last_modified": now}
                             )
+                            # Log metrics for URL canonicalization
+                            duration = time.time() - start_time
+                            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                                "operation": "add_media",
+                                "path": "canonicalize_url",
+                                "has_chunks": "false"
+                            })
+                            log_counter("client_media_db_media_operation_count", labels={
+                                "operation": "add_media",
+                                "path": "canonicalize_url",
+                                "status": "success"
+                            })
+                            
                             return media_id, media_uuid, f"Media '{title}' URL canonicalized."
 
+                        # Log metrics for duplicate skip
+                        duration = time.time() - start_time
+                        log_histogram("client_media_db_media_operation_duration", duration, labels={
+                            "operation": "add_media",
+                            "path": "skip_duplicate",
+                            "has_chunks": "false"
+                        })
+                        log_counter("client_media_db_media_operation_count", labels={
+                            "operation": "add_media",
+                            "path": "skip_duplicate",
+                            "status": "success"
+                        })
+                        
                         return None, None, f"Media '{title}' already exists. Overwrite not enabled."
 
                 # --- Path B: Record does not exist, perform INSERT ---
@@ -2352,13 +2469,53 @@ class MediaDatabase:
                     if chunk_options:
                         logging.info("chunk_options ignored (placeholder): %s", chunk_options)
 
+                    # Log metrics for new media creation
+                    duration = time.time() - start_time
+                    log_histogram("client_media_db_media_operation_duration", duration, labels={
+                        "operation": "add_media",
+                        "path": "create_new",
+                        "has_chunks": str(chunks is not None)
+                    })
+                    log_counter("client_media_db_media_operation_count", labels={
+                        "operation": "add_media",
+                        "path": "create_new",
+                        "status": "success"
+                    })
+                    
                     return media_id, media_uuid, f"Media '{title}' added."
 
         except (InputError, ConflictError, sqlite3.IntegrityError) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "input_error" if isinstance(e, InputError) else "conflict" if isinstance(e, ConflictError) else "integrity_error"
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "add_media",
+                "path": "error",
+                "has_chunks": str(chunks is not None)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "add_media",
+                "path": "error",
+                "status": "error",
+                "error_type": error_type
+            })
             # Catch the specific IntegrityError from the trigger and re-raise as a more descriptive error if you want
             logging.error(f"Transaction failed, rolling back: {type(e).__name__} - {e}")
             raise  # Re-raise the original exception
         except Exception as exc:
+            # Log error metrics for unexpected errors
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "add_media",
+                "path": "error",
+                "has_chunks": str(chunks is not None)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "add_media",
+                "path": "error",
+                "status": "error",
+                "error_type": "unexpected"
+            })
             logging.error(f"Unexpected error in transaction: {type(exc).__name__} - {exc}")
             raise DatabaseError(f"Unexpected error processing media: {exc}") from exc
 
@@ -2559,6 +2716,7 @@ class MediaDatabase:
             ConflictError: If optimistic locking fails (version mismatch)
             DatabaseError: For database errors
         """
+        start_time = time.time()
         logger = logging.getLogger(__name__)
         client_id = self.client_id
         now = self._get_current_utc_timestamp_str()
@@ -2647,17 +2805,75 @@ class MediaDatabase:
                         message = f"No changes needed for media ID {media_id}"
                         
                     logger.info(message)
+                    
+                    # Log metrics for successful update
+                    duration = time.time() - start_time
+                    log_histogram("client_media_db_media_operation_duration", duration, labels={
+                        "operation": "update_metadata",
+                        "fields_updated": str(len(updates_made))
+                    })
+                    log_counter("client_media_db_media_operation_count", labels={
+                        "operation": "update_metadata",
+                        "status": "success",
+                        "fields_updated": str(len(updates_made))
+                    })
+                    
                     return True, message
                 else:
+                    # Log metrics for no-op
+                    duration = time.time() - start_time
+                    log_histogram("client_media_db_media_operation_duration", duration, labels={
+                        "operation": "update_metadata",
+                        "fields_updated": "0"
+                    })
+                    log_counter("client_media_db_media_operation_count", labels={
+                        "operation": "update_metadata",
+                        "status": "no_op"
+                    })
+                    
                     return True, "No changes to update"
                     
         except (InputError, ConflictError, DatabaseError) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "input_error" if isinstance(e, InputError) else "conflict" if isinstance(e, ConflictError) else "database_error"
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "update_metadata",
+                "fields_updated": "0"
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "update_metadata",
+                "status": "error",
+                "error_type": error_type
+            })
             logger.error(f"Error updating media metadata for ID {media_id}: {e}")
             raise
         except sqlite3.Error as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "update_metadata",
+                "fields_updated": "0"
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "update_metadata",
+                "status": "error",
+                "error_type": "sqlite_error"
+            })
             logger.error(f"Database error updating media metadata: {e}", exc_info=True)
             raise DatabaseError(f"Failed to update media metadata: {e}") from e
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "update_metadata",
+                "fields_updated": "0"
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "update_metadata",
+                "status": "error",
+                "error_type": "unexpected"
+            })
             logger.error(f"Unexpected error updating media metadata: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error: {e}") from e
 
@@ -3581,6 +3797,8 @@ class MediaDatabase:
             InputError: If `media_id` is not an integer.
             DatabaseError: If a database query error occurs.
         """
+        start_time = time.time()
+        
         if not isinstance(media_id, int):
             raise InputError("media_id must be an integer.")
 
@@ -3595,11 +3813,53 @@ class MediaDatabase:
         try:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
-            return dict(result) if result else None
+            found_result = dict(result) if result else None
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "true" if found_result else "false",
+                "include_deleted": str(include_deleted),
+                "include_trash": str(include_trash)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "success",
+                "found": "true" if found_result else "false"
+            })
+            
+            return found_result
         except sqlite3.Error as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "false",
+                "include_deleted": str(include_deleted),
+                "include_trash": str(include_trash)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "error",
+                "error_type": "database_error"
+            })
             logger.error(f"Error fetching media by ID {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Failed to fetch media by ID: {e}") from e
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "false",
+                "include_deleted": str(include_deleted),
+                "include_trash": str(include_trash)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "error",
+                "error_type": "unexpected_error"
+            })
             logger.error(f"Unexpected error fetching media by ID {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error fetching media by ID: {e}") from e
 

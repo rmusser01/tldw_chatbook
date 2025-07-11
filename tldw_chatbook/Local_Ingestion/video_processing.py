@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import logging
+import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlparse
@@ -19,6 +20,7 @@ from .audio_processing import LocalAudioProcessor, AudioProcessingError
 from ..config import get_cli_setting
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Utils.text import sanitize_filename
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 # Optional imports
 try:
@@ -77,7 +79,14 @@ class LocalVideoProcessor:
         Returns:
             Path to downloaded file or None if failed
         """
+        start_time = time.time()
+        log_counter("video_processing_download_attempt", labels={
+            "download_type": "full_video" if download_video_flag else "audio_only",
+            "use_cookies": str(use_cookies)
+        })
+        
         if not YT_DLP_AVAILABLE:
+            log_counter("video_processing_download_error", labels={"error_type": "yt_dlp_not_available"})
             raise VideoDownloadError("yt-dlp is not installed")
         
         try:
@@ -133,19 +142,34 @@ class LocalVideoProcessor:
                 ydl_opts['ffmpeg_location'] = ffmpeg_path
             
             # Extract info first to check file size
+            metadata_start = time.time()
             with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
+                # Log metadata extraction
+                metadata_duration = time.time() - metadata_start
+                log_histogram("video_processing_metadata_extraction_duration", metadata_duration)
+                
                 # Check file size if available
                 filesize = info.get('filesize') or info.get('filesize_approx', 0)
-                if filesize and filesize > self.max_file_size:
-                    raise VideoDownloadError(
-                        f"File size ({filesize / (1024*1024):.2f} MB) exceeds limit"
-                    )
+                if filesize:
+                    log_histogram("video_processing_file_size_bytes", filesize)
+                    if filesize > self.max_file_size:
+                        log_counter("video_processing_download_error", labels={"error_type": "file_too_large"})
+                        raise VideoDownloadError(
+                            f"File size ({filesize / (1024*1024):.2f} MB) exceeds limit"
+                        )
             
             # Perform download
+            download_start = time.time()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
+                
+                # Log download duration
+                download_duration = time.time() - download_start
+                log_histogram("video_processing_download_duration", download_duration, labels={
+                    "download_type": "full_video" if download_video_flag else "audio_only"
+                })
                 
                 # Get the actual filename
                 filename = ydl.prepare_filename(info)
@@ -159,6 +183,17 @@ class LocalVideoProcessor:
                         return audio_path
                 
                 if os.path.exists(filename):
+                    # Log success
+                    duration = time.time() - start_time
+                    file_size = os.path.getsize(filename)
+                    log_histogram("video_processing_download_total_duration", duration, labels={
+                        "status": "success",
+                        "download_type": "full_video" if download_video_flag else "audio_only"
+                    })
+                    log_histogram("video_processing_downloaded_file_size_bytes", file_size)
+                    log_counter("video_processing_download_success", labels={
+                        "download_type": "full_video" if download_video_flag else "audio_only"
+                    })
                     return filename
                 
                 # Try to find the file with different extensions
@@ -166,11 +201,37 @@ class LocalVideoProcessor:
                 for ext in ['.mp4', '.mp3', '.m4a', '.webm', '.mkv']:
                     test_path = base_name + ext
                     if os.path.exists(test_path):
+                        # Log success
+                        duration = time.time() - start_time
+                        file_size = os.path.getsize(test_path)
+                        log_histogram("video_processing_download_total_duration", duration, labels={
+                            "status": "success",
+                            "download_type": "full_video" if download_video_flag else "audio_only"
+                        })
+                        log_histogram("video_processing_downloaded_file_size_bytes", file_size)
+                        log_counter("video_processing_download_success", labels={
+                            "download_type": "full_video" if download_video_flag else "audio_only",
+                            "found_with_extension": ext
+                        })
                         return test_path
                 
+                # Log success
+                duration = time.time() - start_time
+                log_histogram("video_processing_download_total_duration", duration, labels={
+                    "status": "not_found",
+                    "download_type": "full_video" if download_video_flag else "audio_only"
+                })
+                log_counter("video_processing_download_error", labels={"error_type": "file_not_found"})
                 raise VideoDownloadError("Downloaded file not found")
                 
         except Exception as e:
+            # Log error
+            duration = time.time() - start_time
+            log_histogram("video_processing_download_total_duration", duration, labels={
+                "status": "error",
+                "download_type": "full_video" if download_video_flag else "audio_only"
+            })
+            log_counter("video_processing_download_error", labels={"error_type": type(e).__name__})
             logger.error(f"Video download error: {str(e)}")
             raise VideoDownloadError(f"Download failed: {str(e)}") from e
         finally:
@@ -184,7 +245,11 @@ class LocalVideoProcessor:
     def extract_metadata(self, url: str, use_cookies: bool = False, 
                         cookies: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
         """Extract metadata from video URL without downloading."""
+        start_time = time.time()
+        log_counter("video_processing_metadata_attempt")
+        
         if not YT_DLP_AVAILABLE:
+            log_counter("video_processing_metadata_error", labels={"error_type": "yt_dlp_not_available"})
             return None
         
         try:
@@ -211,9 +276,21 @@ class LocalVideoProcessor:
                     'thumbnail': info.get('thumbnail'),
                 }
                 
+                # Log success
+                duration = time.time() - start_time
+                log_histogram("video_processing_metadata_duration", duration, labels={"status": "success"})
+                log_counter("video_processing_metadata_success", labels={
+                    "has_duration": str(bool(metadata.get('duration'))),
+                    "has_uploader": str(bool(metadata.get('uploader')))
+                })
+                
                 return metadata
                 
         except Exception as e:
+            # Log error
+            duration = time.time() - start_time
+            log_histogram("video_processing_metadata_duration", duration, labels={"status": "error"})
+            log_counter("video_processing_metadata_error", labels={"error_type": type(e).__name__})
             logger.error(f"Error extracting metadata: {str(e)}")
             return None
     
@@ -234,6 +311,13 @@ class LocalVideoProcessor:
         Returns:
             Dict with processing results
         """
+        start_time = time.time()
+        total_inputs = len(inputs)
+        log_counter("video_processing_batch_start", labels={
+            "total_inputs": str(total_inputs),
+            "download_video": str(download_video_flag)
+        })
+        
         results = []
         errors = []
         
@@ -263,6 +347,18 @@ class LocalVideoProcessor:
         processed_count = sum(1 for r in results if r.get("status") == "Success")
         errors_count = sum(1 for r in results if r.get("status") == "Error")
         
+        # Log batch completion metrics
+        duration = time.time() - start_time
+        log_histogram("video_processing_batch_duration", duration, labels={
+            "total_inputs": str(total_inputs),
+            "success_count": str(processed_count)
+        })
+        log_counter("video_processing_batch_complete", labels={
+            "total_inputs": str(total_inputs),
+            "success_count": str(processed_count),
+            "error_count": str(errors_count)
+        })
+        
         return {
             "processed_count": processed_count,
             "errors_count": errors_count,
@@ -278,6 +374,7 @@ class LocalVideoProcessor:
         **kwargs
     ) -> Dict[str, Any]:
         """Process a single video file or URL."""
+        start_time = time.time()
         
         result = {
             "status": "Pending",
@@ -297,6 +394,11 @@ class LocalVideoProcessor:
         try:
             # Determine if input is URL or local file
             is_url = urlparse(input_item).scheme in ('http', 'https')
+            
+            log_counter("video_processing_single_attempt", labels={
+                "is_url": str(is_url),
+                "download_video": str(download_video_flag)
+            })
             
             if is_url:
                 # Extract metadata
@@ -373,6 +475,19 @@ class LocalVideoProcessor:
             
             result["status"] = "Success" if not result["warnings"] else "Warning"
             
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("video_processing_single_duration", duration, labels={
+                "status": "success",
+                "is_url": str(is_url),
+                "has_analysis": str(bool(result.get("analysis")))
+            })
+            log_counter("video_processing_single_success", labels={
+                "is_url": str(is_url),
+                "download_video": str(download_video_flag),
+                "chunks_created": str(len(result.get("chunks", [])))
+            })
+            
             # Handle keep_original option - move video/audio file to Downloads folder
             if kwargs.get("keep_original", False) and is_url and download_video_flag:
                 try:
@@ -406,11 +521,24 @@ class LocalVideoProcessor:
             logger.error(f"Error processing video: {str(e)}", exc_info=True)
             result["status"] = "Error"
             result["error"] = str(e)
+            
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("video_processing_single_duration", duration, labels={
+                "status": "error",
+                "is_url": str(is_url)
+            })
+            log_counter("video_processing_single_error", labels={
+                "is_url": str(is_url),
+                "error_type": type(e).__name__
+            })
         
         return result
     
     def _extract_audio_from_video(self, video_path: str, output_dir: str) -> str:
         """Extract audio track from video file."""
+        start_time = time.time()
+        log_counter("video_processing_audio_extraction_attempt")
         
         # Find ffmpeg
         ffmpeg_cmd = self._find_ffmpeg()

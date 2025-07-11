@@ -30,6 +30,7 @@ from loguru import logger
 
 from .eval_runner import BaseEvalRunner, EvalSampleResult, EvalSample
 from .task_loader import TaskConfig
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 class CodeExecutionRunner(BaseEvalRunner):
     """Runner for code generation tasks with execution testing."""
@@ -42,24 +43,88 @@ class CodeExecutionRunner(BaseEvalRunner):
         """Run code generation evaluation with execution testing."""
         start_time = time.time()
         
+        # Log specialized runner start
+        log_counter("eval_specialized_runner_started", labels={
+            "runner_type": "code_execution",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        
         try:
             # Generate code
             prompt = self._format_code_prompt(sample)
+            generation_start = time.time()
             response = await self.llm_interface.generate(
                 prompt=prompt,
                 **self.task_config.generation_kwargs
             )
+            generation_duration = time.time() - generation_start
+            
+            # Log generation metrics
+            log_histogram("eval_code_generation_duration", generation_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             # Extract code from response
+            extraction_start = time.time()
             extracted_code = self._extract_code(response)
+            extraction_duration = time.time() - extraction_start
+            
+            log_histogram("eval_code_extraction_duration", extraction_duration, labels={
+                "extraction_method": "regex_and_ast"
+            })
+            log_histogram("eval_extracted_code_length", len(extracted_code), labels={
+                "provider": self.model_config.get('provider', 'unknown')
+            })
             
             # Execute code and run tests
+            execution_start = time.time()
             execution_results = self._execute_code(extracted_code, sample)
+            execution_duration = time.time() - execution_start
+            
+            # Log execution metrics
+            log_histogram("eval_code_execution_duration", execution_duration, labels={
+                "syntax_valid": str(execution_results.get('syntax_valid', False)),
+                "execution_success": str(execution_results.get('execution_success', False))
+            })
+            
+            if execution_results.get('test_results'):
+                passed_tests = sum(1 for t in execution_results['test_results'] if t.get('passed', False))
+                total_tests = len(execution_results['test_results'])
+                log_histogram("eval_code_test_pass_rate", passed_tests / total_tests if total_tests > 0 else 0, labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+                log_histogram("eval_code_test_count", total_tests, labels={
+                    "provider": self.model_config.get('provider', 'unknown')
+                })
             
             # Calculate metrics
             metrics = self._calculate_code_metrics(execution_results, sample)
             
             processing_time = time.time() - start_time
+            
+            # Log success metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "code_execution",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "success"
+            })
+            log_counter("eval_specialized_runner_success", labels={
+                "runner_type": "code_execution",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            
+            # Log code-specific metrics
+            for metric_name, metric_value in metrics.items():
+                if isinstance(metric_value, (int, float)):
+                    log_histogram(f"eval_code_metric_{metric_name}", metric_value, labels={
+                        "provider": self.model_config.get('provider', 'unknown'),
+                        "model": self.model_config.get('model_id', 'unknown')
+                    })
             
             return EvalSampleResult(
                 sample_id=sample.id,
@@ -76,14 +141,30 @@ class CodeExecutionRunner(BaseEvalRunner):
             )
             
         except Exception as e:
+            processing_time = time.time() - start_time
             logger.error(f"Error in code execution sample {sample.id}: {e}")
+            
+            # Log error metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "code_execution",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "error"
+            })
+            log_counter("eval_specialized_runner_error", labels={
+                "runner_type": "code_execution",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_type": type(e).__name__
+            })
+            
             return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0, 'execution_success': 0.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time
             )
     
     def _format_code_prompt(self, sample: EvalSample) -> str:
@@ -125,6 +206,7 @@ class CodeExecutionRunner(BaseEvalRunner):
     
     def _execute_code(self, code: str, sample: EvalSample) -> Dict[str, Any]:
         """Execute code and run test cases."""
+        execution_start = time.time()
         results = {
             'syntax_valid': False,
             'execution_success': False,
@@ -135,8 +217,17 @@ class CodeExecutionRunner(BaseEvalRunner):
         
         try:
             # Check syntax
+            syntax_check_start = time.time()
             ast.parse(code)
             results['syntax_valid'] = True
+            syntax_check_duration = time.time() - syntax_check_start
+            
+            log_histogram("eval_code_syntax_check_duration", syntax_check_duration, labels={
+                "valid": "true"
+            })
+            log_counter("eval_code_syntax_valid", labels={
+                "provider": self.model_config.get('provider', 'unknown')
+            })
             
             # Prepare test cases
             test_cases = getattr(sample, 'test_cases', [])
@@ -330,21 +421,85 @@ class SafetyEvaluationRunner(BaseEvalRunner):
         """Run safety evaluation on a single sample."""
         start_time = time.time()
         
+        # Log specialized runner start
+        log_counter("eval_specialized_runner_started", labels={
+            "runner_type": "safety_evaluation",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        
         try:
             # Generate response
             prompt = self._format_safety_prompt(sample)
+            generation_start = time.time()
             response = await self.llm_interface.generate(
                 prompt=prompt,
                 **self.task_config.generation_kwargs
             )
+            generation_duration = time.time() - generation_start
+            
+            # Log generation metrics
+            log_histogram("eval_safety_generation_duration", generation_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "task_type": self.task_config.task_type
+            })
             
             # Analyze response for safety issues
+            analysis_start = time.time()
             safety_analysis = self._analyze_safety(response, sample)
+            analysis_duration = time.time() - analysis_start
+            
+            log_histogram("eval_safety_analysis_duration", analysis_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown')
+            })
+            
+            # Log safety findings
+            if safety_analysis['contains_harmful_content']:
+                log_counter("eval_safety_harmful_content_detected", labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            if safety_analysis['contains_bias']:
+                log_counter("eval_safety_bias_detected", labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            if safety_analysis['privacy_leakage']:
+                log_counter("eval_safety_privacy_leakage_detected", labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            if safety_analysis['appropriate_refusal']:
+                log_counter("eval_safety_appropriate_refusal", labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
             
             # Calculate safety metrics
             metrics = self._calculate_safety_metrics(safety_analysis, sample)
             
+            # Log safety score
+            if 'safety_score' in metrics:
+                log_histogram("eval_safety_score", metrics['safety_score'], labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            
             processing_time = time.time() - start_time
+            
+            # Log success metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "safety_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "success"
+            })
+            log_counter("eval_specialized_runner_success", labels={
+                "runner_type": "safety_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             return EvalSampleResult(
                 sample_id=sample.id,
@@ -360,14 +515,30 @@ class SafetyEvaluationRunner(BaseEvalRunner):
             )
             
         except Exception as e:
+            processing_time = time.time() - start_time
             logger.error(f"Error in safety evaluation sample {sample.id}: {e}")
+            
+            # Log error metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "safety_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "error"
+            })
+            log_counter("eval_specialized_runner_error", labels={
+                "runner_type": "safety_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_type": type(e).__name__
+            })
+            
             return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time
             )
     
     def _format_safety_prompt(self, sample: EvalSample) -> str:
@@ -490,21 +661,84 @@ class MultilingualEvaluationRunner(BaseEvalRunner):
         """Run multilingual evaluation on a single sample."""
         start_time = time.time()
         
+        # Log specialized runner start
+        log_counter("eval_specialized_runner_started", labels={
+            "runner_type": "multilingual_evaluation",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown'),
+            "target_language": self.target_language
+        })
+        
         try:
             # Generate response
             prompt = self._format_multilingual_prompt(sample)
+            generation_start = time.time()
             response = await self.llm_interface.generate(
                 prompt=prompt,
                 **self.task_config.generation_kwargs
             )
+            generation_duration = time.time() - generation_start
+            
+            # Log generation metrics
+            log_histogram("eval_multilingual_generation_duration", generation_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "target_language": self.target_language
+            })
             
             # Analyze response for language characteristics
+            analysis_start = time.time()
             language_analysis = self._analyze_language(response, sample)
+            analysis_duration = time.time() - analysis_start
+            
+            log_histogram("eval_multilingual_analysis_duration", analysis_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "target_language": self.target_language
+            })
+            
+            # Log language detection results
+            if language_analysis.get('contains_latin_script'):
+                log_counter("eval_multilingual_latin_script_detected", labels={
+                    "target_language": self.target_language
+                })
+            if language_analysis.get('contains_chinese'):
+                log_counter("eval_multilingual_chinese_detected", labels={
+                    "target_language": self.target_language
+                })
+            if language_analysis.get('contains_japanese'):
+                log_counter("eval_multilingual_japanese_detected", labels={
+                    "target_language": self.target_language
+                })
+            if language_analysis.get('contains_arabic'):
+                log_counter("eval_multilingual_arabic_detected", labels={
+                    "target_language": self.target_language
+                })
             
             # Calculate multilingual metrics
             metrics = self._calculate_multilingual_metrics(language_analysis, sample)
             
+            # Log fluency score
+            if 'fluency_score' in metrics:
+                log_histogram("eval_multilingual_fluency_score", metrics['fluency_score'], labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown'),
+                    "target_language": self.target_language
+                })
+            
             processing_time = time.time() - start_time
+            
+            # Log success metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "multilingual_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "success"
+            })
+            log_counter("eval_specialized_runner_success", labels={
+                "runner_type": "multilingual_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             return EvalSampleResult(
                 sample_id=sample.id,
@@ -520,14 +754,30 @@ class MultilingualEvaluationRunner(BaseEvalRunner):
             )
             
         except Exception as e:
+            processing_time = time.time() - start_time
             logger.error(f"Error in multilingual evaluation sample {sample.id}: {e}")
+            
+            # Log error metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "multilingual_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "error"
+            })
+            log_counter("eval_specialized_runner_error", labels={
+                "runner_type": "multilingual_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_type": type(e).__name__
+            })
+            
             return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time
             )
     
     def _format_multilingual_prompt(self, sample: EvalSample) -> str:
@@ -623,21 +873,75 @@ class CreativeEvaluationRunner(BaseEvalRunner):
         """Run creative evaluation on a single sample."""
         start_time = time.time()
         
+        # Log specialized runner start
+        log_counter("eval_specialized_runner_started", labels={
+            "runner_type": "creative_evaluation",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        
         try:
             # Generate creative response
             prompt = self._format_creative_prompt(sample)
+            generation_start = time.time()
             response = await self.llm_interface.generate(
                 prompt=prompt,
                 **self.task_config.generation_kwargs
             )
+            generation_duration = time.time() - generation_start
+            
+            # Log generation metrics
+            log_histogram("eval_creative_generation_duration", generation_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "task_subcategory": self.task_config.metadata.get('subcategory', 'creative_writing')
+            })
             
             # Analyze creativity and quality
+            analysis_start = time.time()
             creativity_analysis = self._analyze_creativity(response, sample)
+            analysis_duration = time.time() - analysis_start
+            
+            log_histogram("eval_creative_analysis_duration", analysis_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown')
+            })
+            
+            # Log vocabulary diversity
+            log_histogram("eval_creative_vocabulary_diversity", creativity_analysis['vocabulary_diversity'], labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             # Calculate creative metrics
             metrics = self._calculate_creative_metrics(creativity_analysis, sample)
             
+            # Log creativity score
+            if 'creativity_score' in metrics:
+                log_histogram("eval_creative_score", metrics['creativity_score'], labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            
+            # Log response length
+            log_histogram("eval_creative_response_length", metrics.get('word_count', 0), labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            
             processing_time = time.time() - start_time
+            
+            # Log success metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "creative_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "success"
+            })
+            log_counter("eval_specialized_runner_success", labels={
+                "runner_type": "creative_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             return EvalSampleResult(
                 sample_id=sample.id,
@@ -653,14 +957,30 @@ class CreativeEvaluationRunner(BaseEvalRunner):
             )
             
         except Exception as e:
+            processing_time = time.time() - start_time
             logger.error(f"Error in creative evaluation sample {sample.id}: {e}")
+            
+            # Log error metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "creative_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "error"
+            })
+            log_counter("eval_specialized_runner_error", labels={
+                "runner_type": "creative_evaluation",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_type": type(e).__name__
+            })
+            
             return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time
             )
     
     def _format_creative_prompt(self, sample: EvalSample) -> str:
@@ -760,22 +1080,61 @@ class MathReasoningRunner(BaseEvalRunner):
         """Run math evaluation on a single sample."""
         start_time = time.time()
         
+        # Log specialized runner start
+        log_counter("eval_specialized_runner_started", labels={
+            "runner_type": "math_reasoning",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        
         try:
             # Generate response
             prompt = self._format_math_prompt(sample)
+            generation_start = time.time()
             response = await self.llm_interface.generate(
                 prompt=prompt,
                 **self.task_config.generation_kwargs
             )
+            generation_duration = time.time() - generation_start
+            
+            # Log generation metrics
+            log_histogram("eval_math_generation_duration", generation_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             # Extract numerical answer
+            extraction_start = time.time()
             extracted_answer = self._extract_numerical_answer(response)
+            extraction_duration = time.time() - extraction_start
+            
+            log_histogram("eval_math_extraction_duration", extraction_duration, labels={
+                "found_answer": str(extracted_answer is not None)
+            })
             
             # Check if answer is correct
             is_correct = self._check_math_answer(extracted_answer, sample.expected_output)
             
+            if is_correct:
+                log_counter("eval_math_correct_answer", labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            else:
+                log_counter("eval_math_incorrect_answer", labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown'),
+                    "no_answer_found": str(extracted_answer is None)
+                })
+            
             # Analyze reasoning steps
+            analysis_start = time.time()
             reasoning_analysis = self._analyze_reasoning(response)
+            analysis_duration = time.time() - analysis_start
+            
+            log_histogram("eval_math_reasoning_analysis_duration", analysis_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown')
+            })
             
             # Calculate metrics
             metrics = {
@@ -786,7 +1145,33 @@ class MathReasoningRunner(BaseEvalRunner):
                 'uses_equations': 1.0 if reasoning_analysis['uses_equations'] else 0.0
             }
             
+            # Log step count
+            log_histogram("eval_math_step_count", reasoning_analysis['step_count'], labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            
+            # Log reasoning quality
+            if reasoning_analysis['has_steps']:
+                log_counter("eval_math_has_reasoning_steps", labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            
             processing_time = time.time() - start_time
+            
+            # Log success metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "math_reasoning",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "success"
+            })
+            log_counter("eval_specialized_runner_success", labels={
+                "runner_type": "math_reasoning",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             return EvalSampleResult(
                 sample_id=sample.id,
@@ -804,14 +1189,30 @@ class MathReasoningRunner(BaseEvalRunner):
             )
             
         except Exception as e:
+            processing_time = time.time() - start_time
             logger.error(f"Error in math evaluation sample {sample.id}: {e}")
+            
+            # Log error metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "math_reasoning",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "error"
+            })
+            log_counter("eval_specialized_runner_error", labels={
+                "runner_type": "math_reasoning",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_type": type(e).__name__
+            })
+            
             return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0, 'correct': 0.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time
             )
     
     def _format_math_prompt(self, sample: EvalSample) -> str:
@@ -893,13 +1294,28 @@ class SummarizationRunner(BaseEvalRunner):
         """Run summarization evaluation on a single sample."""
         start_time = time.time()
         
+        # Log specialized runner start
+        log_counter("eval_specialized_runner_started", labels={
+            "runner_type": "summarization",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        
         try:
             # Generate summary
             prompt = self._format_summarization_prompt(sample)
+            generation_start = time.time()
             summary = await self.llm_interface.generate(
                 prompt=prompt,
                 **self.task_config.generation_kwargs
             )
+            generation_duration = time.time() - generation_start
+            
+            # Log generation metrics
+            log_histogram("eval_summarization_generation_duration", generation_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             # Calculate summarization metrics
             metrics = {}
@@ -920,10 +1336,55 @@ class SummarizationRunner(BaseEvalRunner):
                 metrics['rouge-l'] = MetricsCalculator.calculate_rouge_l(summary, sample.expected_output)
             
             # Content coverage analysis
+            analysis_start = time.time()
             coverage_analysis = self._analyze_content_coverage(summary, sample.input_text)
+            analysis_duration = time.time() - analysis_start
             metrics['key_info_coverage'] = coverage_analysis['coverage_score']
             
+            log_histogram("eval_summarization_analysis_duration", analysis_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown')
+            })
+            
+            # Log summarization metrics
+            log_histogram("eval_summarization_compression_ratio", compression_ratio, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            
+            log_histogram("eval_summarization_coverage_score", coverage_analysis['coverage_score'], labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            
+            # Log ROUGE scores if available
+            if 'rouge-1' in metrics:
+                log_histogram("eval_summarization_rouge1_score", metrics['rouge-1'], labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+                log_histogram("eval_summarization_rouge2_score", metrics['rouge-2'], labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+                log_histogram("eval_summarization_rougeL_score", metrics['rouge-l'], labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            
             processing_time = time.time() - start_time
+            
+            # Log success metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "summarization",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "success"
+            })
+            log_counter("eval_specialized_runner_success", labels={
+                "runner_type": "summarization",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             return EvalSampleResult(
                 sample_id=sample.id,
@@ -940,14 +1401,30 @@ class SummarizationRunner(BaseEvalRunner):
             )
             
         except Exception as e:
+            processing_time = time.time() - start_time
             logger.error(f"Error in summarization sample {sample.id}: {e}")
+            
+            # Log error metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "summarization",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "error"
+            })
+            log_counter("eval_specialized_runner_error", labels={
+                "runner_type": "summarization",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_type": type(e).__name__
+            })
+            
             return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time
             )
     
     def _format_summarization_prompt(self, sample: EvalSample) -> str:
@@ -991,16 +1468,37 @@ class DialogueRunner(BaseEvalRunner):
         """Run dialogue evaluation on a single sample."""
         start_time = time.time()
         
+        # Log specialized runner start
+        log_counter("eval_specialized_runner_started", labels={
+            "runner_type": "dialogue",
+            "provider": self.model_config.get('provider', 'unknown'),
+            "model": self.model_config.get('model_id', 'unknown')
+        })
+        
         try:
             # Generate response
             prompt = self._format_dialogue_prompt(sample)
+            generation_start = time.time()
             response = await self.llm_interface.generate(
                 prompt=prompt,
                 **self.task_config.generation_kwargs
             )
+            generation_duration = time.time() - generation_start
+            
+            # Log generation metrics
+            log_histogram("eval_dialogue_generation_duration", generation_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             # Analyze dialogue quality
+            analysis_start = time.time()
             dialogue_analysis = self._analyze_dialogue_quality(response, sample)
+            analysis_duration = time.time() - analysis_start
+            
+            log_histogram("eval_dialogue_analysis_duration", analysis_duration, labels={
+                "provider": self.model_config.get('provider', 'unknown')
+            })
             
             # Calculate metrics
             metrics = {
@@ -1018,7 +1516,40 @@ class DialogueRunner(BaseEvalRunner):
                     response, sample.expected_output
                 )
             
+            # Log dialogue quality metrics
+            log_histogram("eval_dialogue_relevance_score", dialogue_analysis['relevance_score'], labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            log_histogram("eval_dialogue_coherence_score", dialogue_analysis['coherence_score'], labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            log_histogram("eval_dialogue_appropriateness_score", dialogue_analysis['appropriateness_score'], labels={
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
+            
+            if dialogue_analysis['maintains_context']:
+                log_counter("eval_dialogue_maintains_context", labels={
+                    "provider": self.model_config.get('provider', 'unknown'),
+                    "model": self.model_config.get('model_id', 'unknown')
+                })
+            
             processing_time = time.time() - start_time
+            
+            # Log success metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "dialogue",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "success"
+            })
+            log_counter("eval_specialized_runner_success", labels={
+                "runner_type": "dialogue",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown')
+            })
             
             return EvalSampleResult(
                 sample_id=sample.id,
@@ -1034,14 +1565,30 @@ class DialogueRunner(BaseEvalRunner):
             )
             
         except Exception as e:
+            processing_time = time.time() - start_time
             logger.error(f"Error in dialogue sample {sample.id}: {e}")
+            
+            # Log error metrics
+            log_histogram("eval_specialized_runner_duration", processing_time, labels={
+                "runner_type": "dialogue",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "status": "error"
+            })
+            log_counter("eval_specialized_runner_error", labels={
+                "runner_type": "dialogue",
+                "provider": self.model_config.get('provider', 'unknown'),
+                "model": self.model_config.get('model_id', 'unknown'),
+                "error_type": type(e).__name__
+            })
+            
             return EvalSampleResult(
                 sample_id=sample.id,
                 input_text=sample.input_text,
                 expected_output=sample.expected_output,
                 actual_output=f"ERROR: {str(e)}",
                 metrics={'error': 1.0},
-                processing_time=time.time() - start_time
+                processing_time=processing_time
             )
     
     def _format_dialogue_prompt(self, sample: EvalSample) -> str:
@@ -1110,3 +1657,77 @@ class DialogueRunner(BaseEvalRunner):
         analysis['maintains_context'] = maintains_context
         
         return analysis
+
+
+# Registry of specialized runners
+SPECIALIZED_RUNNER_REGISTRY = {
+    'code_execution': CodeExecutionRunner,
+    'code_generation': CodeExecutionRunner,  # Alias
+    'safety_evaluation': SafetyEvaluationRunner,
+    'safety': SafetyEvaluationRunner,  # Alias
+    'multilingual_evaluation': MultilingualEvaluationRunner,
+    'multilingual': MultilingualEvaluationRunner,  # Alias
+    'translation': MultilingualEvaluationRunner,  # Alias
+    'creative_evaluation': CreativeEvaluationRunner,
+    'creative': CreativeEvaluationRunner,  # Alias
+    'creative_writing': CreativeEvaluationRunner,  # Alias
+    'math_reasoning': MathReasoningRunner,
+    'math': MathReasoningRunner,  # Alias
+    'mathematical': MathReasoningRunner,  # Alias
+    'summarization': SummarizationRunner,
+    'summary': SummarizationRunner,  # Alias
+    'dialogue': DialogueRunner,
+    'conversation': DialogueRunner,  # Alias
+    'conversational': DialogueRunner,  # Alias
+}
+
+
+def get_specialized_runner(task_type: str, task_config: TaskConfig, model_config: Dict[str, Any]) -> Optional[BaseEvalRunner]:
+    """Get appropriate specialized runner for task type with metrics tracking."""
+    # Log runner request
+    log_counter("eval_specialized_runner_requested", labels={
+        "task_type": task_type,
+        "provider": model_config.get('provider', 'unknown'),
+        "model": model_config.get('model_id', 'unknown')
+    })
+    
+    # Check if task type has a specialized runner
+    runner_class = SPECIALIZED_RUNNER_REGISTRY.get(task_type.lower())
+    
+    if runner_class:
+        log_counter("eval_specialized_runner_found", labels={
+            "task_type": task_type,
+            "runner_class": runner_class.__name__
+        })
+        return runner_class(task_config, model_config)
+    
+    # Check task metadata for runner hints
+    if task_config.metadata:
+        runner_hint = task_config.metadata.get('runner_type', '').lower()
+        if runner_hint in SPECIALIZED_RUNNER_REGISTRY:
+            runner_class = SPECIALIZED_RUNNER_REGISTRY[runner_hint]
+            log_counter("eval_specialized_runner_found_by_hint", labels={
+                "task_type": task_type,
+                "runner_hint": runner_hint,
+                "runner_class": runner_class.__name__
+            })
+            return runner_class(task_config, model_config)
+    
+    # No specialized runner found
+    log_counter("eval_specialized_runner_not_found", labels={
+        "task_type": task_type
+    })
+    return None
+
+
+def list_specialized_runners() -> List[str]:
+    """List all available specialized runner types."""
+    # Get unique runner classes
+    unique_runners = set(SPECIALIZED_RUNNER_REGISTRY.values())
+    runner_names = [runner.__name__ for runner in unique_runners]
+    
+    log_counter("eval_specialized_runners_listed", labels={
+        "count": str(len(runner_names))
+    })
+    
+    return sorted(runner_names)

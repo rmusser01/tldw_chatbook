@@ -27,6 +27,7 @@ Example:
 # Imports
 import asyncio
 import logging
+import time
 from typing import Any, Dict, List, Optional
 #
 # Third-Party Libraries
@@ -36,6 +37,7 @@ import trafilatura
 # Local Imports
 from .config import ScraperConfig
 from .utils import convert_html_to_markdown, ContentMetadataHandler
+from ...Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
 #
@@ -87,10 +89,26 @@ class Scraper:
         Raises:
             PlaywrightError: If browser fails to start
         """
+        start_time = time.time()
         logging.info("Starting Playwright browser...")
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=True)
-        return self
+        log_counter("article_scraper_browser_init", labels={"stealth": str(self.config.stealth)})
+        
+        try:
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(headless=True)
+            
+            # Log successful initialization
+            duration = time.time() - start_time
+            log_histogram("article_scraper_browser_init_duration", duration, labels={"status": "success"})
+            log_counter("article_scraper_browser_init_success")
+            
+            return self
+        except Exception as e:
+            # Log initialization failure
+            duration = time.time() - start_time
+            log_histogram("article_scraper_browser_init_duration", duration, labels={"status": "error"})
+            log_counter("article_scraper_browser_init_error", labels={"error_type": type(e).__name__})
+            raise
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Closes the browser and stops Playwright when exiting the block."""
@@ -119,7 +137,15 @@ class Scraper:
             - Retries on timeout or navigation errors
             - Returns empty string after all retries exhausted
         """
+        start_time = time.time()
+        
         for attempt in range(self.config.retries):
+            attempt_start = time.time()
+            log_counter("article_scraper_fetch_attempt", labels={
+                "attempt": str(attempt + 1),
+                "stealth": str(self.config.stealth)
+            })
+            
             try:
                 page = await context.new_page()
                 if self.config.stealth:
@@ -138,10 +164,35 @@ class Scraper:
 
                 content = await page.content()
                 await page.close()
+                
+                # Log successful fetch
+                attempt_duration = time.time() - attempt_start
+                total_duration = time.time() - start_time
+                log_histogram("article_scraper_fetch_duration", total_duration, labels={
+                    "status": "success",
+                    "attempts": str(attempt + 1)
+                })
+                log_counter("article_scraper_fetch_success", labels={"attempts": str(attempt + 1)})
+                
                 return content
             except Exception as e:
                 logging.error(f"Error fetching {url} on attempt {attempt + 1}: {e}")
+                log_counter("article_scraper_fetch_retry", labels={
+                    "attempt": str(attempt + 1),
+                    "error_type": type(e).__name__
+                })
+                
                 if attempt >= self.config.retries - 1:
+                    # Log final failure
+                    total_duration = time.time() - start_time
+                    log_histogram("article_scraper_fetch_duration", total_duration, labels={
+                        "status": "error",
+                        "attempts": str(self.config.retries)
+                    })
+                    log_counter("article_scraper_fetch_error", labels={
+                        "error_type": type(e).__name__,
+                        "final_attempt": "true"
+                    })
                     return ""  # Return empty on final failure
                 await asyncio.sleep(2)
         return ""
@@ -169,40 +220,65 @@ class Scraper:
                 - extraction_successful: Success status
                 - error: Error message if failed
         """
+        start_time = time.time()
+        log_counter("article_scraper_extraction_attempt")
+        
         if not html:
+            log_counter("article_scraper_extraction_error", labels={"error_type": "empty_html"})
             return {'extraction_successful': False, 'error': 'HTML content was empty.'}
 
-        main_content_html = trafilatura.extract(
-            html,
-            include_comments=self.config.include_comments,
-            include_tables=self.config.include_tables,
-            include_images=self.config.include_images
-        )
-        metadata = trafilatura.extract_metadata(html)
+        try:
+            main_content_html = trafilatura.extract(
+                html,
+                include_comments=self.config.include_comments,
+                include_tables=self.config.include_tables,
+                include_images=self.config.include_images
+            )
+            metadata = trafilatura.extract_metadata(html)
 
-        if not main_content_html or not metadata:
-            return {'extraction_successful': False, 'error': 'Trafilatura failed to extract content or metadata.'}
+            if not main_content_html or not metadata:
+                log_counter("article_scraper_extraction_error", labels={"error_type": "trafilatura_failure"})
+                return {'extraction_successful': False, 'error': 'Trafilatura failed to extract content or metadata.'}
 
-        # Convert the extracted HTML content to clean Markdown
-        main_content_md = convert_html_to_markdown(main_content_html)
+            # Convert the extracted HTML content to clean Markdown
+            main_content_md = convert_html_to_markdown(main_content_html)
 
-        article_data = {
-            'url': url,
-            'title': metadata.title or 'N/A',
-            'author': metadata.author or 'N/A',
-            'date': metadata.date or 'N/A',
-            'content': main_content_md,
-            'extraction_successful': True
-        }
+            article_data = {
+                'url': url,
+                'title': metadata.title or 'N/A',
+                'author': metadata.author or 'N/A',
+                'date': metadata.date or 'N/A',
+                'content': main_content_md,
+                'extraction_successful': True
+            }
 
-        # Add our own metadata wrapper
-        article_data['content_with_meta'] = ContentMetadataHandler.format_content_with_metadata(
-            url=url,
-            content=main_content_md,
-            pipeline="trafilatura-playwright",
-            additional_metadata={'author': article_data['author'], 'extracted_date': article_data['date']}
-        )
-        return article_data
+            # Add our own metadata wrapper
+            article_data['content_with_meta'] = ContentMetadataHandler.format_content_with_metadata(
+                url=url,
+                content=main_content_md,
+                pipeline="trafilatura-playwright",
+                additional_metadata={'author': article_data['author'], 'extracted_date': article_data['date']}
+            )
+            
+            # Log successful extraction
+            duration = time.time() - start_time
+            content_length = len(main_content_md) if main_content_md else 0
+            log_histogram("article_scraper_extraction_duration", duration, labels={"status": "success"})
+            log_histogram("article_scraper_content_length", content_length)
+            log_counter("article_scraper_extraction_success", labels={
+                "has_title": str(bool(metadata.title)),
+                "has_author": str(bool(metadata.author)),
+                "has_date": str(bool(metadata.date))
+            })
+            
+            return article_data
+        except Exception as e:
+            # Log extraction error
+            duration = time.time() - start_time
+            log_histogram("article_scraper_extraction_duration", duration, labels={"status": "error"})
+            log_counter("article_scraper_extraction_error", labels={"error_type": type(e).__name__})
+            logging.error(f"Extraction error for {url}: {e}")
+            return {'extraction_successful': False, 'error': f'Extraction error: {str(e)}'}
 
     async def scrape(self, url: str) -> Dict[str, Any]:
         """
@@ -229,25 +305,46 @@ class Scraper:
         if not self._browser:
             raise RuntimeError("Scraper must be used within an `async with` block.")
 
+        start_time = time.time()
         logging.info(f"Scraping article from: {url}")
+        log_counter("article_scraper_scrape_request", labels={
+            "has_cookies": str(bool(self.custom_cookies))
+        })
 
-        context = await self._browser.new_context(
-            user_agent=self.config.user_agent,
-            viewport={"width": 1280, "height": 720},
-        )
-        if self.custom_cookies:
-            await context.add_cookies(self.custom_cookies)
+        try:
+            context = await self._browser.new_context(
+                user_agent=self.config.user_agent,
+                viewport={"width": 1280, "height": 720},
+            )
+            if self.custom_cookies:
+                await context.add_cookies(self.custom_cookies)
 
-        html = await self._fetch_html(context, url)
-        await context.close()
+            html = await self._fetch_html(context, url)
+            await context.close()
 
-        result = self._extract_data(html, url)
-        if result['extraction_successful']:
-            logging.info(f"Successfully extracted article: '{result.get('title', 'N/A')}'")
-        else:
-            logging.warning(f"Failed to extract article from {url}. Reason: {result.get('error')}")
+            result = self._extract_data(html, url)
+            
+            # Log scraping result
+            duration = time.time() - start_time
+            if result['extraction_successful']:
+                logging.info(f"Successfully extracted article: '{result.get('title', 'N/A')}'")
+                log_histogram("article_scraper_scrape_duration", duration, labels={"status": "success"})
+                log_counter("article_scraper_scrape_success")
+            else:
+                logging.warning(f"Failed to extract article from {url}. Reason: {result.get('error')}")
+                log_histogram("article_scraper_scrape_duration", duration, labels={"status": "error"})
+                log_counter("article_scraper_scrape_error", labels={
+                    "error_reason": result.get('error', 'unknown').replace(' ', '_').lower()[:50]
+                })
 
-        return result
+            return result
+        except Exception as e:
+            # Log scraping error
+            duration = time.time() - start_time
+            log_histogram("article_scraper_scrape_duration", duration, labels={"status": "error"})
+            log_counter("article_scraper_scrape_error", labels={"error_type": type(e).__name__})
+            logging.error(f"Scraping error for {url}: {e}")
+            return {'extraction_successful': False, 'error': f'Scraping error: {str(e)}'}
 
     async def scrape_many(self, urls: List[str]) -> List[Dict[str, Any]]:
         """
@@ -276,8 +373,28 @@ class Scraper:
             ...         if result['extraction_successful']:
             ...             print(result['title'])
         """
+        start_time = time.time()
+        url_count = len(urls)
+        log_counter("article_scraper_batch_request", labels={"url_count": str(url_count)})
+        
         tasks = [self.scrape(url) for url in urls]
         results = await asyncio.gather(*tasks)
+        
+        # Log batch results
+        duration = time.time() - start_time
+        success_count = sum(1 for r in results if r.get('extraction_successful', False))
+        failure_count = url_count - success_count
+        
+        log_histogram("article_scraper_batch_duration", duration, labels={
+            "url_count": str(url_count),
+            "success_count": str(success_count)
+        })
+        log_counter("article_scraper_batch_complete", labels={
+            "total_urls": str(url_count),
+            "success_count": str(success_count),
+            "failure_count": str(failure_count)
+        })
+        
         return results
 
 #

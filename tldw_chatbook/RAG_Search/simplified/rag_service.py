@@ -41,6 +41,17 @@ CITATION_CONTEXT_CHARS = 50  # Characters of context around keyword matches
 KEYWORD_BATCH_SIZE = 10  # Batch size for processing keyword results
 FTS5_CONNECTION_POOL_SIZE = 3  # Connection pool size for FTS5 searches
 CACHE_TIMEOUT_SECONDS = 3600.0  # Cache timeout: 1 hour for better performance
+MAX_QUERY_LENGTH = 1000  # Maximum query length for FTS5
+DEFAULT_FTS5_LIMIT = 100  # Default result limit for FTS5 searches
+MAX_FTS5_LIMIT = 1000  # Maximum result limit for FTS5 searches
+SEARCH_RESULT_MULTIPLIER = 2  # Multiplier for initial search results before filtering
+MIN_SYSTEM_MEMORY_MB = 500  # Minimum system memory to avoid pressure
+MEMORY_PRESSURE_REDUCTION = 0.2  # Fraction to reduce on memory pressure
+MAX_DOCUMENT_SIZE_MB = 10  # Maximum document size in MB
+EMBEDDING_IDLE_TIMEOUT = 900  # 15 minutes idle timeout for embeddings
+CHUNK_PROGRESS_INTERVAL = 10  # Show progress every N documents
+EMBEDDING_PROGRESS_INTERVAL = 5  # Show progress every N batches
+DEFAULT_BATCH_SIZE = 32  # Default batch size for embeddings
 
 
 class RAGService:
@@ -101,12 +112,23 @@ class RAGService:
         cache_ttl = cache_config.get('cache_ttl', 3600)
         cache_enabled = cache_config.get('enable_cache', True)
         
+        # Search-type specific TTLs (optional)
+        ttl_by_search_type = {}
+        if hasattr(config.search, 'semantic_cache_ttl'):
+            ttl_by_search_type['semantic'] = config.search.semantic_cache_ttl
+        if hasattr(config.search, 'keyword_cache_ttl'):
+            ttl_by_search_type['keyword'] = config.search.keyword_cache_ttl
+        if hasattr(config.search, 'hybrid_cache_ttl'):
+            ttl_by_search_type['hybrid'] = config.search.hybrid_cache_ttl
+        
         self.cache = get_rag_cache(
             max_size=cache_size,
             ttl_seconds=cache_ttl,
-            enabled=cache_enabled
+            enabled=cache_enabled,
+            ttl_by_search_type=ttl_by_search_type if ttl_by_search_type else None
         )
-        logger.info(f"Initialized cache: size={cache_size}, ttl={cache_ttl}s, enabled={cache_enabled}")
+        logger.info(f"Initialized cache: size={cache_size}, ttl={cache_ttl}s, enabled={cache_enabled}, "
+                   f"search_type_ttls={ttl_by_search_type}")
         
         # Log initialization metrics
         log_counter("rag_service_initialized", labels={
@@ -169,8 +191,8 @@ class RAGService:
         if not content or not isinstance(content, str):
             raise ValueError("content must be a non-empty string")
         
-        # Document size limit: 10MB (configurable)
-        max_doc_size = getattr(self.config, 'max_document_size', 10 * 1024 * 1024)  # 10MB default
+        # Document size limit (configurable)
+        max_doc_size = getattr(self.config, 'max_document_size', MAX_DOCUMENT_SIZE_MB * 1024 * 1024)
         if len(content) > max_doc_size:
             raise ValueError(f"Document too large: {len(content)} bytes exceeds limit of {max_doc_size} bytes")
         
@@ -310,7 +332,7 @@ class RAGService:
         total = len(documents)
         
         for i, doc in enumerate(documents):
-            if show_progress and i % 10 == 0 and i > 0:
+            if show_progress and i % CHUNK_PROGRESS_INTERVAL == 0 and i > 0:
                 logger.info(f"Indexing progress: {i}/{total} documents")
             
             try:
@@ -382,8 +404,8 @@ class RAGService:
         # Phase 2: Generate embeddings in batches
         embed_start = time.time()
         chunk_texts = [chunk['text'] for chunk in all_chunks]
-        all_embeddings = await generate_embeddings_batch(
-            self, chunk_texts, batch_size, show_progress
+        all_embeddings, failed_embedding_indices = await generate_embeddings_batch(
+            self, chunk_texts, batch_size, show_progress, retry_failed=True
         )
         embed_time = time.time() - embed_start
         logger.info(f"Embedding generation completed in {embed_time:.2f}s")
@@ -391,7 +413,7 @@ class RAGService:
         # Phase 3: Store documents with their embeddings
         store_start = time.time()
         storage_results = await store_documents_batch(
-            self, documents, doc_chunk_info, all_embeddings, batch_start_time
+            self, documents, doc_chunk_info, all_embeddings, batch_start_time, failed_embedding_indices
         )
         store_time = time.time() - store_start
         
@@ -544,10 +566,10 @@ class RAGService:
         # Search vector store
         if include_citations:
             results = self.vector_store.search_with_citations(
-                query_embedding, query, top_k * 2, score_threshold
+                query_embedding, query, top_k * SEARCH_RESULT_MULTIPLIER, score_threshold
             )
         else:
-            results = self.vector_store.search(query_embedding, top_k * 2)
+            results = self.vector_store.search(query_embedding, top_k * SEARCH_RESULT_MULTIPLIER)
             # Apply score threshold for basic results
             results = [r for r in results if r.score >= score_threshold]
         
@@ -620,7 +642,7 @@ class RAGService:
                 self._perform_fts5_search,
                 pool,
                 query,
-                top_k * 2  # Get extra for filtering
+                top_k * SEARCH_RESULT_MULTIPLIER  # Get extra for filtering
             )
             
             # Process results in batches for better performance
@@ -655,10 +677,10 @@ class RAGService:
         """
         # Get results from both search types
         semantic_task = self._semantic_search(
-            query, top_k * 2, filter_metadata, include_citations, score_threshold
+            query, top_k * SEARCH_RESULT_MULTIPLIER, filter_metadata, include_citations, score_threshold
         )
         keyword_task = self._keyword_search(
-            query, top_k * 2, filter_metadata, include_citations
+            query, top_k * SEARCH_RESULT_MULTIPLIER, filter_metadata, include_citations
         )
         
         # Run both searches in parallel
@@ -977,7 +999,6 @@ class RAGService:
         escaped_query = query.replace('"', '""')
         
         # Validate query length to prevent DoS
-        MAX_QUERY_LENGTH = 1000
         if len(escaped_query) > MAX_QUERY_LENGTH:
             logger.warning(f"Query truncated from {len(escaped_query)} to {MAX_QUERY_LENGTH} characters")
             escaped_query = escaped_query[:MAX_QUERY_LENGTH]
@@ -1004,8 +1025,8 @@ class RAGService:
         
         # Validate limit parameter
         if not isinstance(limit, int) or limit < 1:
-            limit = 100  # Safe default
-        limit = min(limit, 1000)  # Cap maximum results
+            limit = DEFAULT_FTS5_LIMIT  # Safe default
+        limit = min(limit, MAX_FTS5_LIMIT)  # Cap maximum results
         
         sql = """
         SELECT 
@@ -1028,7 +1049,8 @@ class RAGService:
         
         results = []
         try:
-            with pool.get_connection() as conn:
+            # Use transaction for consistent read
+            with pool.transaction() as conn:
                 cursor = conn.cursor()
                 # Use parameterized query - the escaped_query is already safe
                 cursor.execute(sql, (escaped_query, limit))

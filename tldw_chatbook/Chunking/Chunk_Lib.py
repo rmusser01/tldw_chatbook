@@ -8,6 +8,7 @@
 import hashlib
 import json
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable, Generator
 import xml.etree.ElementTree as ET
 #
@@ -23,6 +24,7 @@ from tldw_chatbook.config import load_settings, get_cli_setting
 from .language_chunkers import LanguageChunkerFactory
 from .token_chunker import create_token_chunker
 from .chunking_templates import ChunkingTemplateManager, ChunkingPipeline, ChunkingTemplate
+from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
 # Custom Exceptions
@@ -219,18 +221,40 @@ class Chunker:
             str: The detected language code (e.g., 'en', 'zh-cn').
                  Defaults to 'en' if detection fails.
         """
+        start_time = time.time()
+        log_counter("chunking_language_detection_attempt")
+        
         if not text or not text.strip():
             logger.warning("Attempted to detect language from empty or whitespace-only text. Defaulting to 'en'.")
+            log_counter("chunking_language_detection_empty_text")
             return self._get_option('language', 'en') # Use option if available, else 'en'
         try:
             lang = detect(text)
             logger.debug(f"Detected language: {lang}")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("chunking_language_detection_duration", duration, labels={"status": "success"})
+            log_counter("chunking_language_detection_success", labels={"language": lang})
+            
             return lang
         except LangDetectException as e:
             logger.warning(f"Language detection failed: {e}. Defaulting to 'en'.")
+            
+            # Log detection failure
+            duration = time.time() - start_time
+            log_histogram("chunking_language_detection_duration", duration, labels={"status": "error"})
+            log_counter("chunking_language_detection_error", labels={"error_type": "lang_detect_exception"})
+            
             return self._get_option('language', 'en')
         except Exception as e_gen:
             logger.error(f"Unexpected error during language detection: {e_gen}. Defaulting to 'en'.")
+            
+            # Log unexpected error
+            duration = time.time() - start_time
+            log_histogram("chunking_language_detection_duration", duration, labels={"status": "error"})
+            log_counter("chunking_language_detection_error", labels={"error_type": type(e_gen).__name__})
+            
             return self._get_option('language', 'en')
 
 
@@ -400,13 +424,22 @@ class Chunker:
             chunks.append(' '.join(chunk_words))
             logger.debug(f"Created word chunk {len(chunks)} with {len(chunk_words)} words")
 
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("chunking_method_duration", duration, labels={"method": "words", "language": language})
+        log_histogram("chunking_words_per_chunk", max_words)
+        log_histogram("chunking_total_words", len(words))
+        log_counter("chunking_method_words_success", labels={"chunks_created": str(len(chunks))})
+        
         processed_chunks = self._post_process_chunks(chunks)
         logger.info(f"Word chunking complete: created {len(processed_chunks)} chunks from {len(words)} words")
         return processed_chunks
 
 
     def _chunk_text_by_sentences(self, text: str, max_sentences: int, overlap: int, language: str) -> List[str]:
+        start_time = time.time()
         logger.info(f"Chunking by sentences: max_sentences={max_sentences}, overlap={overlap}, lang='{language}'")
+        log_counter("chunking_method_sentences_attempt", labels={"language": language})
         
         # Use language-specific chunker
         language_chunker = LanguageChunkerFactory.get_chunker(language)

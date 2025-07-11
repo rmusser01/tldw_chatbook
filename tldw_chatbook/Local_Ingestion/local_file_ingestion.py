@@ -502,7 +502,16 @@ def batch_ingest_files(
     Raises:
         FileIngestionError: If stop_on_error is True and an error occurs
     """
+    start_time = time.time()
+    total_files = len(file_paths)
+    log_counter("local_file_ingestion_batch_start", labels={
+        "total_files": str(total_files),
+        "stop_on_error": str(stop_on_error)
+    })
+    
     results = []
+    success_count = 0
+    error_count = 0
     
     for file_path in file_paths:
         try:
@@ -516,8 +525,10 @@ def batch_ingest_files(
                 chunk_options=chunk_options
             )
             results.append(result)
+            success_count += 1
             
         except Exception as e:
+            error_count += 1
             error_result = {
                 'file_path': str(file_path),
                 'error': str(e),
@@ -526,9 +537,22 @@ def batch_ingest_files(
             results.append(error_result)
             
             if stop_on_error:
+                log_counter("local_file_ingestion_batch_stopped_on_error")
                 raise FileIngestionError(f"Batch ingestion stopped: {e}")
             else:
                 logger.error(f"Error ingesting {file_path}, continuing with next file: {e}")
+    
+    # Log batch completion metrics
+    duration = time.time() - start_time
+    log_histogram("local_file_ingestion_batch_duration", duration, labels={
+        "total_files": str(total_files),
+        "success_count": str(success_count)
+    })
+    log_counter("local_file_ingestion_batch_complete", labels={
+        "total_files": str(total_files),
+        "success_count": str(success_count),
+        "error_count": str(error_count)
+    })
     
     return results
 

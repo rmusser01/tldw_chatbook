@@ -24,6 +24,7 @@
 import json
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -36,6 +37,7 @@ from loguru import logger
 # Local Imports
 from .base_db import BaseDB
 from .sql_validation import validate_table_name, validate_column_name
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 # --- Custom Exceptions ---
@@ -327,6 +329,8 @@ class SubscriptionsDB(BaseDB):
         Returns:
             ID of the created subscription
         """
+        start_time = time.time()
+        
         with self.transaction() as conn:
             cursor = conn.cursor()
             
@@ -370,17 +374,50 @@ class SubscriptionsDB(BaseDB):
             subscription_id = cursor.lastrowid
             logger.info(f"Added subscription '{name}' (ID: {subscription_id}, Type: {type})")
             
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("subscriptions_db_operation_duration", duration, labels={
+                "operation": "add_subscription",
+                "type": type,
+                "priority": str(priority)
+            })
+            log_counter("subscriptions_db_operation_count", labels={
+                "operation": "add_subscription",
+                "type": type,
+                "status": "success",
+                "has_auth": "true" if auth_config else "false",
+                "has_tags": "true" if tags else "false"
+            })
+            
             return subscription_id
     
     def get_subscription(self, subscription_id: int) -> Optional[Dict[str, Any]]:
         """Get a subscription by ID."""
+        start_time = time.time()
+        
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        result = dict(row) if row else None
+        
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("subscriptions_db_operation_duration", duration, labels={
+            "operation": "get_subscription",
+            "found": "true" if result else "false"
+        })
+        log_counter("subscriptions_db_operation_count", labels={
+            "operation": "get_subscription",
+            "status": "success",
+            "found": "true" if result else "false"
+        })
+        
+        return result
     
     def update_subscription(self, subscription_id: int, **kwargs) -> bool:
         """Update subscription fields."""
+        start_time = time.time()
+        
         if not kwargs:
             return False
             
@@ -419,14 +456,44 @@ class SubscriptionsDB(BaseDB):
                 WHERE id = ?
             """, values)
             
-            return cursor.rowcount > 0
+            success = cursor.rowcount > 0
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("subscriptions_db_operation_duration", duration, labels={
+                "operation": "update_subscription",
+                "fields_updated": str(len(updates)),
+                "success": str(success)
+            })
+            log_counter("subscriptions_db_operation_count", labels={
+                "operation": "update_subscription",
+                "status": "success" if success else "not_found",
+                "fields_updated": str(len(updates))
+            })
+            
+            return success
     
     def delete_subscription(self, subscription_id: int) -> bool:
         """Delete a subscription and all related data."""
+        start_time = time.time()
+        
         with self.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM subscriptions WHERE id = ?", (subscription_id,))
-            return cursor.rowcount > 0
+            success = cursor.rowcount > 0
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("subscriptions_db_operation_duration", duration, labels={
+                "operation": "delete_subscription",
+                "success": str(success)
+            })
+            log_counter("subscriptions_db_operation_count", labels={
+                "operation": "delete_subscription",
+                "status": "success" if success else "not_found"
+            })
+            
+            return success
     
     def get_pending_checks(self, limit: int = 10, priority_order: bool = True) -> List[Dict[str, Any]]:
         """
@@ -439,6 +506,8 @@ class SubscriptionsDB(BaseDB):
         Returns:
             List of subscriptions due for checking
         """
+        start_time = time.time()
+        
         cursor = self.conn.cursor()
         
         order_clause = "ORDER BY priority DESC, last_checked ASC" if priority_order else "ORDER BY last_checked ASC"
@@ -455,7 +524,23 @@ class SubscriptionsDB(BaseDB):
             LIMIT ?
         """, (limit,))
         
-        return [dict(row) for row in cursor.fetchall()]
+        results = [dict(row) for row in cursor.fetchall()]
+        
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("subscriptions_db_operation_duration", duration, labels={
+            "operation": "get_pending_checks",
+            "limit": str(limit),
+            "result_count": str(len(results))
+        })
+        log_counter("subscriptions_db_operation_count", labels={
+            "operation": "get_pending_checks",
+            "status": "success",
+            "result_count": str(len(results)),
+            "priority_order": str(priority_order)
+        })
+        
+        return results
     
     def get_subscriptions_by_tag(self, tag: str) -> List[Dict[str, Any]]:
         """Filter subscriptions by tag."""
@@ -492,6 +577,8 @@ class SubscriptionsDB(BaseDB):
             error: Error message if check failed
             stats: Performance statistics (response_time_ms, bytes_transferred)
         """
+        start_time = time.time()
+        
         with self.transaction() as conn:
             cursor = conn.cursor()
             
@@ -543,6 +630,20 @@ class SubscriptionsDB(BaseDB):
             # Update statistics if provided
             if stats:
                 self._update_subscription_stats(subscription_id, stats, error is not None)
+                
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("subscriptions_db_operation_duration", duration, labels={
+                "operation": "record_check_result",
+                "has_error": "true" if error else "false",
+                "has_items": "true" if items else "false"
+            })
+            log_counter("subscriptions_db_operation_count", labels={
+                "operation": "record_check_result",
+                "status": "error" if error else "success",
+                "item_count": str(len(items)) if items else "0",
+                "auto_paused": "true" if error and 'Auto-paused' in str(error) else "false"
+            })
     
     def record_check_error(self, subscription_id: int, error: str, should_pause: bool = False) -> None:
         """Record an error with optional auto-pause."""
@@ -696,6 +797,7 @@ class SubscriptionsDB(BaseDB):
     
     def get_subscription_health(self, subscription_id: int, days: int = 30) -> Dict[str, Any]:
         """Get health metrics for dashboard."""
+        start_time = time.time()
         cursor = self.conn.cursor()
         
         # Get recent stats
@@ -731,6 +833,18 @@ class SubscriptionsDB(BaseDB):
         current = cursor.fetchone()
         if current:
             stats.update(dict(current))
+        
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("subscriptions_db_operation_duration", duration, labels={
+            "operation": "get_subscription_health",
+            "days": str(days)
+        })
+        log_counter("subscriptions_db_operation_count", labels={
+            "operation": "get_subscription_health",
+            "status": "success",
+            "health_score": str(stats.get('health_score', 0))
+        })
         
         return stats
     
@@ -924,6 +1038,8 @@ class SubscriptionsDB(BaseDB):
     
     def get_all_subscriptions(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
         """Get all subscriptions with optional filtering."""
+        start_time = time.time()
+        
         cursor = self.conn.cursor()
         
         if include_inactive:
@@ -931,10 +1047,27 @@ class SubscriptionsDB(BaseDB):
         else:
             cursor.execute("SELECT * FROM subscriptions WHERE is_active = 1 ORDER BY name")
         
-        return [dict(row) for row in cursor.fetchall()]
+        results = [dict(row) for row in cursor.fetchall()]
+        
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("subscriptions_db_operation_duration", duration, labels={
+            "operation": "get_all_subscriptions",
+            "include_inactive": str(include_inactive),
+            "result_count": str(len(results))
+        })
+        log_counter("subscriptions_db_operation_count", labels={
+            "operation": "get_all_subscriptions",
+            "status": "success",
+            "result_count": str(len(results))
+        })
+        
+        return results
     
     def get_subscription_count(self, active_only: bool = True) -> Dict[str, int]:
         """Get count of subscriptions by type."""
+        start_time = time.time()
+        
         cursor = self.conn.cursor()
         
         where_clause = "WHERE is_active = 1" if active_only else ""
@@ -946,7 +1079,23 @@ class SubscriptionsDB(BaseDB):
             GROUP BY type
         """)
         
-        return {row['type']: row['count'] for row in cursor.fetchall()}
+        results = {row['type']: row['count'] for row in cursor.fetchall()}
+        
+        # Log metrics
+        duration = time.time() - start_time
+        total_count = sum(results.values())
+        log_histogram("subscriptions_db_operation_duration", duration, labels={
+            "operation": "get_subscription_count",
+            "active_only": str(active_only)
+        })
+        log_counter("subscriptions_db_operation_count", labels={
+            "operation": "get_subscription_count",
+            "status": "success",
+            "total_count": str(total_count),
+            "type_count": str(len(results))
+        })
+        
+        return results
     
     def close(self):
         """Close database connections."""

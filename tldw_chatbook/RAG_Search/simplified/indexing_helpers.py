@@ -13,6 +13,10 @@ from .data_models import IndexingResult
 
 logger = logging.getLogger(__name__)
 
+# Constants from rag_service
+CHUNK_PROGRESS_INTERVAL = 10  # Show progress every N documents
+EMBEDDING_PROGRESS_INTERVAL = 5  # Show progress every N batches
+
 
 async def chunk_documents_batch(rag_service, documents: List[Dict[str, Any]], 
                                show_progress: bool = True) -> Tuple[List[Any], List[Dict]]:
@@ -34,7 +38,7 @@ async def chunk_documents_batch(rag_service, documents: List[Dict[str, Any]],
     failed_results = []
     
     for i, doc in enumerate(documents):
-        if show_progress and i % 10 == 0 and i > 0:
+        if show_progress and i % CHUNK_PROGRESS_INTERVAL == 0 and i > 0:
             logger.info(f"Chunking progress: {i}/{len(documents)} documents")
         
         try:
@@ -95,7 +99,7 @@ async def generate_embeddings_batch(rag_service, chunk_texts: List[str],
         batch = chunk_texts[i:i + batch_size]
         batch_indices = list(range(i, min(i + batch_size, len(chunk_texts))))
         
-        if show_progress and (i // batch_size) % 5 == 0:
+        if show_progress and (i // batch_size) % EMBEDDING_PROGRESS_INTERVAL == 0:
             progress = (i + len(batch)) / len(chunk_texts) * 100
             logger.info(f"Embedding progress: {progress:.1f}%")
         

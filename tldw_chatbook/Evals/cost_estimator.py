@@ -18,6 +18,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 from loguru import logger
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 @dataclass
 class ModelPricing:
@@ -114,6 +115,12 @@ class CostEstimator:
         Returns:
             Cost estimation with breakdown
         """
+        # Log cost estimation request
+        log_counter("eval_cost_estimation_requested", labels={
+            "provider": provider,
+            "model_id": model_id
+        })
+        
         pricing_key = f"{provider}/{model_id}"
         
         # Try exact match first
@@ -125,6 +132,12 @@ class CostEstimator:
                 pricing_key = "anthropic/claude-3-haiku"  # Conservative estimate
             else:
                 # Return zero cost for unknown models (e.g., local models)
+                # Log free/unknown model
+                log_counter("eval_cost_free_model", labels={
+                    "provider": provider,
+                    "model_id": model_id
+                })
+                
                 return {
                     "estimated_cost": 0.0,
                     "is_free": True,
@@ -140,6 +153,22 @@ class CostEstimator:
         total_input_tokens = num_samples * avg_input_tokens
         total_output_tokens = num_samples * avg_output_tokens
         total_cost = pricing.calculate_cost(total_input_tokens, total_output_tokens)
+        
+        # Log cost estimation metrics
+        log_histogram("eval_cost_estimated_total", total_cost, labels={
+            "provider": provider,
+            "model_id": model_id
+        })
+        log_histogram("eval_cost_estimated_per_sample", total_cost / num_samples if num_samples > 0 else 0, labels={
+            "provider": provider,
+            "model_id": model_id
+        })
+        log_histogram("eval_cost_estimated_input_tokens", total_input_tokens, labels={
+            "provider": provider
+        })
+        log_histogram("eval_cost_estimated_output_tokens", total_output_tokens, labels={
+            "provider": provider
+        })
         
         return {
             "estimated_cost": total_cost,
@@ -163,6 +192,12 @@ class CostEstimator:
     def start_tracking(self, run_id: str) -> None:
         """Start tracking costs for a run."""
         self.current_run_costs[run_id] = 0.0
+        
+        # Log tracking start
+        log_counter("eval_cost_tracking_started", labels={
+            "run_id": run_id
+        })
+        
         logger.info(f"Started cost tracking for run {run_id}")
     
     def add_sample_cost(
@@ -179,11 +214,31 @@ class CostEstimator:
         
         pricing_key = f"{provider}/{model_id}"
         if pricing_key not in self.pricing:
+            log_counter("eval_cost_unknown_model_sample", labels={
+                "provider": provider,
+                "model_id": model_id
+            })
             return 0.0  # No cost for unknown models
         
         pricing = self.pricing[pricing_key]
         cost = pricing.calculate_cost(input_tokens, output_tokens)
         self.current_run_costs[run_id] += cost
+        
+        # Log sample cost metrics
+        log_histogram("eval_cost_sample_cost", cost, labels={
+            "provider": provider,
+            "model_id": model_id
+        })
+        log_histogram("eval_cost_sample_input_tokens", input_tokens, labels={
+            "provider": provider
+        })
+        log_histogram("eval_cost_sample_output_tokens", output_tokens, labels={
+            "provider": provider
+        })
+        log_counter("eval_cost_sample_added", labels={
+            "provider": provider,
+            "model_id": model_id
+        })
         
         return cost
     
@@ -203,6 +258,18 @@ class CostEstimator:
         }
         
         self.run_history.append(cost_record)
+        
+        # Log finalized cost metrics
+        log_histogram("eval_cost_run_total", total_cost, labels={
+            "provider": run_metadata.get('provider', 'unknown'),
+            "model_id": run_metadata.get('model_id', 'unknown')
+        })
+        log_counter("eval_cost_run_finalized", labels={
+            "provider": run_metadata.get('provider', 'unknown'),
+            "model_id": run_metadata.get('model_id', 'unknown'),
+            "cost_tier": self._get_cost_tier(total_cost)
+        })
+        
         logger.info(f"Finalized run {run_id} with total cost: ${total_cost:.4f}")
         
         return cost_record
@@ -216,6 +283,17 @@ class CostEstimator:
         ]
         
         total_cost = sum(run['total_cost'] for run in recent_runs)
+        
+        # Log cost summary request
+        log_counter("eval_cost_summary_requested", labels={
+            "period_days": str(days)
+        })
+        log_histogram("eval_cost_summary_total", total_cost, labels={
+            "period_days": str(days)
+        })
+        log_histogram("eval_cost_summary_runs", len(recent_runs), labels={
+            "period_days": str(days)
+        })
         
         # Group by provider
         provider_costs = {}
@@ -284,6 +362,19 @@ class CostEstimator:
             return "balanced"
         else:
             return "efficient"
+    
+    def _get_cost_tier(self, cost: float) -> str:
+        """Get cost tier for a run."""
+        if cost == 0:
+            return "free"
+        elif cost < 0.01:
+            return "minimal"
+        elif cost < 0.1:
+            return "low"
+        elif cost < 1.0:
+            return "medium"
+        else:
+            return "high"
 
 # Utility functions for token counting (approximate)
 def estimate_tokens(text: str) -> int:

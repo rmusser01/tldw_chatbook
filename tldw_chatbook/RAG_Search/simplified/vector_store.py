@@ -20,6 +20,10 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log
 
 logger = logging.getLogger(__name__)
 
+# Import constants from rag_service
+MIN_SYSTEM_MEMORY_MB = 500  # Minimum system memory to avoid pressure
+MEMORY_PRESSURE_REDUCTION = 0.2  # Fraction to reduce on memory pressure
+
 
 @dataclass
 class SearchResult:
@@ -586,8 +590,8 @@ class InMemoryVectorStore:
             
             # Trigger eviction if:
             # 1. Process memory exceeds threshold, OR
-            # 2. System available memory is very low (< 500MB)
-            if memory_mb > self.memory_threshold_mb or available_mb < 500:
+            # 2. System available memory is very low
+            if memory_mb > self.memory_threshold_mb or available_mb < MIN_SYSTEM_MEMORY_MB:
                 logger.warning(f"Memory pressure detected: process={memory_mb:.1f}MB, "
                              f"available={available_mb:.1f}MB, threshold={self.memory_threshold_mb}MB")
                 return True
@@ -597,7 +601,7 @@ class InMemoryVectorStore:
         
         return False
     
-    def _evict_for_memory_pressure(self, target_reduction_ratio: float = 0.2):
+    def _evict_for_memory_pressure(self, target_reduction_ratio: float = MEMORY_PRESSURE_REDUCTION):
         """
         Evict documents to reduce memory pressure.
         

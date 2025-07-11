@@ -20,10 +20,12 @@ The module uses a simple schema that tracks:
 
 import sqlite3
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple, Union
 from loguru import logger
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 class RAGIndexingDB:
     """
@@ -118,6 +120,8 @@ class RAGIndexingDB:
             chunk_count: Number of chunks created for this item
             metadata: Optional metadata about the indexing
         """
+        start_time = time.time()
+        
         query = """
         INSERT OR REPLACE INTO indexed_items 
         (item_id, item_type, last_indexed, last_modified, chunk_count, metadata)
@@ -127,12 +131,42 @@ class RAGIndexingDB:
         now = datetime.now(timezone.utc)
         metadata_json = json.dumps(metadata) if metadata else None
         
-        with self._get_connection() as conn:
-            conn.execute(
-                query,
-                (item_id, item_type, now, last_modified, chunk_count, metadata_json)
-            )
-            conn.commit()
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    query,
+                    (item_id, item_type, now, last_modified, chunk_count, metadata_json)
+                )
+                conn.commit()
+                
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("rag_indexing_db_operation_duration", duration, labels={
+                "operation": "mark_indexed",
+                "item_type": item_type,
+                "chunk_count": str(chunk_count)
+            })
+            log_counter("rag_indexing_db_operation_count", labels={
+                "operation": "mark_indexed",
+                "item_type": item_type,
+                "status": "success"
+            })
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("rag_indexing_db_operation_duration", duration, labels={
+                "operation": "mark_indexed",
+                "item_type": item_type,
+                "chunk_count": str(chunk_count)
+            })
+            log_counter("rag_indexing_db_operation_count", labels={
+                "operation": "mark_indexed",
+                "item_type": item_type,
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            logger.error(f"Error marking item indexed: {e}")
+            raise
             
     def get_items_to_index(
         self, 
@@ -171,25 +205,60 @@ class RAGIndexingDB:
         Returns:
             Dictionary with indexing information or None if not indexed
         """
+        start_time = time.time()
+        
         query = """
         SELECT * FROM indexed_items 
         WHERE item_id = ? AND item_type = ?
         """
         
-        with self._get_connection() as conn:
-            cursor = conn.execute(query, (item_id, item_type))
-            row = cursor.fetchone()
-            
-            if row:
-                return {
-                    'item_id': row['item_id'],
-                    'item_type': row['item_type'],
-                    'last_indexed': row['last_indexed'],
-                    'last_modified': row['last_modified'],
-                    'chunk_count': row['chunk_count'],
-                    'metadata': json.loads(row['metadata']) if row['metadata'] else None
-                }
-            return None
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(query, (item_id, item_type))
+                row = cursor.fetchone()
+                
+                result = None
+                if row:
+                    result = {
+                        'item_id': row['item_id'],
+                        'item_type': row['item_type'],
+                        'last_indexed': row['last_indexed'],
+                        'last_modified': row['last_modified'],
+                        'chunk_count': row['chunk_count'],
+                        'metadata': json.loads(row['metadata']) if row['metadata'] else None
+                    }
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("rag_indexing_db_operation_duration", duration, labels={
+                    "operation": "get_item_info",
+                    "item_type": item_type,
+                    "found": "true" if result else "false"
+                })
+                log_counter("rag_indexing_db_operation_count", labels={
+                    "operation": "get_item_info",
+                    "item_type": item_type,
+                    "status": "success",
+                    "found": "true" if result else "false"
+                })
+                
+                return result
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("rag_indexing_db_operation_duration", duration, labels={
+                "operation": "get_item_info",
+                "item_type": item_type,
+                "found": "false"
+            })
+            log_counter("rag_indexing_db_operation_count", labels={
+                "operation": "get_item_info",
+                "item_type": item_type,
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            logger.error(f"Error getting indexed item info: {e}")
+            raise
             
     def get_indexed_items_by_type(
         self, 
@@ -224,11 +293,45 @@ class RAGIndexingDB:
             item_id: Item identifier
             item_type: Type of item
         """
+        start_time = time.time()
+        
         query = "DELETE FROM indexed_items WHERE item_id = ? AND item_type = ?"
         
-        with self._get_connection() as conn:
-            conn.execute(query, (item_id, item_type))
-            conn.commit()
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.execute(query, (item_id, item_type))
+                rows_affected = cursor.rowcount
+                conn.commit()
+                
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("rag_indexing_db_operation_duration", duration, labels={
+                "operation": "remove_item",
+                "item_type": item_type,
+                "found": "true" if rows_affected > 0 else "false"
+            })
+            log_counter("rag_indexing_db_operation_count", labels={
+                "operation": "remove_item",
+                "item_type": item_type,
+                "status": "success",
+                "found": "true" if rows_affected > 0 else "false"
+            })
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("rag_indexing_db_operation_duration", duration, labels={
+                "operation": "remove_item",
+                "item_type": item_type,
+                "found": "false"
+            })
+            log_counter("rag_indexing_db_operation_count", labels={
+                "operation": "remove_item",
+                "item_type": item_type,
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            logger.error(f"Error removing indexed item: {e}")
+            raise
             
     def update_collection_state(
         self,
@@ -246,6 +349,8 @@ class RAGIndexingDB:
             indexed_items: Number of items indexed
             metadata: Optional metadata about the collection
         """
+        start_time = time.time()
+        
         query = """
         INSERT OR REPLACE INTO collection_state 
         (collection_name, last_full_index, total_items, indexed_items, metadata)
@@ -255,12 +360,44 @@ class RAGIndexingDB:
         now = datetime.now(timezone.utc)
         metadata_json = json.dumps(metadata) if metadata else None
         
-        with self._get_connection() as conn:
-            conn.execute(
-                query,
-                (collection_name, now, total_items, indexed_items, metadata_json)
-            )
-            conn.commit()
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    query,
+                    (collection_name, now, total_items, indexed_items, metadata_json)
+                )
+                conn.commit()
+                
+            # Log success metrics
+            duration = time.time() - start_time
+            completion_rate = (indexed_items / total_items * 100) if total_items > 0 else 0
+            log_histogram("rag_indexing_db_operation_duration", duration, labels={
+                "operation": "update_collection_state",
+                "collection": collection_name
+            })
+            log_counter("rag_indexing_db_operation_count", labels={
+                "operation": "update_collection_state",
+                "collection": collection_name,
+                "status": "success"
+            })
+            log_histogram("rag_indexing_db_collection_completion_rate", completion_rate, labels={
+                "collection": collection_name
+            })
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("rag_indexing_db_operation_duration", duration, labels={
+                "operation": "update_collection_state",
+                "collection": collection_name
+            })
+            log_counter("rag_indexing_db_operation_count", labels={
+                "operation": "update_collection_state",
+                "collection": collection_name,
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            logger.error(f"Error updating collection state: {e}")
+            raise
             
     def get_collection_state(self, collection_name: str) -> Optional[Dict[str, Any]]:
         """

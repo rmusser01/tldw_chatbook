@@ -7,6 +7,7 @@
 import json
 import os
 import subprocess
+import time
 from typing import Any, Generator, Union, Dict, Optional, List
 
 import requests
@@ -17,6 +18,7 @@ from tldw_chatbook.Chat.Chat_Deps import ChatProviderError, ChatBadRequestError,
 from tldw_chatbook.Utils.Utils import logging
 from tldw_chatbook.config import load_settings, settings
 from tldw_chatbook.Local_Inference.mlx_lm_inference_local import start_mlx_lm_server, stop_mlx_lm_server
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
 ####################
@@ -113,7 +115,15 @@ def _chat_with_openai_compatible_local_server(
         api_retries: int = 1,
         api_retry_delay: int = 1
 ):
+    start_time = time.time()
     logging.debug(f"{provider_name}: Chat request starting. API Base: {api_base_url}, Model: {model_name}")
+    
+    # Log request metrics
+    log_counter("local_openai_compatible_api_request", labels={
+        "provider": provider_name,
+        "model": model_name or "default",
+        "streaming": str(streaming)
+    })
 
     headers = {'Content-Type': 'application/json'}
     if api_key: # Some local servers might use a key
@@ -200,6 +210,20 @@ def _chat_with_openai_compatible_local_server(
             response = session.post(full_api_url, headers=headers, json=payload, stream=True, timeout=timeout + 60)
             response.raise_for_status()
             logging.debug(f"{provider_name}: Streaming response received.")
+            
+            # Log streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("local_openai_compatible_api_response_time", duration, labels={
+                "provider": provider_name,
+                "model": model_name or "default",
+                "streaming": "true",
+                "status_code": str(response.status_code)
+            })
+            log_counter("local_openai_compatible_api_success", labels={
+                "provider": provider_name,
+                "model": model_name or "default", 
+                "streaming": "true"
+            })
 
             def stream_generator():
                 try:
@@ -226,16 +250,88 @@ def _chat_with_openai_compatible_local_server(
             response.raise_for_status()
             response_data = response.json()
             logging.debug(f"{provider_name}: Non-streaming request successful.")
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("local_openai_compatible_api_response_time", duration, labels={
+                "provider": provider_name,
+                "model": model_name or "default",
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("local_openai_compatible_api_success", labels={
+                "provider": provider_name,
+                "model": model_name or "default",
+                "streaming": "false"
+            })
+            
+            # Log token usage if available
+            usage = response_data.get("usage", {})
+            if usage:
+                log_histogram("local_openai_compatible_api_input_tokens", usage.get("prompt_tokens", 0), labels={
+                    "provider": provider_name,
+                    "model": model_name or "default"
+                })
+                log_histogram("local_openai_compatible_api_output_tokens", usage.get("completion_tokens", 0), labels={
+                    "provider": provider_name,
+                    "model": model_name or "default"
+                })
+                log_histogram("local_openai_compatible_api_total_tokens", usage.get("total_tokens", 0), labels={
+                    "provider": provider_name,
+                    "model": model_name or "default"
+                })
+            
             return response_data
     except requests.exceptions.HTTPError as e_http:
         # Logged by a higher level, but good to note here too
         logging.error(f"{provider_name}: HTTP Error: {getattr(e_http.response, 'status_code', 'N/A')} - {getattr(e_http.response, 'text', str(e_http))[:500]}", exc_info=False)
+        
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        status_code = getattr(e_http.response, 'status_code', 500)
+        log_counter("local_openai_compatible_api_error", labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("local_openai_compatible_api_error_response_time", duration, labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "status_code": str(status_code)
+        })
         raise # Re-raise to be caught by chat_api_call's handler
     except requests.RequestException as e_req:
         logging.error(f"{provider_name}: Request Exception: {e_req}", exc_info=True)
+        
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("local_openai_compatible_api_error", labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "network_error"
+        })
+        log_histogram("local_openai_compatible_api_error_response_time", duration, labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "network_error"
+        })
         raise ChatProviderError(provider=provider_name, message=f"Network error making request to {provider_name}: {e_req}", status_code=503) # 503 Service Unavailable
     except (ValueError, KeyError, TypeError) as e_data: # Issues with payload construction or response parsing
         logging.error(f"{provider_name}: Data processing or configuration error: {e_data}", exc_info=True)
+        
+        # Log data error metrics
+        duration = time.time() - start_time
+        log_counter("local_openai_compatible_api_error", labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "data_error"
+        })
+        log_histogram("local_openai_compatible_api_error_response_time", duration, labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "data_error"
+        })
         raise ChatBadRequestError(provider=provider_name, message=f"{provider_name} data or configuration error: {e_data}")
 
 
@@ -461,6 +557,7 @@ def chat_with_kobold(
         # Add api_url as an optional parameter if it can be passed directly
         api_url: Optional[str] = None
 ):
+    start_time = time.time()
     if model and (model.lower() == "none" or model.strip() == ""): model = None
     logging.debug("KoboldAI (Native): Chat request starting...")
 
@@ -484,6 +581,12 @@ def chat_with_kobold(
     current_model = model or cfg.get('model')
     if not current_model:
         logging.info("Kobold API model namenot passed and or could not be determined from arguments or configuration.")
+    
+    # Log request metrics
+    log_counter("kobold_api_request", labels={
+        "model": current_model or "default",
+        "streaming": str(current_streaming)
+    })
 
     current_temp = temp if temp is not None else float(cfg.get('temperature', 0.7)) # Kobold native 'temp'
     current_top_k = top_k if top_k is not None else cfg.get('top_k')
@@ -577,6 +680,19 @@ def chat_with_kobold(
             # If n > 1, there might be multiple. For now, taking the first.
             generated_text = response_data['results'][0].get('text', '').strip()
             logging.debug("KoboldAI (Native): Chat request successful.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("kobold_api_response_time", duration, labels={
+                "model": current_model or "default",
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("kobold_api_success", labels={
+                "model": current_model or "default",
+                "streaming": "false"
+            })
+            
             # To make it somewhat OpenAI-like for the dispatcher, wrap in a choices structure.
             # This assumes non-streaming. Streaming would need a generator yielding SSE-like events.
             return {"choices": [{"message": {"role": "assistant", "content": generated_text}, "finish_reason": "stop"}]} # Assuming "stop"
@@ -586,12 +702,47 @@ def chat_with_kobold(
 
     except requests.exceptions.HTTPError as e_http:
         logging.error(f"KoboldAI (Native): HTTP Error: {getattr(e_http.response, 'status_code', 'N/A')} - {getattr(e_http.response, 'text', str(e_http))[:500]}", exc_info=False)
+        
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        status_code = getattr(e_http.response, 'status_code', 500)
+        log_counter("kobold_api_error", labels={
+            "model": current_model or "default",
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("kobold_api_error_response_time", duration, labels={
+            "model": current_model or "default",
+            "status_code": str(status_code)
+        })
         raise
     except requests.RequestException as e_req:
         logging.error(f"KoboldAI (Native): Request Exception: {e_req}", exc_info=True)
+        
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("kobold_api_error", labels={
+            "model": current_model or "default",
+            "error_type": "network_error"
+        })
+        log_histogram("kobold_api_error_response_time", duration, labels={
+            "model": current_model or "default",
+            "error_type": "network_error"
+        })
         raise ChatProviderError(provider="kobold", message=f"Network error calling KoboldAI (Native): {e_req}", status_code=503)
     except (ValueError, KeyError, TypeError) as e_data:
         logging.error(f"KoboldAI (Native): Data or configuration error: {e_data}", exc_info=True)
+        
+        # Log data error metrics
+        duration = time.time() - start_time
+        log_counter("kobold_api_error", labels={
+            "model": current_model or "default",
+            "error_type": "data_error"
+        })
+        log_histogram("kobold_api_error_response_time", duration, labels={
+            "model": current_model or "default",
+            "error_type": "data_error"
+        })
         raise ChatBadRequestError(provider="kobold", message=f"KoboldAI (Native) config/data error: {e_data}")
 
 

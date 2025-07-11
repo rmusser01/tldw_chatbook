@@ -74,7 +74,11 @@ class SearchConfig:
     # Cache settings
     enable_cache: bool = True
     cache_size: int = 100
-    cache_ttl: float = 3600  # 1 hour in seconds
+    cache_ttl: float = 3600  # 1 hour in seconds (default for all search types)
+    # Search-type specific cache TTLs (optional)
+    semantic_cache_ttl: Optional[float] = None  # TTL for semantic search results
+    keyword_cache_ttl: Optional[float] = None   # TTL for keyword search results  
+    hybrid_cache_ttl: Optional[float] = None    # TTL for hybrid search results
     # Database connection settings
     fts5_connection_pool_size: int = 3  # Connection pool size for FTS5 searches
 
@@ -411,6 +415,16 @@ class RAGConfig:
             search_section.get('fts5_connection_pool_size', config.search.fts5_connection_pool_size)
         )
         
+        # Search-type specific cache TTLs
+        if 'semantic_cache_ttl' in search_section:
+            config.search.semantic_cache_ttl = float(search_section['semantic_cache_ttl'])
+        
+        if 'keyword_cache_ttl' in search_section:
+            config.search.keyword_cache_ttl = float(search_section['keyword_cache_ttl'])
+            
+        if 'hybrid_cache_ttl' in search_section:
+            config.search.hybrid_cache_ttl = float(search_section['hybrid_cache_ttl'])
+        
         # === Query Expansion Configuration ===
         query_expansion_section = rag_config.get('query_expansion', {})
         
@@ -616,7 +630,11 @@ fts_top_k = 10
 vector_top_k = 10
 hybrid_alpha = 0.5
 cache_size = 100
-cache_ttl = 3600  # 1 hour
+cache_ttl = 3600  # 1 hour default for all search types
+# Optional search-type specific cache TTLs
+# semantic_cache_ttl = 7200  # 2 hours for semantic search
+# keyword_cache_ttl = 1800   # 30 minutes for keyword search
+# hybrid_cache_ttl = 3600    # 1 hour for hybrid search
 fts5_connection_pool_size = 3  # Adjust based on concurrent search load
 
 # Legacy configuration locations (still supported)

@@ -4,11 +4,13 @@
 # Imports
 import json
 import os
+import time
 from typing import Dict, List, Optional, Any, Union
 from pathlib import Path
 #
 # 3rd-Party Imports
 from loguru import logger
+from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 # Check for optional tokenizers library
 try:
@@ -50,8 +52,14 @@ class CustomTokenizerManager:
                 with open(mappings_file, 'r') as f:
                     self._model_mappings = json.load(f)
                 logger.info(f"Loaded {len(self._model_mappings)} tokenizer mappings")
+                log_counter("custom_tokenizers_load_mappings_success", labels={
+                    "count": str(len(self._model_mappings))
+                })
             except Exception as e:
                 logger.error(f"Failed to load tokenizer mappings: {e}")
+                log_counter("custom_tokenizers_load_mappings_error", labels={
+                    "error_type": type(e).__name__
+                })
     
     def save_mappings(self) -> None:
         """Save current model to tokenizer mappings."""
@@ -84,11 +92,16 @@ class CustomTokenizerManager:
         Returns:
             Loaded tokenizer or None if not available
         """
+        start_time = time.time()
+        log_counter("custom_tokenizers_load_tokenizer_attempt", labels={"name": name})
+        
         if not TOKENIZERS_AVAILABLE:
+            log_counter("custom_tokenizers_load_tokenizer_unavailable")
             return None
             
         # Check cache first
         if name in self._tokenizers:
+            log_counter("custom_tokenizers_load_tokenizer_cache_hit", labels={"name": name})
             return self._tokenizers[name]
         
         # Try to load from file
@@ -98,9 +111,20 @@ class CustomTokenizerManager:
                 tokenizer = Tokenizer.from_file(tokenizer_path)
                 self._tokenizers[name] = tokenizer
                 logger.info(f"Loaded tokenizer: {name}")
+                
+                duration = time.time() - start_time
+                log_histogram("custom_tokenizers_load_tokenizer_duration", duration)
+                log_counter("custom_tokenizers_load_tokenizer_success", labels={"name": name})
+                
                 return tokenizer
             except Exception as e:
                 logger.error(f"Failed to load tokenizer {name}: {e}")
+                log_counter("custom_tokenizers_load_tokenizer_error", labels={
+                    "name": name,
+                    "error_type": type(e).__name__
+                })
+        else:
+            log_counter("custom_tokenizers_load_tokenizer_not_found", labels={"name": name})
         
         return None
     
@@ -160,13 +184,40 @@ class CustomTokenizerManager:
         Returns:
             Token count or None if no suitable tokenizer
         """
+        start_time = time.time()
+        log_counter("custom_tokenizers_count_tokens_attempt", labels={
+            "model": model,
+            "provider": provider
+        })
+        
         tokenizer = self.get_tokenizer_for_model(model, provider)
         if tokenizer:
             try:
                 encoding = tokenizer.encode(text)
-                return len(encoding.ids)
+                token_count = len(encoding.ids)
+                
+                duration = time.time() - start_time
+                log_histogram("custom_tokenizers_count_tokens_duration", duration)
+                log_histogram("custom_tokenizers_text_length", len(text))
+                log_histogram("custom_tokenizers_token_count", token_count)
+                log_counter("custom_tokenizers_count_tokens_success", labels={
+                    "model": model,
+                    "provider": provider
+                })
+                
+                return token_count
             except Exception as e:
                 logger.error(f"Error counting tokens with custom tokenizer: {e}")
+                log_counter("custom_tokenizers_count_tokens_error", labels={
+                    "model": model,
+                    "provider": provider,
+                    "error_type": type(e).__name__
+                })
+        else:
+            log_counter("custom_tokenizers_count_tokens_no_tokenizer", labels={
+                "model": model,
+                "provider": provider
+            })
         
         return None
     
@@ -182,8 +233,16 @@ class CustomTokenizerManager:
         Returns:
             Total token count or None
         """
+        start_time = time.time()
+        log_counter("custom_tokenizers_count_messages_attempt", labels={
+            "model": model,
+            "provider": provider,
+            "message_count": str(len(messages))
+        })
+        
         tokenizer = self.get_tokenizer_for_model(model, provider)
         if not tokenizer:
+            log_counter("custom_tokenizers_count_messages_no_tokenizer")
             return None
         
         total_tokens = 0
@@ -237,6 +296,16 @@ class CustomTokenizerManager:
                     # Add some overhead for formatting
                     total_tokens += 3
         
+        # Log completion
+        duration = time.time() - start_time
+        log_histogram("custom_tokenizers_count_messages_duration", duration)
+        log_histogram("custom_tokenizers_messages_total_tokens", total_tokens)
+        log_counter("custom_tokenizers_count_messages_success", labels={
+            "model": model,
+            "provider": provider,
+            "message_count": str(len(messages))
+        })
+        
         return total_tokens
     
     def list_available_tokenizers(self) -> List[str]:
@@ -258,10 +327,14 @@ class CustomTokenizerManager:
         Returns:
             Success status
         """
+        start_time = time.time()
+        log_counter("custom_tokenizers_install_attempt")
+        
         try:
             source = Path(source_path)
             if not source.exists():
                 logger.error(f"Tokenizer file not found: {source_path}")
+                log_counter("custom_tokenizers_install_error", labels={"error": "file_not_found"})
                 return False
             
             if name is None:
@@ -286,10 +359,16 @@ class CustomTokenizerManager:
             if name in self._tokenizers:
                 del self._tokenizers[name]
             
+            # Log success
+            duration = time.time() - start_time
+            log_histogram("custom_tokenizers_install_duration", duration)
+            log_counter("custom_tokenizers_install_success", labels={"name": name})
+            
             return True
             
         except Exception as e:
             logger.error(f"Failed to install tokenizer: {e}")
+            log_counter("custom_tokenizers_install_error", labels={"error_type": type(e).__name__})
             return False
 
 

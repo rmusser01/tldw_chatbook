@@ -59,6 +59,7 @@ from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
 from tldw_chatbook.Logging_Config import logging
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
 #
@@ -159,7 +160,15 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     Raises:
         ValueError: If the input parameters are invalid.
     """
+    start_time = time.time()
     logging.info(f"Starting generate_and_search with query: {question}")
+    
+    # Log search attempt
+    engine = search_params.get('engine', 'unknown')
+    log_counter("websearch_generate_and_search_attempt", labels={
+        "engine": engine,
+        "subquery_generation": str(search_params.get("subquery_generation", False))
+    })
 
     # Validate input parameters
     if not question or not isinstance(question, str):
@@ -303,6 +312,21 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
 
     # 7. Return the final data
     logging.info("Returning final websearch results")
+    
+    # Log success metrics
+    duration = time.time() - start_time
+    result_count = len(web_search_results_dict.get("results", []))
+    log_histogram("websearch_generate_and_search_duration", duration, labels={
+        "engine": engine,
+        "subquery_generation": str(search_params.get("subquery_generation", False)),
+        "result_count": str(result_count)
+    })
+    log_counter("websearch_generate_and_search_success", labels={
+        "engine": engine,
+        "total_queries": str(len(all_queries)),
+        "result_count": str(result_count)
+    })
+    
     return {
         "final_answer": final_answer,
         "relevant_results": relevant_results,
@@ -907,6 +931,15 @@ def perform_websearch(search_engine, search_query, content_country, search_lang,
         - tavily: Tavily Search API
         - searx: SearX instance
     """
+    start_time = time.time()
+    
+    # Log search attempt
+    log_counter("websearch_perform_search_attempt", labels={
+        "engine": search_engine.lower(),
+        "country": content_country,
+        "lang": search_lang
+    })
+    
     try:
         if search_engine.lower() == "baidu":
             web_search_results = search_web_baidu(search_query, None, None)
@@ -990,6 +1023,20 @@ def perform_websearch(search_engine, search_query, content_country, search_lang,
             # Call the search_web_google function with the prepared arguments
             web_search_results = search_web_google(**google_args)  # raw JSON
             web_search_results_dict = process_web_search_results(web_search_results, "google")
+            
+            # Log success metrics for google
+            duration = time.time() - start_time
+            result_count = len(web_search_results_dict.get("results", []))
+            log_histogram("websearch_perform_search_duration", duration, labels={
+                "engine": "google",
+                "country": content_country,
+                "result_count": str(result_count)
+            })
+            log_counter("websearch_perform_search_success", labels={
+                "engine": "google",
+                "result_count": str(result_count)
+            })
+            
             return web_search_results_dict
 
         elif search_engine.lower() == "kagi":
@@ -1015,9 +1062,35 @@ def perform_websearch(search_engine, search_query, content_country, search_lang,
         # FIXME
         #logging.debug("After process_web_search_results:")
         #logging.debug(json.dumps(web_search_results_dict, indent=2))
+        
+        # Log success metrics
+        duration = time.time() - start_time
+        result_count = len(web_search_results_dict.get("results", []))
+        log_histogram("websearch_perform_search_duration", duration, labels={
+            "engine": search_engine.lower(),
+            "country": content_country,
+            "result_count": str(result_count)
+        })
+        log_counter("websearch_perform_search_success", labels={
+            "engine": search_engine.lower(),
+            "result_count": str(result_count)
+        })
+        
         return web_search_results_dict
 
     except Exception as e:
+        # Log error metrics
+        duration = time.time() - start_time
+        log_histogram("websearch_perform_search_duration", duration, labels={
+            "engine": search_engine.lower(),
+            "country": content_country,
+            "result_count": "0"
+        })
+        log_counter("websearch_perform_search_error", labels={
+            "engine": search_engine.lower(),
+            "error_type": type(e).__name__
+        })
+        
         return {"processing_error": f"Error performing web search: {str(e)}"}
 
 

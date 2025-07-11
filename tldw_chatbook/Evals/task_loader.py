@@ -17,10 +17,12 @@ Handles task configuration, dataset loading, and validation.
 import json
 import yaml
 import csv
+import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union, Tuple
 from dataclasses import dataclass, asdict
 from loguru import logger
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 try:
     from datasets import load_dataset, Dataset
@@ -93,6 +95,8 @@ class TaskLoader:
         Returns:
             TaskConfig object
         """
+        start_time = time.time()
+        
         if format_type == 'auto':
             format_type = self._detect_format(source)
         
@@ -101,16 +105,47 @@ class TaskLoader:
         
         logger.info(f"Loading task from {source} with format {format_type}")
         
-        if format_type == 'eleuther':
-            return self._load_eleuther_task(source)
-        elif format_type == 'custom':
-            return self._load_custom_task(source)
-        elif format_type == 'huggingface':
-            return self._load_huggingface_task(source)
-        elif format_type == 'csv':
-            return self._load_csv_task(source)
-        else:
-            raise TaskLoadError(f"Format {format_type} not implemented")
+        # Log task load attempt
+        log_counter("eval_task_load_attempt", labels={
+            "format_type": format_type,
+            "source_type": "dict" if isinstance(source, dict) else "file"
+        })
+        
+        try:
+            if format_type == 'eleuther':
+                task_config = self._load_eleuther_task(source)
+            elif format_type == 'custom':
+                task_config = self._load_custom_task(source)
+            elif format_type == 'huggingface':
+                task_config = self._load_huggingface_task(source)
+            elif format_type == 'csv':
+                task_config = self._load_csv_task(source)
+            else:
+                raise TaskLoadError(f"Format {format_type} not implemented")
+            
+            # Log successful load
+            duration = time.time() - start_time
+            log_histogram("eval_task_load_duration", duration, labels={
+                "format_type": format_type,
+                "task_type": task_config.task_type
+            })
+            log_counter("eval_task_load_success", labels={
+                "format_type": format_type,
+                "task_type": task_config.task_type
+            })
+            
+            return task_config
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            log_counter("eval_task_load_error", labels={
+                "format_type": format_type,
+                "error_type": type(e).__name__
+            })
+            log_histogram("eval_task_load_error_duration", duration, labels={
+                "format_type": format_type
+            })
+            raise
     
     def _detect_format(self, source: Union[str, Path, Dict]) -> str:
         """Auto-detect the format of the task source."""
@@ -148,6 +183,8 @@ class TaskLoader:
     
     def _load_eleuther_task(self, source: Union[str, Path, Dict]) -> TaskConfig:
         """Load task in Eleuther AI evaluation harness format."""
+        parse_start = time.time()
+        
         if isinstance(source, dict):
             config_data = source
         else:
@@ -159,9 +196,28 @@ class TaskLoader:
                 with open(path, 'r') as f:
                     if path.suffix.lower() in ['.yaml', '.yml']:
                         config_data = yaml.safe_load(f)
+                        file_format = "yaml"
                     else:
                         config_data = json.load(f)
+                        file_format = "json"
+                
+                # Log file parsing metrics
+                parse_duration = time.time() - parse_start
+                log_histogram("eval_task_file_parse_duration", parse_duration, labels={
+                    "format": "eleuther",
+                    "file_format": file_format
+                })
+                log_histogram("eval_task_file_size", path.stat().st_size, labels={
+                    "format": "eleuther",
+                    "file_format": file_format
+                })
+                
             except (json.JSONDecodeError, yaml.YAMLError) as e:
+                parse_duration = time.time() - parse_start
+                log_counter("eval_task_file_parse_error", labels={
+                    "format": "eleuther",
+                    "error_type": type(e).__name__
+                })
                 raise TaskLoadError(f"Failed to parse Eleuther task file {path}: {e}")
         
         # Extract required fields
@@ -423,6 +479,13 @@ class TaskLoader:
     
     def create_task_from_template(self, template_name: str, **kwargs) -> TaskConfig:
         """Create a task from a built-in template."""
+        start_time = time.time()
+        
+        # Log template creation attempt
+        log_counter("eval_task_template_create_attempt", labels={
+            "template_name": template_name
+        })
+        
         # Import here to avoid circular imports
         from .eval_templates import get_eval_templates
         
@@ -430,7 +493,21 @@ class TaskLoader:
         
         # Try to get from extended templates first
         try:
-            return template_manager.create_task_config(template_name, **kwargs)
+            task_config = template_manager.create_task_config(template_name, **kwargs)
+            
+            # Log successful template creation
+            duration = time.time() - start_time
+            log_histogram("eval_task_template_create_duration", duration, labels={
+                "template_name": template_name,
+                "task_type": task_config.task_type
+            })
+            log_counter("eval_task_template_create_success", labels={
+                "template_name": template_name,
+                "task_type": task_config.task_type
+            })
+            
+            return task_config
+            
         except ValueError:
             pass
         
@@ -493,32 +570,72 @@ class TaskLoader:
     def export_task(self, task_config: TaskConfig, output_path: Union[str, Path], 
                    format_type: str = 'custom') -> None:
         """Export task configuration to file."""
+        start_time = time.time()
         path = Path(output_path)
         
-        if format_type == 'custom':
-            data = asdict(task_config)
-            
-            if path.suffix.lower() in ['.yaml', '.yml']:
-                with open(path, 'w') as f:
-                    yaml.dump(data, f, default_flow_style=False)
-            else:
-                with open(path, 'w') as f:
-                    json.dump(data, f, indent=2)
+        # Log export attempt
+        log_counter("eval_task_export_attempt", labels={
+            "format_type": format_type,
+            "task_type": task_config.task_type
+        })
         
-        elif format_type == 'eleuther':
-            # Convert to Eleuther format
-            eleuther_config = self._convert_to_eleuther_format(task_config)
-            
-            with open(path, 'w') as f:
+        try:
+            if format_type == 'custom':
+                data = asdict(task_config)
+                
                 if path.suffix.lower() in ['.yaml', '.yml']:
-                    yaml.dump(eleuther_config, f, default_flow_style=False)
+                    with open(path, 'w') as f:
+                        yaml.dump(data, f, default_flow_style=False)
+                    file_format = "yaml"
                 else:
-                    json.dump(eleuther_config, f, indent=2)
-        
-        else:
-            raise TaskLoadError(f"Export format {format_type} not supported")
-        
-        logger.info(f"Exported task to {path}")
+                    with open(path, 'w') as f:
+                        json.dump(data, f, indent=2)
+                    file_format = "json"
+            
+            elif format_type == 'eleuther':
+                # Convert to Eleuther format
+                eleuther_config = self._convert_to_eleuther_format(task_config)
+                
+                with open(path, 'w') as f:
+                    if path.suffix.lower() in ['.yaml', '.yml']:
+                        yaml.dump(eleuther_config, f, default_flow_style=False)
+                        file_format = "yaml"
+                    else:
+                        json.dump(eleuther_config, f, indent=2)
+                        file_format = "json"
+            
+            else:
+                raise TaskLoadError(f"Export format {format_type} not supported")
+            
+            # Log successful export
+            duration = time.time() - start_time
+            file_size = path.stat().st_size
+            log_histogram("eval_task_export_duration", duration, labels={
+                "format_type": format_type,
+                "file_format": file_format,
+                "task_type": task_config.task_type
+            })
+            log_histogram("eval_task_export_file_size", file_size, labels={
+                "format_type": format_type,
+                "file_format": file_format
+            })
+            log_counter("eval_task_export_success", labels={
+                "format_type": format_type,
+                "task_type": task_config.task_type
+            })
+            
+            logger.info(f"Exported task to {path}")
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            log_counter("eval_task_export_error", labels={
+                "format_type": format_type,
+                "error_type": type(e).__name__
+            })
+            log_histogram("eval_task_export_error_duration", duration, labels={
+                "format_type": format_type
+            })
+            raise
     
     def _convert_to_eleuther_format(self, task_config: TaskConfig) -> Dict[str, Any]:
         """Convert TaskConfig to Eleuther format."""
@@ -676,6 +793,7 @@ class TaskLoader:
     
     def validate_task(self, task_config: TaskConfig) -> List[str]:
         """Validate a task configuration and return list of issues."""
+        start_time = time.time()
         issues = []
         
         # Validate required fields
@@ -714,5 +832,23 @@ class TaskLoader:
                 issues.append("Code generation tasks must specify generation_kwargs")
             elif 'language' not in task_config.generation_kwargs:
                 issues.append("Code generation tasks must specify language in generation_kwargs")
+        
+        # Log validation metrics
+        duration = time.time() - start_time
+        log_histogram("eval_task_validation_duration", duration, labels={
+            "task_type": task_config.task_type
+        })
+        log_histogram("eval_task_validation_issue_count", len(issues), labels={
+            "task_type": task_config.task_type
+        })
+        if len(issues) > 0:
+            log_counter("eval_task_validation_failed", labels={
+                "task_type": task_config.task_type,
+                "issue_count": str(len(issues))
+            })
+        else:
+            log_counter("eval_task_validation_passed", labels={
+                "task_type": task_config.task_type
+            })
         
         return issues

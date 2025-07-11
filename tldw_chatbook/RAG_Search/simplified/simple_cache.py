@@ -50,18 +50,21 @@ class SimpleRAGCache:
     def __init__(self, 
                  max_size: int = 100,
                  ttl_seconds: float = 3600,  # 1 hour default
-                 enabled: bool = True):
+                 enabled: bool = True,
+                 ttl_by_search_type: Optional[Dict[str, float]] = None):
         """
         Initialize the cache.
         
         Args:
             max_size: Maximum number of entries to cache
-            ttl_seconds: Time-to-live for cache entries in seconds
+            ttl_seconds: Default time-to-live for cache entries in seconds
             enabled: Whether caching is enabled
+            ttl_by_search_type: Optional dict mapping search types to specific TTLs
         """
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
         self.enabled = enabled
+        self.ttl_by_search_type = ttl_by_search_type or {}
         
         # Use OrderedDict for LRU behavior
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
@@ -159,15 +162,16 @@ class SimpleRAGCache:
             
             entry = self._cache[key]
             
-            # Check TTL
+            # Check TTL - use search type specific TTL if available
+            ttl = self.ttl_by_search_type.get(search_type, self.ttl_seconds)
             age = time.time() - entry.timestamp
-            if age > self.ttl_seconds:
+            if age > ttl:
                 # Expired
                 del self._cache[key]
                 self._misses += 1
                 log_counter("cache_expired", labels={"type": search_type})
                 log_histogram("cache_entry_expired_age_seconds", age)
-                logger.debug(f"Cache entry expired for query: '{query[:50]}...' (age: {age:.1f}s)")
+                logger.debug(f"Cache entry expired for query: '{query[:50]}...' (age: {age:.1f}s, ttl: {ttl}s)")
                 return None
             
             # Move to end (most recently used)
@@ -482,7 +486,8 @@ _global_cache: Optional[SimpleRAGCache] = None
 
 def get_rag_cache(max_size: int = 100,
                   ttl_seconds: float = 3600,
-                  enabled: bool = True) -> SimpleRAGCache:
+                  enabled: bool = True,
+                  ttl_by_search_type: Optional[Dict[str, float]] = None) -> SimpleRAGCache:
     """
     Get or create the global RAG cache instance.
     
@@ -490,6 +495,7 @@ def get_rag_cache(max_size: int = 100,
         max_size: Maximum number of entries
         ttl_seconds: Time-to-live in seconds
         enabled: Whether caching is enabled
+        ttl_by_search_type: Optional dict mapping search types to specific TTLs
         
     Returns:
         The cache instance
@@ -500,7 +506,8 @@ def get_rag_cache(max_size: int = 100,
         _global_cache = SimpleRAGCache(
             max_size=max_size,
             ttl_seconds=ttl_seconds,
-            enabled=enabled
+            enabled=enabled,
+            ttl_by_search_type=ttl_by_search_type
         )
     
     return _global_cache

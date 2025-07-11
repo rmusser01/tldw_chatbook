@@ -92,6 +92,66 @@ class ConnectionPool:
                         self._pool.put(new_conn)
                         self._all_connections.append(new_conn)
     
+    @contextmanager
+    def transaction(self) -> ContextManager[sqlite3.Connection]:
+        """
+        Get a connection from the pool with automatic transaction management.
+        
+        Automatically commits on success and rolls back on exception.
+        
+        Usage:
+            with pool.transaction() as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO table VALUES (?)", (value,))
+                # Automatically commits if no exception
+        """
+        if self._closed:
+            raise RuntimeError("Connection pool is closed")
+        
+        conn = None
+        try:
+            # Get connection from pool
+            conn = self._pool.get(timeout=self.timeout)
+            
+            # Start explicit transaction
+            conn.execute("BEGIN")
+            
+            yield conn
+            
+            # Commit on success
+            conn.commit()
+            logger.debug("Transaction committed successfully")
+            
+        except queue.Empty:
+            raise TimeoutError(f"Could not get connection within {self.timeout} seconds")
+        except Exception as e:
+            # Rollback on any error
+            if conn is not None:
+                try:
+                    conn.rollback()
+                    logger.warning(f"Transaction rolled back due to error: {e}")
+                except sqlite3.Error as rollback_error:
+                    logger.error(f"Failed to rollback transaction: {rollback_error}")
+            raise
+        finally:
+            # Return connection to pool
+            if conn is not None:
+                try:
+                    # Ensure we're not in a transaction
+                    conn.rollback()  # This is safe even if already rolled back
+                    # Test if connection is still valid
+                    conn.execute("SELECT 1")
+                    self._pool.put(conn)
+                except sqlite3.Error:
+                    # Connection is broken, create a new one
+                    logger.warning("Replacing broken database connection after transaction")
+                    with self._lock:
+                        if conn in self._all_connections:
+                            self._all_connections.remove(conn)
+                        new_conn = self._create_connection()
+                        self._pool.put(new_conn)
+                        self._all_connections.append(new_conn)
+    
     def close(self):
         """Close all connections in the pool."""
         with self._lock:

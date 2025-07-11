@@ -31,6 +31,7 @@
 import json
 import sqlite3
 import threading
+import time
 import uuid
 import re
 from contextlib import contextmanager
@@ -45,6 +46,7 @@ from loguru import logger as logging
 #
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
+from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 ########################################################################################################################
 #
@@ -740,6 +742,8 @@ class PromptsDatabase:
                    system_prompt: Optional[str] = None, user_prompt: Optional[str] = None,
                    keywords: Optional[List[str]] = None, overwrite: bool = False) -> Tuple[
         Optional[int], Optional[str], str]:
+        start_time = time.time()
+        
         if not name or not name.strip():
             raise InputError("Prompt name cannot be empty.")
         name = name.strip()  # Use original case for name, but ensure no leading/trailing spaces
@@ -830,9 +834,38 @@ class PromptsDatabase:
                     self.update_keywords_for_prompt(prompt_id, keywords_list=keywords) # This is an instance method
 
                 msg = f"Prompt '{name}' {action_taken} successfully."
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("prompts_db_operation_duration", duration, labels={
+                    "operation": "add_prompt",
+                    "action": action_taken,
+                    "has_keywords": "true" if keywords else "false"
+                })
+                log_counter("prompts_db_operation_count", labels={
+                    "operation": "add_prompt",
+                    "action": action_taken,
+                    "status": "success",
+                    "overwrite": str(overwrite)
+                })
+                
                 return prompt_id, prompt_uuid, msg
 
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "input_error" if isinstance(e, InputError) else "conflict" if isinstance(e, ConflictError) else "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "add_prompt",
+                "action": "error",
+                "has_keywords": "false"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "add_prompt",
+                "status": "error",
+                "error_type": error_type
+            })
+            
             logger.error(f"Error adding/updating prompt '{name}': {e}", exc_info=True)
             if isinstance(e, (InputError, ConflictError, DatabaseError)): raise e
             else: raise DatabaseError(f"Failed to process prompt '{name}': {e}") from e
@@ -923,6 +956,8 @@ class PromptsDatabase:
             ConflictError: If a name change conflicts with another existing prompt, or version mismatch.
             DatabaseError: For other database issues.
         """
+        start_time = time.time()
+        
         if 'name' in update_data and (not update_data['name'] or not update_data['name'].strip()):
             raise InputError("Prompt name cannot be empty if provided for update.")
 
@@ -1016,15 +1051,43 @@ class PromptsDatabase:
                 if 'keywords' in update_data and isinstance(update_data['keywords'], list):
                     self.update_keywords_for_prompt(prompt_id, update_data['keywords'])  # Call existing method
 
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("prompts_db_operation_duration", duration, labels={
+                    "operation": "update_prompt",
+                    "fields_updated": str(len(set_clauses)),
+                    "has_keywords": "true" if 'keywords' in update_data else "false"
+                })
+                log_counter("prompts_db_operation_count", labels={
+                    "operation": "update_prompt",
+                    "status": "success",
+                    "name_changed": "true" if new_name != original_name else "false"
+                })
+
                 return original_uuid, f"Prompt ID {prompt_id} updated successfully to version {new_version}."
 
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "input_error" if isinstance(e, InputError) else "conflict" if isinstance(e, ConflictError) else "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "update_prompt",
+                "fields_updated": "0",
+                "has_keywords": "false"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "update_prompt",
+                "status": "error",
+                "error_type": error_type
+            })
+            
             logger.error(f"Error updating prompt ID {prompt_id}: {e}", exc_info=True)
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             raise DatabaseError(f"Failed to update prompt ID {prompt_id}: {e}") from e
 
     def soft_delete_prompt(self, prompt_id_or_name_or_uuid: Union[int, str]) -> bool:
+        start_time = time.time()
         current_time = self._get_current_utc_timestamp_str()
         client_id = self.client_id
 
@@ -1089,8 +1152,36 @@ class PromptsDatabase:
                     logging.debug(f"Unlinked {len(keywords_to_unlink)} keywords from soft-deleted prompt ID {prompt_id}.")
 
                 logger.info(f"Soft deleted prompt '{prompt_id_or_name_or_uuid}' (ID: {prompt_id}, UUID: {prompt_uuid}).")
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("prompts_db_operation_duration", duration, labels={
+                    "operation": "soft_delete_prompt",
+                    "lookup_by": col_name,
+                    "keywords_unlinked": str(len(keywords_to_unlink))
+                })
+                log_counter("prompts_db_operation_count", labels={
+                    "operation": "soft_delete_prompt",
+                    "status": "success",
+                    "had_keywords": "true" if keywords_to_unlink else "false"
+                })
+                
                 return True
         except (ConflictError, DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "conflict" if isinstance(e, ConflictError) else "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "soft_delete_prompt",
+                "lookup_by": col_name if 'col_name' in locals() else "unknown",
+                "keywords_unlinked": "0"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "soft_delete_prompt",
+                "status": "error",
+                "error_type": error_type
+            })
+            
             logger.error(f"Error soft deleting prompt '{prompt_id_or_name_or_uuid}': {e}", exc_info=True)
             if isinstance(e, (ConflictError, DatabaseError)): raise e
             else: raise DatabaseError(f"Failed to soft delete prompt: {e}") from e
@@ -1153,6 +1244,8 @@ class PromptsDatabase:
 
     # --- Read Methods ---
     def get_prompt_by_id(self, prompt_id: int, include_deleted: bool = False) -> Optional[Dict]:
+        start_time = time.time()
+        
         query = "SELECT * FROM Prompts WHERE id = ?"
         params = [prompt_id]
         if not include_deleted:
@@ -1160,8 +1253,34 @@ class PromptsDatabase:
         try:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
-            return dict(result) if result else None
+            found_result = dict(result) if result else None
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "true" if found_result else "false"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "success",
+                "found": "true" if found_result else "false"
+            })
+            
+            return found_result
         except (DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "false"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Error fetching prompt by ID {prompt_id}: {e}")
             raise DatabaseError(f"Failed fetch prompt by ID: {e}") from e
 
@@ -1179,6 +1298,8 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed fetch prompt by UUID: {e}") from e
 
     def get_prompt_by_name(self, name: str, include_deleted: bool = False) -> Optional[Dict]:
+        start_time = time.time()
+        
         query = "SELECT * FROM Prompts WHERE name = ?"
         params = [name]
         if not include_deleted:
@@ -1186,12 +1307,40 @@ class PromptsDatabase:
         try:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
-            return dict(result) if result else None
+            found_result = dict(result) if result else None
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "get_by_name",
+                "found": "true" if found_result else "false"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "get_by_name",
+                "status": "success",
+                "found": "true" if found_result else "false"
+            })
+            
+            return found_result
         except (DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "get_by_name",
+                "found": "false"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "get_by_name",
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Error fetching prompt by name '{name}': {e}")
             raise DatabaseError(f"Failed fetch prompt by name: {e}") from e
 
     def list_prompts(self, page: int = 1, per_page: int = 10, include_deleted: bool = False) -> Tuple[List[Dict], int, int, int]:
+        start_time = time.time()
+        
         if page < 1: raise ValueError("Page number must be >= 1")
         if per_page < 1: raise ValueError("Per page must be >= 1")
         offset = (page - 1) * per_page
@@ -1214,8 +1363,36 @@ class PromptsDatabase:
                     results_data = [dict(row) for row in cursor.fetchall()]
 
             total_pages = ceil(total_items / per_page) if total_items > 0 else 0
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "list_prompts",
+                "page": str(page),
+                "per_page": str(per_page)
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "list_prompts",
+                "status": "success",
+                "result_count": str(len(results_data)),
+                "total_items": str(total_items)
+            })
+            
             return results_data, total_pages, page, total_items
         except (DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "list_prompts",
+                "page": str(page),
+                "per_page": str(per_page)
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "list_prompts",
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Error listing prompts: {e}")
             raise DatabaseError(f"Failed to list prompts: {e}") from e
 
@@ -1273,6 +1450,8 @@ class PromptsDatabase:
                        results_per_page: int = 20,
                        include_deleted: bool = False
                        ) -> Tuple[List[Dict[str, Any]], int]:
+        start_time = time.time()
+        
         if page < 1: raise ValueError("Page must be >= 1")
         if results_per_page < 1: raise ValueError("Results per page must be >= 1")
 
@@ -1354,8 +1533,40 @@ class PromptsDatabase:
                 for res_dict in results_list:
                     res_dict['keywords'] = self.fetch_keywords_for_prompt(res_dict['id'], include_deleted=False)
 
+            # Log success metrics
+            duration = time.time() - start_time
+            search_type = "full_text" if search_query else "list_all"
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "search_prompts",
+                "search_type": search_type,
+                "page": str(page),
+                "result_count": str(len(results_list))
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "search_prompts",
+                "status": "success",
+                "search_type": search_type,
+                "total_matches": str(total_matches),
+                "searched_keywords": "true" if "keywords" in search_fields else "false"
+            })
+            
             return results_list, total_matches
         except (DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "search_prompts",
+                "search_type": "error",
+                "page": str(page),
+                "result_count": "0"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "search_prompts",
+                "status": "error",
+                "error_type": error_type
+            })
+            
             logging.error(f"DB error during prompt search: {e}", exc_info=True)
             raise DatabaseError(f"Failed to search prompts: {e}") from e
 
@@ -1458,6 +1669,8 @@ class PromptsDatabase:
         Returns:
             List of prompt dictionaries that have the keyword
         """
+        start_time = time.time()
+        
         if not keyword or not keyword.strip():
             return []
             
@@ -1485,8 +1698,33 @@ class PromptsDatabase:
             for res_dict in results:
                 res_dict['keywords'] = self.fetch_keywords_for_prompt(res_dict['id'], include_deleted=False)
                 
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "search_by_keyword",
+                "result_count": str(len(results))
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "search_by_keyword",
+                "status": "success",
+                "result_count": str(len(results))
+            })
+            
             return results
         except (DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            log_histogram("prompts_db_operation_duration", duration, labels={
+                "operation": "search_by_keyword",
+                "result_count": "0"
+            })
+            log_counter("prompts_db_operation_count", labels={
+                "operation": "search_by_keyword",
+                "status": "error",
+                "error_type": error_type
+            })
+            
             logger.error(f"Error searching prompts by keyword '{keyword}': {e}")
             raise DatabaseError(f"Failed to search prompts by keyword: {e}") from e
 
