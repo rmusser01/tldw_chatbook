@@ -10,6 +10,7 @@ from textual.widgets import (
     ListView, ListItem, LoadingIndicator, Collapsible
 )
 from ..config import get_media_ingestion_defaults
+from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -121,14 +122,30 @@ class IngestLocalEbookWindow(Vertical):
             
             # --- Ebook Specific Options ---
             yield Static("Ebook Specific Options", classes="sidebar-title")
-            yield Label("Ebook Extraction Method:")
-            ebook_extraction_options = [("filtered", "filtered"), ("markdown", "markdown"), ("basic", "basic")]
-            yield Select(ebook_extraction_options, id="local-ebook-extraction-method-ebook", value="filtered")
+            
+            # Check if ebook processing is available
+            ebook_processing_available = DEPENDENCIES_AVAILABLE.get('ebook_processing', False)
+            
+            if ebook_processing_available:
+                yield Label("Ebook Extraction Method:")
+                ebook_extraction_options = [("filtered", "filtered"), ("markdown", "markdown"), ("basic", "basic")]
+                yield Select(ebook_extraction_options, id="local-ebook-extraction-method-ebook", value="filtered")
+            else:
+                yield Static("⚠️ Ebook processing not available. Install with: pip install tldw_chatbook[ebook]", 
+                           classes="warning-message")
+                yield Select([("No processing available", Select.BLANK)], id="local-ebook-extraction-method-ebook", disabled=True)
             
             yield Static("Local Database Options", classes="sidebar-title")
             yield Checkbox("Overwrite if media exists in local DB", False, id="local-overwrite-db-ebook")
             
-            yield Button("Process Ebook Locally", id="local-submit-ebook", variant="primary", classes="ingest-submit-button")
+            # Only enable submit button if ebook processing is available
+            yield Button(
+                "Process Ebook Locally", 
+                id="local-submit-ebook", 
+                variant="primary" if ebook_processing_available else "default",
+                classes="ingest-submit-button",
+                disabled=not ebook_processing_available
+            )
             yield LoadingIndicator(id="local-loading-indicator-ebook", classes="hidden")
             yield TextArea(
                 "",

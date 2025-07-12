@@ -326,13 +326,25 @@ async def perform_plain_rag_search(
                     rerank_req = RerankRequest(query=query, passages=passages)
                     ranked_results = ranker.rerank(rerank_req)
                     
-                    # Update scores based on re-ranking
-                    for i, ranked in enumerate(ranked_results):
-                        if i < len(all_results):
-                            all_results[ranked['index']]['score'] = ranked['score']
+                    # Create a new list with reranked results
+                    reranked_list = []
+                    for ranked in ranked_results:
+                        # FlashRank returns objects with attributes, not dicts
+                        # Get the index using attribute access
+                        idx = getattr(ranked, 'index', None) if hasattr(ranked, 'index') else ranked.get('index', None) if isinstance(ranked, dict) else None
+                        score = getattr(ranked, 'score', None) if hasattr(ranked, 'score') else ranked.get('score', None) if isinstance(ranked, dict) else None
+                        
+                        if idx is not None and idx < len(all_results):
+                            result = all_results[idx].copy()
+                            result['score'] = score if score is not None else result.get('score', 0.0)
+                            reranked_list.append(result)
                     
-                    # Sort by score
-                    all_results.sort(key=lambda x: x['score'], reverse=True)
+                    # Replace all_results with reranked results
+                    if reranked_list:
+                        all_results = reranked_list
+                    else:
+                        # If reranking failed, just sort by existing scores
+                        all_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
             except Exception as e:
                 logger.error(f"Error during FlashRank re-ranking: {e}", exc_info=True)
                 
@@ -622,13 +634,24 @@ async def perform_full_rag_pipeline(
                     rerank_req = RerankRequest(query=query, passages=passages)
                     ranked_results = ranker.rerank(rerank_req)
                     
-                    # Update scores based on re-ranking
-                    for i, ranked in enumerate(ranked_results):
-                        if i < len(all_results):
-                            all_results[ranked['index']]['score'] = ranked['score']
+                    # Create a new list with reranked results
+                    reranked_list = []
+                    for ranked in ranked_results:
+                        # FlashRank returns objects with attributes, not dicts
+                        idx = getattr(ranked, 'index', None) if hasattr(ranked, 'index') else ranked.get('index', None) if isinstance(ranked, dict) else None
+                        score = getattr(ranked, 'score', None) if hasattr(ranked, 'score') else ranked.get('score', None) if isinstance(ranked, dict) else None
+                        
+                        if idx is not None and idx < len(all_results):
+                            result = all_results[idx].copy()
+                            result['score'] = score if score is not None else result.get('score', 0.0)
+                            reranked_list.append(result)
                     
-                    # Re-sort by new scores
-                    all_results.sort(key=lambda x: x['score'], reverse=True)
+                    # Replace all_results with reranked results
+                    if reranked_list:
+                        all_results = reranked_list
+                    else:
+                        # If reranking failed, just sort by existing scores
+                        all_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
             except Exception as e:
                 logger.error(f"Error during FlashRank re-ranking: {e}")
                 
@@ -1032,14 +1055,25 @@ async def perform_hybrid_rag_search(
                     rerank_req = RerankRequest(query=query, passages=passages)
                     ranked_results = ranker.rerank(rerank_req)
                     
-                    # Update scores based on re-ranking
-                    for i, ranked in enumerate(ranked_results):
-                        if i < len(all_results):
-                            all_results[ranked['index']]['rerank_score'] = ranked['score']
-                            all_results[ranked['index']]['score'] = ranked['score']
+                    # Create a new list with reranked results
+                    reranked_list = []
+                    for ranked in ranked_results:
+                        # FlashRank returns objects with attributes, not dicts
+                        idx = getattr(ranked, 'index', None) if hasattr(ranked, 'index') else ranked.get('index', None) if isinstance(ranked, dict) else None
+                        score = getattr(ranked, 'score', None) if hasattr(ranked, 'score') else ranked.get('score', None) if isinstance(ranked, dict) else None
+                        
+                        if idx is not None and idx < len(all_results):
+                            result = all_results[idx].copy()
+                            result['rerank_score'] = score if score is not None else result.get('score', 0.0)
+                            result['score'] = score if score is not None else result.get('score', 0.0)
+                            reranked_list.append(result)
                     
-                    # Re-sort by new scores
-                    all_results.sort(key=lambda x: x['score'], reverse=True)
+                    # Replace all_results with reranked results
+                    if reranked_list:
+                        all_results = reranked_list
+                    else:
+                        # If reranking failed, just sort by existing scores
+                        all_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
             except Exception as e:
                 logger.error(f"Error during FlashRank re-ranking: {e}")
                 
@@ -1327,11 +1361,24 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                             rerank_req = RerankRequest(query=user_message, passages=passages)
                             ranked_results = ranker.rerank(rerank_req)
                             
-                            for i, ranked in enumerate(ranked_results):
-                                if i < len(all_results):
-                                    all_results[ranked['index']]['score'] = ranked['score']
+                            # Create a new list with reranked results
+                            reranked_list = []
+                            for ranked in ranked_results:
+                                # FlashRank returns objects with attributes, not dicts
+                                idx = getattr(ranked, 'index', None) if hasattr(ranked, 'index') else ranked.get('index', None) if isinstance(ranked, dict) else None
+                                score = getattr(ranked, 'score', None) if hasattr(ranked, 'score') else ranked.get('score', None) if isinstance(ranked, dict) else None
+                                
+                                if idx is not None and idx < len(all_results):
+                                    result = all_results[idx].copy()
+                                    result['score'] = score if score is not None else result.get('score', 0.0)
+                                    reranked_list.append(result)
                             
-                            all_results.sort(key=lambda x: x['score'], reverse=True)
+                            # Replace all_results with reranked results
+                            if reranked_list:
+                                all_results = reranked_list
+                            else:
+                                # If reranking failed, just sort by existing scores
+                                all_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
                     except Exception as e:
                         logger.error(f"Error during FlashRank re-ranking: {e}")
                 

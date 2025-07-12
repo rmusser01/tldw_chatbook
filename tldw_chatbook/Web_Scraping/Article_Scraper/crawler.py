@@ -37,8 +37,21 @@ from urllib.parse import urlparse, urljoin
 import xml.etree.ElementTree as ET
 #
 # Third-Party Libraries
-import aiohttp
-from bs4 import BeautifulSoup
+# Handle optional aiohttp dependency
+try:
+    import aiohttp
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+    aiohttp = None
+
+# Handle optional BeautifulSoup dependency
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    BeautifulSoup = None
 #
 # Local Imports
 from ...Metrics.metrics_logger import log_counter, log_histogram
@@ -97,6 +110,15 @@ async def crawl_site(
     """
     start_time = time.time()
     logging.info(f"Starting crawl of {base_url} (max_pages={max_pages}, max_depth={max_depth})")
+    
+    if not BS4_AVAILABLE or not AIOHTTP_AVAILABLE:
+        missing = []
+        if not BS4_AVAILABLE:
+            missing.append("beautifulsoup4")
+        if not AIOHTTP_AVAILABLE:
+            missing.append("aiohttp")
+        logging.error(f"Missing dependencies: {', '.join(missing)}. Install with: pip install tldw_chatbook[websearch]")
+        return set()
     
     # Log crawl start
     log_counter("crawler_site_crawl_start", labels={

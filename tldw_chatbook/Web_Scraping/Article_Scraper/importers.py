@@ -42,8 +42,20 @@ import time
 from typing import Dict, List, Union
 #
 # Third-Party Libraries
-from bs4 import BeautifulSoup
-import pandas as pd
+# Handle optional dependencies
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    BeautifulSoup = None
+
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+    pd = None
 #
 # Local Imports
 from ...Metrics.metrics_logger import log_counter, log_histogram
@@ -106,6 +118,10 @@ def _load_from_firefox_html(file_path: str) -> Dict[str, str]:
     start_time = time.time()
     log_counter("importer_firefox_html_attempt")
     
+    if not BS4_AVAILABLE:
+        logging.error("BeautifulSoup not available for parsing Firefox bookmarks. Install with: pip install tldw_chatbook[websearch]")
+        return {}
+    
     bookmarks = {}
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -148,6 +164,10 @@ def _load_from_csv(file_path: str) -> Dict[str, str]:
     """Loads URLs from a CSV file. Expects 'url' and optionally 'title' columns."""
     start_time = time.time()
     log_counter("importer_csv_attempt")
+    
+    if not PANDAS_AVAILABLE:
+        logging.error("Pandas not available for parsing CSV files. Install with: pip install tldw_chatbook[websearch]")
+        return {}
     
     bookmarks = {}
     try:

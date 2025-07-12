@@ -5,7 +5,6 @@ This maintains the clean API while leveraging the robust existing implementation
 that provides thread-safe caching, multiple providers, and async support.
 """
 
-import numpy as np
 from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
 import logging
@@ -13,6 +12,17 @@ import os
 import time
 import psutil
 import hashlib
+
+# Handle numpy as optional dependency
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    # Create a minimal stub for type hints
+    class np:
+        class ndarray:
+            pass
 
 from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
@@ -199,7 +209,11 @@ class EmbeddingsServiceWrapper:
         Raises:
             ValueError: If texts is empty
             RuntimeError: If embedding creation fails
+            ImportError: If numpy is not available
         """
+        if not NUMPY_AVAILABLE:
+            raise ImportError("NumPy is required for embeddings. Install with: pip install tldw_chatbook[embeddings_rag]")
+            
         if not texts:
             logger.warning("create_embeddings called with empty text list")
             return np.array([])
@@ -295,6 +309,9 @@ class EmbeddingsServiceWrapper:
         
         Uses the factory's async_embed method for non-blocking operation.
         """
+        if not NUMPY_AVAILABLE:
+            raise ImportError("NumPy is required for embeddings. Install with: pip install tldw_chatbook[embeddings_rag]")
+            
         if not texts:
             logger.warning("create_embeddings_async called with empty text list")
             return np.array([])

@@ -10,8 +10,22 @@ from urllib.parse import urlparse, parse_qs
 import html
 #
 # Third-party imports
-from bs4 import BeautifulSoup, NavigableString
-from markdownify import markdownify as md
+# Handle optional dependencies
+try:
+    from bs4 import BeautifulSoup, NavigableString
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    BeautifulSoup = None
+    NavigableString = None
+
+try:
+    from markdownify import markdownify as md
+    MARKDOWNIFY_AVAILABLE = True
+except ImportError:
+    MARKDOWNIFY_AVAILABLE = False
+    md = None
+
 from loguru import logger
 #
 #######################################################################################################################
@@ -30,6 +44,15 @@ def convert_confluence_to_markdown(html_content: str) -> str:
     """
     if not html_content:
         return ""
+    
+    if not BS4_AVAILABLE or not MARKDOWNIFY_AVAILABLE:
+        missing = []
+        if not BS4_AVAILABLE:
+            missing.append("beautifulsoup4")
+        if not MARKDOWNIFY_AVAILABLE:
+            missing.append("markdownify")
+        logger.error(f"Missing dependencies: {', '.join(missing)}. Install with: pip install tldw_chatbook[websearch]")
+        return html_content  # Return raw HTML as fallback
         
     try:
         # First, handle Confluence-specific elements

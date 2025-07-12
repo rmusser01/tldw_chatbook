@@ -30,28 +30,33 @@ from .health_check import init_health_checker, get_health_status
 from .data_models import IndexingResult
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.config import load_settings
 
 logger = logging.getLogger(__name__)
 
-# Constants
-DEFAULT_EMBEDDING_DIM = 768  # Default dimension if detection fails
-KEYWORD_SEARCH_SCORE = 0.8  # Fixed score for keyword search results
-MAX_CITATION_MATCHES = 3  # Maximum keyword matches to show as citations
-CITATION_CONTEXT_CHARS = 50  # Characters of context around keyword matches
-KEYWORD_BATCH_SIZE = 10  # Batch size for processing keyword results
-FTS5_CONNECTION_POOL_SIZE = 3  # Connection pool size for FTS5 searches
-CACHE_TIMEOUT_SECONDS = 3600.0  # Cache timeout: 1 hour for better performance
-MAX_QUERY_LENGTH = 1000  # Maximum query length for FTS5
-DEFAULT_FTS5_LIMIT = 100  # Default result limit for FTS5 searches
-MAX_FTS5_LIMIT = 1000  # Maximum result limit for FTS5 searches
-SEARCH_RESULT_MULTIPLIER = 2  # Multiplier for initial search results before filtering
-MIN_SYSTEM_MEMORY_MB = 500  # Minimum system memory to avoid pressure
-MEMORY_PRESSURE_REDUCTION = 0.2  # Fraction to reduce on memory pressure
-MAX_DOCUMENT_SIZE_MB = 10  # Maximum document size in MB
-EMBEDDING_IDLE_TIMEOUT = 900  # 15 minutes idle timeout for embeddings
-CHUNK_PROGRESS_INTERVAL = 10  # Show progress every N documents
-EMBEDDING_PROGRESS_INTERVAL = 5  # Show progress every N batches
-DEFAULT_BATCH_SIZE = 32  # Default batch size for embeddings
+# Load constants from config with fallbacks
+_config = load_settings()
+_rag_service_config = _config.get('rag', {}).get('service', {})
+
+# Constants from config
+DEFAULT_EMBEDDING_DIM = _rag_service_config.get('default_embedding_dim', 768)
+KEYWORD_SEARCH_SCORE = _rag_service_config.get('keyword_search_score', 0.8)
+MAX_CITATION_MATCHES = _rag_service_config.get('max_citation_matches', 3)
+CITATION_CONTEXT_CHARS = _rag_service_config.get('citation_context_chars', 50)
+KEYWORD_BATCH_SIZE = _rag_service_config.get('keyword_batch_size', 10)
+FTS5_CONNECTION_POOL_SIZE = _rag_service_config.get('fts5_connection_pool_size', 3)
+CACHE_TIMEOUT_SECONDS = _rag_service_config.get('cache_timeout_seconds', 3600.0)
+MAX_QUERY_LENGTH = _rag_service_config.get('max_query_length', 1000)
+DEFAULT_FTS5_LIMIT = _rag_service_config.get('default_fts5_limit', 100)
+MAX_FTS5_LIMIT = _rag_service_config.get('max_fts5_limit', 1000)
+SEARCH_RESULT_MULTIPLIER = _rag_service_config.get('search_result_multiplier', 2)
+MIN_SYSTEM_MEMORY_MB = _rag_service_config.get('min_system_memory_mb', 500)
+MEMORY_PRESSURE_REDUCTION = _rag_service_config.get('memory_pressure_reduction', 0.2)
+MAX_DOCUMENT_SIZE_MB = _rag_service_config.get('max_document_size_mb', 10)
+EMBEDDING_IDLE_TIMEOUT = _rag_service_config.get('embedding_idle_timeout', 900)
+CHUNK_PROGRESS_INTERVAL = _rag_service_config.get('chunk_progress_interval', 10)
+EMBEDDING_PROGRESS_INTERVAL = _rag_service_config.get('embedding_progress_interval', 5)
+DEFAULT_BATCH_SIZE = _rag_service_config.get('batch_size', 32)  # This one matches the rag.embedding.batch_size
 
 
 class RAGService:

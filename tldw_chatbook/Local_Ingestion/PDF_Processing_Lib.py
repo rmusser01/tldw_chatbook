@@ -24,8 +24,15 @@ import os
 from pathlib import Path
 #
 # Import External Libs
-import pymupdf
-import pymupdf4llm
+try:
+    import pymupdf
+    import pymupdf4llm
+    PDF_PROCESSING_AVAILABLE = True
+except ImportError as e:
+    PDF_PROCESSING_AVAILABLE = False
+    pymupdf = None
+    pymupdf4llm = None
+    PDF_IMPORT_ERROR = str(e)
 #
 # Import Local
 from ..config import get_cli_setting, get_ocr_backend_config
@@ -58,6 +65,9 @@ def extract_text_and_format_from_pdf(pdf_path):
     """
     Extract text from a PDF file and convert it to Markdown, preserving formatting.
     """
+    if not PDF_PROCESSING_AVAILABLE:
+        raise ImportError(f"PDF processing libraries not available. Install with: pip install tldw_chatbook[pdf]. Error: {PDF_IMPORT_ERROR}")
+    
     try:
         log_counter("pdf_text_extraction_attempt", labels={"file_path": pdf_path})
         start_time = datetime.now()
@@ -178,6 +188,9 @@ def pymupdf4llm_parse_pdf(pdf_path):
     """
     Extract text from a PDF file and convert it to Markdown, preserving formatting.
     """
+    if not PDF_PROCESSING_AVAILABLE:
+        raise ImportError(f"PDF processing libraries not available. Install with: pip install tldw_chatbook[pdf]. Error: {PDF_IMPORT_ERROR}")
+    
     try:
         log_counter("pdf_text_extraction_attempt", labels={"file_path": pdf_path})
         start_time = datetime.now()

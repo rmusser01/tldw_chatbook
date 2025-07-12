@@ -12,6 +12,7 @@ from textual.widgets import (
 from textual.reactive import reactive
 from textual.widget import Widget
 from ..config import get_media_ingestion_defaults
+from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -206,7 +207,24 @@ class IngestLocalWebArticleWindow(Vertical):
                               id="ingest-local-web-multi-level-chunking")
             
             # Action Section
-            yield Button("Scrape Articles", id="ingest-local-web-process", variant="primary", classes="ingest-submit-button")
+            # Check if web scraping dependencies are available
+            web_scraping_available = (
+                DEPENDENCIES_AVAILABLE.get('playwright', False) or 
+                DEPENDENCIES_AVAILABLE.get('trafilatura', False) or
+                DEPENDENCIES_AVAILABLE.get('beautifulsoup4', False)
+            )
+            
+            if not web_scraping_available:
+                yield Static("⚠️ Web scraping dependencies not available. Install with: pip install tldw_chatbook[websearch]", 
+                           classes="warning-message")
+            
+            yield Button(
+                "Scrape Articles", 
+                id="ingest-local-web-process", 
+                variant="primary" if web_scraping_available else "default",
+                classes="ingest-submit-button",
+                disabled=not web_scraping_available
+            )
             yield LoadingIndicator(id="ingest-local-web-loading", classes="hidden")
             
             # Progress section

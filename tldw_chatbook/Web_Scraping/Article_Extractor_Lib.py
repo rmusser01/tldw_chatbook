@@ -50,15 +50,43 @@ from xml.dom import minidom
 import xml.etree.ElementTree as xET
 #
 # External Libraries
-from bs4 import BeautifulSoup
-import pandas as pd
-from playwright.async_api import (
-    TimeoutError,
-    async_playwright
-)
-from playwright.sync_api import sync_playwright
+# Handle optional web scraping dependencies
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    BeautifulSoup = None
+
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+    pd = None
+
+try:
+    from playwright.async_api import (
+        TimeoutError,
+        async_playwright
+    )
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    TimeoutError = Exception
+    async_playwright = None
+    sync_playwright = None
+
 import requests
-import trafilatura
+
+try:
+    import trafilatura
+    TRAFILATURA_AVAILABLE = True
+except ImportError:
+    TRAFILATURA_AVAILABLE = False
+    trafilatura = None
+
 from tqdm import tqdm
 #
 # Import Local
@@ -195,6 +223,10 @@ def get_page_title(url: str) -> str:
         logging.error(f"Invalid URL provided to get_page_title: {url}")
         return "Untitled"
     
+    if not BS4_AVAILABLE:
+        logging.warning("BeautifulSoup not available. Install with: pip install tldw_chatbook[websearch]")
+        return "Untitled (BeautifulSoup not available)"
+    
     try:
         response = requests.get(url, timeout=10)  # Add timeout
         if response.status_code == 200:
@@ -271,6 +303,31 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
         }
     
     logging.info(f"Scraping article from URL: {url}")
+    
+    # Check required dependencies
+    if not PLAYWRIGHT_AVAILABLE:
+        logging.error("Playwright not available. Install with: pip install tldw_chatbook[websearch]")
+        return {
+            'title': 'Error',
+            'author': 'Unknown',
+            'content': 'Playwright not available for web scraping',
+            'date': datetime.now().isoformat(),
+            'url': url,
+            'extraction_successful': False,
+            'error': 'Playwright not installed'
+        }
+    
+    if not TRAFILATURA_AVAILABLE:
+        logging.error("Trafilatura not available. Install with: pip install tldw_chatbook[websearch]")
+        return {
+            'title': 'Error',
+            'author': 'Unknown',
+            'content': 'Trafilatura not available for content extraction',
+            'date': datetime.now().isoformat(),
+            'url': url,
+            'extraction_successful': False,
+            'error': 'Trafilatura not installed'
+        }
     
     async def fetch_html(url: str) -> str:
             # Load and log the configuration
@@ -411,6 +468,10 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
 
     def convert_html_to_markdown(html: str) -> str:
         logging.info("Converting HTML to Markdown")
+        if not BS4_AVAILABLE:
+            logging.warning("BeautifulSoup not available for HTML to Markdown conversion")
+            # Return raw HTML as fallback
+            return html
         soup = BeautifulSoup(html, 'html.parser')
         for para in soup.find_all('p'):
             # Add a newline at the end of each paragraph for markdown separation
@@ -495,6 +556,16 @@ async def scrape_and_summarize_multiple(
         ...     summarize_checkbox=True
         ... )
     """
+    # Check required dependencies
+    if not PLAYWRIGHT_AVAILABLE or not TRAFILATURA_AVAILABLE:
+        missing = []
+        if not PLAYWRIGHT_AVAILABLE:
+            missing.append("playwright")
+        if not TRAFILATURA_AVAILABLE:
+            missing.append("trafilatura")
+        logging.error(f"Missing dependencies: {', '.join(missing)}. Install with: pip install tldw_chatbook[websearch]")
+        return []
+    
     urls_list = [url.strip() for url in urls.split('\n') if url.strip()]
     custom_titles = custom_article_titles.split('\n') if custom_article_titles else []
 
@@ -780,6 +851,10 @@ def collect_internal_links(base_url: str) -> set:
         - Handles relative URLs correctly
         - Avoids infinite loops with visited tracking
     """
+    if not BS4_AVAILABLE:
+        logging.error("BeautifulSoup not available for link collection. Install with: pip install tldw_chatbook[websearch]")
+        return set()
+        
     visited = set()
     to_visit = {base_url}
 
@@ -978,6 +1053,10 @@ def parse_firefox_bookmarks(html_content: str) -> Dict[str, Union[str, List[str]
     :param html_content: The HTML content from the bookmarks file
     :return: A dictionary with bookmark names as keys and URLs as values or lists of URLs if duplicates exist
     """
+    if not BS4_AVAILABLE:
+        logging.error("BeautifulSoup not available for parsing bookmarks. Install with: pip install tldw_chatbook[websearch]")
+        return {}
+        
     bookmarks = {}
     soup = BeautifulSoup(html_content, 'html.parser')
 
@@ -1059,6 +1138,10 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
     :param file_path: Path to the CSV file
     :return: Dictionary with titles/names as keys and URLs as values
     """
+    if not PANDAS_AVAILABLE:
+        logging.error("Pandas not available for CSV parsing. Install with: pip install tldw_chatbook[websearch]")
+        return {}
+        
     try:
         # Read CSV file
         df = pd.read_csv(file_path)
@@ -1093,11 +1176,11 @@ def parse_csv_urls(file_path: str) -> Dict[str, Union[str, List[str]]]:
 
         return urls_dict
 
-    except pd.errors.EmptyDataError:
-        logging.error("The CSV file is empty")
-        return {}
     except Exception as e:
-        logging.error(f"Error parsing CSV file: {str(e)}")
+        if PANDAS_AVAILABLE and hasattr(pd, 'errors') and isinstance(e, pd.errors.EmptyDataError):
+            logging.error("The CSV file is empty")
+        else:
+            logging.error(f"Error parsing CSV file: {str(e)}")
         return {}
 
 

@@ -48,11 +48,19 @@ from urllib.parse import urlparse, urlencode, unquote
 #
 # 3rd-Party Imports
 import requests
-from lxml.etree import _Element
-from lxml.html import document_fromstring
 from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
+
+# Handle optional lxml dependency
+try:
+    from lxml.etree import _Element
+    from lxml.html import document_fromstring
+    LXML_AVAILABLE = True
+except ImportError:
+    LXML_AVAILABLE = False
+    _Element = None
+    document_fromstring = None
 #
 # Local Imports
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
@@ -1661,6 +1669,10 @@ def search_web_duckduckgo(
     max_results: int | None = None,
 ) -> list[dict[str, str]]:
     assert keywords, "keywords is mandatory"
+    
+    if not LXML_AVAILABLE:
+        logger.error("lxml not available for DuckDuckGo search. Install with: pip install tldw_chatbook[websearch]")
+        return []
 
     payload = {
         "q": keywords,

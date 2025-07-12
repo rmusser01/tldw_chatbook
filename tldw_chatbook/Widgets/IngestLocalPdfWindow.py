@@ -10,6 +10,7 @@ from textual.widgets import (
     ListView, ListItem, LoadingIndicator, Collapsible
 )
 from ..config import get_media_ingestion_defaults
+from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -120,18 +121,43 @@ class IngestLocalPdfWindow(Vertical):
             
             # --- PDF Specific Options ---
             yield Static("PDF Specific Options", classes="sidebar-title")
-            yield Label("PDF Parsing Engine:")
-            pdf_engine_options = [
-                ("pymupdf4llm", "pymupdf4llm"),
-                ("pymupdf", "pymupdf"),
-                ("docling", "docling")
-            ]
-            yield Select(pdf_engine_options, id="local-pdf-engine-pdf", value="pymupdf4llm")
+            
+            # Check available PDF processing engines
+            pdf_engine_options = []
+            default_engine = None
+            
+            if DEPENDENCIES_AVAILABLE.get('pymupdf4llm', False):
+                pdf_engine_options.append(("pymupdf4llm", "pymupdf4llm"))
+                default_engine = "pymupdf4llm"
+            if DEPENDENCIES_AVAILABLE.get('pymupdf', False):
+                pdf_engine_options.append(("pymupdf", "pymupdf"))
+                if not default_engine:
+                    default_engine = "pymupdf"
+            if DEPENDENCIES_AVAILABLE.get('docling', False):
+                pdf_engine_options.append(("docling", "docling"))
+                if not default_engine:
+                    default_engine = "docling"
+                    
+            if pdf_engine_options:
+                yield Label("PDF Parsing Engine:")
+                yield Select(pdf_engine_options, id="local-pdf-engine-pdf", value=default_engine)
+            else:
+                yield Static("⚠️ No PDF processing engines available. Install with: pip install tldw_chatbook[pdf]", 
+                           classes="warning-message")
+                yield Select([("No engines available", Select.BLANK)], id="local-pdf-engine-pdf", disabled=True)
             
             yield Static("Local Database Options", classes="sidebar-title")
             yield Checkbox("Overwrite if media exists in local DB", False, id="local-overwrite-db-pdf")
             
-            yield Button("Process PDF Locally", id="local-submit-pdf", variant="primary", classes="ingest-submit-button")
+            # Only enable submit button if PDF processing is available
+            pdf_processing_available = DEPENDENCIES_AVAILABLE.get('pdf_processing', False)
+            yield Button(
+                "Process PDF Locally", 
+                id="local-submit-pdf", 
+                variant="primary" if pdf_processing_available else "default",
+                classes="ingest-submit-button",
+                disabled=not pdf_processing_available
+            )
             yield LoadingIndicator(id="local-loading-indicator-pdf", classes="hidden")
             yield TextArea(
                 "",

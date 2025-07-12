@@ -795,6 +795,31 @@ cache_size_limit_gb = 10.0
     min_documents_to_keep = 100       # Minimum documents to always keep
     cleanup_confirmation_required = false  # Require confirmation for cleanup
 
+    # --- Service Settings ---
+    [rag.service]
+    # Search and indexing constants
+    default_embedding_dim = 768         # Default embedding dimension if detection fails
+    keyword_search_score = 0.8          # Fixed score for keyword search results
+    max_citation_matches = 3            # Maximum keyword matches to show as citations
+    citation_context_chars = 50         # Characters of context around keyword matches
+    keyword_batch_size = 10             # Batch size for processing keyword results
+    fts5_connection_pool_size = 3       # Connection pool size for FTS5 searches
+    max_query_length = 1000             # Maximum query length for FTS5
+    default_fts5_limit = 100            # Default result limit for FTS5 searches
+    max_fts5_limit = 1000               # Maximum result limit for FTS5 searches
+    search_result_multiplier = 2        # Multiplier for initial search results before filtering
+    
+    # Memory management
+    min_system_memory_mb = 500          # Minimum system memory to avoid pressure
+    memory_pressure_reduction = 0.2     # Fraction to reduce on memory pressure
+    max_document_size_mb = 10           # Maximum document size in MB
+    
+    # Timeouts and intervals
+    cache_timeout_seconds = 3600.0      # Cache timeout: 1 hour
+    embedding_idle_timeout = 900        # 15 minutes idle timeout for embeddings
+    chunk_progress_interval = 10        # Show progress every N documents
+    embedding_progress_interval = 5     # Show progress every N batches
+
 # Legacy RAG settings (for backwards compatibility)
 [rag_search]
 fts_top_k = 10

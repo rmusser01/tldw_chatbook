@@ -51,7 +51,8 @@ class SimpleRAGCache:
                  max_size: int = 100,
                  ttl_seconds: float = 3600,  # 1 hour default
                  enabled: bool = True,
-                 ttl_by_search_type: Optional[Dict[str, float]] = None):
+                 ttl_by_search_type: Optional[Dict[str, float]] = None,
+                 max_memory_mb: float = 100.0):  # Default 100MB max memory
         """
         Initialize the cache.
         
@@ -60,22 +61,27 @@ class SimpleRAGCache:
             ttl_seconds: Default time-to-live for cache entries in seconds
             enabled: Whether caching is enabled
             ttl_by_search_type: Optional dict mapping search types to specific TTLs
+            max_memory_mb: Maximum memory usage in MB
         """
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
         self.enabled = enabled
         self.ttl_by_search_type = ttl_by_search_type or {}
+        self.max_memory_bytes = max_memory_mb * 1024 * 1024
         
         # Use OrderedDict for LRU behavior
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         
         # Use asyncio.Lock for async-safe operations
-        self._lock = asyncio.Lock()
+        # Note: Sync methods use asyncio.run() which creates a new event loop,
+        # so they don't interfere with the async lock
+        self._async_lock = asyncio.Lock()
         
         # Metrics
         self._hits = 0
         self._misses = 0
         self._evictions = 0
+        self._current_memory_bytes = 0
         self._total_requests = 0
         self._last_prune_time = time.time()
         self._prune_interval = min(ttl_seconds / 2, 1800)  # Prune every half TTL or 30 minutes, whichever is less
@@ -119,8 +125,9 @@ class SimpleRAGCache:
             import xxhash
             return xxhash.xxh64(key_str.encode()).hexdigest()
         except ImportError:
-            # Fallback to builtin hash for performance over cryptographic security
-            return str(hash(key_str))
+            # Fallback to MD5 for stable hashing across processes
+            # MD5 is fine for cache keys - we don't need cryptographic security
+            return hashlib.md5(key_str.encode()).hexdigest()
     
     async def get_async(self, 
                        query: str,
@@ -142,7 +149,7 @@ class SimpleRAGCache:
         if not self.enabled:
             return None
         
-        async with self._lock:
+        async with self._async_lock:
             self._total_requests += 1
             
             # Check if we need to prune expired entries
@@ -246,32 +253,52 @@ class SimpleRAGCache:
         if not self.enabled:
             return
         
-        async with self._lock:
+        async with self._async_lock:
             key = self._make_key(query, search_type, top_k, filters)
             
-            # Check if we need to evict
-            if len(self._cache) >= self.max_size and key not in self._cache:
-                # Evict least recently used
-                oldest_key = next(iter(self._cache))
-                evicted_entry = self._cache[oldest_key]
-                del self._cache[oldest_key]
-                self._evictions += 1
-                
-                # Log eviction details
-                log_counter("cache_eviction", labels={"type": search_type})
-                eviction_age = time.time() - evicted_entry.timestamp
-                log_histogram("cache_evicted_entry_age_seconds", eviction_age)
-                log_histogram("cache_evicted_entry_access_count", evicted_entry.access_count)
-                logger.debug(f"Evicted cache entry (age: {eviction_age:.1f}s, accesses: {evicted_entry.access_count})")
-            
-            # Store the entry
+            # Calculate memory for new entry
             entry = CacheEntry(
                 key=key,
                 value=(results, context),
                 timestamp=time.time()
             )
+            entry_memory = self._deep_getsizeof(entry)
             
+            # Evict entries if needed (by size or memory)
+            while ((len(self._cache) >= self.max_size and key not in self._cache) or
+                   (self._current_memory_bytes + entry_memory > self.max_memory_bytes)):
+                
+                if not self._cache:
+                    # Cache is empty but we still exceed memory - entry is too large
+                    logger.warning(f"Entry too large for cache: {entry_memory / 1024 / 1024:.1f}MB")
+                    return
+                
+                # Evict least recently used
+                oldest_key = next(iter(self._cache))
+                evicted_entry = self._cache[oldest_key]
+                evicted_memory = self._deep_getsizeof(evicted_entry)
+                
+                del self._cache[oldest_key]
+                self._evictions += 1
+                self._current_memory_bytes -= evicted_memory
+                
+                # Log eviction details
+                log_counter("cache_eviction", labels={"type": search_type, "reason": "memory" if self._current_memory_bytes + entry_memory > self.max_memory_bytes else "size"})
+                eviction_age = time.time() - evicted_entry.timestamp
+                log_histogram("cache_evicted_entry_age_seconds", eviction_age)
+                log_histogram("cache_evicted_entry_access_count", evicted_entry.access_count)
+                log_histogram("cache_evicted_entry_memory_mb", evicted_memory / 1024 / 1024)
+                logger.debug(f"Evicted cache entry (age: {eviction_age:.1f}s, accesses: {evicted_entry.access_count}, memory: {evicted_memory / 1024 / 1024:.1f}MB)")
+            
+            # Remove old entry if updating
+            if key in self._cache:
+                old_entry = self._cache[key]
+                self._current_memory_bytes -= self._deep_getsizeof(old_entry)
+            
+            # Store the entry
             self._cache[key] = entry
+            self._current_memory_bytes += entry_memory
+            
             # Move to end (most recently used)
             self._cache.move_to_end(key)
             
@@ -281,12 +308,10 @@ class SimpleRAGCache:
             log_histogram("cache_context_size", len(context))
             log_gauge("cache_current_size", len(self._cache))
             log_gauge("cache_eviction_count", self._evictions)
+            log_gauge("cache_memory_usage_mb", self._current_memory_bytes / 1024 / 1024)
+            log_histogram("cache_entry_size_mb", entry_memory / 1024 / 1024)
             
-            # Estimate memory usage for this entry
-            entry_size = sys.getsizeof(results) + sys.getsizeof(context)
-            log_histogram("cache_entry_size_bytes", entry_size)
-            
-            logger.debug(f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_size} bytes)")
+            logger.debug(f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_memory / 1024 / 1024:.1f}MB)")
     
     def put(self,
             query: str,
@@ -325,12 +350,15 @@ class SimpleRAGCache:
     
     async def clear_async(self) -> None:
         """Async-safe clear all cache entries."""
-        async with self._lock:
+        async with self._async_lock:
             size_before = len(self._cache)
+            memory_before = self._current_memory_bytes / 1024 / 1024
             self._cache.clear()
+            self._current_memory_bytes = 0
             log_counter("cache_cleared")
             log_gauge("cache_current_size", 0)
-            logger.info(f"Cache cleared ({size_before} entries removed)")
+            log_gauge("cache_memory_usage_mb", 0)
+            logger.info(f"Cache cleared ({size_before} entries, {memory_before:.1f}MB removed)")
     
     def clear(self) -> None:
         """Thread-safe synchronous cache clear."""
@@ -351,6 +379,42 @@ class SimpleRAGCache:
         """Internal synchronous implementation using asyncio.run."""
         asyncio.run(self.clear_async())
     
+    def _deep_getsizeof(self, obj, seen=None):
+        """
+        Calculate the deep size of an object, including all referenced objects.
+        
+        Args:
+            obj: The object to measure
+            seen: Set of already-seen object ids to avoid infinite recursion
+            
+        Returns:
+            Size in bytes
+        """
+        size = sys.getsizeof(obj)
+        if seen is None:
+            seen = set()
+            
+        obj_id = id(obj)
+        if obj_id in seen:
+            return 0
+            
+        # Mark this object as seen first
+        seen.add(obj_id)
+        
+        if isinstance(obj, dict):
+            size += sum(self._deep_getsizeof(k, seen) + self._deep_getsizeof(v, seen) 
+                       for k, v in obj.items())
+        elif hasattr(obj, '__dict__'):
+            size += self._deep_getsizeof(obj.__dict__, seen)
+        elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
+            try:
+                size += sum(self._deep_getsizeof(i, seen) for i in obj)
+            except TypeError:
+                # Some iterables don't support iteration in all contexts
+                pass
+                
+        return size
+    
     def get_metrics(self) -> Dict[str, Any]:
         """
         Get cache metrics.
@@ -361,13 +425,8 @@ class SimpleRAGCache:
         total_requests = self._hits + self._misses
         hit_rate = self._hits / total_requests if total_requests > 0 else 0.0
         
-        # Calculate size in memory (rough estimate)
-        size_bytes = 0
-        for entry in self._cache.values():
-            if isinstance(entry.value, tuple) and len(entry.value) == 2:
-                results, context = entry.value
-                # Rough size estimate
-                size_bytes += sys.getsizeof(results) + sys.getsizeof(context)
+        # Use tracked memory size for efficiency
+        size_bytes = self._current_memory_bytes
         
         metrics = {
             "enabled": self.enabled,
@@ -379,6 +438,8 @@ class SimpleRAGCache:
             "hit_rate": hit_rate,
             "ttl_seconds": self.ttl_seconds,
             "size_bytes": size_bytes,
+            "max_memory_bytes": self.max_memory_bytes,
+            "memory_usage_percent": (size_bytes / self.max_memory_bytes * 100) if self.max_memory_bytes > 0 else 0,
             "total_requests": self._total_requests
         }
         

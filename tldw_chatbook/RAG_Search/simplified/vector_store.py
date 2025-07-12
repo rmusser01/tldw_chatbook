@@ -5,7 +5,17 @@ This module provides vector store interfaces and implementations that support
 both basic search and search with citations for source attribution.
 """
 
-import numpy as np
+# Handle numpy as optional dependency
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    # Create a minimal stub for type hints
+    class np:
+        class ndarray:
+            pass
+            
 from typing import List, Dict, Optional, Protocol, Tuple, Any, Union
 from pathlib import Path
 import json
@@ -50,17 +60,17 @@ class VectorStore(Protocol):
     Using Protocol instead of ABC for lighter weight and better type checking.
     """
     
-    def add(self, ids: List[str], embeddings: np.ndarray, 
+    def add(self, ids: List[str], embeddings: Union[np.ndarray, List[List[float]]], 
             documents: List[str], metadata: List[dict]) -> None:
         """Add documents with embeddings to the store."""
         ...
     
-    def search(self, query_embedding: np.ndarray, 
+    def search(self, query_embedding: Union[np.ndarray, List[float]], 
                top_k: int = 10) -> List[SearchResult]:
         """Basic search without citations (backward compatibility)."""
         ...
     
-    def search_with_citations(self, query_embedding: np.ndarray,
+    def search_with_citations(self, query_embedding: Union[np.ndarray, List[float]],
                             query_text: str,
                             top_k: int = 10) -> List[SearchResultWithCitations]:
         """Enhanced search that includes citations."""
@@ -166,7 +176,7 @@ class ChromaVectorStore:
     @timeit("vector_store_add_documents")
     def add(self, 
             ids: List[str], 
-            embeddings: np.ndarray, 
+            embeddings: Union[np.ndarray, List[List[float]]], 
             documents: List[str], 
             metadata: List[dict]) -> None:
         """
@@ -194,7 +204,8 @@ class ChromaVectorStore:
         if len(ids) != len(documents) or len(ids) != len(metadata):
             raise ValueError("ids, documents, and metadata must have same length")
         
-        if isinstance(embeddings, np.ndarray):
+        # Handle embeddings conversion
+        if NUMPY_AVAILABLE and isinstance(embeddings, np.ndarray):
             if embeddings.shape[0] != len(ids):
                 raise ValueError(f"embeddings shape {embeddings.shape} doesn't match {len(ids)} documents")
             
@@ -205,6 +216,15 @@ class ChromaVectorStore:
                 logger.info(f"Detected embedding dimension: {self._embedding_dim}")
             
             embeddings = embeddings.tolist()
+        elif isinstance(embeddings, list):
+            # Validate list structure
+            if len(embeddings) != len(ids):
+                raise ValueError(f"embeddings length {len(embeddings)} doesn't match {len(ids)} documents")
+            # Store embedding dimension from first embedding
+            if self._embedding_dim is None and embeddings and len(embeddings[0]) > 0:
+                self._embedding_dim = len(embeddings[0])
+                log_gauge("vector_store_embedding_dim", self._embedding_dim)
+                logger.info(f"Detected embedding dimension: {self._embedding_dim}")
         
         # Log document statistics
         doc_lengths = [len(doc) for doc in documents]
@@ -257,7 +277,7 @@ class ChromaVectorStore:
     
     @timeit("vector_store_search")
     def search(self, 
-               query_embedding: np.ndarray, 
+               query_embedding: Union[np.ndarray, List[float]], 
                top_k: int = 10) -> List[SearchResult]:
         """Basic search without citations (backward compatibility)."""
         start_time = time.time()
@@ -266,8 +286,11 @@ class ChromaVectorStore:
         log_counter("vector_store_search_attempt", labels={"collection": self.collection_name})
         log_histogram("vector_store_search_top_k", top_k)
         
-        if isinstance(query_embedding, np.ndarray):
+        # Convert numpy array to list if needed
+        if NUMPY_AVAILABLE and isinstance(query_embedding, np.ndarray):
             query_embedding = query_embedding.tolist()
+        elif not isinstance(query_embedding, list):
+            raise TypeError(f"query_embedding must be numpy array or list, got {type(query_embedding)}")
         
         try:
             results = self.collection.query(
@@ -313,7 +336,7 @@ class ChromaVectorStore:
             return []
     
     def search_with_citations(self, 
-                            query_embedding: np.ndarray,
+                            query_embedding: Union[np.ndarray, List[float]],
                             query_text: str,
                             top_k: int = 10,
                             score_threshold: float = 0.0) -> List[SearchResultWithCitations]:
@@ -493,9 +516,10 @@ class ChromaVectorStore:
             self.collection_name = collection_name
             self._collection = None  # Force reload
         
-        # Convert embeddings to numpy array if needed
-        if isinstance(embeddings, list):
+        # Convert embeddings to numpy array if needed and numpy is available
+        if NUMPY_AVAILABLE and isinstance(embeddings, list):
             embeddings = np.array(embeddings)
+        # If numpy not available, keep as list - the add method will handle it
         
         try:
             self.add(ids, embeddings, documents, metadatas)
@@ -538,7 +562,7 @@ class InMemoryVectorStore:
         self.max_collections = max_collections
         self.memory_threshold_mb = memory_threshold_mb
         self.ids: List[str] = []
-        self.embeddings: List[np.ndarray] = []
+        self.embeddings: List[Union[np.ndarray, List[float]]] = []
         self.documents: List[str] = []
         self.metadata: List[dict] = []
         
@@ -620,7 +644,7 @@ class InMemoryVectorStore:
     
     def add(self, 
             ids: List[str], 
-            embeddings: np.ndarray, 
+            embeddings: Union[np.ndarray, List[List[float]]], 
             documents: List[str], 
             metadata: List[dict]) -> None:
         """Add documents to memory with LRU eviction and memory pressure handling."""
@@ -631,9 +655,14 @@ class InMemoryVectorStore:
         if self._check_memory_pressure():
             self._evict_for_memory_pressure()
         
-        # Convert embeddings to numpy if needed
-        if not isinstance(embeddings, np.ndarray):
-            embeddings = np.array(embeddings)
+        # Handle embeddings based on numpy availability
+        if NUMPY_AVAILABLE:
+            if not isinstance(embeddings, np.ndarray):
+                embeddings = np.array(embeddings)
+        else:
+            # Without numpy, ensure embeddings is a list
+            if not isinstance(embeddings, list):
+                raise TypeError("Without numpy, embeddings must be provided as a list of lists")
         
         # Add documents, updating existing ones
         for i, id_val in enumerate(ids):
@@ -682,49 +711,88 @@ class InMemoryVectorStore:
         logger.debug(f"Evicted document {lru_id} (total evictions: {self._eviction_count})")
     
     def _compute_similarity(self, 
-                          query_embedding: np.ndarray, 
-                          doc_embedding: np.ndarray) -> float:
+                          query_embedding: Union[np.ndarray, List[float]], 
+                          doc_embedding: Union[np.ndarray, List[float]]) -> float:
         """Compute similarity based on distance metric with numerical stability."""
-        if self.distance_metric == "cosine":
-            # Cosine similarity with proper zero vector handling
-            query_norm = np.linalg.norm(query_embedding)
-            doc_norm = np.linalg.norm(doc_embedding)
-            
-            # Check for zero vectors
-            if query_norm < 1e-6 or doc_norm < 1e-6:
-                # Zero vectors have no meaningful similarity
-                return 0.0
-            
-            # Normalize vectors
-            query_normalized = query_embedding / query_norm
-            doc_normalized = doc_embedding / doc_norm
-            
-            # Compute cosine similarity (clamp to [-1, 1] for numerical stability)
-            similarity = np.dot(query_normalized, doc_normalized)
-            return float(np.clip(similarity, -1.0, 1.0))
-            
-        elif self.distance_metric == "l2":
-            # Negative L2 distance (so higher is more similar)
-            distance = np.linalg.norm(query_embedding - doc_embedding)
-            # Convert to similarity score (bounded between 0 and 1)
-            return float(1.0 / (1.0 + distance))
-            
-        elif self.distance_metric == "ip":
-            # Inner product
-            return float(np.dot(query_embedding, doc_embedding))
+        if NUMPY_AVAILABLE:
+            # Use numpy for efficiency when available
+            if self.distance_metric == "cosine":
+                # Cosine similarity with proper zero vector handling
+                query_norm = np.linalg.norm(query_embedding)
+                doc_norm = np.linalg.norm(doc_embedding)
+                
+                # Check for zero vectors
+                if query_norm < 1e-6 or doc_norm < 1e-6:
+                    # Zero vectors have no meaningful similarity
+                    return 0.0
+                
+                # Normalize vectors
+                query_normalized = query_embedding / query_norm
+                doc_normalized = doc_embedding / doc_norm
+                
+                # Compute cosine similarity (clamp to [-1, 1] for numerical stability)
+                similarity = np.dot(query_normalized, doc_normalized)
+                return float(np.clip(similarity, -1.0, 1.0))
+                
+            elif self.distance_metric == "l2":
+                # Negative L2 distance (so higher is more similar)
+                distance = np.linalg.norm(query_embedding - doc_embedding)
+                # Convert to similarity score (bounded between 0 and 1)
+                return float(1.0 / (1.0 + distance))
+                
+            elif self.distance_metric == "ip":
+                # Inner product
+                return float(np.dot(query_embedding, doc_embedding))
         else:
-            raise ValueError(f"Unknown distance metric: {self.distance_metric}")
+            # Pure Python implementations
+            # Ensure we're working with lists
+            if not isinstance(query_embedding, list):
+                query_embedding = list(query_embedding)
+            if not isinstance(doc_embedding, list):
+                doc_embedding = list(doc_embedding)
+                
+            if self.distance_metric == "cosine":
+                # Compute dot product and norms
+                dot_product = sum(q * d for q, d in zip(query_embedding, doc_embedding))
+                query_norm = sum(q * q for q in query_embedding) ** 0.5
+                doc_norm = sum(d * d for d in doc_embedding) ** 0.5
+                
+                # Check for zero vectors
+                if query_norm < 1e-6 or doc_norm < 1e-6:
+                    return 0.0
+                
+                # Compute cosine similarity
+                similarity = dot_product / (query_norm * doc_norm)
+                # Clamp to [-1, 1]
+                return float(max(-1.0, min(1.0, similarity)))
+                
+            elif self.distance_metric == "l2":
+                # Compute L2 distance
+                distance = sum((q - d) ** 2 for q, d in zip(query_embedding, doc_embedding)) ** 0.5
+                # Convert to similarity score
+                return float(1.0 / (1.0 + distance))
+                
+            elif self.distance_metric == "ip":
+                # Inner product
+                return float(sum(q * d for q, d in zip(query_embedding, doc_embedding)))
+                
+        raise ValueError(f"Unknown distance metric: {self.distance_metric}")
     
     def search(self, 
-               query_embedding: np.ndarray, 
+               query_embedding: Union[np.ndarray, List[float]], 
                top_k: int = 10) -> List[SearchResult]:
         """Search using the specified distance metric."""
         if not self.embeddings:
             return []
         
-        # Ensure query_embedding is numpy array
-        if not isinstance(query_embedding, np.ndarray):
-            query_embedding = np.array(query_embedding)
+        # Handle query embedding conversion based on numpy availability
+        if NUMPY_AVAILABLE:
+            if not isinstance(query_embedding, np.ndarray):
+                query_embedding = np.array(query_embedding)
+        else:
+            # Without numpy, ensure it's a list
+            if not isinstance(query_embedding, list):
+                raise TypeError("Without numpy, query_embedding must be a list")
         
         # Compute similarities
         similarities = []
@@ -765,7 +833,7 @@ class InMemoryVectorStore:
         return results
     
     def search_with_citations(self, 
-                            query_embedding: np.ndarray,
+                            query_embedding: Union[np.ndarray, List[float]],
                             query_text: str,
                             top_k: int = 10,
                             score_threshold: float = 0.0) -> List[SearchResultWithCitations]:
@@ -843,9 +911,16 @@ class InMemoryVectorStore:
         
         # Add embedding dimension if we have data
         if self.embeddings:
-            stats["embedding_dimension"] = self.embeddings[0].shape[0]
-            # Estimate memory usage in MB
-            embedding_size = self.embeddings[0].nbytes * len(self.embeddings) / (1024 * 1024)
+            if NUMPY_AVAILABLE and hasattr(self.embeddings[0], 'shape'):
+                stats["embedding_dimension"] = self.embeddings[0].shape[0]
+                # Estimate memory usage in MB
+                embedding_size = self.embeddings[0].nbytes * len(self.embeddings) / (1024 * 1024)
+            else:
+                # For lists, get length of first embedding
+                stats["embedding_dimension"] = len(self.embeddings[0])
+                # Estimate memory usage for lists (8 bytes per float)
+                embedding_size = len(self.embeddings) * len(self.embeddings[0]) * 8 / (1024 * 1024)
+            
             text_size = sum(len(doc) for doc in self.documents) / (1024 * 1024)
             stats["estimated_memory_mb"] = embedding_size + text_size
         
@@ -885,8 +960,8 @@ class InMemoryVectorStore:
         # Store current collection
         self._current_collection = collection_name
         
-        # Convert embeddings to numpy array if needed
-        if isinstance(embeddings, list):
+        # Convert embeddings to numpy array if needed and numpy is available
+        if NUMPY_AVAILABLE and isinstance(embeddings, list):
             embeddings = np.array(embeddings)
         
         # Initialize collection if it doesn't exist

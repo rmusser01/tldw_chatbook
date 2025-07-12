@@ -87,7 +87,11 @@ class ConnectionPool:
                     # Connection is broken, create a new one
                     logger.warning("Replacing broken database connection")
                     with self._lock:
-                        self._all_connections.remove(conn)
+                        try:
+                            self._all_connections.remove(conn)
+                        except ValueError:
+                            # Connection was already removed
+                            logger.debug("Broken connection was already removed from tracking")
                         new_conn = self._create_connection()
                         self._pool.put(new_conn)
                         self._all_connections.append(new_conn)
@@ -166,12 +170,22 @@ class ConnectionPool:
                     break
                     
             # Close any connections that might be in use
-            for conn in self._all_connections:
+            # Use a copy of the list to avoid modification during iteration
+            connections_to_close = list(self._all_connections)
+            for conn in connections_to_close:
                 try:
                     conn.close()
                 except Exception as e:
                     logger.error(f"Error closing connection: {e}")
+                finally:
+                    # Always remove from list, even if close fails
+                    try:
+                        self._all_connections.remove(conn)
+                    except ValueError:
+                        # Connection was already removed
+                        pass
                     
+            # Clear any remaining connections (shouldn't be any, but just in case)
             self._all_connections.clear()
             
     def __enter__(self):

@@ -6,8 +6,18 @@ This module contains extracted functions to reduce complexity in the main RAG se
 
 import logging
 import time
-from typing import List, Dict, Any, Tuple, Optional
-import numpy as np
+from typing import List, Dict, Any, Tuple, Optional, Union
+
+# Handle numpy as optional dependency
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    # Create a minimal stub for type hints
+    class np:
+        class ndarray:
+            pass
 
 from .data_models import IndexingResult
 
@@ -122,22 +132,32 @@ async def generate_embeddings_batch(rag_service, chunk_texts: List[str],
                     except Exception as e2:
                         logger.error(f"Failed to embed chunk {idx} individually: {e2}")
                         # Use zero embedding as fallback
-                        all_embeddings.append(np.zeros(rag_service._embedding_dim))
+                        if NUMPY_AVAILABLE:
+                            all_embeddings.append(np.zeros(rag_service._embedding_dim))
+                        else:
+                            all_embeddings.append([0.0] * rag_service._embedding_dim)
                         failed_indices.append(idx)
             else:
                 # Create zero embeddings as fallback for the entire batch
-                fallback_embeddings = [np.zeros(rag_service._embedding_dim) for _ in batch]
+                if NUMPY_AVAILABLE:
+                    fallback_embeddings = [np.zeros(rag_service._embedding_dim) for _ in batch]
+                else:
+                    fallback_embeddings = [[0.0] * rag_service._embedding_dim for _ in batch]
                 all_embeddings.extend(fallback_embeddings)
                 failed_indices.extend(batch_indices)
     
     if failed_indices:
         logger.warning(f"Failed to generate embeddings for {len(failed_indices)} chunks out of {len(chunk_texts)}")
     
-    return np.array(all_embeddings), failed_indices
+    # Return as numpy array if available, otherwise as list
+    if NUMPY_AVAILABLE:
+        return np.array(all_embeddings), failed_indices
+    else:
+        return all_embeddings, failed_indices
 
 
 async def store_documents_batch(rag_service, documents: List[Dict[str, Any]], 
-                               doc_chunk_info: List[Dict], all_embeddings: np.ndarray,
+                               doc_chunk_info: List[Dict], all_embeddings: Union[np.ndarray, List[List[float]]],
                                batch_start_time: float,
                                failed_embedding_indices: Optional[List[int]] = None) -> List[IndexingResult]:
     """
@@ -218,9 +238,15 @@ async def store_documents_batch(rag_service, documents: List[Dict[str, Any]],
                 chunk_metadata.append(meta)
             
             # Store in vector database
+            # Convert embeddings if numpy is available
+            if NUMPY_AVAILABLE:
+                embeddings_to_store = np.array(valid_embeddings)
+            else:
+                embeddings_to_store = valid_embeddings
+                
             await rag_service._store_chunks(
                 chunk_ids, 
-                np.array(valid_embeddings), 
+                embeddings_to_store, 
                 chunk_texts, 
                 chunk_metadata
             )

@@ -12,7 +12,14 @@ import re
 # Third-party imports
 from loguru import logger
 import requests
-from bs4 import BeautifulSoup
+
+# Handle optional BeautifulSoup dependency
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    BeautifulSoup = None
 #
 # Local imports
 import sys

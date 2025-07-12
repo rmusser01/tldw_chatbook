@@ -113,6 +113,15 @@ class EmbeddingsWindow(Container):
         """Compose the embeddings window with navigation and content areas."""
         logger.debug("Composing EmbeddingsWindow UI")
         
+        # Check if embeddings dependencies are available
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            with Container(classes="embeddings-not-available"):
+                yield Static("⚠️ Embeddings/RAG functionality not available", classes="warning-title")
+                yield Static("The required dependencies for embeddings are not installed.", classes="warning-message")
+                yield Static("To enable embeddings, please install with:", classes="warning-message")
+                yield Static("pip install tldw_chatbook[embeddings_rag]", classes="code-block")
+            return
+        
         # Left navigation pane
         with VerticalScroll(id="embeddings-nav-pane", classes="embeddings-nav-pane"):
             yield Static("Embeddings Options", classes="sidebar-title")

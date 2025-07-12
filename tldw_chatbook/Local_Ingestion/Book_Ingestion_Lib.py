@@ -39,15 +39,43 @@ import re
 import tempfile
 import zipfile
 from datetime import datetime
-import defusedxml.ElementTree as ET
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, Union
 #
 # External Imports
-from bs4 import BeautifulSoup
-import ebooklib
-from ebooklib import epub
-import html2text
+# Handle optional ebook processing dependencies
+try:
+    import defusedxml.ElementTree as ET
+    DEFUSEDXML_AVAILABLE = True
+except ImportError:
+    DEFUSEDXML_AVAILABLE = False
+    import xml.etree.ElementTree as ET  # Fallback to standard library
+    
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    BeautifulSoup = None
+
+try:
+    import ebooklib
+    from ebooklib import epub
+    EBOOKLIB_AVAILABLE = True
+except ImportError:
+    EBOOKLIB_AVAILABLE = False
+    ebooklib = None
+    epub = None
+
+try:
+    import html2text
+    HTML2TEXT_AVAILABLE = True
+except ImportError:
+    HTML2TEXT_AVAILABLE = False
+    html2text = None
+
+# Check if core ebook dependencies are available
+EBOOK_PROCESSING_AVAILABLE = EBOOKLIB_AVAILABLE and DEFUSEDXML_AVAILABLE
 
 #
 # Import Local
@@ -87,6 +115,9 @@ def process_ebook(
     Returns:
         Same as process_epub
     """
+    if not EBOOK_PROCESSING_AVAILABLE:
+        raise ImportError("E-book processing libraries not available. Install with: pip install tldw_chatbook[ebook]")
+    
     file_path_obj = Path(file_path)
     file_extension = file_path_obj.suffix.lower()
     
@@ -237,6 +268,8 @@ def slugify(text: str) -> str:
 # File Conversion Functions
 
 def epub_to_markdown(epub_path: str) -> Tuple[str, Optional[epub.EpubBook]]:
+    if not EBOOKLIB_AVAILABLE:
+        raise ImportError("ebooklib not available. Install with: pip install tldw_chatbook[ebook]")
     """
     Converts an EPUB file to Markdown format.
 
@@ -359,6 +392,8 @@ def extract_epub_metadata_from_epub_obj(book: epub.EpubBook) -> Tuple[Optional[s
 # epub parsing Functions
 
 def read_epub_filtered(epub_path) -> Tuple[str, Optional[epub.EpubBook]]:
+    if not EBOOKLIB_AVAILABLE:
+        raise ImportError("ebooklib not available. Install with: pip install tldw_chatbook[ebook]")
     """
     Reads an EPUB file by following its spine, attempting to skip known front matter.
 
@@ -1238,6 +1273,8 @@ def _process_markup_or_plain_text(
 
         # 1. Read and Convert Content
         if file_type == 'html':
+            if not HTML2TEXT_AVAILABLE:
+                raise ImportError("html2text not available. Install with: pip install tldw_chatbook[ebook]")
             h = html2text.HTML2Text()
             h.ignore_links = False
             h.body_width = 0
@@ -1245,12 +1282,20 @@ def _process_markup_or_plain_text(
                 with open(file_path, 'r', encoding='utf-8') as file:
                     html_content = file.read()
                 markdown_content = h.handle(html_content)
-                soup = BeautifulSoup(html_content, 'html.parser')
-                title_tag = soup.find('title')
+                if BS4_AVAILABLE:
+                    soup = BeautifulSoup(html_content, 'html.parser')
+                    title_tag = soup.find('title')
+                else:
+                    title_tag = None
                 extracted_title = title_tag.string.strip() if title_tag and title_tag.string else None
-                meta_author_tag = soup.find('meta', attrs={'name': 'author'})
-                if meta_author_tag and meta_author_tag.get('content'):
-                     extracted_author = meta_author_tag['content'].strip()
+                if BS4_AVAILABLE and soup:
+                    meta_author_tag = soup.find('meta', attrs={'name': 'author'})
+                    if meta_author_tag and meta_author_tag.get('content'):
+                        extracted_author = meta_author_tag['content'].strip()
+                    else:
+                        extracted_author = None
+                else:
+                    extracted_author = None
                 raw_metadata = {'html_title': extracted_title, 'html_author': extracted_author}
             except Exception as html_err:
                  raise ValueError(f"Failed to parse HTML file {file_path}: {html_err}") from html_err
