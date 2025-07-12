@@ -14,9 +14,31 @@ import xml.etree.ElementTree as ET
 #
 # Import 3rd party
 from loguru import logger
-from langdetect import detect, LangDetectException # Import specific exception
-import nltk
-from nltk.tokenize import sent_tokenize
+
+# Import optional dependencies
+try:
+    from langdetect import detect, LangDetectException
+    LANGDETECT_AVAILABLE = True
+except ImportError:
+    LANGDETECT_AVAILABLE = False
+    # Define placeholder classes for when langdetect is not available
+    class LangDetectException(Exception):
+        pass
+    def detect(text):
+        raise ImportError("langdetect is not installed. Install with: pip install langdetect")
+
+try:
+    import nltk
+    from nltk.tokenize import sent_tokenize
+    NLTK_AVAILABLE = True
+except ImportError:
+    NLTK_AVAILABLE = False
+    # Define placeholder for when nltk is not available
+    def sent_tokenize(text):
+        # Simple fallback - split on common sentence endings
+        import re
+        sentences = re.split(r'[.!?]+', text)
+        return [s.strip() for s in sentences if s.strip()]
 
 #
 # Import Local
@@ -49,6 +71,10 @@ class LanguageDetectionError(ChunkingError):
 #
 
 def ensure_nltk_data():
+    if not NLTK_AVAILABLE:
+        logger.debug("NLTK not available, skipping punkt tokenizer check")
+        return
+        
     try:
         nltk.data.find('tokenizers/punkt')
     except LookupError:
@@ -228,6 +254,12 @@ class Chunker:
             logger.warning("Attempted to detect language from empty or whitespace-only text. Defaulting to 'en'.")
             log_counter("chunking_language_detection_empty_text")
             return self._get_option('language', 'en') # Use option if available, else 'en'
+        
+        # Check if langdetect is available
+        if not LANGDETECT_AVAILABLE:
+            logger.debug("langdetect not available, defaulting to configured language or 'en'")
+            return self._get_option('language', 'en')
+            
         try:
             lang = detect(text)
             logger.debug(f"Detected language: {lang}")

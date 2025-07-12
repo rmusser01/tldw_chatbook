@@ -200,6 +200,8 @@ class EmbeddingConfigSchema(BaseModel):
 
 def _masked_mean(last_hidden: Tensor, attn: Tensor) -> Tensor:
     """Default pooling: mean of vectors where attention_mask is 1."""
+    if torch is None:
+        raise ImportError("torch is required for pooling operations")
     mask = attn.unsqueeze(-1).type_as(last_hidden)
     summed = (last_hidden * mask).sum(dim=1)
     lengths = mask.sum(dim=1).clamp(min=1e-9)
@@ -305,7 +307,12 @@ class _HuggingFaceEmbedder:
                     cache_dir=cache_dir,
                     revision=cfg.revision  # Pin to specific revision if provided
                 )
-                dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+                # Check if torch is available before using it
+                if torch is not None:
+                    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+                else:
+                    # This shouldn't happen due to the check in _build, but just in case
+                    raise ImportError("torch is required for HuggingFace embeddings")
                 self._model = AutoModel.from_pretrained(
                     cfg.model_name_or_path,
                     torch_dtype=dtype,
@@ -321,6 +328,9 @@ class _HuggingFaceEmbedder:
             ) from e
 
         # Handle device selection including "auto" option
+        if torch is None:
+            raise ImportError("torch is required for HuggingFace embeddings")
+            
         if cfg.device == "auto" or cfg.device is None:
             # Auto-detect best available device
             if torch.cuda.is_available():
@@ -340,10 +350,16 @@ class _HuggingFaceEmbedder:
         self._batch_size = cfg.batch_size
         self._pool = cfg.pooling or _masked_mean
 
-    @torch.inference_mode()
     def _forward(self, inp: Dict[str, Tensor]) -> Tensor:
-        out = self._model(**inp).last_hidden_state
-        return self._pool(out, inp["attention_mask"])
+        # Apply inference mode only if torch is available
+        if torch is not None:
+            with torch.inference_mode():
+                out = self._model(**inp).last_hidden_state
+                return self._pool(out, inp["attention_mask"])
+        else:
+            # This shouldn't happen since _HuggingFaceEmbedder requires torch
+            out = self._model(**inp).last_hidden_state
+            return self._pool(out, inp["attention_mask"])
 
     def embed(self, texts: List[str], *, as_list: bool = False) -> np.ndarray | List[List[float]]:
         vecs: List[Tensor] = []
@@ -361,12 +377,14 @@ class _HuggingFaceEmbedder:
             vecs.append(self._forward(tok))
 
         # --- [FIX] Performance: concatenate on GPU, then move to CPU once ---
+        if torch is None:
+            raise ImportError("torch is required for HuggingFace embeddings")
         joined = torch.cat(vecs, dim=0).float().cpu().numpy()
         return joined.tolist() if as_list else joined
 
     def close(self) -> None:
         del self._model, self._tok
-        if torch.cuda.is_available():
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
 
@@ -487,6 +505,13 @@ class EmbeddingFactory:
 
         t0 = time.perf_counter()
         if spec.provider == "huggingface":
+            # Check if torch and transformers are available
+            if torch is None or transformers is None:
+                raise ImportError(
+                    "HuggingFace embeddings require torch and transformers. "
+                    "Install with: pip install tldw_chatbook[embeddings_rag]"
+                )
+            
             # Ensure spec is correctly typed for HFModelCfg
             if not isinstance(spec, HFModelCfg):
                 logger.error(f"_build: Type mismatch for model {model_id} - expected HFModelCfg, got {type(spec)}")

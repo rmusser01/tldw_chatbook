@@ -13,6 +13,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import (
     Static, Button, Input, Label, Select, TextArea, Checkbox, RadioButton, RadioSet,
@@ -413,20 +414,26 @@ class EmbeddingsWindow(Container):
         except Exception as e:
             logger.debug(f"Mode containers not yet available: {e}")
         
-        # Initialize the DataTable
-        table = self.query_one("#embeddings-db-results", DataTable)
-        table.add_columns("✓", "ID", "Title", "Type", "Date")
-        table.cursor_type = "row"
+        # Initialize the DataTable if it exists (it's only visible when database source is selected)
+        try:
+            table = self.query_one("#embeddings-db-results", DataTable)
+            table.add_columns("✓", "ID", "Title", "Type", "Date")
+            table.cursor_type = "row"
+        except NoMatches:
+            logger.debug("DataTable not available yet - will be initialized when database source is selected")
         
         # Clear selected items
         self.selected_db_items = set()
         
-        # Trigger initial database selection
-        db_select = self.query_one("#embeddings-db-select", Select)
-        # The Select widget should auto-select the first option when allow_blank=False
-        # But we'll manually trigger the change event to set up the content types
-        if db_select.value and db_select.value != Select.BLANK:
-            self.on_database_changed(Select.Changed(db_select, db_select.value))
+        # Trigger initial database selection if available
+        try:
+            db_select = self.query_one("#embeddings-db-select", Select)
+            # The Select widget should auto-select the first option when allow_blank=False
+            # But we'll manually trigger the change event to set up the content types
+            if db_select.value and db_select.value != Select.BLANK:
+                self.on_database_changed(Select.Changed(db_select, db_select.value))
+        except NoMatches:
+            logger.debug("Database select not available yet")
     
     async def _initialize_embeddings(self) -> None:
         """Initialize embedding factory and ChromaDB manager."""
@@ -567,6 +574,19 @@ class EmbeddingsWindow(Container):
                 switcher = self.query_one("#embeddings-source-switcher", ContentSwitcher)
                 switcher.current = self.selected_source
                 logger.info(f"ContentSwitcher updated to show: {self.selected_source}")
+                
+                # Initialize DataTable when switching to database source
+                if self.selected_source == self.SOURCE_DATABASE:
+                    try:
+                        table = self.query_one("#embeddings-db-results", DataTable)
+                        # Only initialize if not already initialized (no columns)
+                        if not table.columns:
+                            table.add_columns("✓", "ID", "Title", "Type", "Date")
+                            table.cursor_type = "row"
+                            logger.debug("DataTable initialized for database source")
+                    except NoMatches:
+                        logger.error("DataTable not found even though database source is selected")
+                        
             except Exception as e:
                 logger.error(f"Failed to update ContentSwitcher: {e}")
                 # Fallback to old method
