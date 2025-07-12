@@ -510,11 +510,14 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             except Exception as e:
                 loguru_logger.warning(f"Unexpected error getting pending attachment/image: {e}", exc_info=True)
         
+        # Get user display name from User Identifier or default to "User"
+        user_display_name = llm_user_identifier_value or "User"
+        
         # Create appropriate widget based on image presence
         if pending_image:
             user_msg_widget_instance = ChatMessageEnhanced(
                 message=message_text_from_input,
-                role="User",
+                role=user_display_name,
                 image_data=pending_image['data'],
                 image_mime_type=pending_image['mime_type']
             )
@@ -522,9 +525,9 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         else:
             # Use enhanced widget if available and we're in enhanced mode, otherwise basic
             if use_enhanced_chat:
-                user_msg_widget_instance = ChatMessageEnhanced(message_text_from_input, role="User")
+                user_msg_widget_instance = ChatMessageEnhanced(message_text_from_input, role=user_display_name)
             else:
-                user_msg_widget_instance = ChatMessage(message_text_from_input, role="User")
+                user_msg_widget_instance = ChatMessage(message_text_from_input, role=user_display_name)
         
         await chat_container.mount(user_msg_widget_instance)
         loguru_logger.debug(f"Mounted new user message to UI: '{message_text_from_input[:50]}...'")
@@ -642,15 +645,18 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # Use the correct widget type based on which chat window is active
     # Note: use_enhanced_chat was already defined above when handling user message
     
+    # Get AI display name from active character or default to "AI"
+    ai_display_name = active_char_data.get('name', 'AI') if active_char_data else 'AI'
+    
     if use_enhanced_chat:
         ai_placeholder_widget = ChatMessageEnhanced(
-            message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
-            role="AI", generation_complete=False
+            message=f"{ai_display_name} {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
+            role=ai_display_name, generation_complete=False
         )
     else:
         ai_placeholder_widget = ChatMessage(
-            message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
-            role="AI", generation_complete=False
+            message=f"{ai_display_name} {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
+            role=ai_display_name, generation_complete=False
         )
     
     await chat_container.mount(ai_placeholder_widget)
@@ -1362,8 +1368,12 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                 widgets_to_remove_after_regen_source.append(msg_widget_iter)
             else:
                 # This message is *before* the one we're regenerating
-                if msg_widget_iter.role in ("User", "AI") and msg_widget_iter.generation_complete:
-                    role_for_api = "assistant" if msg_widget_iter.role == "AI" else "user"
+                if msg_widget_iter.generation_complete:
+                    # Determine if this is a user or assistant message
+                    # Check if role matches current character name (assistant) or is anything else (user)
+                    active_char_data_regen = app.current_chat_active_character_data
+                    char_name_regen = active_char_data_regen.get('name', 'AI') if active_char_data_regen else 'AI'
+                    role_for_api = "assistant" if msg_widget_iter.role == char_name_regen else "user"
                     history_for_regeneration.append({"role": role_for_api, "content": msg_widget_iter.message_text})
 
         if not history_for_regeneration:
@@ -1523,16 +1533,19 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
         from tldw_chatbook.config import get_cli_setting
         use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
         
+        # Get AI display name from active character for regeneration
+        ai_display_name_regen = active_char_data_regen.get('name', 'AI') if active_char_data_regen else 'AI'
+        
         if use_enhanced_chat:
             from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
             ai_placeholder_widget_regen = ChatMessageEnhanced(
-                message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
-                role="AI", generation_complete=False
+                message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
+                role=ai_display_name_regen, generation_complete=False
             )
         else:
             ai_placeholder_widget_regen = ChatMessage(
-                message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
-                role="AI", generation_complete=False
+                message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
+                role=ai_display_name_regen, generation_complete=False
             )
         
         await chat_container.mount(ai_placeholder_widget_regen)
@@ -1743,7 +1756,8 @@ async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Bu
 
     ui_messages_to_save: List[Dict[str, Any]] = []
     for msg_widget in messages_in_log:
-        sender_for_db_initial_msg = "User" if msg_widget.role == "User" else char_name_for_sender
+        # Store the actual role/name displayed in the UI
+        sender_for_db_initial_msg = msg_widget.role
 
         if msg_widget.generation_complete :
             ui_messages_to_save.append({
@@ -1759,7 +1773,8 @@ async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Bu
     if not final_title_for_db:
         # Use character's name for title generation if a specific character is active
         title_char_name_part = char_name_for_sender if character_id_for_saving != ccl.DEFAULT_CHARACTER_ID else "Assistant"
-        if ui_messages_to_save and ui_messages_to_save[0]['sender'] == "User":
+        # Check if first message is from a user (not the AI character)
+        if ui_messages_to_save and ui_messages_to_save[0]['sender'] != char_name_for_sender:
             content_preview = ui_messages_to_save[0]['content'][:30].strip()
             if content_preview:
                 final_title_for_db = f"Chat: {content_preview}..."
