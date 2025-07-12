@@ -1,0 +1,46 @@
+{
+  "name": "conversation",
+  "description": "Optimized for dialogue, transcripts, and conversational content",
+  "base_method": "sentences",
+  "pipeline": [
+    {
+      "stage": "preprocess",
+      "operations": [
+        {
+          "type": "normalize_whitespace",
+          "params": {}
+        }
+      ]
+    },
+    {
+      "stage": "chunk",
+      "method": "sentences",
+      "options": {
+        "max_size": 10,
+        "overlap": 2
+      }
+    },
+    {
+      "stage": "postprocess",
+      "operations": [
+        {
+          "type": "merge_small",
+          "params": {
+            "min_size": 150
+          }
+        },
+        {
+          "type": "add_overlap",
+          "params": {
+            "overlap_size": 100
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["interviews", "chat_logs", "transcripts", "dialogue"],
+    "preserves_speaker_turns": true,
+    "maintains_conversation_flow": true
+  }
+}

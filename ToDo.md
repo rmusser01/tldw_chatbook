@@ -1,16 +1,15 @@
 # ToDo for tldw-cli
 
-
 ### ToDo List
 - [ ] Manual for use
-- [ ] Add tests
+- [x] Add tests
 - [ ] Add examples of use
 - **General UI/UX**
-  - [ ] Setup Emoji support/handling/detection if the user's terminal supports it
-  - [ ] Remove the 'speak' buttons
-  - 
+  - [x] Setup Emoji support/handling/detection if the user's terminal supports it
+  - [ ] Chat tabs
+  - [ ] Multi-Provider chat in a single window
 - **Chat Functionality**
-  - [ ] Support for uploading files in chat
+  - [x] Support for uploading files in chat
 - **Character Chat Functionality**
   - [ ] Add support for multiple files
 - **Media Endpoint Functionality**
@@ -20,7 +19,7 @@
   - [ ] Add support for ingestion of media files into the tldw `/media/add` endpoint
   - [ ] Add support for viewing versions of media files
   - [ ] Add support for modifying or deleting versions of media files
-  - [ ] Add support for processing of media files without remote ingestion.
+  - [x] Add support for processing of media files without remote ingestion.
 - **RAG Search Endpoint Functionality**
   - [ ] Add support for RAG search endpoint
   - [ ] Add support for searching against RAG endpoint
@@ -33,8 +32,8 @@
     - So requests, responses, errors, etc.
     - Also a way to file bug reports if one is encountered. (maybe from main menu?)
 - **Local DB Functionality**
-  - [ ] Allow for ingestion of media files that have been processed by the tldw API (process-* endpoints)
-  - [ ] Allow for editing/modifications/deletion of locally stored media files/character cards/chats
+  - [x] Allow for ingestion of media files that have been processed by the tldw API (process-* endpoints)
+  - [x] Allow for editing/modifications/deletion of locally stored media files/character cards/chats
 
 
 https://github.com/paulrobello/parllama

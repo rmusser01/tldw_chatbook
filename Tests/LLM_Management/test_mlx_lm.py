@@ -30,6 +30,9 @@ except ImportError:
             self.status_code = status_code
             super().__init__(f"{provider}: {message}")
 
+# Mark all tests in this file as unit tests
+pytestmark = pytest.mark.unit
+
 # Helper to reset settings if modified directly (use with caution or preferably mock settings.get)
 def_mlx_settings = {
     "model_path": "mlx-community/test-model",

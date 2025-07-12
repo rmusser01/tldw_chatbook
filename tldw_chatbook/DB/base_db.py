@@ -92,3 +92,45 @@ class BaseDB(ABC):
         Can be overridden by subclasses.
         """
         pass
+    
+    def vacuum(self):
+        """
+        Vacuum the database to reclaim unused space and optimize performance.
+        """
+        if self.is_memory_db:
+            logger.debug("Skipping vacuum for in-memory database")
+            return
+            
+        try:
+            conn = self._get_connection()
+            conn.execute("VACUUM")
+            conn.close()
+            logger.info(f"Successfully vacuumed database: {self.db_path_str}")
+        except Exception as e:
+            logger.error(f"Failed to vacuum database: {e}")
+            raise
+    
+    def check_integrity(self) -> bool:
+        """
+        Check the integrity of the database.
+        
+        Returns:
+            bool: True if integrity check passes, False otherwise
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()
+            conn.close()
+            
+            is_ok = result and result[0] == "ok"
+            if is_ok:
+                logger.info(f"Database integrity check passed: {self.db_path_str}")
+            else:
+                logger.error(f"Database integrity check failed: {self.db_path_str}")
+            
+            return is_ok
+        except Exception as e:
+            logger.error(f"Failed to check database integrity: {e}")
+            return False

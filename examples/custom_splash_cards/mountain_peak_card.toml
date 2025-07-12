@@ -1,0 +1,41 @@
+# Mountain Peak Achievement splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "spotlight"
+style = "white on rgb(30,40,60)"
+
+# Spotlight effect parameters for summit reveal
+spotlight_climb = true
+altitude_simulation = 10000
+achievement_glow = 0.9
+
+content = """
+           ▲
+          ╱ ╲
+         ╱   ╲        SUMMIT REACHED!
+        ╱     ╲       
+       ╱       ╲      Elevation: 10,000 commits
+      ╱         ╲     
+     ╱           ╲    git log --oneline | wc -l
+    ╱_____________╲   > 10000
+   ╱               ╲  
+  ╱        ☁️       ╲ "The view from here..."
+ ╱    ☁️       ☁️    ╲ "...worth every merge conflict"
+╱_____________________╲
+
+⛰️  BASE CAMP: v0.0.1
+🏔️  PEAK: v10.0.0
+"""
+
+# Progress messages
+progress_messages = [
+    "Climbing the learning curve...",
+    "Conquering technical debt mountain...",
+    "Reaching new heights of abstraction...",
+    "The air is thin at enterprise scale...",
+    "Base camp was 10,000 bugs ago..."
+]
+
+# Additional styling
+css_classes = ["mountain-achievement", "summit-glow"]

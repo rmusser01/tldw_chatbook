@@ -1,0 +1,72 @@
+/* ========================================
+ * COMPONENTS: Messages
+ * ======================================== 
+ * Message display components
+ * ======================================== */
+
+ChatMessage {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+ChatMessage > Vertical {
+    border: round $surface;
+    background: $panel;
+    padding: 0 1;
+    width: 100%;
+    height: auto;
+}
+ChatMessage.-user > Vertical {
+    background: $boost; /* Different background for user */
+    border: round $accent;
+}
+ChatMessage.-tool-call > Vertical {
+    background: $surface-lighten-1;
+    border: round $warning;
+}
+ChatMessage.-tool-result > Vertical {
+    background: $surface-lighten-1;
+    border: round $success;
+}
+.message-header {
+    width: 100%;
+    padding: 0 1;
+    background: $surface-darken-1;
+    text-style: bold;
+    height: 1; /* Ensure header is minimal height */
+}
+.message-text {
+    padding: 1; /* Padding around the text itself */
+    width: 100%;
+    height: auto;
+}
+
+.message-text.tts-generating {
+    opacity: 0.8;
+    border-left: thick $accent;
+}
+.message-actions {
+    height: auto;
+    width: 100%;
+    padding: 1; /* Add padding around buttons */
+    /* Use a VALID border type */
+    border-top: solid $surface-lighten-1; /* CHANGED thin to solid */
+    align: right middle; /* Align buttons to the right */
+    display: block; /* Default display state */
+}
+.message-actions Button {
+    min-width: 8;
+    height: 1;
+    margin: 0 0 0 1; /* Space between buttons */
+    border: none;
+    background: $surface-lighten-2;
+    color: $text-muted;
+}
+.message-actions Button:hover {
+    background: $surface;
+    color: $text;
+}
+/* Initially hide AI actions until generation is complete */
+ChatMessage.-ai .message-actions.-generating {
+    display: none;
+}

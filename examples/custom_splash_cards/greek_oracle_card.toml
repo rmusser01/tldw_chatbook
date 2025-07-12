@@ -1,0 +1,46 @@
+# Greek Oracle splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "fade"
+style = "rgb(218,165,32) on rgb(20,10,5)"
+
+# Fade effect parameters
+prophecy_reveal = true
+smoke_opacity = 0.7
+divine_glow = 0.9
+
+content = """
+        ⊱ ────── {⋅. ♪ THE ORACLE OF DELPHI ♪ .⋅} ────── ⊰
+        
+                    ╱╲    ╱╲    ╱╲
+                   ╱  ╲  ╱  ╲  ╱  ╲
+                  ╱    ╲╱    ╲╱    ╲
+                 │  ☉ PYTHIA  ☉   │
+                 │                 │
+            ┌────┴─────────────────┴────┐
+            │                           │
+            │  "KNOW THYSELF, MORTAL"   │
+            │                           │
+            │  γνῶθι σεαυτόν          │
+            │                           │
+            │  The sacred vapors rise  │
+            │  The code speaks true    │
+            │  TLDW awaits your query  │
+            │                           │
+            └───────────⚊─⚊─⚊──────────┘
+                    
+         ⚡ ZEUS ⚡  ⚔ ATHENA ⚔  ☀ APOLLO ☀
+"""
+
+# Progress messages
+progress_messages = [
+    "Consulting the sacred vapors...",
+    "Interpreting divine algorithms...",
+    "Reading the entrails of memory dumps...",
+    "Channeling Apollo's wisdom...",
+    "Deciphering cryptic prophecies..."
+]
+
+# Additional styling
+css_classes = ["oracle-temple", "divine-glow"]

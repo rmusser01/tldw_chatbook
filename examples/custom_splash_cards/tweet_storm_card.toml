@@ -1,0 +1,53 @@
+# Tweet Storm Terminal splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "text_explosion"
+style = "rgb(29,161,242) on white"
+
+# Text explosion effect parameters
+viral_velocity = 0.9
+ratio_threshold = 0.1
+thread_length = 47
+
+content = """
+┌─────────────── 🐦 TWITTER OS v280 ───────────────┐
+│                                                  │
+│  @user:~$ tweet --compose                        │
+│  ┌──────────────────────────────────────────┐   │
+│  │ Just setting up my tldw                   │   │
+│  │                                            │   │
+│  │ Characters: 25/280                         │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  TIMELINE FEED:                                  │
+│  ├─ @tech_bro: "Actually, it's pronounced..."   │
+│  │  ♥ 2.3K  🔁 567  💬 1.2K ratio'd            │
+│  ├─ @random_user: "A thread on why... 1/47"     │
+│  │  ♥ 45K  🔁 12K  💬 3K                       │
+│  ├─ @news_bot: "[BREAKING] Nothing important"   │
+│  │  ♥ 134K  🔁 89K  💬 45K doom scrolling      │
+│  └─ @verified: "." (somehow has 1M likes)       │
+│                                                  │
+│  TRENDING NOW:                                   │
+│  #1 TouchGrass          │ Notifications: 9,999+ │
+│  #2 RatioParty          │ DMs: 420 (all spam)  │
+│  #3 TLDW               │ Drafts: 1,337         │
+│                                                  │
+│  ⚠️  WARNING: Opinions may cause side effects   │
+│                                                  │
+│  Too Long; Didn't Write (but subtweeted)       │
+└──────────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Crafting the perfect subtweet...",
+    "Doom scrolling for inspiration...",
+    "Preparing to get ratio'd...",
+    "Adding unnecessary thread markers...",
+    "Refreshing for dopamine hits..."
+]
+
+# Additional styling
+css_classes = ["twitter-blue", "endless-scroll"]

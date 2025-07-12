@@ -24,7 +24,8 @@ from tldw_chatbook.Constants import LLAMA_CPP_SERVER_ARGS_HELP_TEXT, LLAMAFILE_S
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
 #
 ########################################################################################################################
 #
@@ -87,10 +88,9 @@ async def handle_llamafile_browse_exec_button_pressed(app: "TldwCli", event: But
         FileOpen(
             location=str(Path.home()),
             title="Select Llamafile Executable",
-            filters=exec_filters,
+            context="llm_models"
         ),
-        callback=_make_path_update_callback(app, "llamafile-exec-path"),
-    )
+        callback=_make_path_update_callback(app, "llamafile-exec-path"))
 
 
 async def handle_llamafile_browse_model_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
@@ -99,15 +99,15 @@ async def handle_llamafile_browse_model_button_pressed(app: "TldwCli", event: Bu
 
     gguf_filters = Filters(
         ("GGUF Models (*.gguf)", lambda p: p.suffix.lower() == ".gguf"),
-        ("All files (*.*)", lambda p: True),
-    )
+        ("All files (*.*)", lambda p: True))
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select Llamafile Model (.gguf)",
             filters=gguf_filters,
+            context="llm_models"
         ),
-        callback=_make_path_update_callback(app, "llamafile-model-path"),
+        callback=_make_path_update_callback(app, "llamafile-model-path")
     )
 
 
@@ -477,8 +477,7 @@ def run_model_download_worker(app_instance: "TldwCli", command: List[str]):
 
         app_instance.call_from_thread(
             app_instance._update_model_download_log,
-            f"Download started (PID: {process.pid})…\n",
-        )
+            f"Download started (PID: {process.pid})…\n")
         _stream_process(app_instance, "_update_model_download_log", process)
         process.wait()
         yield f"Download command exited with code: {process.returncode}\n"
@@ -686,23 +685,24 @@ async def handle_llamacpp_browse_exec_button_pressed(app: "TldwCli", event: Butt
             location=str(Path.home()),
             title="Select Llama.cpp executable (e.g. main, server.py)",
             filters=exec_filters,
+            context="llm_models"
         ),
-        callback=_make_path_update_callback(app, "llamacpp-exec-path"),
+        callback=_make_path_update_callback(app, "llamacpp-exec-path")
     )
 
 
 async def handle_llamacpp_browse_model_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     gguf_filters = Filters(
         ("GGUF Models (*.gguf)", lambda p: p.suffix.lower() == ".gguf"),
-        ("All files (*.*)", lambda p: True),
-    )
+        ("All files (*.*)", lambda p: True))
     await app.push_screen(
         FileOpen(
             location=str(Path.home()),
             title="Select Llama.cpp Model (.gguf)",
             filters=gguf_filters,
+            context="llm_models"
         ),
-        callback=_make_path_update_callback(app, "llamacpp-model-path"),
+        callback=_make_path_update_callback(app, "llamacpp-model-path")
     )
 
 
@@ -894,8 +894,9 @@ async def handle_browse_models_dir_button_pressed(app: "TldwCli", event: Button.
         FileOpen(
             location=str(Path.home()),
             title="Select Models Directory (select any file inside)",
+            context="llm_models"
         ),
-        callback=_make_path_update_callback(app, "models-dir-path", is_directory=True),
+        callback=_make_path_update_callback(app, "models-dir-path", is_directory=True)
     )
 
 
@@ -952,8 +953,7 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
             thread=True,  # <--- ADDED THIS
             done=lambda w: app.call_from_thread(
                 stream_worker_output_to_log, app, w, "#model-download-log-output"
-            ),
-        )
+            ))
         app.notify("Model download started…")
     except Exception as err:  # pragma: no cover
         logger.error("Error preparing model download: %s", err, exc_info=True)
@@ -962,6 +962,14 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
 async def populate_llm_help_texts(app: 'TldwCli') -> None:
     """Populates the RichLog widgets with help text for LLM arguments."""
     app.loguru_logger.info("Populating LLM argument help texts...")
+    
+    # Check if LLM Management Window exists first
+    try:
+        llm_window = app.query_one("#llm_management-window")
+    except QueryError:
+        app.loguru_logger.debug("LLM Management Window not found, skipping help text population.")
+        return
+    
     try:
         # Llama.cpp
         llamacpp_help_widget = app.query_one("#llamacpp-args-help-display", RichLog)
@@ -969,7 +977,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
         llamacpp_help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
         app.loguru_logger.debug("Populated Llama.cpp args help.")
     except QueryError:
-        app.loguru_logger.error("Failed to find #llamacpp-args-help-display widget.")
+        app.loguru_logger.debug("Failed to find #llamacpp-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating Llama.cpp help: {e}", exc_info=True)
     try:
@@ -978,7 +986,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
         llamafile_help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)  # Write new content
         app.loguru_logger.debug("Populated Llamafile args help.")
     except QueryError:
-        app.loguru_logger.error("Failed to find #llamafile-args-help-display widget.")
+        app.loguru_logger.debug("Failed to find #llamafile-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating Llamafile help: {e}", exc_info=True)
     try:
@@ -988,7 +996,7 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
         mlx_help_widget.write(MLX_LM_SERVER_ARGS_HELP_TEXT)  # Write new content
         app.loguru_logger.debug("Populated MLX-LM args help.")
     except QueryError:
-        app.loguru_logger.error("Failed to find #mlx-args-help-display widget.")
+        app.loguru_logger.debug("Failed to find #mlx-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating MLX-LM help: {e}", exc_info=True)
 
@@ -1007,6 +1015,7 @@ LLM_MANAGEMENT_BUTTON_HANDLERS = {
     # Model Download (Legacy)
     "browse-models-dir-button": handle_browse_models_dir_button_pressed,
     "start-model-download-button": handle_start_model_download_button_pressed,
+    # Ollama handlers will be added in app.py to avoid circular imports
 }
 
 #

@@ -1,0 +1,49 @@
+# Chef's Terminal splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "terminal_boot"
+style = "white on rgb(20,20,30)"
+
+# Terminal boot effect parameters
+mise_en_place = true
+kitchen_efficiency = 0.95
+gordon_ramsay_mode = false
+
+content = """
+┌────────────── KITCHEN OS v5.0 ──────────────┐
+│ chef@kitchen:~$ sudo service dinner start   │
+│ [sudo] password for chef: ********          │
+│                                             │
+│ Starting dinner service...                  │
+│ ✓ Mise en place initialized                │
+│ ✓ Burners calibrated to optimal temp       │
+│ ✓ Knife sharpness: 98.5%                   │
+│ ✓ Ingredients fresh (TTL: 4 hours)         │
+│ ✓ Sous chef processes spawned              │
+│                                             │
+│ chef@kitchen:~$ ./prep --all               │
+│ Chopping onions... 🧅 [DONE]               │
+│ Mincing garlic...  🧄 [DONE]               │
+│ Heating oil...     🛢️  [IN PROGRESS]        │
+│                                             │
+│ chef@kitchen:~$ tail -f orders.log         │
+│ [18:32:01] Table 5: Medium-rare steak      │
+│ [18:32:45] Table 2: Vegetarian pasta       │
+│ [18:33:12] VIP: Chef's special tasting     │
+│                                             │
+│ TLDW: Too Long; Didn't Whisk              │
+└─────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Sharpening digital knives...",
+    "Seasoning the algorithms...",
+    "Reducing technical debt sauce...",
+    "Plating the presentation layer...",
+    "Flambéing the firewall..."
+]
+
+# Additional styling
+css_classes = ["chef-terminal", "kitchen-command"]

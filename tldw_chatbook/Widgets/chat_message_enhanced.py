@@ -33,6 +33,7 @@ except ImportError:
 
 #
 # Local Imports
+from tldw_chatbook.Utils.file_extraction import FileExtractor
 #
 #######################################################################################################################
 #
@@ -138,6 +139,11 @@ class ChatMessageEnhanced(Widget):
     timestamp: reactive[Optional[str]] = reactive(None)
     image_data: reactive[Optional[bytes]] = reactive(None)
     image_mime_type: reactive[Optional[str]] = reactive(None)
+    # Store feedback (thumbs up/down)
+    feedback: reactive[Optional[str]] = reactive(None)
+    # Store extracted files
+    _extracted_files = None
+    _file_extractor = None
     
     def __init__(
         self,
@@ -149,6 +155,7 @@ class ChatMessageEnhanced(Widget):
         timestamp: Optional[str] = None,
         image_data: Optional[bytes] = None,
         image_mime_type: Optional[str] = None,
+        feedback: Optional[str] = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -160,6 +167,7 @@ class ChatMessageEnhanced(Widget):
         self.timestamp = timestamp
         self.image_data = image_data
         self.image_mime_type = image_mime_type
+        self.feedback = feedback
         self._image_widget = None
         
         # Add role-specific class
@@ -193,8 +201,8 @@ class ChatMessageEnhanced(Widget):
                     
                     # Image controls
                     with Container(classes="image-controls"):
-                        yield Button("Toggle View", id="toggle-image-mode")
-                        yield Button("Save Image", id="save-image")
+                        yield Button("Toggle View", id="toggle-image-mode", tooltip="Switch between image display modes")
+                        yield Button("Save Image", id="save-image", tooltip="Save image to Downloads")
             
             # Action buttons
             actions_class = "message-actions"
@@ -204,19 +212,33 @@ class ChatMessageEnhanced(Widget):
             with Horizontal(classes=actions_class) as actions_bar:
                 actions_bar.id = f"actions-bar-{self.id or self.message_id_internal or 'new'}"
                 # Common buttons
-                yield Button("Edit", classes="action-button edit-button")
-                yield Button("📋", classes="action-button copy-button", id="copy")
-                yield Button("🔊", classes="action-button speak-button", id="speak")
+                yield Button("Edit", classes="action-button edit-button", tooltip="Edit message")
+                yield Button("📋", classes="action-button copy-button", id="copy", tooltip="Copy message to clipboard")
+                yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
+                
+                # Add file extraction button if files detected
+                if self._extracted_files is None:
+                    self._check_for_files()
+                if self._extracted_files:
+                    file_count = len(self._extracted_files)
+                    yield Button(f"📎 {file_count}", classes="action-button file-extract-button", 
+                               id="extract-files", 
+                               tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
+                
+                yield Button("🔊", classes="action-button speak-button", id="speak", tooltip="Read message aloud")
                 
                 # AI-specific buttons
                 if self.has_class("-ai"):
-                    yield Button("👍", classes="action-button thumb-up-button", id="thumb-up")
-                    yield Button("👎", classes="action-button thumb-down-button", id="thumb-down")
-                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate")
-                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button")
+                    # Display feedback state on thumb buttons
+                    thumb_up_label = "👍✓" if self.feedback == "1;" else "👍"
+                    thumb_down_label = "👎✓" if self.feedback == "2;" else "👎"
+                    yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up", tooltip="Mark as helpful")
+                    yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down", tooltip="Mark as unhelpful")
+                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate", tooltip="Regenerate response")
+                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button", tooltip="Continue response")
                 
                 # Delete button
-                yield Button("🗑️", classes="action-button delete-button")
+                yield Button("🗑️", classes="action-button delete-button", tooltip="Delete message")
     
     def on_mount(self) -> None:
         """Render image when widget is mounted."""
@@ -242,8 +264,11 @@ class ChatMessageEnhanced(Widget):
                 self._render_regular()
         except Exception as e:
             logging.error(f"Error rendering image: {e}")
-            self._image_widget.mount(
-                Static(f"[red]Error rendering image: {e}[/red]")
+            # Use call_after_refresh for error mounting too
+            self.call_after_refresh(
+                lambda: self._image_widget.mount(
+                    Static(f"[red]Error rendering image: {e}[/red]")
+                ) if self._image_widget else None
             )
     
     def _render_pixelated(self) -> None:
@@ -269,13 +294,8 @@ class ChatMessageEnhanced(Widget):
                 )
                 pil_image = pil_image.resize(new_size, PILImage.Resampling.LANCZOS)
             
-            # Save to temporary buffer
-            temp_buffer = BytesIO()
-            pil_image.save(temp_buffer, format='PNG')
-            temp_buffer.seek(0)
-            
-            # Create Pixels renderable
-            pixels = Pixels.from_image(temp_buffer)
+            # Create Pixels renderable directly from PIL image
+            pixels = Pixels.from_image(pil_image)
             self._image_widget.mount(Static(pixels))
         except Exception as e:
             logging.error(f"Error in pixelated rendering: {e}")
@@ -285,13 +305,26 @@ class ChatMessageEnhanced(Widget):
         """Render image using textual-image or fallback."""
         if TEXTUAL_IMAGE_AVAILABLE:
             try:
-                image = TextualImage.from_bytes(self.image_data)
-                self._image_widget.mount(image)
+                # TextualImage expects a PIL image, not raw bytes
+                pil_image = PILImage.open(BytesIO(self.image_data))
+                image = TextualImage(pil_image)
+                # Defer the mounting to ensure proper widget tree attachment
+                self.call_after_refresh(lambda: self._mount_textual_image(image))
             except Exception as e:
                 logging.error(f"Error with textual-image rendering: {e}")
                 self._render_fallback()
         else:
             self._render_fallback()
+    
+    def _mount_textual_image(self, image: TextualImage) -> None:
+        """Mount the TextualImage widget after the widget tree is stable."""
+        try:
+            if self._image_widget and not image.parent:
+                self._image_widget.mount(image)
+        except Exception as e:
+            logging.error(f"Error mounting textual-image: {e}")
+            if self._image_widget:
+                self._render_fallback()
     
     def _render_fallback(self) -> None:
         """Fallback rendering for unsupported terminals."""
@@ -303,7 +336,7 @@ class ChatMessageEnhanced(Widget):
 📷 Image ({self.image_mime_type or 'unknown'})
 Size: {image_size:.1f} KB
 Preview: {preview}...
-[Click "Save Image" to view in external viewer]
+\\[Click "Save Image" to view in external viewer\\]
 [/dim]"""
         
         self._image_widget.mount(Static(fallback_text))
@@ -365,10 +398,12 @@ Preview: {preview}...
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Called when a button inside this message is pressed."""
-        # Post our custom Action message
-        self.post_message(self.Action(self, event.button))
-        # Stop the event from bubbling up
-        event.stop()
+        # Only handle buttons that don't have specific handlers
+        if event.button.id not in ["toggle-image-mode", "save-image"]:
+            # Post our custom Action message
+            self.post_message(self.Action(self, event.button))
+            # Stop the event from bubbling up
+            event.stop()
     
     def mark_generation_complete(self):
         """Marks the AI message generation as complete."""
@@ -381,6 +416,17 @@ Preview: {preview}...
         """Appends a chunk of text to an AI message during streaming."""
         if self.has_class("-ai") and not self._generation_complete_internal:
             self.message_text += chunk
+    
+    def _check_for_files(self):
+        """Check if the message contains extractable files."""
+        if not self._file_extractor:
+            self._file_extractor = FileExtractor()
+        
+        try:
+            self._extracted_files = self._file_extractor.extract_files(self.message_text)
+        except Exception as e:
+            logging.error(f"Error extracting files from message: {e}")
+            self._extracted_files = []
 
 #
 #

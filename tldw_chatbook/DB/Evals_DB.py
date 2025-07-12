@@ -24,12 +24,14 @@ import sqlite3
 import json
 import uuid
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Union, Tuple
 from loguru import logger
 
 from .sql_validation import validate_table_name, validate_column_name
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 # Database Schema Version
 SCHEMA_VERSION = 1
@@ -318,6 +320,13 @@ class EvalsDB:
     def create_task(self, name: str, task_type: str, config_format: str, config_data: Dict[str, Any], 
                    description: str = None, dataset_id: str = None) -> str:
         """Create a new evaluation task."""
+        start_time = time.time()
+        
+        # Clean control characters from name and description
+        name = ''.join(c for c in name if c.isprintable() and ord(c) != 0)
+        if description:
+            description = ''.join(c for c in description if c.isprintable() and ord(c) != 0)
+        
         if not name or not name.strip():
             raise InputError("Task name cannot be empty")
         
@@ -330,6 +339,12 @@ class EvalsDB:
         task_id = str(uuid.uuid4())
         config_json = json.dumps(config_data)
         
+        # Log DB operation start
+        log_counter("eval_db_operation_started", labels={
+            "operation": "create_task",
+            "table": "eval_tasks"
+        })
+        
         conn = self._get_connection()
         try:
             with conn:
@@ -340,10 +355,37 @@ class EvalsDB:
                 """, (task_id, name.strip(), description, task_type, config_format, 
                      config_json, dataset_id, self.client_id))
                 
+                # Log successful operation
+                duration = time.time() - start_time
+                log_histogram("eval_db_operation_duration", duration, labels={
+                    "operation": "create_task",
+                    "table": "eval_tasks",
+                    "status": "success"
+                })
+                log_counter("eval_db_operation_success", labels={
+                    "operation": "create_task",
+                    "table": "eval_tasks"
+                })
+                log_histogram("eval_db_record_size", len(config_json), labels={
+                    "table": "eval_tasks",
+                    "field": "config_data"
+                })
+                
                 logger.info(f"Created eval task: {name} ({task_id})")
                 return task_id
                 
         except sqlite3.IntegrityError as e:
+            duration = time.time() - start_time
+            log_histogram("eval_db_operation_duration", duration, labels={
+                "operation": "create_task",
+                "table": "eval_tasks",
+                "status": "error"
+            })
+            log_counter("eval_db_operation_error", labels={
+                "operation": "create_task",
+                "table": "eval_tasks",
+                "error_type": "integrity_error"
+            })
             if "UNIQUE constraint failed" in str(e):
                 raise ConflictError(f"Task with name '{name}' already exists", "eval_tasks", name)
             raise EvalsDBError(f"Failed to create task: {e}")
@@ -411,6 +453,14 @@ class EvalsDB:
     
     def get_task(self, task_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
         """Get task by ID."""
+        start_time = time.time()
+        
+        # Log DB operation start
+        log_counter("eval_db_operation_started", labels={
+            "operation": "get_task",
+            "table": "eval_tasks"
+        })
+        
         conn = self._get_connection()
         
         query = "SELECT * FROM eval_tasks WHERE id = ?"
@@ -420,6 +470,21 @@ class EvalsDB:
         cursor = conn.execute(query, (task_id,))
         
         row = cursor.fetchone()
+        
+        # Log operation metrics
+        duration = time.time() - start_time
+        status = "found" if row else "not_found"
+        log_histogram("eval_db_operation_duration", duration, labels={
+            "operation": "get_task",
+            "table": "eval_tasks",
+            "status": status
+        })
+        log_counter("eval_db_operation_success", labels={
+            "operation": "get_task",
+            "table": "eval_tasks",
+            "status": status
+        })
+        
         if row:
             task = dict(row)
             task['config_data'] = json.loads(task['config_data'])
@@ -452,12 +517,28 @@ class EvalsDB:
     def search_tasks(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search tasks using FTS5."""
         conn = self._get_connection()
-        cursor = conn.execute("""
-            SELECT t.* FROM eval_tasks t
-            JOIN eval_tasks_fts fts ON t.id = fts.id
-            WHERE eval_tasks_fts MATCH ? AND t.deleted_at IS NULL
-            ORDER BY rank LIMIT ?
-        """, (query, limit))
+        
+        # Remove null bytes and other control characters
+        query = ''.join(c for c in query if c.isprintable() and ord(c) != 0)
+        
+        # For special characters or very short queries, use LIKE instead of FTS
+        if len(query) <= 2 or any(c in query for c in ':*"\'[]()'):
+            cursor = conn.execute("""
+                SELECT * FROM eval_tasks 
+                WHERE (name LIKE ? OR description LIKE ?) AND deleted_at IS NULL
+                ORDER BY created_at DESC LIMIT ?
+            """, (f'%{query}%', f'%{query}%', limit))
+        else:
+            # For normal queries, use FTS5 with proper escaping
+            # Escape double quotes in the query
+            escaped_query = query.replace('"', '""')
+            safe_query = f'"{escaped_query}"' if escaped_query else '""'
+            cursor = conn.execute("""
+                SELECT t.* FROM eval_tasks t
+                JOIN eval_tasks_fts fts ON t.id = fts.id
+                WHERE eval_tasks_fts MATCH ? AND t.deleted_at IS NULL
+                ORDER BY rank LIMIT ?
+            """, (safe_query, limit))
         
         tasks = []
         for row in cursor.fetchall():
@@ -536,13 +617,16 @@ class EvalsDB:
     
     def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search datasets using FTS5."""
+        # Escape special characters in FTS5 query by wrapping in quotes
+        safe_query = f'"{query}"' if query else '""'
+        
         conn = self._get_connection()
         cursor = conn.execute("""
             SELECT d.* FROM eval_datasets d
             JOIN eval_datasets_fts fts ON d.id = fts.id
             WHERE eval_datasets_fts MATCH ? AND d.deleted_at IS NULL
             ORDER BY rank LIMIT ?
-        """, (query, limit))
+        """, (safe_query, limit))
         
         datasets = []
         for row in cursor.fetchall():
@@ -624,6 +708,8 @@ class EvalsDB:
     def create_run(self, name: str, task_id: str, model_id: str, 
                   config_overrides: Dict[str, Any] = None) -> str:
         """Create a new evaluation run."""
+        start_time = time.time()
+        
         if not all([name.strip(), task_id.strip(), model_id.strip()]):
             raise InputError("Name, task_id, and model_id cannot be empty")
         
@@ -636,15 +722,48 @@ class EvalsDB:
         run_id = str(uuid.uuid4())
         config_json = json.dumps(config_overrides or {})
         
+        # Log DB operation start
+        log_counter("eval_db_operation_started", labels={
+            "operation": "create_run",
+            "table": "eval_runs"
+        })
+        
         conn = self._get_connection()
-        with conn:
-            conn.execute("""
-                INSERT INTO eval_runs (id, name, task_id, model_id, config_overrides, client_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (run_id, name.strip(), task_id, model_id, config_json, self.client_id))
-            
-            logger.info(f"Created eval run: {name} ({run_id})")
-            return run_id
+        try:
+            with conn:
+                conn.execute("""
+                    INSERT INTO eval_runs (id, name, task_id, model_id, config_overrides, client_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (run_id, name.strip(), task_id, model_id, config_json, self.client_id))
+                
+                # Log successful operation
+                duration = time.time() - start_time
+                log_histogram("eval_db_operation_duration", duration, labels={
+                    "operation": "create_run",
+                    "table": "eval_runs",
+                    "status": "success"
+                })
+                log_counter("eval_db_operation_success", labels={
+                    "operation": "create_run",
+                    "table": "eval_runs"
+                })
+                
+                logger.info(f"Created eval run: {name} ({run_id})")
+                return run_id
+                
+        except Exception as e:
+            duration = time.time() - start_time
+            log_histogram("eval_db_operation_duration", duration, labels={
+                "operation": "create_run",
+                "table": "eval_runs",
+                "status": "error"
+            })
+            log_counter("eval_db_operation_error", labels={
+                "operation": "create_run",
+                "table": "eval_runs",
+                "error_type": type(e).__name__
+            })
+            raise
     
     def update_run_status(self, run_id: str, status: str, error_message: str = None):
         """Update run status."""
@@ -735,27 +854,77 @@ class EvalsDB:
                     logprobs: Dict[str, Any] = None, metrics: Dict[str, Any] = None,
                     metadata: Dict[str, Any] = None) -> str:
         """Store individual evaluation result."""
+        start_time = time.time()
         result_id = str(uuid.uuid4())
         
+        # Log DB operation start
+        log_counter("eval_db_operation_started", labels={
+            "operation": "store_result",
+            "table": "eval_results"
+        })
+        
+        # Calculate data sizes
+        input_size = len(json.dumps(input_data))
+        output_size = len(actual_output) if actual_output else 0
+        metrics_size = len(json.dumps(metrics or {}))
+        
         conn = self._get_connection()
-        with conn:
-            conn.execute("""
-                INSERT INTO eval_results 
-                (id, run_id, sample_id, input_data, expected_output, actual_output, 
-                 logprobs, metrics, metadata, client_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (result_id, run_id, sample_id, json.dumps(input_data), expected_output,
-                 actual_output, json.dumps(logprobs or {}), json.dumps(metrics or {}),
-                 json.dumps(metadata or {}), self.client_id))
-            
-            # Update completed samples count
-            conn.execute("""
-                UPDATE eval_runs 
-                SET completed_samples = completed_samples + 1, updated_at = ?
-                WHERE id = ?
-            """, (datetime.now(timezone.utc).isoformat(), run_id))
-            
-            return result_id
+        try:
+            with conn:
+                conn.execute("""
+                    INSERT INTO eval_results 
+                    (id, run_id, sample_id, input_data, expected_output, actual_output, 
+                     logprobs, metrics, metadata, client_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (result_id, run_id, sample_id, json.dumps(input_data), expected_output,
+                     actual_output, json.dumps(logprobs or {}), json.dumps(metrics or {}),
+                     json.dumps(metadata or {}), self.client_id))
+                
+                # Update completed samples count
+                conn.execute("""
+                    UPDATE eval_runs 
+                    SET completed_samples = completed_samples + 1, updated_at = ?
+                    WHERE id = ?
+                """, (datetime.now(timezone.utc).isoformat(), run_id))
+                
+                # Log successful operation
+                duration = time.time() - start_time
+                log_histogram("eval_db_operation_duration", duration, labels={
+                    "operation": "store_result",
+                    "table": "eval_results",
+                    "status": "success"
+                })
+                log_counter("eval_db_operation_success", labels={
+                    "operation": "store_result",
+                    "table": "eval_results"
+                })
+                
+                # Log data sizes
+                log_histogram("eval_db_result_input_size", input_size, labels={
+                    "table": "eval_results"
+                })
+                log_histogram("eval_db_result_output_size", output_size, labels={
+                    "table": "eval_results"
+                })
+                log_histogram("eval_db_result_metrics_size", metrics_size, labels={
+                    "table": "eval_results"
+                })
+                
+                return result_id
+                
+        except Exception as e:
+            duration = time.time() - start_time
+            log_histogram("eval_db_operation_duration", duration, labels={
+                "operation": "store_result",
+                "table": "eval_results",
+                "status": "error"
+            })
+            log_counter("eval_db_operation_error", labels={
+                "operation": "store_result",
+                "table": "eval_results",
+                "error_type": type(e).__name__
+            })
+            raise
     
     def store_run_metrics(self, run_id: str, metrics: Dict[str, Tuple[float, str]]):
         """Store aggregated metrics for a run.
@@ -775,6 +944,14 @@ class EvalsDB:
     
     def get_run_results(self, run_id: str, limit: int = 1000, offset: int = 0) -> List[Dict[str, Any]]:
         """Get results for a specific run."""
+        start_time = time.time()
+        
+        # Log DB operation start
+        log_counter("eval_db_operation_started", labels={
+            "operation": "get_run_results",
+            "table": "eval_results"
+        })
+        
         conn = self._get_connection()
         cursor = conn.execute("""
             SELECT * FROM eval_results 
@@ -790,6 +967,22 @@ class EvalsDB:
             result['metrics'] = json.loads(result['metrics'])
             result['metadata'] = json.loads(result['metadata'])
             results.append(result)
+        
+        # Log operation metrics
+        duration = time.time() - start_time
+        log_histogram("eval_db_operation_duration", duration, labels={
+            "operation": "get_run_results",
+            "table": "eval_results",
+            "status": "success"
+        })
+        log_counter("eval_db_operation_success", labels={
+            "operation": "get_run_results",
+            "table": "eval_results"
+        })
+        log_histogram("eval_db_result_count", len(results), labels={
+            "operation": "get_run_results",
+            "table": "eval_results"
+        })
         
         return results
     

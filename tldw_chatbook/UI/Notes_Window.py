@@ -12,7 +12,7 @@ from textual.widgets import Button, TextArea, Static, Label
 # Local Imports
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
-from ..Widgets.notes_sync_widget import NotesSyncWidget
+from ..Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
 # Import EmojiSelected and EmojiPickerScreen
 from ..Widgets.emoji_picker import EmojiSelected, EmojiPickerScreen
 # from ..Constants import TAB_NOTES # Not strictly needed if IDs are hardcoded here
@@ -50,6 +50,16 @@ class NotesWindow(Container):
         color: $error;
     }
     
+    .unsaved-indicator.auto-saving {
+        color: $primary;
+        text-style: italic;
+    }
+    
+    .unsaved-indicator.saved {
+        color: $success;
+        text-style: bold;
+    }
+    
     .word-count {
         color: $text-muted;
         margin: 0 1;
@@ -57,12 +67,6 @@ class NotesWindow(Container):
     
     #notes-preview-toggle {
         margin: 0 1;
-    }
-    
-    .compact-button {
-        width: 3;
-        min-width: 3;
-        padding: 0;
     }
     """
     def __init__(self, app_instance: 'TldwCli', **kwargs):
@@ -75,13 +79,12 @@ class NotesWindow(Container):
         with Container(id="notes-main-content"):
             yield TextArea(id="notes-editor-area", classes="notes-editor")
             with Horizontal(id="notes-controls-area"):
-                yield Button("☰ L", id="toggle-notes-sidebar-left", classes="sidebar-toggle")
-                yield Button("😊", id="open-emoji-picker-button", tooltip="Insert Emoji", classes="compact-button")
+                yield Button("☰ L", id="toggle-notes-sidebar-left", classes="sidebar-toggle", tooltip="Toggle left sidebar")
                 yield Label("", id="notes-unsaved-indicator", classes="unsaved-indicator")
                 yield Button("Save Note", id="notes-save-button", variant="primary")
                 yield Button("Preview", id="notes-preview-toggle", variant="default")
                 yield Button("Sync 🔄", id="notes-sync-button", variant="default")
-                yield Button("R ☰", id="toggle-notes-sidebar-right", classes="sidebar-toggle")
+                yield Button("R ☰", id="toggle-notes-sidebar-right", classes="sidebar-toggle", tooltip="Toggle right sidebar")
 
         yield NotesSidebarRight(id="notes-sidebar-right")
 
@@ -94,13 +97,9 @@ class NotesWindow(Container):
     # Added on_button_pressed to handle the new button
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handles button presses within the NotesWindow."""
-        if event.button.id == "open-emoji-picker-button":
-            # Use a unique ID for the picker if needed, e.g., "notes-modal-emoji-picker"
-            self.app.push_screen(EmojiPickerScreen(id="notes_emoji_modal_picker"), self._handle_emoji_picker_result)
-            event.stop()
-        elif event.button.id == "notes-sync-button":
+        if event.button.id == "notes-sync-button":
             # Push the sync widget as a modal screen
-            self.app.push_screen(NotesSyncWidget(self.app_instance))
+            self.app.push_screen(NotesSyncWidgetImproved(self.app_instance))
             event.stop()
         # Add other button ID checks here if necessary for this window's specific buttons.
         # For example, the sidebar toggles are often handled at the app level via actions,
@@ -118,6 +117,7 @@ class NotesWindow(Container):
         #     pass # Let other handlers catch it if not stopped
 
 
+
     def on_emoji_picker_emoji_selected(self, message: EmojiSelected) -> None:
         """Handles the EmojiSelected message posted after an emoji is picked."""
         # The message is now posted by _handle_emoji_picker_result,
@@ -126,7 +126,7 @@ class NotesWindow(Container):
         # If multiple sources could send EmojiSelected to NotesWindow,
         # the picker_id attribute on EmojiSelected could be used.
         notes_editor = self.query_one("#notes-editor-area", TextArea)
-        notes_editor.insert_text_at_cursor(message.emoji)
+        notes_editor.insert(message.emoji)
         notes_editor.focus()
         message.stop()
 

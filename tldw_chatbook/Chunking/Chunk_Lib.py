@@ -8,6 +8,7 @@
 import hashlib
 import json
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable, Generator
 import xml.etree.ElementTree as ET
 #
@@ -22,6 +23,8 @@ from nltk.tokenize import sent_tokenize
 from tldw_chatbook.config import load_settings, get_cli_setting
 from .language_chunkers import LanguageChunkerFactory
 from .token_chunker import create_token_chunker
+from .chunking_templates import ChunkingTemplateManager, ChunkingPipeline, ChunkingTemplate
+from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
 # Custom Exceptions
@@ -98,7 +101,8 @@ _default_chunk_options_from_config = {
     'summarize_additional_instructions': get_cli_setting('chunking_config', 'summarize_additional_instructions', None),
     'summarize_temperature': float(get_cli_setting('chunking_config', 'summarize_temperature', 0.1)),
     'summarization_llm_provider': get_cli_setting('chunking_config', 'summarization_llm_provider', 'openai'),
-    'summarization_llm_model': get_cli_setting('chunking_config', 'summarization_llm_model', 'gpt-4o')
+    'summarization_llm_model': get_cli_setting('chunking_config', 'summarization_llm_model', 'gpt-4o'),
+    'template': get_cli_setting('chunking_config', 'template', None)  # Template name if using template-based chunking
 }
 logger.info("Chunking library defaults loaded from config.")
 logger.debug(f"Default chunking options: {_default_chunk_options_from_config}")
@@ -117,6 +121,8 @@ class Chunker:
     def __init__(self,
                  options: Optional[Dict[str, Any]] = None,
                  tokenizer_name_or_path: str = "gpt2",
+                 template: Optional[str] = None,
+                 template_manager: Optional[ChunkingTemplateManager] = None,
                  # Specific methods needing LLMs will take them as args or use a callback.
                  ):
         """
@@ -126,7 +132,34 @@ class Chunker:
             options (Optional[Dict[str, Any]]): Custom chunking options to override defaults.
             tokenizer_name_or_path (str): Name or path of the Hugging Face tokenizer to use.
                                            Defaults to "gpt2".
+            template (Optional[str]): Name of chunking template to use.
+            template_manager (Optional[ChunkingTemplateManager]): Template manager instance.
         """
+        # Initialize template manager
+        self.template_manager = template_manager or ChunkingTemplateManager()
+        self.pipeline = ChunkingPipeline(self.template_manager)
+        
+        # Load template if specified
+        self.template: Optional[ChunkingTemplate] = None
+        if template:
+            self.template = self.template_manager.load_template(template)
+            if self.template:
+                logger.info(f"Loaded chunking template: {template}")
+                # Extract options from template
+                template_options = {}
+                for stage in self.template.pipeline:
+                    if stage.stage == 'chunk':
+                        template_options.update(stage.options)
+                        if stage.method:
+                            template_options['method'] = stage.method
+                        break
+                # Template options have lower priority than explicit options
+                if options:
+                    template_options.update(options)
+                options = template_options
+            else:
+                logger.warning(f"Template '{template}' not found, using default options")
+        
         # Initialize options: start with defaults, then update with provided options
         self.options = DEFAULT_CHUNK_OPTIONS.copy()
         if options:
@@ -188,18 +221,40 @@ class Chunker:
             str: The detected language code (e.g., 'en', 'zh-cn').
                  Defaults to 'en' if detection fails.
         """
+        start_time = time.time()
+        log_counter("chunking_language_detection_attempt")
+        
         if not text or not text.strip():
             logger.warning("Attempted to detect language from empty or whitespace-only text. Defaulting to 'en'.")
+            log_counter("chunking_language_detection_empty_text")
             return self._get_option('language', 'en') # Use option if available, else 'en'
         try:
             lang = detect(text)
             logger.debug(f"Detected language: {lang}")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("chunking_language_detection_duration", duration, labels={"status": "success"})
+            log_counter("chunking_language_detection_success", labels={"language": lang})
+            
             return lang
         except LangDetectException as e:
             logger.warning(f"Language detection failed: {e}. Defaulting to 'en'.")
+            
+            # Log detection failure
+            duration = time.time() - start_time
+            log_histogram("chunking_language_detection_duration", duration, labels={"status": "error"})
+            log_counter("chunking_language_detection_error", labels={"error_type": "lang_detect_exception"})
+            
             return self._get_option('language', 'en')
         except Exception as e_gen:
             logger.error(f"Unexpected error during language detection: {e_gen}. Defaulting to 'en'.")
+            
+            # Log unexpected error
+            duration = time.time() - start_time
+            log_histogram("chunking_language_detection_duration", duration, labels={"status": "error"})
+            log_counter("chunking_language_detection_error", labels={"error_type": type(e_gen).__name__})
+            
             return self._get_option('language', 'en')
 
 
@@ -226,6 +281,7 @@ class Chunker:
                    method: Optional[str] = None,
                    llm_call_function: Optional[Callable[[Dict[str, Any]], Union[str, Generator[str, None, None]]]] = None,
                    llm_api_config: Optional[Dict[str, Any]] = None,
+                   use_template: Optional[bool] = None,
                    ) -> List[Union[str, Dict[str, Any]]]:
         """
         Main method to chunk text based on the specified method in options or argument.
@@ -233,6 +289,7 @@ class Chunker:
         Args:
             text (str): The text to chunk.
             method (Optional[str]): Override the chunking method defined in options.
+            use_template (Optional[bool]): Force use/bypass of template if loaded.
 
         Returns:
             List[Union[str, Dict[str, Any]]]: A list of chunks.
@@ -242,6 +299,28 @@ class Chunker:
             InvalidChunkingMethodError: If the method is not supported.
             ChunkingError: For errors during the chunking process.
         """
+        # Check if we should use template-based chunking
+        if use_template is None:
+            use_template = self.template is not None
+        
+        if use_template and self.template:
+            logger.info(f"Using template-based chunking with template: {self.template.name}")
+            # Execute template pipeline
+            template_results = self.pipeline.execute(
+                text=text,
+                template=self.template,
+                chunker_instance=self,
+                llm_call_function=llm_call_function,
+                llm_api_config=llm_api_config
+            )
+            # Convert template results to expected format
+            chunks = []
+            for result in template_results:
+                if isinstance(result, dict) and 'text' in result:
+                    chunks.append(result['text'])
+                else:
+                    chunks.append(result)
+            return chunks
         chunk_method = method if method else self._get_option('method', 'words')
         max_size = self._get_option('max_size') # Already int from __init__
         overlap = self._get_option('overlap')   # Already int from __init__
@@ -345,13 +424,22 @@ class Chunker:
             chunks.append(' '.join(chunk_words))
             logger.debug(f"Created word chunk {len(chunks)} with {len(chunk_words)} words")
 
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("chunking_method_duration", duration, labels={"method": "words", "language": language})
+        log_histogram("chunking_words_per_chunk", max_words)
+        log_histogram("chunking_total_words", len(words))
+        log_counter("chunking_method_words_success", labels={"chunks_created": str(len(chunks))})
+        
         processed_chunks = self._post_process_chunks(chunks)
         logger.info(f"Word chunking complete: created {len(processed_chunks)} chunks from {len(words)} words")
         return processed_chunks
 
 
     def _chunk_text_by_sentences(self, text: str, max_sentences: int, overlap: int, language: str) -> List[str]:
+        start_time = time.time()
         logger.info(f"Chunking by sentences: max_sentences={max_sentences}, overlap={overlap}, lang='{language}'")
+        log_counter("chunking_method_sentences_attempt", labels={"language": language})
         
         # Use language-specific chunker
         language_chunker = LanguageChunkerFactory.get_chunker(language)
@@ -1277,6 +1365,8 @@ def process_document_with_metadata(text: str,
 def improved_chunking_process(text: str,
                               chunk_options_dict: Optional[Dict[str, Any]] = None,
                               tokenizer_name_or_path: str = "gpt2",
+                              template: Optional[str] = None,
+                              template_manager: Optional[ChunkingTemplateManager] = None,
                               # Parameters for LLM calls if needed by a chunking method
                               llm_call_function_for_chunker: Optional[Callable] = None,
                               llm_api_config_for_chunker: Optional[Dict[str, Any]] = None
@@ -1284,9 +1374,13 @@ def improved_chunking_process(text: str,
     logger.info("Improved chunking process started...")
     logger.debug(f"Received chunk_options_dict: {chunk_options_dict}")
     logger.debug(f"Text length: {len(text)} characters, tokenizer: {tokenizer_name_or_path}")
+    if template:
+        logger.debug(f"Using template: {template}")
 
     chunker_instance = Chunker(options=chunk_options_dict,
                                tokenizer_name_or_path=tokenizer_name_or_path,
+                               template=template,
+                               template_manager=template_manager,
                                 )
 
     # Get effective options from the chunker instance (these are now resolved)

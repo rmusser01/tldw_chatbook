@@ -5,6 +5,7 @@
 import logging
 import threading
 import sqlite3  # For exception handling in _get_db
+import time
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Union
 #
@@ -19,6 +20,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     ConflictError
 )
 from tldw_chatbook.config import chachanotes_db as global_db_from_config
+from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
 #
@@ -128,37 +130,134 @@ class NotesInteropService:
         """
         Adds a new note for the specified user. The user_id will be used as the client_id.
         """
-        db = self._get_db(user_id)
-        created_note_id = db.add_note(title=title, content=content, note_id=note_id)
-        if created_note_id is None:
-            logger.error(f"add_note for user_id '{user_id}' (as client_id) returned None unexpectedly for title '{title}'.")
-            raise CharactersRAGDBError("Failed to create note, received None ID unexpectedly.")
-        return created_note_id
+        start_time = time.time()
+        log_counter("notes_library_add_note_attempt", labels={"has_note_id": str(note_id is not None)})
+        
+        try:
+            db = self._get_db(user_id)
+            created_note_id = db.add_note(title=title, content=content, note_id=note_id)
+            if created_note_id is None:
+                logger.error(f"add_note for user_id '{user_id}' (as client_id) returned None unexpectedly for title '{title}'.")
+                log_counter("notes_library_add_note_error", labels={"error_type": "null_id_returned"})
+                raise CharactersRAGDBError("Failed to create note, received None ID unexpectedly.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("notes_library_add_note_duration", duration, labels={"status": "success"})
+            log_histogram("notes_library_note_content_length", len(content))
+            log_counter("notes_library_add_note_success")
+            
+            return created_note_id
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("notes_library_add_note_duration", duration, labels={"status": "error"})
+            log_counter("notes_library_add_note_error", labels={"error_type": type(e).__name__})
+            raise
 
     def get_note_by_id(self, user_id: str, note_id: str) -> Optional[Dict[str, Any]]:
+        start_time = time.time()
+        log_counter("notes_library_get_note_attempt")
+        
         db = self._get_db(user_id) # user_id here is mainly for consistency or if _get_db has other uses
-        return db.get_note_by_id(note_id=note_id) # The actual filtering by user would be in SQL if notes were user-specific
+        result = db.get_note_by_id(note_id=note_id) # The actual filtering by user would be in SQL if notes were user-specific
+        
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("notes_library_get_note_duration", duration)
+        log_counter("notes_library_get_note_result", labels={"found": str(result is not None)})
+        
+        return result
 
     def list_notes(self, user_id: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        start_time = time.time()
+        log_counter("notes_library_list_notes_attempt", labels={"limit": str(limit), "has_offset": str(offset > 0)})
+        
         db = self._get_db(user_id)
         # If notes are truly global and not per-user within the DB, then user_id here doesn't filter.
         # If notes *are* associated with a client_id in the DB table, then CharactersRAGDB.list_notes
         # would need to be modified to filter by its self.client_id (which is user_id here).
         # Assuming current list_notes in ChaChaNotes_DB lists all non-deleted notes.
-        return db.list_notes(limit=limit, offset=offset)
+        results = db.list_notes(limit=limit, offset=offset)
+        
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("notes_library_list_notes_duration", duration)
+        log_histogram("notes_library_list_notes_count", len(results))
+        log_counter("notes_library_list_notes_success", labels={"count": str(len(results))})
+        
+        return results
 
     def update_note(self, user_id: str, note_id: str, update_data: Dict[str, Any], expected_version: int) -> bool:
-        db = self._get_db(user_id) # The db instance will have user_id as its client_id for the update
-        return db.update_note(note_id=note_id, update_data=update_data, expected_version=expected_version)
+        start_time = time.time()
+        log_counter("notes_library_update_note_attempt", labels={
+            "fields_count": str(len(update_data)),
+            "has_title": str('title' in update_data),
+            "has_content": str('content' in update_data)
+        })
+        
+        try:
+            db = self._get_db(user_id) # The db instance will have user_id as its client_id for the update
+            result = db.update_note(note_id=note_id, update_data=update_data, expected_version=expected_version)
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("notes_library_update_note_duration", duration, labels={"status": "success" if result else "conflict"})
+            log_counter("notes_library_update_note_result", labels={"success": str(result)})
+            
+            return result
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("notes_library_update_note_duration", duration, labels={"status": "error"})
+            log_counter("notes_library_update_note_error", labels={"error_type": type(e).__name__})
+            raise
 
     def soft_delete_note(self, user_id: str, note_id: str, expected_version: int) -> bool:
-        db = self._get_db(user_id) # client_id for operation comes from db instance
-        return db.soft_delete_note(note_id=note_id, expected_version=expected_version)
+        start_time = time.time()
+        log_counter("notes_library_delete_note_attempt")
+        
+        try:
+            db = self._get_db(user_id) # client_id for operation comes from db instance
+            result = db.soft_delete_note(note_id=note_id, expected_version=expected_version)
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("notes_library_delete_note_duration", duration, labels={"status": "success" if result else "conflict"})
+            log_counter("notes_library_delete_note_result", labels={"success": str(result)})
+            
+            return result
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("notes_library_delete_note_duration", duration, labels={"status": "error"})
+            log_counter("notes_library_delete_note_error", labels={"error_type": type(e).__name__})
+            raise
 
     def search_notes(self, user_id: str, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
-        db = self._get_db(user_id)
-        # Similar to list_notes, if search should be user-specific, CharactersRAGDB.search_notes needs adjustment.
-        return db.search_notes(search_term=search_term, limit=limit)
+        start_time = time.time()
+        log_counter("notes_library_search_notes_attempt", labels={
+            "search_term_length": str(len(search_term)),
+            "limit": str(limit)
+        })
+        try:
+            db = self._get_db(user_id)
+            # Similar to list_notes, if search should be user-specific, CharactersRAGDB.search_notes needs adjustment.
+            results = db.search_notes(search_term=search_term, limit=limit)
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("notes_library_search_notes_duration", duration, labels={"status": "success"})
+            log_histogram("notes_library_search_notes_results_count", len(results))
+            log_counter("notes_library_search_notes_success", labels={"results_count": str(len(results))})
+            
+            return results
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("notes_library_search_notes_duration", duration, labels={"status": "error"})
+            log_counter("notes_library_search_notes_error", labels={"error_type": type(e).__name__})
+            raise
 
     # --- Note-Keyword Linking Methods ---
     # These methods operate on global keywords but link them to notes.

@@ -1,0 +1,53 @@
+{
+  "name": "legal_document",
+  "description": "Specialized for legal documents preserving clause structure and citations",
+  "base_method": "paragraphs",
+  "pipeline": [
+    {
+      "stage": "preprocess",
+      "operations": [
+        {
+          "type": "section_detection",
+          "params": {
+            "headers": [
+              "ARTICLE", "Article", "SECTION", "Section",
+              "CLAUSE", "Clause", "SCHEDULE", "Schedule",
+              "APPENDIX", "Appendix", "EXHIBIT", "Exhibit"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "stage": "chunk",
+      "method": "paragraphs",
+      "options": {
+        "max_size": 5,
+        "overlap": 1
+      }
+    },
+    {
+      "stage": "postprocess",
+      "operations": [
+        {
+          "type": "merge_small",
+          "params": {
+            "min_size": 300
+          }
+        },
+        {
+          "type": "add_context",
+          "params": {
+            "context_size": 1
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["contracts", "legal_briefs", "regulations", "terms_of_service"],
+    "preserves_clause_structure": true,
+    "maintains_legal_hierarchy": true,
+    "citation_aware": true
+  }
+}

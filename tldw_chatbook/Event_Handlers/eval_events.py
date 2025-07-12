@@ -15,19 +15,21 @@ Handles all evaluation-related events:
 
 import asyncio
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from loguru import logger
 
 from textual.widgets import Button, Input
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 if TYPE_CHECKING:
     from ..app import TldwCli
 
 # Import evaluation components
-from ..App_Functions.Evals.eval_orchestrator import EvaluationOrchestrator
-from ..App_Functions.Evals.task_loader import TaskLoader, TaskLoadError
+from tldw_chatbook.Evals import EvaluationOrchestrator
+from tldw_chatbook.Evals import TaskLoader, TaskLoadError
 from ..Widgets.file_picker_dialog import TaskFilePickerDialog, DatasetFilePickerDialog, ExportFilePickerDialog
 from ..Widgets.eval_config_dialogs import ModelConfigDialog, TaskConfigDialog, RunConfigDialog
 from ..Widgets.template_selector import TemplateSelectorDialog
@@ -48,6 +50,9 @@ async def handle_upload_task(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle task file upload."""
     logger.info("Starting task file upload")
     
+    # Log UI interaction
+    log_counter("eval_ui_task_upload_clicked")
+    
     def on_file_selected(file_path: Optional[str]):
         if file_path:
             asyncio.create_task(_process_task_upload(app, file_path))
@@ -58,11 +63,19 @@ async def handle_upload_task(app: 'TldwCli', event: Button.Pressed) -> None:
 
 async def _process_task_upload(app: 'TldwCli', file_path: str):
     """Process the uploaded task file."""
+    start_time = time.time()
     try:
         app.notify(f"Processing task file: {Path(file_path).name}", severity="information")
         
         orchestrator = get_orchestrator()
         task_id = await orchestrator.create_task_from_file(file_path)
+        
+        # Log successful task upload
+        duration = time.time() - start_time
+        log_histogram("eval_ui_task_upload_duration", duration, labels={
+            "status": "success"
+        })
+        log_counter("eval_ui_task_upload_success")
         
         app.notify(f"Task created successfully: {task_id}", severity="information")
         
@@ -70,15 +83,38 @@ async def _process_task_upload(app: 'TldwCli', file_path: str):
         await refresh_tasks_list(app)
         
     except TaskLoadError as e:
+        duration = time.time() - start_time
         logger.error(f"Task load error: {e}")
+        
+        # Log task load error
+        log_histogram("eval_ui_task_upload_duration", duration, labels={
+            "status": "error"
+        })
+        log_counter("eval_ui_task_upload_error", labels={
+            "error_type": "TaskLoadError"
+        })
+        
         app.notify(f"Failed to load task: {str(e)}", severity="error")
     except Exception as e:
+        duration = time.time() - start_time
         logger.error(f"Error processing task upload: {e}")
+        
+        # Log generic error
+        log_histogram("eval_ui_task_upload_duration", duration, labels={
+            "status": "error"
+        })
+        log_counter("eval_ui_task_upload_error", labels={
+            "error_type": type(e).__name__
+        })
+        
         app.notify(f"Error processing task: {str(e)}", severity="error")
 
 async def handle_create_task(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle new task creation."""
     logger.info("Creating new task")
+    
+    # Log UI interaction
+    log_counter("eval_ui_create_task_clicked")
     
     def on_config_ready(config: Optional[Dict[str, Any]]):
         if config:
@@ -90,6 +126,7 @@ async def handle_create_task(app: 'TldwCli', event: Button.Pressed) -> None:
 
 async def _create_custom_task(app: 'TldwCli', config: Dict[str, Any]):
     """Create a custom task from configuration."""
+    start_time = time.time()
     try:
         app.notify("Creating custom task...", severity="information")
         
@@ -104,18 +141,43 @@ async def _create_custom_task(app: 'TldwCli', config: Dict[str, Any]):
             config_data=config
         )
         
+        # Log successful task creation
+        duration = time.time() - start_time
+        log_histogram("eval_ui_custom_task_creation_duration", duration, labels={
+            "task_type": config['task_type'],
+            "status": "success"
+        })
+        log_counter("eval_ui_custom_task_created", labels={
+            "task_type": config['task_type']
+        })
+        
         app.notify(f"Task created successfully: {config['name']}", severity="information")
         
         # Update UI
         await refresh_tasks_list(app)
         
     except Exception as e:
+        duration = time.time() - start_time
         logger.error(f"Error creating custom task: {e}")
+        
+        # Log error
+        log_histogram("eval_ui_custom_task_creation_duration", duration, labels={
+            "status": "error"
+        })
+        log_counter("eval_ui_custom_task_error", labels={
+            "error_type": type(e).__name__
+        })
+        
         app.notify(f"Error creating task: {str(e)}", severity="error")
 
 async def handle_template_selection(app: 'TldwCli', template_name: str) -> None:
     """Handle template selection for task creation."""
     logger.info(f"Creating task from template: {template_name}")
+    
+    # Log template selection
+    log_counter("eval_ui_template_selected", labels={
+        "template_name": template_name
+    })
     
     try:
         app.notify(f"Creating task from template: {template_name}", severity="information")
@@ -128,6 +190,11 @@ async def handle_template_selection(app: 'TldwCli', template_name: str) -> None:
             output_dir=None  # Don't save files by default
         )
         
+        # Log successful template usage
+        log_counter("eval_ui_template_task_created", labels={
+            "template_name": template_name
+        })
+        
         app.notify(f"Task created from template: {template_name}", severity="information")
         
         # Update UI
@@ -135,6 +202,13 @@ async def handle_template_selection(app: 'TldwCli', template_name: str) -> None:
         
     except Exception as e:
         logger.error(f"Error creating task from template: {e}")
+        
+        # Log error
+        log_counter("eval_ui_template_task_error", labels={
+            "template_name": template_name,
+            "error_type": type(e).__name__
+        })
+        
         app.notify(f"Error creating template task: {str(e)}", severity="error")
 
 # === MODEL MANAGEMENT EVENTS ===
@@ -142,6 +216,9 @@ async def handle_template_selection(app: 'TldwCli', template_name: str) -> None:
 async def handle_add_model(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle adding a new model configuration."""
     logger.info("Adding new model configuration")
+    
+    # Log UI interaction
+    log_counter("eval_ui_add_model_clicked")
     
     def on_config_ready(config: Optional[Dict[str, Any]]):
         if config:
@@ -166,6 +243,12 @@ async def _save_model_config(app: 'TldwCli', config: Dict[str, Any]):
             config=config
         )
         
+        # Log successful model config
+        log_counter("eval_ui_model_configured", labels={
+            "provider": config['provider'],
+            "model_id": config['model_id']
+        })
+        
         app.notify(f"Model configured: {config['name']}", severity="information")
         
         # Update UI
@@ -173,11 +256,22 @@ async def _save_model_config(app: 'TldwCli', config: Dict[str, Any]):
         
     except Exception as e:
         logger.error(f"Error saving model config: {e}")
+        
+        # Log error
+        log_counter("eval_ui_model_config_error", labels={
+            "error_type": type(e).__name__
+        })
+        
         app.notify(f"Error saving model: {str(e)}", severity="error")
 
 async def handle_provider_setup(app: 'TldwCli', provider: str) -> None:
     """Handle quick provider setup."""
     logger.info(f"Setting up provider: {provider}")
+    
+    # Log provider setup
+    log_counter("eval_ui_provider_setup_clicked", labels={
+        "provider": provider
+    })
     
     # Pre-fill configuration based on provider
     provider_configs = {
@@ -219,16 +313,25 @@ async def handle_start_evaluation(app: 'TldwCli', event: Button.Pressed) -> None
     """Handle starting an evaluation run."""
     logger.info("Starting evaluation run")
     
+    # Log UI interaction
+    log_counter("eval_ui_start_evaluation_clicked")
+    
     # Get available tasks and models
     orchestrator = get_orchestrator()
     tasks = orchestrator.list_tasks()
     models = orchestrator.list_models()
     
     if not tasks:
+        log_counter("eval_ui_start_evaluation_blocked", labels={
+            "reason": "no_tasks"
+        })
         app.notify("No tasks available. Create a task first.", severity="error")
         return
     
     if not models:
+        log_counter("eval_ui_start_evaluation_blocked", labels={
+            "reason": "no_models"
+        })
         app.notify("No models configured. Add a model first.", severity="error")
         return
     
@@ -246,73 +349,188 @@ async def handle_start_evaluation(app: 'TldwCli', event: Button.Pressed) -> None
 
 async def _execute_evaluation(app: 'TldwCli', config: Dict[str, Any]):
     """Execute the evaluation run."""
+    eval_start_time = time.time()
     try:
         app.notify("Starting evaluation...", severity="information")
+        
+        # Log evaluation start
+        log_counter("eval_ui_evaluation_started", labels={
+            "task_id": config.get('task_id', 'unknown'),
+            "model_id": config.get('model_id', 'unknown')
+        })
         
         orchestrator = get_orchestrator()
         
         # Update progress tracker if available
         progress_tracker = None
+        cost_estimator = None
         try:
-            # Try to find progress tracker in current evals view
+            # Try to find progress tracker and cost estimator in current evals view
             evals_window = app.query_one("EvalsWindow")
             progress_tracker = evals_window.query_one("#progress-tracker")
+            cost_estimator = evals_window.query_one("#cost-estimator")
         except:
             pass
         
         def progress_callback(completed: int, total: int, result):
             """Progress callback for real-time updates."""
-            if progress_tracker:
-                progress_tracker.current_progress = completed
-                progress_tracker.total_samples = total
+            # Try to update via EvalsWindow method for more detailed updates
+            try:
+                def update_ui():
+                    # Convert result to dict format if needed
+                    result_dict = None
+                    if hasattr(result, '__dict__'):
+                        result_dict = {
+                            'error_info': getattr(result, 'error_info', None),
+                            'sample_id': getattr(result, 'sample_id', None),
+                            'metrics': getattr(result, 'metrics', {})
+                        }
+                    
+                    # Use EvalsWindow's update method if available
+                    if hasattr(evals_window, 'update_evaluation_progress'):
+                        evals_window.update_evaluation_progress(
+                            run_id=config.get('run_id', 'current'),
+                            completed=completed,
+                            total=total,
+                            current_result=result_dict
+                        )
+                    elif progress_tracker:
+                        # Fallback to direct progress tracker update
+                        progress_tracker.current_progress = completed
+                        progress_tracker.total_samples = total
+                        
+                        # Update status message
+                        if completed == total:
+                            progress_tracker.complete_evaluation()
+                        else:
+                            progress_tracker.status_message = f"Processing sample {completed}/{total}"
                 
-                # Update status message
-                if completed == total:
-                    progress_tracker.complete_evaluation()
-                else:
-                    progress_tracker.status_message = f"Processing sample {completed}/{total}"
+                app.call_from_thread(update_ui)
+            except Exception as e:
+                logger.error(f"Error updating progress: {e}")
+        
+        # Get model details for cost estimation
+        model_info = orchestrator.db.get_model(config['model_id'])
+        if cost_estimator and model_info:
+            # Show cost estimation
+            app.call_from_thread(
+                cost_estimator.estimate_cost,
+                model_info['provider'],
+                model_info['model_id'],
+                config.get('max_samples', 100)
+            )
         
         # Start evaluation
         if progress_tracker:
-            progress_tracker.start_evaluation(config.get('max_samples', 100))
+            app.call_from_thread(progress_tracker.start_evaluation, config.get('max_samples', 100))
         
-        run_id = await orchestrator.run_evaluation(
+        # Generate run ID for tracking
+        from uuid import uuid4
+        run_id = str(uuid4())
+        
+        # Start cost tracking
+        if cost_estimator:
+            app.call_from_thread(cost_estimator.start_tracking, run_id)
+        
+        # Modified progress callback to include cost tracking
+        def enhanced_progress_callback(completed: int, total: int, result):
+            # Call original progress callback
+            progress_callback(completed, total, result)
+            
+            # Update cost if we have token counts
+            if cost_estimator and hasattr(result, 'token_usage'):
+                app.call_from_thread(
+                    cost_estimator.update_sample_cost,
+                    result.token_usage.get('input_tokens', 0),
+                    result.token_usage.get('output_tokens', 0),
+                    completed - 1  # 0-based index
+                )
+        
+        actual_run_id = await orchestrator.run_evaluation(
             task_id=config['task_id'],
             model_id=config['model_id'],
             run_name=config['name'],
             max_samples=config.get('max_samples'),
-            progress_callback=progress_callback
+            progress_callback=enhanced_progress_callback if cost_estimator else progress_callback
         )
         
+        # Log successful evaluation
+        eval_duration = time.time() - eval_start_time
+        log_histogram("eval_ui_evaluation_duration", eval_duration, labels={
+            "status": "success",
+            "task_id": config.get('task_id', 'unknown'),
+            "model_id": config.get('model_id', 'unknown')
+        })
+        log_counter("eval_ui_evaluation_completed", labels={
+            "task_id": config.get('task_id', 'unknown'),
+            "model_id": config.get('model_id', 'unknown')
+        })
+        
         app.notify(f"Evaluation completed: {config['name']}", severity="information")
+        
+        # Finalize cost tracking
+        if cost_estimator:
+            cost_result = app.call_from_thread(cost_estimator.finalize_tracking)
+            if cost_result:
+                app.notify(
+                    f"Total cost: {cost_estimator.cost_estimator.format_cost_display(cost_result['total_cost'])}", 
+                    severity="information"
+                )
         
         # Update UI
         await refresh_results_list(app)
         
+        # Update the results table with the completed run
+        await update_results_table(app, actual_run_id)
+        
         # Auto-export if requested
         if config.get('auto_export'):
-            await _auto_export_results(app, run_id)
+            await _auto_export_results(app, actual_run_id)
         
     except Exception as e:
+        eval_duration = time.time() - eval_start_time
         logger.error(f"Error executing evaluation: {e}")
+        
+        # Log evaluation error
+        log_histogram("eval_ui_evaluation_duration", eval_duration, labels={
+            "status": "error",
+            "task_id": config.get('task_id', 'unknown'),
+            "model_id": config.get('model_id', 'unknown')
+        })
+        log_counter("eval_ui_evaluation_error", labels={
+            "error_type": type(e).__name__,
+            "task_id": config.get('task_id', 'unknown'),
+            "model_id": config.get('model_id', 'unknown')
+        })
+        
         app.notify(f"Evaluation failed: {str(e)}", severity="error")
         
         # Update progress tracker with error
         if progress_tracker:
-            progress_tracker.error_evaluation(str(e))
+            app.call_from_thread(progress_tracker.error_evaluation, str(e))
 
 # === RESULTS MANAGEMENT EVENTS ===
 
 async def handle_refresh_results(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle refreshing results list."""
     logger.info("Refreshing results list")
+    
+    # Log UI interaction
+    log_counter("eval_ui_refresh_results_clicked")
+    
     await refresh_results_list(app)
 
 async def refresh_results_list(app: 'TldwCli'):
     """Refresh the results display."""
+    start_time = time.time()
     try:
         orchestrator = get_orchestrator()
         runs = orchestrator.list_runs()
+        
+        # Log refresh metrics
+        duration = time.time() - start_time
+        log_histogram("eval_ui_refresh_results_duration", duration)
+        log_histogram("eval_ui_results_count", len(runs))
         
         # Update results display
         try:
@@ -329,6 +547,10 @@ async def refresh_results_list(app: 'TldwCli'):
                     content += f"    Samples: {run.get('completed_samples', 0)}\n\n"
                 
                 results_list.update(content)
+                
+                # Also update the ResultsTable if we have a completed run
+                if runs and runs[0]['status'] == 'completed':
+                    await update_results_table(app, runs[0]['id'])
             else:
                 results_list.update("No evaluation runs found")
                 
@@ -337,17 +559,83 @@ async def refresh_results_list(app: 'TldwCli'):
         
     except Exception as e:
         logger.error(f"Error refreshing results: {e}")
+
+async def update_results_table(app: 'TldwCli', run_id: str):
+    """Update the ResultsTable widget with detailed results from a run."""
+    try:
+        orchestrator = get_orchestrator()
+        
+        # Get detailed results for the run
+        results = orchestrator.get_run_results(run_id)
+        
+        if results:
+            # Try to find and update the ResultsTable widget
+            try:
+                evals_window = app.query_one("EvalsWindow")
+                from ..Widgets.eval_results_widgets import ResultsTable
+                results_table = evals_window.query_one(ResultsTable)
+                
+                # Update the table on the main thread
+                def update_table():
+                    results_table.update_results(results)
+                
+                app.call_from_thread(update_table)
+                
+            except Exception as e:
+                logger.error(f"Error finding or updating ResultsTable: {e}")
+        
+    except Exception as e:
+        logger.error(f"Error loading run results: {e}")
         app.notify(f"Error refreshing results: {str(e)}", severity="error")
+
+async def handle_view_detailed_results(app: 'TldwCli', event) -> None:
+    """Handle viewing detailed results for the most recent run."""
+    logger.info("Viewing detailed results")
+    
+    # Log UI interaction
+    log_counter("eval_ui_view_detailed_results_clicked")
+    
+    try:
+        orchestrator = get_orchestrator()
+        
+        # Get the most recent completed run
+        runs = orchestrator.list_runs(status='completed', limit=1)
+        
+        if runs:
+            run_id = runs[0]['id']
+            await update_results_table(app, run_id)
+            
+            # Log successful result viewing
+            log_counter("eval_ui_detailed_results_viewed", labels={
+                "run_id": run_id
+            })
+            
+            app.notify(f"Loaded results for: {runs[0]['name']}", severity="information")
+        else:
+            log_counter("eval_ui_detailed_results_not_found")
+            app.notify("No completed evaluation runs found", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error viewing detailed results: {e}")
+        app.notify(f"Error loading results: {str(e)}", severity="error")
 
 async def handle_export_results(app: 'TldwCli', format_type: str) -> None:
     """Handle exporting results."""
     logger.info(f"Exporting results in {format_type} format")
+    
+    # Log export request
+    log_counter("eval_ui_export_results_clicked", labels={
+        "format_type": format_type
+    })
     
     # Get list of completed runs
     orchestrator = get_orchestrator()
     runs = orchestrator.list_runs(status='completed')
     
     if not runs:
+        log_counter("eval_ui_export_blocked", labels={
+            "reason": "no_completed_runs"
+        })
         app.notify("No completed runs to export", severity="error")
         return
     
@@ -370,10 +658,23 @@ async def _export_run_results(app: 'TldwCli', run_id: str, file_path: str, forma
         orchestrator = get_orchestrator()
         orchestrator.export_results(run_id, file_path, format_type)
         
+        # Log successful export
+        log_counter("eval_ui_results_exported", labels={
+            "format_type": format_type,
+            "run_id": run_id
+        })
+        
         app.notify(f"Results exported to: {Path(file_path).name}", severity="information")
         
     except Exception as e:
         logger.error(f"Error exporting results: {e}")
+        
+        # Log export error
+        log_counter("eval_ui_export_error", labels={
+            "format_type": format_type,
+            "error_type": type(e).__name__
+        })
+        
         app.notify(f"Export failed: {str(e)}", severity="error")
 
 async def _auto_export_results(app: 'TldwCli', run_id: str):
@@ -400,6 +701,9 @@ async def handle_upload_dataset(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle dataset file upload."""
     logger.info("Starting dataset upload")
     
+    # Log UI interaction
+    log_counter("eval_ui_upload_dataset_clicked")
+    
     def on_file_selected(file_path: Optional[str]):
         if file_path:
             asyncio.create_task(_process_dataset_upload(app, file_path))
@@ -422,6 +726,11 @@ async def _process_dataset_upload(app: 'TldwCli', file_path: str):
             description=f"Uploaded dataset from {Path(file_path).name}"
         )
         
+        # Log successful dataset upload
+        log_counter("eval_ui_dataset_uploaded", labels={
+            "file_extension": Path(file_path).suffix
+        })
+        
         app.notify(f"Dataset uploaded: {dataset_name}", severity="information")
         
         # Update UI
@@ -429,20 +738,36 @@ async def _process_dataset_upload(app: 'TldwCli', file_path: str):
         
     except Exception as e:
         logger.error(f"Error processing dataset upload: {e}")
+        
+        # Log dataset upload error
+        log_counter("eval_ui_dataset_upload_error", labels={
+            "error_type": type(e).__name__
+        })
+        
         app.notify(f"Dataset upload failed: {str(e)}", severity="error")
 
 async def handle_refresh_datasets(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle refreshing datasets list."""
     logger.info("Refreshing datasets list")
+    
+    # Log UI interaction
+    log_counter("eval_ui_refresh_datasets_clicked")
+    
     await refresh_datasets_list(app)
 
 # === UI UPDATE HELPERS ===
 
 async def refresh_tasks_list(app: 'TldwCli'):
     """Refresh the tasks display."""
+    start_time = time.time()
     try:
         orchestrator = get_orchestrator()
         tasks = orchestrator.list_tasks()
+        
+        # Log refresh metrics
+        duration = time.time() - start_time
+        log_histogram("eval_ui_refresh_tasks_duration", duration)
+        log_histogram("eval_ui_tasks_count", len(tasks))
         
         # Update task status display
         try:
@@ -462,9 +787,15 @@ async def refresh_tasks_list(app: 'TldwCli'):
 
 async def refresh_models_list(app: 'TldwCli'):
     """Refresh the models display."""
+    start_time = time.time()
     try:
         orchestrator = get_orchestrator()
         models = orchestrator.list_models()
+        
+        # Log refresh metrics
+        duration = time.time() - start_time
+        log_histogram("eval_ui_refresh_models_duration", duration)
+        log_histogram("eval_ui_models_count", len(models))
         
         # Update models list display
         try:
@@ -489,9 +820,15 @@ async def refresh_models_list(app: 'TldwCli'):
 
 async def refresh_datasets_list(app: 'TldwCli'):
     """Refresh the datasets display."""
+    start_time = time.time()
     try:
         orchestrator = get_orchestrator()
         datasets = orchestrator.db.list_datasets()
+        
+        # Log refresh metrics
+        duration = time.time() - start_time
+        log_histogram("eval_ui_refresh_datasets_duration", duration)
+        log_histogram("eval_ui_datasets_count", len(datasets))
         
         # Update datasets display
         try:
@@ -520,6 +857,11 @@ async def refresh_datasets_list(app: 'TldwCli'):
 async def handle_template_button(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle template button press."""
     button_id = event.button.id
+    
+    # Log template button click
+    log_counter("eval_ui_template_button_clicked", labels={
+        "button_id": button_id
+    })
     
     # Map button IDs to template names
     template_mapping = {
@@ -552,16 +894,28 @@ async def handle_compare_runs(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle run comparison."""
     logger.info("Starting run comparison")
     
+    # Log UI interaction
+    log_counter("eval_ui_compare_runs_clicked")
+    
     orchestrator = get_orchestrator()
     runs = orchestrator.list_runs(status='completed')
     
     if len(runs) < 2:
+        log_counter("eval_ui_compare_runs_blocked", labels={
+            "reason": "insufficient_runs",
+            "available_runs": str(len(runs))
+        })
         app.notify("Need at least 2 completed runs to compare", severity="error")
         return
     
     # For now, compare the two most recent runs
     run_ids = [runs[0]['id'], runs[1]['id']]
     comparison = orchestrator.compare_runs(run_ids)
+    
+    # Log successful comparison
+    log_counter("eval_ui_runs_compared", labels={
+        "num_runs": "2"
+    })
     
     # Update comparison display
     try:
@@ -590,6 +944,9 @@ async def initialize_evals_system(app: 'TldwCli') -> None:
     """Initialize the evaluation system."""
     logger.info("Initializing evaluation system")
     
+    # Log system initialization
+    log_counter("eval_ui_system_initialized")
+    
     try:
         # Initialize orchestrator
         get_orchestrator()
@@ -600,10 +957,19 @@ async def initialize_evals_system(app: 'TldwCli') -> None:
         await refresh_datasets_list(app)
         await refresh_results_list(app)
         
+        # Log successful initialization
+        log_counter("eval_ui_system_initialization_success")
+        
         app.notify("Evaluation system initialized", severity="information")
         
     except Exception as e:
         logger.error(f"Error initializing evaluation system: {e}")
+        
+        # Log initialization error
+        log_counter("eval_ui_system_initialization_error", labels={
+            "error_type": type(e).__name__
+        })
+        
         app.notify(f"Failed to initialize evaluation system: {str(e)}", severity="error")
 
 # === HELPER FUNCTIONS FOR UX ENHANCEMENTS ===
@@ -653,16 +1019,19 @@ def get_available_datasets(app: 'TldwCli', limit: int = 50) -> List[Dict[str, An
     """Get available datasets."""
     try:
         orchestrator = get_orchestrator()
-        # This would need to be implemented in the orchestrator
-        # For now, return empty list
-        return []
+        return orchestrator.list_datasets(limit=limit)
     except Exception as e:
         logger.error(f"Error getting available datasets: {e}")
         return []
 
 async def handle_cancel_evaluation(app: 'TldwCli', run_id: Optional[str]) -> None:
     """Handle cancelling an active evaluation."""
+    log_counter("eval_ui_cancel_evaluation_clicked")
+    
     if not run_id:
+        log_counter("eval_ui_cancel_evaluation_blocked", labels={
+            "reason": "no_active_evaluation"
+        })
         app.notify("No active evaluation to cancel", severity="warning")
         return
     
@@ -671,10 +1040,22 @@ async def handle_cancel_evaluation(app: 'TldwCli', run_id: Optional[str]) -> Non
         success = orchestrator.cancel_evaluation(run_id)
         
         if success:
+            log_counter("eval_ui_evaluation_cancelled", labels={
+                "run_id": run_id
+            })
             app.notify(f"Evaluation {run_id} cancelled", severity="information")
         else:
+            log_counter("eval_ui_evaluation_cancel_failed", labels={
+                "run_id": run_id
+            })
             app.notify(f"Could not cancel evaluation {run_id}", severity="warning")
             
     except Exception as e:
         logger.error(f"Error cancelling evaluation: {e}")
+        
+        # Log cancellation error
+        log_counter("eval_ui_evaluation_cancel_error", labels={
+            "error_type": type(e).__name__
+        })
+        
         app.notify(f"Error cancelling evaluation: {str(e)}", severity="error")

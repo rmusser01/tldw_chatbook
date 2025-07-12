@@ -46,21 +46,35 @@ except ImportError as e:
         raise ImportError("Hybrid RAG search not available - missing dependencies")
 
 try:
-    from ..RAG_Search.Services import EmbeddingsService, ChunkingService, IndexingService
+    from tldw_chatbook.RAG_Search.simplified import (
+        RAGService, create_config_for_collection, RAGConfig, IndexingResult
+    )
     RAG_SERVICES_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"RAG services not available: {e}")
+    logger.warning(f"Simplified RAG services not available: {e}")
     RAG_SERVICES_AVAILABLE = False
     # Create placeholder classes
+    class RAGService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("RAGService not available - missing dependencies")
+    def create_config_for_collection(*args, **kwargs):
+        raise ImportError("RAG configuration not available - missing dependencies")
+    class RAGConfig:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("RAGConfig not available - missing dependencies")
+    class IndexingResult:
+        pass
+
+try:
+    from tldw_chatbook.RAG_Search.Services.embeddings_service import EmbeddingsService
+    EMBEDDINGS_SERVICE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"EmbeddingsService not available: {e}")
+    EMBEDDINGS_SERVICE_AVAILABLE = False
+    # Create placeholder class
     class EmbeddingsService:
         def __init__(self, *args, **kwargs):
             raise ImportError("EmbeddingsService not available - missing dependencies")
-    class ChunkingService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("ChunkingService not available - missing dependencies")
-    class IndexingService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("IndexingService not available - missing dependencies")
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -297,7 +311,7 @@ class SearchRAGWindow(Container):
         self.current_search_id: Optional[int] = None
         
         # Initialize components
-        history_db_path = get_user_data_dir() / "databases" / "search_history.db"
+        history_db_path = get_user_data_dir() / "default_user" / "search_history.db"
         self.search_history_db = SearchHistoryDB(history_db_path)
         self._load_recent_search_history()
         
@@ -311,64 +325,65 @@ class SearchRAGWindow(Container):
         
     def compose(self) -> ComposeResult:
         """Create the enhanced UI layout"""
-        with VerticalScroll(classes="rag-search-container"):
-            # Header Section
-            with Container(classes="search-header-section"):
-                yield Static("🔍 RAG Search & Discovery", classes="rag-title-enhanced")
-                if not self.rag_search_available:
-                    yield Static(
-                        "⚠️ RAG search functionality is limited - install dependencies with: pip install -e '.[embeddings_rag]'",
-                        classes="rag-warning"
-                    )
-                else:
-                    yield Static("Search across your media, conversations, and notes with semantic understanding", classes="rag-subtitle")
-            
-            # Search Section with visual prominence
-            with Container(classes="search-section"):
-                with Container(classes="search-input-wrapper"):
-                    with Horizontal(classes="search-bar-enhanced"):
-                        self.search_input = Input(
-                            placeholder="🔎 Enter your search query...",
-                            id="rag-search-input",
-                            classes="search-input-enhanced"
+        with Container(classes="rag-search-main-wrapper"):
+            with VerticalScroll(classes="rag-search-container"):
+                # Header Section
+                with Container(classes="search-header-section"):
+                    yield Static("🔍 RAG Search & Discovery", classes="rag-title-enhanced")
+                    if not self.rag_search_available:
+                        yield Static(
+                            "⚠️ RAG search functionality is limited - install dependencies with: pip install -e '.[embeddings_rag]'",
+                            classes="rag-warning"
                         )
-                        self.search_input.tooltip = "Press Ctrl+K to focus • Esc to clear"
-                        yield self.search_input
-                        yield Button("×", id="clear-search-btn", classes="clear-button hidden", variant="default")
-                        yield Button("Search", id="rag-search-btn", classes="primary search-button-enhanced", variant="primary")
-                    yield LoadingIndicator(id="search-loading", classes="search-loading-indicator hidden")
-                    
-                    # Search history dropdown
-                    yield SearchHistoryDropdown(self.search_history_db)
-            
-            # Settings Section with better organization
-            with Container(classes="settings-section"):
-                # Quick Settings Row
-                with Container(classes="quick-settings-container"):
-                    yield Static("⚙️ Search Configuration", classes="settings-title")
-                    
-                    with Horizontal(classes="settings-grid"):
-                        # Search Mode Selection
-                        with Vertical(classes="setting-group"):
-                            yield Label("Search Mode:", classes="setting-label")
-                            yield Select(
-                                options=[
-                                    ("📊 Plain RAG (Fast)", "plain"),
-                                    ("🧠 Semantic" if self.embeddings_available else "🧠 Semantic (Unavailable)", "full"),
-                                    ("🔀 Hybrid" if self.embeddings_available else "🔀 Hybrid (Unavailable)", "hybrid")
-                                ],
-                                value="plain",
-                                id="search-mode-select",
-                                classes="mode-select"
+                    else:
+                        yield Static("Search across your media, conversations, and notes with semantic understanding", classes="rag-subtitle")
+                
+                # Search Section with visual prominence
+                with Container(classes="search-section"):
+                    with Container(classes="search-input-wrapper"):
+                        with Horizontal(classes="search-bar-enhanced"):
+                            self.search_input = Input(
+                                placeholder="🔎 Enter your search query...",
+                                id="rag-search-input",
+                                classes="search-input-enhanced"
                             )
+                            self.search_input.tooltip = "Press Ctrl+K to focus • Esc to clear"
+                            yield self.search_input
+                            yield Button("×", id="clear-search-btn", classes="clear-button hidden", variant="default")
+                            yield Button("Search", id="rag-search-btn", classes="primary search-button-enhanced", variant="primary")
+                        yield LoadingIndicator(id="search-loading", classes="search-loading-indicator hidden")
                         
-                        # Source Selection
-                        with Vertical(classes="setting-group"):
-                            yield Label("Search Sources:", classes="setting-label")
-                            with Horizontal(classes="source-checkboxes-enhanced"):
-                                yield Checkbox("🎬 Media", value=True, id="source-media", classes="source-checkbox")
-                                yield Checkbox("💬 Chats", value=True, id="source-conversations", classes="source-checkbox")
-                                yield Checkbox("📝 Notes", value=True, id="source-notes", classes="source-checkbox")
+                        # Search history dropdown
+                        yield SearchHistoryDropdown(self.search_history_db)
+                
+                # Settings Section with better organization
+                with Container(classes="settings-section"):
+                    # Quick Settings Row
+                    with Container(classes="quick-settings-container"):
+                        yield Static("⚙️ Search Configuration", classes="settings-title")
+                        
+                        with Horizontal(classes="settings-grid"):
+                            # Search Mode Selection
+                            with Vertical(classes="setting-group"):
+                                yield Label("Search Mode:", classes="setting-label")
+                                yield Select(
+                                    options=[
+                                        ("📊 Plain RAG (Fast)", "plain"),
+                                        ("🧠 Semantic" if self.embeddings_available else "🧠 Semantic (Unavailable)", "full"),
+                                        ("🔀 Hybrid" if self.embeddings_available else "🔀 Hybrid (Unavailable)", "hybrid")
+                                    ],
+                                    value="plain",
+                                    id="search-mode-select",
+                                    classes="mode-select"
+                                )
+                        
+                            # Source Selection
+                            with Vertical(classes="setting-group"):
+                                yield Label("Search Sources:", classes="setting-label")
+                                with Horizontal(classes="source-checkboxes-enhanced"):
+                                    yield Checkbox("🎬 Media", value=True, id="source-media", classes="source-checkbox")
+                                    yield Checkbox("💬 Chats", value=True, id="source-conversations", classes="source-checkbox")
+                                    yield Checkbox("📝 Notes", value=True, id="source-notes", classes="source-checkbox")
                 
                 # Saved searches panel - moved here for better flow
                 yield SavedSearchesPanel()
@@ -508,17 +523,23 @@ class SearchRAGWindow(Container):
     
     def watch_is_searching(self, is_searching: bool) -> None:
         """React to search state changes"""
-        loading = self.query_one("#search-loading")
-        search_btn = self.query_one("#rag-search-btn")
-        
-        if is_searching:
-            loading.remove_class("hidden")
-            search_btn.disabled = True
-            search_btn.label = "Searching..."
-        else:
-            loading.add_class("hidden")
-            search_btn.disabled = False
-            search_btn.label = "Search"
+        # Check if the widgets exist before trying to query them
+        # This can be called before compose() completes
+        try:
+            loading = self.query_one("#search-loading")
+            search_btn = self.query_one("#rag-search-btn")
+            
+            if is_searching:
+                loading.remove_class("hidden")
+                search_btn.disabled = True
+                search_btn.label = "Searching..."
+            else:
+                loading.add_class("hidden")
+                search_btn.disabled = False
+                search_btn.label = "Search"
+        except:
+            # Widgets not yet created, ignore
+            pass
     
     @on(Input.Changed, "#rag-search-input")
     async def handle_search_input_change(self, event: Input.Changed) -> None:
@@ -901,13 +922,19 @@ class SearchRAGWindow(Container):
         self.query_one("#maintenance-menu").add_class("hidden")
         
         try:
-            from ..RAG_Search.Services.cache_service import get_cache_service
-            cache_service = get_cache_service()
-            cache_service.clear_all_caches()
+            # Clear the embeddings cache in the simplified RAG service
+            # We'll need to get or create a RAG service instance
+            config = create_config_for_collection(
+                "media",
+                persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+            )
+            rag_service = RAGService(config)
+            rag_service.clear_cache()
+            rag_service.close()
             self.app_instance.notify("✅ Cache cleared successfully", severity="success")
         except ImportError:
-            logger.warning("Cache service not available - dependencies missing")
-            self.app_instance.notify("❌ Cache service not available - please install RAG dependencies", severity="error")
+            logger.warning("RAG service not available - dependencies missing")
+            self.app_instance.notify("❌ RAG service not available - please install RAG dependencies", severity="error")
         except Exception as e:
             logger.error(f"Error clearing cache: {e}")
             self.app_instance.notify(f"❌ Error clearing cache: {str(e)}", severity="error")
@@ -930,11 +957,12 @@ class SearchRAGWindow(Container):
         try:
             await status_elem.update("🔄 Indexing content...")
             
-            # Initialize services
-            embeddings_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
-            embeddings_service = EmbeddingsService(embeddings_dir)
-            chunking_service = ChunkingService()
-            indexing_service = IndexingService(embeddings_service, chunking_service)
+            # Initialize RAG service
+            config = create_config_for_collection(
+                "media",  # Default collection, will be used for all types
+                persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+            )
+            rag_service = RAGService(config)
             
             # Index with progress updates
             total_steps = 3
@@ -946,11 +974,52 @@ class SearchRAGWindow(Container):
                 await progress_bar.update(progress=progress)
                 await status_elem.update(f"🔄 Indexing {content_type}: {current}/{total}")
             
-            results = await indexing_service.index_all(
-                media_db=self.app_instance.media_db,
-                chachanotes_db=self.app_instance.chachanotes_db,
-                progress_callback=update_progress
-            )
+            # Index each content type
+            results = {"media": 0, "conversations": 0, "notes": 0}
+            
+            # Index media content
+            if self.app_instance.media_db:
+                await update_progress("media", 0, 100)
+                media_docs = await self._get_media_documents()
+                for i, doc in enumerate(media_docs):
+                    await update_progress("media", i, len(media_docs))
+                    result = await rag_service.index_document(
+                        doc_id=doc["id"],
+                        content=doc["content"],
+                        title=doc["title"],
+                        metadata=doc["metadata"]
+                    )
+                    if result.success:
+                        results["media"] += 1
+            
+            # Index conversations
+            if self.app_instance.chachanotes_db:
+                await update_progress("conversations", 0, 100)
+                conv_docs = await self._get_conversation_documents()
+                for i, doc in enumerate(conv_docs):
+                    await update_progress("conversations", i, len(conv_docs))
+                    result = await rag_service.index_document(
+                        doc_id=doc["id"],
+                        content=doc["content"],
+                        title=doc["title"],
+                        metadata=doc["metadata"]
+                    )
+                    if result.success:
+                        results["conversations"] += 1
+            
+            # Index notes
+            await update_progress("notes", 0, 100)
+            notes_docs = await self._get_notes_documents()
+            for i, doc in enumerate(notes_docs):
+                await update_progress("notes", i, len(notes_docs))
+                result = await rag_service.index_document(
+                    doc_id=doc["id"],
+                    content=doc["content"],
+                    title=doc["title"],
+                    metadata=doc["metadata"]
+                )
+                if result.success:
+                    results["notes"] += 1
             
             total_indexed = sum(results.values())
             await status_elem.update(
@@ -1183,7 +1252,7 @@ class SearchRAGWindow(Container):
     
     async def _check_index_status(self) -> None:
         """Check the status of vector indices"""
-        if not self.embeddings_available:
+        if not self.embeddings_available or not EMBEDDINGS_SERVICE_AVAILABLE:
             return
             
         try:
@@ -1317,6 +1386,91 @@ Score: {result.get('score', 0):.3f}
             except Exception as e:
                 self.app_instance.notify(f"Export failed: {str(e)}", severity="error")
     
+    async def _get_media_documents(self) -> List[Dict[str, Any]]:
+        """Get documents from media database"""
+        documents = []
+        try:
+            if self.app_instance.media_db:
+                # Get all media entries
+                media_items = self.app_instance.media_db.get_all_media()
+                for item in media_items:
+                    doc = {
+                        "id": f"media_{item['id']}",
+                        "title": item.get('title', 'Untitled Media'),
+                        "content": item.get('transcription', '') or item.get('content', ''),
+                        "metadata": {
+                            "source": "media",
+                            "media_type": item.get('type', 'unknown'),
+                            "url": item.get('url', ''),
+                            "author": item.get('author', ''),
+                            "ingested_at": item.get('ingested_at', '')
+                        }
+                    }
+                    if doc["content"]:  # Only add if there's content
+                        documents.append(doc)
+        except Exception as e:
+            logger.error(f"Error getting media documents: {e}")
+        return documents
+    
+    async def _get_conversation_documents(self) -> List[Dict[str, Any]]:
+        """Get documents from conversations database"""
+        documents = []
+        try:
+            if self.app_instance.chachanotes_db:
+                # Get all conversations
+                conversations = self.app_instance.chachanotes_db.get_all_conversations()
+                for conv in conversations:
+                    # Get messages for this conversation
+                    messages = self.app_instance.chachanotes_db.get_messages_for_conversation(conv['id'])
+                    if messages:
+                        # Combine messages into conversation content
+                        content = "\n".join([
+                            f"{msg['role']}: {msg['content']}" 
+                            for msg in messages
+                        ])
+                        doc = {
+                            "id": f"conv_{conv['id']}",
+                            "title": conv.get('name', f"Conversation {conv['id']}"),
+                            "content": content,
+                            "metadata": {
+                                "source": "conversations",
+                                "conversation_id": conv['id'],
+                                "character_id": conv.get('character_id'),
+                                "created_at": conv.get('created_at', ''),
+                                "message_count": len(messages)
+                            }
+                        }
+                        documents.append(doc)
+        except Exception as e:
+            logger.error(f"Error getting conversation documents: {e}")
+        return documents
+    
+    async def _get_notes_documents(self) -> List[Dict[str, Any]]:
+        """Get documents from notes"""
+        documents = []
+        try:
+            if self.app_instance.chachanotes_db:
+                # Get all notes
+                notes = self.app_instance.chachanotes_db.get_all_notes()
+                for note in notes:
+                    doc = {
+                        "id": f"note_{note['id']}",
+                        "title": note.get('title', 'Untitled Note'),
+                        "content": note.get('content', ''),
+                        "metadata": {
+                            "source": "notes",
+                            "note_id": note['id'],
+                            "tags": note.get('tags', ''),
+                            "created_at": note.get('created_at', ''),
+                            "updated_at": note.get('updated_at', '')
+                        }
+                    }
+                    if doc["content"]:  # Only add if there's content
+                        documents.append(doc)
+        except Exception as e:
+            logger.error(f"Error getting notes documents: {e}")
+        return documents
+
     def get_search_analytics(self, days_back: int = 30) -> Dict[str, Any]:
         """Get search analytics from the history database."""
         try:

@@ -39,7 +39,7 @@ sample_evaluation_tasks/
 ### Loading a Task File
 
 ```python
-from tldw_chatbook.App_Functions.Evals.task_loader import TaskLoader
+from tldw_chatbook.Evals.task_loader import TaskLoader
 
 loader = TaskLoader()
 
@@ -56,7 +56,7 @@ config = loader.load_task("csv_datasets/simple_qa.csv", "auto")
 ### Running an Evaluation
 
 ```python
-from tldw_chatbook.App_Functions.Evals.eval_orchestrator import EvaluationOrchestrator
+from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 
 orchestrator = EvaluationOrchestrator()
 

@@ -1,0 +1,44 @@
+# Dream State splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "wave_ripple"
+style = "gradient(purple, blue)"
+
+# Wave ripple effect parameters
+wave_speed = 0.05
+wave_amplitude = 2.0
+dream_distortion = 0.3
+
+content = """
+    ·  ·  ·  dreaming  ·  ·  ·
+    
+    if (electric_sheep) {
+        count++;
+    }
+    
+    ╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲
+    
+    01110010 01100101 01100001 01101100
+    01101001 01110100 01111001 00111111
+    
+    ╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱
+    
+    subconscious.process(memories);
+    
+    while (sleeping) {
+        imagine(possibilities);
+    }
+"""
+
+# Progress messages
+progress_messages = [
+    "Do androids dream of electric sheep?",
+    "Processing REM cycles...",
+    "Defragmenting memory during sleep mode...",
+    "Dreaming in binary...",
+    "Subconscious garbage collection in progress..."
+]
+
+# Additional styling
+css_classes = ["dream-wave", "ethereal"]

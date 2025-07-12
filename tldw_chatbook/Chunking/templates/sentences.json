@@ -1,0 +1,40 @@
+{
+  "name": "sentences",
+  "description": "Sentence-based chunking that preserves grammatical boundaries",
+  "base_method": "sentences",
+  "pipeline": [
+    {
+      "stage": "preprocess",
+      "operations": [
+        {
+          "type": "normalize_whitespace",
+          "params": {}
+        }
+      ]
+    },
+    {
+      "stage": "chunk",
+      "method": "sentences",
+      "options": {
+        "max_size": 5,
+        "overlap": 1
+      }
+    },
+    {
+      "stage": "postprocess",
+      "operations": [
+        {
+          "type": "filter_empty",
+          "params": {
+            "min_length": 20
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["narrative_text", "stories", "articles"],
+    "language_aware": true,
+    "preserves_grammar": true
+  }
+}

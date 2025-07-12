@@ -1,0 +1,45 @@
+# Digital Garden splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "game_of_life"
+style = "green on rgb(20,30,20)"
+
+# Game of life effect parameters for organic growth
+growth_rate = 0.7
+seed_density = 0.3
+evolution_speed = 0.1
+
+content = """
+    🌱 Digital Garden Growing... 🌱
+    
+         🌿
+        ╱│╲    class Tree:
+       ╱ │ ╲     def grow(self):
+      ╱  │  ╲      self.height += 1
+     ╱   │   ╲     self.branches.spawn()
+    ╱____│____╲    
+         │      
+    ▓▓▓▓▓▓▓▓▓▓  roots.extend(deep=True)
+    
+    Commits planted: 1,337
+    Branches grown: 42
+    Bugs composted: 628
+    Features bloomed: 89
+    
+    📊 Code Climate: HEALTHY
+    🌡️  Tech Debt: MANAGEABLE
+    💧 Memory Leaks: PATCHED
+"""
+
+# Progress messages
+progress_messages = [
+    "Watering the code garden...",
+    "Pruning dead branches...",
+    "Composting deprecated functions...",
+    "Pollinating with new ideas...",
+    "Photosynthesizing coffee into code..."
+]
+
+# Additional styling
+css_classes = ["organic-growth", "garden-theme"]

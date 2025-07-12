@@ -1,0 +1,58 @@
+# LinkedIn Networking OS splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "terminal_boot"
+style = "rgb(0,119,181) on white"
+
+# Terminal boot effect parameters
+synergy_level = 0.95
+buzzword_density = 1.0
+humble_brag_mode = true
+
+content = """
+╔═══════════════ LINKEDIN PROFESSIONAL OS ═══════════════╗
+║                                                        ║
+║  👔 CORPORATE SYNERGY TERMINAL v10.0 👔                ║
+║                                                        ║
+║  Loading professional persona...                       ║
+║  ├─ Humble bragging module: [ACTIVATED]               ║
+║  ├─ Buzzword generator: [OPTIMIZED]                   ║
+║  ├─ Coffee addiction: [CAFFEINATED]                   ║
+║  └─ Work-life balance: [404 NOT FOUND]               ║
+║                                                        ║
+║  RECENT POSTS:                                         ║
+║  ┌──────────────────────────────────────────────┐    ║
+║  │ "Thrilled to announce I just breathed air!    │    ║
+║  │  This wouldn't be possible without my amazing │    ║
+║  │  team. We're disrupting the oxygen industry!  │    ║
+║  │  #Blessed #Entrepreneur #AirBreather          │    ║
+║  │                                                │    ║
+║  │  👍 2.3K CEOs liked this                      │    ║
+║  │  💡 567 found this insightful                 │    ║
+║  └──────────────────────────────────────────────┘    ║
+║                                                        ║
+║  NETWORK STATUS:                                       ║
+║  ├─ Connections: 500+ (mostly recruiters)             ║
+║  ├─ Endorsements: Java, Excel, Breathing              ║
+║  ├─ Profile views: 69 (all from yourself)            ║
+║  └─ InMail: 99+ "Exciting opportunity!"               ║
+║                                                        ║
+║  Currently: Leveraging synergies to ideate scalable   ║
+║             solutions for thought leadership          ║
+║                                                        ║
+║  TLDW: Too Long; Didn't Work-Life-Balance           ║
+╚════════════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Synergizing core competencies...",
+    "Leveraging blockchain AI solutions...",
+    "Circling back on action items...",
+    "Taking this offline to align...",
+    "Pivoting to disrupt the paradigm..."
+]
+
+# Additional styling
+css_classes = ["corporate-blue", "professional-facade"]

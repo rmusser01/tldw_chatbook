@@ -33,25 +33,38 @@ else:
 
 # Conditional imports for RAG services
 try:
-    from ...RAG_Search.Services.embeddings_service import EmbeddingsService
-    from ...RAG_Search.Services.chunking_service import ChunkingService
-    from ...RAG_Search.Services.cache_service import get_cache_service
+    from tldw_chatbook.RAG_Search.simplified import (
+        RAGService, create_config_for_collection, RAGConfig,
+        SearchResult, SearchResultWithCitations, EmbeddingsService
+    )
+    from tldw_chatbook.RAG_Search.query_expansion import QueryExpander
     RAG_SERVICES_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"RAG services not available: {e}")
+    logger.warning(f"Simplified RAG services not available: {e}")
     RAG_SERVICES_AVAILABLE = False
     
     # Create placeholder classes
+    class RAGService:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("RAGService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    
+    def create_config_for_collection(*args, **kwargs):
+        raise ImportError("RAG config not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    
+    class RAGConfig:
+        pass
+    
+    class SearchResult:
+        pass
+    
+    class SearchResultWithCitations:
+        pass
+    
     class EmbeddingsService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("EmbeddingsService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+        pass
     
-    class ChunkingService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("ChunkingService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
-    
-    def get_cache_service(*args, **kwargs):
-        raise ImportError("Cache service not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+    class QueryExpander:
+        pass
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -64,6 +77,32 @@ RAG_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) and RAG_SERV
 RERANK_AVAILABLE = DEPENDENCIES_AVAILABLE.get('flashrank', False)
 COHERE_AVAILABLE = DEPENDENCIES_AVAILABLE.get('cohere', False)
 
+# Global cache for RAG service instance
+_rag_service_cache = {
+    'service': None,
+    'config_hash': None
+}
+
+def _safe_init_flashrank():
+    """Safely initialize FlashRank Ranker to avoid file descriptor issues in Textual."""
+    from flashrank import Ranker
+    import sys
+    import os
+    
+    # Temporarily redirect stdout/stderr to avoid subprocess issues in Textual
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        # Use devnull to avoid file descriptor issues during model download
+        with open(os.devnull, 'w') as devnull:
+            sys.stdout = devnull
+            sys.stderr = devnull
+            ranker = Ranker()
+        return ranker
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
 async def perform_plain_rag_search(
     app: "TldwCli",
     query: str,
@@ -71,7 +110,8 @@ async def perform_plain_rag_search(
     top_k: int = 5,
     max_context_length: int = 10000,
     enable_rerank: bool = True,
-    reranker_model: str = "flashrank"
+    reranker_model: str = "flashrank",
+    keyword_filter_list: Optional[List[str]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform a plain RAG search using BM25 (FTS5) search across selected sources.
@@ -84,6 +124,7 @@ async def perform_plain_rag_search(
         max_context_length: Maximum total character count for context
         enable_rerank: Whether to apply re-ranking
         reranker_model: Which re-ranker to use
+        keyword_filter_list: Optional list of keywords to filter results
         
     Returns:
         Tuple of (results list, formatted context string)
@@ -98,29 +139,29 @@ async def perform_plain_rag_search(
     
     logger.info(f"Performing plain RAG search for query: '{query}'")
     
-    # Check cache first if available
-    if RAG_AVAILABLE:
-        try:
-            cache_service = get_cache_service()
-            cache_params = {
-                'sources': sources,
-                'top_k': top_k,
-                'max_context_length': max_context_length,
-                'enable_rerank': enable_rerank,
-                'reranker_model': reranker_model
-            }
-            cached_result = cache_service.get_query_result(query, cache_params)
-            if cached_result:
-                logger.info("Returning cached RAG search result")
-                return cached_result
-        except Exception as e:
-            logger.debug(f"Cache service not available or error: {e}")
+    # Note: Caching is now handled internally by the simplified RAG service
+    # when perform_full_rag_pipeline is called. For plain RAG search,
+    # we don't have caching since it uses direct database queries.
+    
+    # Helper function to check if item's keywords/tags match filter
+    def matches_keyword_filter(item_keywords: List[str], filter_keywords: List[str]) -> bool:
+        """Check if item has any of the filter keywords in its tags/keywords (case-insensitive)"""
+        if not filter_keywords:
+            return True
+        
+        # Convert to lowercase for case-insensitive comparison
+        item_keywords_lower = [kw.lower() for kw in item_keywords]
+        filter_keywords_lower = [kw.lower() for kw in filter_keywords]
+        
+        # Check if any filter keyword matches any item keyword
+        return any(filter_kw in item_keywords_lower for filter_kw in filter_keywords_lower)
     
     all_results = []
     
     # Search Media Items
     if sources.get('media', False) and app.media_db:
         logger.debug("Searching media items...")
+        logger.info(f"[RAG DEBUG] About to search media DB via asyncio.to_thread. Current thread: {asyncio.current_task()}")
         try:
             media_results = await asyncio.to_thread(
                 app.media_db.search_media_db,
@@ -130,25 +171,46 @@ async def perform_plain_rag_search(
                 results_per_page=top_k * 2,  # Get more results for re-ranking
                 include_trash=False
             )
+            logger.info(f"[RAG DEBUG] Media DB search completed successfully")
             # Extract just the results list
             if isinstance(media_results, tuple):
                 media_items = media_results[0]
             else:
                 media_items = media_results
+            
+            # Fetch keywords for all media items in batch
+            if media_items:
+                media_ids = [item.get('id') for item in media_items if item.get('id')]
+                keywords_map = await asyncio.to_thread(
+                    app.media_db.fetch_keywords_for_media_batch,
+                    media_ids
+                ) if media_ids else {}
+            else:
+                keywords_map = {}
                 
             for item in media_items:
-                all_results.append({
-                    'source': 'media',
-                    'id': item.get('id'),
-                    'title': item.get('title', 'Untitled'),
-                    'content': item.get('content', ''),
-                    'score': 1.0,  # Default score for BM25 results
-                    'metadata': {
-                        'type': item.get('type', 'unknown'),
-                        'author': item.get('author', 'Unknown'),
-                        'ingestion_date': item.get('ingestion_date', '')
-                    }
-                })
+                title = item.get('title', 'Untitled')
+                content = item.get('content', '')
+                media_id = item.get('id')
+                
+                # Get keywords for this media item
+                item_keywords = keywords_map.get(media_id, []) if media_id else []
+                
+                # Apply keyword filter if provided
+                if matches_keyword_filter(item_keywords, keyword_filter_list or []):
+                    all_results.append({
+                        'source': 'media',
+                        'id': media_id,
+                        'title': title,
+                        'content': content,
+                        'score': 1.0,  # Default score for BM25 results
+                        'metadata': {
+                            'type': item.get('type', 'unknown'),
+                            'author': item.get('author', 'Unknown'),
+                            'ingestion_date': item.get('ingestion_date', ''),
+                            'keywords': item_keywords  # Include keywords in metadata
+                        }
+                    })
         except DatabaseError as e:
             logger.error(f"Error searching media DB: {e}")
         except Exception as e:
@@ -157,12 +219,14 @@ async def perform_plain_rag_search(
     # Search Conversations
     if sources.get('conversations', False) and app.chachanotes_db:
         logger.debug("Searching conversations...")
+        logger.info(f"[RAG DEBUG] About to search conversations DB via asyncio.to_thread. Current thread: {asyncio.current_task()}")
         try:
             conv_results = await asyncio.to_thread(
                 app.chachanotes_db.search_conversations_by_content,
                 search_query=query,
                 limit=top_k * 2
             )
+            logger.info(f"[RAG DEBUG] Conversations DB search completed successfully")
             for conv in conv_results:
                 # Get messages for context
                 messages = await asyncio.to_thread(
@@ -176,15 +240,27 @@ async def perform_plain_rag_search(
                 for msg in messages:
                     content_parts.append(f"{msg['sender']}: {msg['content']}")
                 
-                all_results.append({
-                    'source': 'conversation',
-                    'id': conv['id'],
-                    'title': conv.get('title', 'Untitled Conversation'),
-                    'content': "\n".join(content_parts),
-                    'score': 1.0,
-                    'metadata': {
-                        'character_id': conv.get('character_id'),
-                        'created_at': conv.get('created_at'),
+                title = conv.get('title', 'Untitled Conversation')
+                content = "\n".join(content_parts)
+                
+                # Get keywords/tags from conversation metadata
+                item_keywords = []
+                if 'keywords' in conv:
+                    item_keywords.extend(conv.get('keywords', []))
+                if 'tags' in conv:
+                    item_keywords.extend(conv.get('tags', []))
+                
+                # Apply keyword filter if provided
+                if matches_keyword_filter(item_keywords, keyword_filter_list or []):
+                    all_results.append({
+                        'source': 'conversation',
+                        'id': conv['id'],
+                        'title': title,
+                        'content': content,
+                        'score': 1.0,
+                        'metadata': {
+                            'character_id': conv.get('character_id'),
+                            'created_at': conv.get('created_at'),
                         'updated_at': conv.get('updated_at')
                     }
                 })
@@ -194,6 +270,7 @@ async def perform_plain_rag_search(
     # Search Notes
     if sources.get('notes', False) and app.notes_service:
         logger.debug("Searching notes...")
+        logger.info(f"[RAG DEBUG] About to search notes via asyncio.to_thread. Current thread: {asyncio.current_task()}")
         try:
             note_results = await asyncio.to_thread(
                 app.notes_service.search_notes,
@@ -201,29 +278,42 @@ async def perform_plain_rag_search(
                 search_term=query,
                 limit=top_k * 2
             )
+            logger.info(f"[RAG DEBUG] Notes search completed successfully")
             for note in note_results:
-                all_results.append({
-                    'source': 'note',
-                    'id': note['id'],
-                    'title': note.get('title', 'Untitled Note'),
-                    'content': note.get('content', ''),
-                    'score': 1.0,
-                    'metadata': {
-                        'created_at': note.get('created_at'),
-                        'updated_at': note.get('updated_at'),
-                        'tags': note.get('tags', [])
-                    }
-                })
+                title = note.get('title', 'Untitled Note')
+                content = note.get('content', '')
+                
+                # Get keywords/tags from note metadata
+                item_keywords = []
+                if 'keywords' in note:
+                    item_keywords.extend(note.get('keywords', []))
+                if 'tags' in note:
+                    item_keywords.extend(note.get('tags', []))
+                
+                # Apply keyword filter if provided
+                if matches_keyword_filter(item_keywords, keyword_filter_list or []):
+                    all_results.append({
+                        'source': 'note',
+                        'id': note['id'],
+                        'title': title,
+                        'content': content,
+                        'score': 1.0,
+                        'metadata': {
+                            'created_at': note.get('created_at'),
+                            'updated_at': note.get('updated_at'),
+                            'tags': note.get('tags', [])
+                        }
+                    })
         except Exception as e:
             logger.error(f"Error searching notes: {e}", exc_info=True)
     
-    # Apply re-ranking if enabled and available
-    if enable_rerank:
+    # Apply re-ranking if enabled and available AND we have results to rank
+    if enable_rerank and len(all_results) > 0:
         if reranker_model == "flashrank" and RERANK_AVAILABLE:
             logger.debug("Applying FlashRank re-ranking...")
             try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
+                from flashrank import RerankRequest
+                ranker = _safe_init_flashrank()
                 
                 # Prepare documents for re-ranking
                 passages = []
@@ -328,12 +418,7 @@ async def perform_plain_rag_search(
     logger.info(f"Plain RAG search completed. Found {len(all_results)} results, "
                 f"context length: {len(context_string)} chars")
     
-    # Cache the results if available
-    if RAG_AVAILABLE:
-        try:
-            cache_service.cache_query_result(query, cache_params, all_results, context_string)
-        except Exception as e:
-            logger.debug(f"Failed to cache results: {e}")
+    # Note: No caching for plain RAG search as it uses direct database queries
     
     return all_results, context_string
 
@@ -348,7 +433,8 @@ async def perform_full_rag_pipeline(
     chunk_overlap: int = 100,
     include_metadata: bool = True,
     enable_rerank: bool = True,
-    reranker_model: str = "flashrank"
+    reranker_model: str = "flashrank",
+    keyword_filter_list: Optional[List[str]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform full RAG pipeline with embeddings, vector search, and re-ranking.
@@ -374,55 +460,158 @@ async def perform_full_rag_pipeline(
     # Check if embeddings are available
     if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
         logger.warning("Embeddings dependencies not available. Falling back to plain RAG.")
+        app.notify(
+            "Using plain text search (embeddings not available). Install with: pip install tldw_chatbook[embeddings_rag]",
+            severity="warning"
+        )
         return await perform_plain_rag_search(
             app, query, sources, top_k, max_context_length, 
-            enable_rerank=True, reranker_model="flashrank"
+            enable_rerank=True, reranker_model="flashrank",
+            keyword_filter_list=keyword_filter_list
         )
     
-    # Initialize services
-    embeddings_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
-    embeddings_service = EmbeddingsService(embeddings_dir)
-    chunking_service = ChunkingService()
+    # Initialize or get cached RAG service
+    persist_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+    persist_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create query embedding
-    query_embeddings = embeddings_service.create_embeddings([query])
-    if not query_embeddings:
-        logger.error("Failed to create query embeddings. Falling back to plain RAG.")
-        return await perform_plain_rag_search(
-            app, query, sources, top_k, max_context_length, 
-            enable_rerank=True, reranker_model="flashrank"
-        )
+    # Create config
+    config = create_config_for_collection(
+        "tldw_rag",  # Unified collection for all sources
+        persist_dir=persist_dir
+    )
+    # Configure for the search
+    config.search.default_top_k = top_k
+    config.search.include_citations = include_metadata
+    config.chunking.chunk_size = chunk_size
+    config.chunking.chunk_overlap = chunk_overlap
     
-    all_results = []
+    # Generate a simple hash of the config for caching
+    import hashlib
+    config_str = f"{persist_dir}_{chunk_size}_{chunk_overlap}"
+    config_hash = hashlib.md5(config_str.encode()).hexdigest()
     
-    # Search each enabled source
+    # Check if we can use cached service
+    if _rag_service_cache['service'] and _rag_service_cache['config_hash'] == config_hash:
+        rag_service = _rag_service_cache['service']
+        logger.debug("Using cached RAG service")
+    else:
+        try:
+            rag_service = RAGService(config)
+            _rag_service_cache['service'] = rag_service
+            _rag_service_cache['config_hash'] = config_hash
+            logger.info("Created new RAG service instance")
+        except Exception as e:
+            logger.error(f"Failed to initialize RAG service: {e}")
+            # Fall back to plain RAG
+            return await perform_plain_rag_search(
+                app, query, sources, top_k, max_context_length, 
+                enable_rerank, reranker_model,
+                keyword_filter_list=keyword_filter_list
+            )
+    
+    # First, check if we need to index any new content
+    # This is a placeholder - in production, you'd want smarter incremental indexing
+    await _ensure_content_indexed(app, rag_service, sources)
+    
+    # Build metadata filter based on enabled sources
+    source_filters = []
+    filter_metadata = {}
+    enabled_sources = []
+    
     if sources.get('media', False):
-        media_results = await _search_media_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(media_results)
-    
+        enabled_sources.append('media')
     if sources.get('conversations', False):
-        conv_results = await _search_conversations_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(conv_results)
-    
+        enabled_sources.append('conversation')
     if sources.get('notes', False):
-        notes_results = await _search_notes_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(notes_results)
+        enabled_sources.append('note')
     
-    # Sort by similarity score
-    all_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+    # Only add filter if not all sources are selected
+    if len(enabled_sources) < 3 and enabled_sources:
+        filter_metadata['source_type'] = {'$in': enabled_sources}
+    
+    # Search with the simplified RAG service
+    try:
+        search_results = await rag_service.search(
+            query=query,
+            top_k=top_k * 2,  # Get extra for re-ranking
+            search_type="semantic",
+            filter_metadata=filter_metadata if filter_metadata else None,
+            include_citations=include_metadata
+        )
+    except Exception as e:
+        logger.error(f"RAG search failed: {e}")
+        # Fall back to plain RAG
+        return await perform_plain_rag_search(
+            app, query, sources, top_k, max_context_length, 
+            enable_rerank, reranker_model
+        )
+    
+    # Helper function to check if item's keywords/tags match filter
+    def matches_keyword_filter(item_keywords: List[str], filter_keywords: List[str]) -> bool:
+        """Check if item has any of the filter keywords in its tags/keywords (case-insensitive)"""
+        if not filter_keywords:
+            return True
+        
+        # Convert to lowercase for case-insensitive comparison
+        item_keywords_lower = [kw.lower() for kw in item_keywords]
+        filter_keywords_lower = [kw.lower() for kw in filter_keywords]
+        
+        # Check if any filter keyword matches any item keyword
+        return any(filter_kw in item_keywords_lower for filter_kw in filter_keywords_lower)
+    
+    # Convert search results to the expected format
+    all_results = []
+    for result in search_results:
+        # Extract source type and verify it's enabled
+        source_type = result.metadata.get('source_type', 'unknown')
+        
+        # Map source types to expected format
+        source_map = {
+            'media': 'media',
+            'conversation': 'conversation',
+            'note': 'note'
+        }
+        
+        title = result.metadata.get('title', result.metadata.get('doc_title', 'Untitled'))
+        content = result.document
+        
+        # Get keywords/tags from result metadata
+        item_keywords = []
+        if 'keywords' in result.metadata:
+            item_keywords.extend(result.metadata.get('keywords', []))
+        if 'tags' in result.metadata:
+            item_keywords.extend(result.metadata.get('tags', []))
+        
+        # Apply keyword filter if provided
+        if matches_keyword_filter(item_keywords, keyword_filter_list or []):
+            result_dict = {
+                'id': result.id,
+                'title': title,
+                'content': content,
+                'source': source_map.get(source_type, source_type),
+                'score': result.score,
+                'metadata': result.metadata
+            }
+            
+            # Add citations if available
+            if hasattr(result, 'citations') and result.citations:
+                result_dict['citations'] = [
+                    {
+                        'text': cit.text,
+                        'document_title': cit.document_title,
+                        'confidence': cit.confidence
+                    }
+                    for cit in result.citations
+                ]
+            
+            all_results.append(result_dict)
     
     # Apply re-ranking if enabled and available
     if enable_rerank and len(all_results) > 0:
         if reranker_model == "flashrank" and RERANK_AVAILABLE:
             try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
+                from flashrank import RerankRequest
+                ranker = _safe_init_flashrank()
                 
                 passages = []
                 for result in all_results:
@@ -673,7 +862,8 @@ async def perform_hybrid_rag_search(
     chunk_size: int = 400,
     chunk_overlap: int = 100,
     bm25_weight: float = 0.5,
-    vector_weight: float = 0.5
+    vector_weight: float = 0.5,
+    keyword_filter_list: Optional[List[str]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform hybrid RAG search combining BM25 and vector search results.
@@ -712,18 +902,77 @@ async def perform_hybrid_rag_search(
     logger.debug("Getting BM25 results...")
     bm25_results, _ = await perform_plain_rag_search(
         app, query, sources, top_k * 3, max_context_length,
-        enable_rerank=False  # We'll re-rank the combined results
+        enable_rerank=False,  # We'll re-rank the combined results
+        reranker_model=reranker_model,
+        keyword_filter_list=keyword_filter_list
     )
     
-    # Get vector search results if available
+    # Get vector search results if available using simplified RAG
     vector_results = []
-    if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-        logger.debug("Getting vector search results...")
-        vector_results, _ = await perform_full_rag_pipeline(
-            app, query, sources, top_k * 3, max_context_length,
-            chunk_size, chunk_overlap, include_metadata=True,
-            enable_rerank=False  # We'll re-rank the combined results
-        )
+    if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) and RAG_SERVICES_AVAILABLE:
+        logger.debug("Getting vector search results using simplified RAG...")
+        try:
+            # Initialize RAG service for hybrid search
+            config = create_config_for_collection(
+                "media",
+                persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
+            )
+            config.search.default_top_k = top_k * 3
+            config.chunking.chunk_size = chunk_size
+            config.chunking.chunk_overlap = chunk_overlap
+            
+            rag_service = RAGService(config)
+            
+            # Perform semantic search
+            search_results = await rag_service.search(
+                query=query,
+                top_k=top_k * 3,
+                search_type="semantic",
+                include_citations=False  # We don't need citations for hybrid
+            )
+            
+            # Helper function to check if item's keywords/tags match filter
+            def matches_keyword_filter(item_keywords: List[str], filter_keywords: List[str]) -> bool:
+                """Check if item has any of the filter keywords in its tags/keywords (case-insensitive)"""
+                if not filter_keywords:
+                    return True
+                
+                # Convert to lowercase for case-insensitive comparison
+                item_keywords_lower = [kw.lower() for kw in item_keywords]
+                filter_keywords_lower = [kw.lower() for kw in filter_keywords]
+                
+                # Check if any filter keyword matches any item keyword
+                return any(filter_kw in item_keywords_lower for filter_kw in filter_keywords_lower)
+            
+            # Convert to expected format and filter by sources
+            source_filters = [k for k, v in sources.items() if v]
+            for result in search_results:
+                if result.metadata.get('source') in source_filters:
+                    # Get keywords/tags from result metadata
+                    item_keywords = []
+                    if 'keywords' in result.metadata:
+                        item_keywords.extend(result.metadata.get('keywords', []))
+                    if 'tags' in result.metadata:
+                        item_keywords.extend(result.metadata.get('tags', []))
+                    
+                    # Apply keyword filter if provided
+                    if matches_keyword_filter(item_keywords, keyword_filter_list or []):
+                        vector_results.append({
+                            'id': result.id,
+                            'title': result.metadata.get('title', 'Untitled'),
+                            'content': result.document,
+                            'source': result.metadata.get('source', 'unknown'),
+                            'score': result.score,
+                            'metadata': result.metadata
+                        })
+            
+            rag_service.close()
+            
+        except Exception as e:
+            logger.error(f"Error in vector search: {e}")
+            logger.warning("Vector search failed - using BM25 results only")
+            vector_weight = 0
+            bm25_weight = 1.0
     else:
         logger.warning("Embeddings not available, using BM25 only")
         vector_weight = 0
@@ -771,8 +1020,8 @@ async def perform_hybrid_rag_search(
         if reranker_model == "flashrank" and RERANK_AVAILABLE:
             logger.debug("Applying FlashRank re-ranking to hybrid results...")
             try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
+                from flashrank import RerankRequest
+                ranker = _safe_init_flashrank()
                 
                 passages = []
                 for result in all_results:
@@ -846,13 +1095,13 @@ async def perform_hybrid_rag_search(
     for i, result in enumerate(all_results):
         # Format result with hybrid scores
         result_text = f"[{result['source'].upper()} - {result['title']}]\n"
-        if logger.level <= 10:  # DEBUG level
-            result_text += f"Scores - BM25: {result.get('bm25_score', 0):.3f}, "
-            result_text += f"Vector: {result.get('vector_score', 0):.3f}, "
-            result_text += f"Combined: {result['score']:.3f}"
-            if 'rerank_score' in result:
-                result_text += f", Rerank: {result['rerank_score']:.3f}"
-            result_text += "\n"
+        # Log debug information separately
+        logger.debug(
+            f"Result {i} scores - BM25: {result.get('bm25_score', 0):.3f}, "
+            f"Vector: {result.get('vector_score', 0):.3f}, "
+            f"Combined: {result['score']:.3f}" + 
+            (f", Rerank: {result['rerank_score']:.3f}" if 'rerank_score' in result else "")
+        )
         
         # Add content with character limit check
         remaining_chars = max_context_length - total_chars - len(result_text)
@@ -881,6 +1130,31 @@ async def perform_hybrid_rag_search(
     return all_results, context_string
 
 
+async def _ensure_content_indexed(app: "TldwCli", rag_service: RAGService, sources: Dict[str, bool]) -> None:
+    """
+    Ensure content from enabled sources is indexed in the RAG service.
+    This is a simplified version - in production you'd want incremental indexing.
+    """
+    try:
+        # For now, we'll just log a message
+        # In a full implementation, you would:
+        # 1. Check what's already indexed (using timestamps)
+        # 2. Index only new/updated content
+        # 3. Use the RAG indexing database to track what's been indexed
+        
+        logger.info(f"Content indexing check for sources: {sources}")
+        
+        # TODO: Implement actual indexing logic here
+        # This would involve:
+        # - Querying media_db for new items if sources['media']
+        # - Querying conversations for new messages if sources['conversations']
+        # - Querying notes for new/updated notes if sources['notes']
+        # - Using rag_service.index_document() to add them to the vector store
+        
+    except Exception as e:
+        logger.error(f"Error ensuring content is indexed: {e}")
+
+
 async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optional[str]:
     """
     Get RAG context for a chat message based on current settings.
@@ -899,6 +1173,17 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         logger.debug("RAG is disabled")
         return None
     
+    # Get search mode from the new dropdown (if it exists)
+    search_mode = None
+    try:
+        search_mode_widget = app.query_one("#chat-rag-search-mode")
+        search_mode = search_mode_widget.value
+        logger.info(f"RAG search mode from dropdown: {search_mode}")
+    except:
+        # Fallback to checkbox-based detection for backward compatibility
+        logger.debug("Search mode dropdown not found, using checkbox-based detection")
+        search_mode = "plain" if plain_rag_enabled else "semantic"
+    
     # Get RAG settings
     try:
         sources = {
@@ -906,6 +1191,13 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
             'conversations': app.query_one("#chat-rag-search-conversations-checkbox").value,
             'notes': app.query_one("#chat-rag-search-notes-checkbox").value
         }
+        
+        # Get keyword filter
+        keyword_filter = app.query_one("#chat-rag-keyword-filter").value.strip()
+        keyword_filter_list = [kw.strip() for kw in keyword_filter.split(',') if kw.strip()] if keyword_filter else []
+        
+        if keyword_filter_list:
+            logger.info(f"Applying keyword filter: {keyword_filter_list}")
         
         top_k = int(app.query_one("#chat-rag-top-k").value or "5")
         max_context_length = int(app.query_one("#chat-rag-max-context-length").value or "10000")
@@ -917,6 +1209,13 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         chunk_overlap = int(app.query_one("#chat-rag-chunk-overlap").value or "100")
         include_metadata = app.query_one("#chat-rag-include-metadata-checkbox").value
         
+        # Query expansion settings
+        query_expansion_enabled = app.query_one("#chat-rag-query-expansion-checkbox").value
+        query_expansion_method = app.query_one("#chat-rag-expansion-method").value or "llm"
+        query_expansion_llm_model = app.query_one("#chat-rag-expansion-llm-model").value or "gpt-3.5-turbo"
+        query_expansion_local_model = app.query_one("#chat-rag-expansion-local-model").value or "qwen2.5:0.5b"
+        query_expansion_max_queries = int(app.query_one("#chat-rag-expansion-max-queries").value or "3")
+        
     except Exception as e:
         logger.error(f"Error reading RAG settings: {e}")
         return None
@@ -927,20 +1226,205 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         app.notify("Please select at least one RAG source", severity="warning")
         return None
     
-    # Perform RAG search
+    # Expand query if enabled
+    expanded_queries = []
+    if query_expansion_enabled and RAG_SERVICES_AVAILABLE:
+        try:
+            # Create query expansion config
+            from tldw_chatbook.RAG_Search.simplified.config import QueryExpansionConfig
+            
+            # Get the current provider more reliably
+            if query_expansion_method == "llm":
+                try:
+                    # Use the dedicated expansion provider widget
+                    current_provider = str(app.query_one("#chat-rag-expansion-provider").value).lower()
+                except Exception as e:
+                    logger.warning(f"Could not get expansion provider from UI, using default: {e}")
+                    current_provider = "openai"
+            else:
+                # For local_llm or keywords, provider doesn't matter
+                current_provider = "openai"
+            
+            expansion_config = QueryExpansionConfig(
+                enabled=True,
+                method=query_expansion_method,
+                max_sub_queries=query_expansion_max_queries,
+                llm_provider=current_provider,
+                llm_model=query_expansion_llm_model,
+                local_model=query_expansion_local_model,
+                expansion_prompt_template="default",
+                combine_results=True,
+                cache_expansions=True
+            )
+            
+            # Create expander and expand query
+            expander = QueryExpander(app, expansion_config)
+            expanded_queries = await expander.expand_query(user_message)
+            
+            if expanded_queries:
+                logger.info(f"Query expanded to {len(expanded_queries)} sub-queries")
+                app.notify(f"Generated {len(expanded_queries)} query variations", severity="information")
+            
+        except Exception as e:
+            logger.error(f"Error during query expansion: {e}")
+            app.notify("Query expansion failed, using original query", severity="warning")
+    
+    # Perform RAG search based on selected mode
     try:
-        if plain_rag_enabled:
-            logger.info("Performing plain RAG search")
-            results, context = await perform_plain_rag_search(
-                app, user_message, sources, top_k, max_context_length,
-                enable_rerank, reranker_model
-            )
+        # If we have expanded queries and combine_results is true, search with all queries
+        if expanded_queries and query_expansion_enabled:
+            all_results = []
+            all_queries = [user_message] + expanded_queries
+            
+            for query in all_queries:
+                if search_mode == "plain":
+                    logger.info(f"Performing plain RAG search (BM25) for query: '{query}'")
+                    results, _ = await perform_plain_rag_search(
+                        app, query, sources, top_k, max_context_length,
+                        enable_rerank=False, reranker_model=reranker_model,
+                        keyword_filter_list=keyword_filter_list
+                    )
+                    all_results.extend(results)
+                elif search_mode == "semantic":
+                    logger.info(f"Performing semantic RAG search for query: '{query}'")
+                    results, _ = await perform_full_rag_pipeline(
+                        app, query, sources, top_k, max_context_length,
+                        chunk_size, chunk_overlap, include_metadata,
+                        enable_rerank=False, reranker_model=reranker_model,
+                        keyword_filter_list=keyword_filter_list
+                    )
+                    all_results.extend(results)
+                elif search_mode == "hybrid":
+                    logger.info(f"Performing hybrid RAG search for query: '{query}'")
+                    results, _ = await perform_hybrid_rag_search(
+                        app, query, sources, top_k, max_context_length,
+                        enable_rerank=False, reranker_model=reranker_model,
+                        chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+                        bm25_weight=0.5, vector_weight=0.5,
+                        keyword_filter_list=keyword_filter_list
+                    )
+                    all_results.extend(results)
+            
+            # Combine and deduplicate results
+            if 'expander' in locals():
+                all_results = expander.combine_search_results([all_results])
+            
+            # Apply re-ranking if enabled
+            if enable_rerank and all_results:
+                # Use the same re-ranking logic from perform_plain_rag_search
+                if reranker_model == "flashrank" and RERANK_AVAILABLE:
+                    logger.debug("Applying FlashRank re-ranking to combined results...")
+                    try:
+                        from flashrank import RerankRequest
+                        ranker = _safe_init_flashrank()
+                        
+                        passages = []
+                        for result in all_results:
+                            text = f"{result['title']}\n{result['content'][:1000]}"
+                            passages.append({"text": text})
+                        
+                        if passages:
+                            rerank_req = RerankRequest(query=user_message, passages=passages)
+                            ranked_results = ranker.rerank(rerank_req)
+                            
+                            for i, ranked in enumerate(ranked_results):
+                                if i < len(all_results):
+                                    all_results[ranked['index']]['score'] = ranked['score']
+                            
+                            all_results.sort(key=lambda x: x['score'], reverse=True)
+                    except Exception as e:
+                        logger.error(f"Error during FlashRank re-ranking: {e}")
+                
+                elif reranker_model == "cohere" and COHERE_AVAILABLE:
+                    logger.debug("Applying Cohere re-ranking to combined results...")
+                    try:
+                        import cohere
+                        api_key = app.config_dict.get('API', {}).get('cohere_api_key')
+                        co = cohere.Client(api_key) if api_key else None
+                        
+                        if co:
+                            documents = []
+                            for result in all_results:
+                                text = f"{result['title']}\n{result['content'][:1000]}"
+                                documents.append(text)
+                            
+                            if documents:
+                                response = co.rerank(
+                                    query=user_message,
+                                    documents=documents,
+                                    top_n=min(len(documents), top_k * 2),
+                                    model='rerank-english-v2.0'
+                                )
+                                
+                                reranked_results = []
+                                for hit in response:
+                                    idx = hit.index
+                                    if idx < len(all_results):
+                                        result = all_results[idx].copy()
+                                        result['score'] = hit.relevance_score
+                                        reranked_results.append(result)
+                                
+                                all_results = reranked_results
+                    except Exception as e:
+                        logger.error(f"Error during Cohere re-ranking: {e}")
+            
+            # Limit to top_k results
+            all_results = all_results[:top_k]
+            
+            # Build context string (same format as perform_plain_rag_search)
+            context_parts = []
+            total_chars = 0
+            
+            for i, result in enumerate(all_results):
+                result_text = f"[{result['source'].upper()} - {result['title']}]\n"
+                
+                remaining_chars = max_context_length - total_chars - len(result_text)
+                if remaining_chars <= 0:
+                    break
+                
+                content_preview = result['content'][:remaining_chars]
+                result_text += content_preview
+                
+                if i < len(all_results) - 1:
+                    result_text += "\n\n---\n\n"
+                
+                context_parts.append(result_text)
+                total_chars += len(result_text)
+            
+            context = "".join(context_parts)
+            results = all_results
+            
         else:
-            logger.info("Performing full RAG pipeline")
-            results, context = await perform_full_rag_pipeline(
-                app, user_message, sources, top_k, max_context_length,
-                chunk_size, chunk_overlap, include_metadata
-            )
+            # Original single query search
+            if search_mode == "plain":
+                logger.info("Performing plain RAG search (BM25)")
+                results, context = await perform_plain_rag_search(
+                    app, user_message, sources, top_k, max_context_length,
+                    enable_rerank, reranker_model, keyword_filter_list
+                )
+            elif search_mode == "semantic":
+                logger.info("Performing semantic RAG search (embeddings)")
+                results, context = await perform_full_rag_pipeline(
+                    app, user_message, sources, top_k, max_context_length,
+                    chunk_size, chunk_overlap, include_metadata,
+                    enable_rerank, reranker_model, keyword_filter_list
+                )
+            elif search_mode == "hybrid":
+                logger.info("Performing hybrid RAG search (BM25 + embeddings)")
+                results, context = await perform_hybrid_rag_search(
+                    app, user_message, sources, top_k, max_context_length,
+                    enable_rerank, reranker_model, chunk_size, chunk_overlap,
+                    0.5, 0.5,  # Default weights for BM25 and vector search
+                    keyword_filter_list
+                )
+            else:
+                # Default to semantic if mode is unrecognized
+                logger.warning(f"Unknown search mode '{search_mode}', defaulting to semantic")
+                results, context = await perform_full_rag_pipeline(
+                    app, user_message, sources, top_k, max_context_length,
+                    chunk_size, chunk_overlap, include_metadata,
+                    enable_rerank, reranker_model, keyword_filter_list
+                )
         
         if context:
             # Format context for inclusion in chat

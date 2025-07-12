@@ -1,0 +1,30 @@
+# Minimalist splash card configuration
+# Clean and simple design with typewriter effect
+
+type = "animated"
+effect = "typewriter"
+style = "white on black"
+
+# Typewriter effect parameters
+typewriter_speed = 0.03
+typewriter_sound = false
+typewriter_cursor = "▋"
+
+content = """
+
+
+         tldw.
+         
+         thinking...
+
+
+
+
+"""
+
+# Fade transitions for minimalist feel
+fade_in_duration = 0.8
+fade_out_duration = 0.4
+
+# Keep it short
+recommended_duration = 1.0

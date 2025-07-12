@@ -1,0 +1,47 @@
+# Recipe Compiler splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "typewriter"
+style = "rgb(255,200,100) on rgb(40,30,20)"
+
+# Typewriter effect parameters
+ingredient_parsing = true
+cook_time_optimization = 0.8
+flavor_compilation = true
+
+content = """
+╔═══════════════ RECIPE COMPILER v2.3 ═══════════════╗
+║                                                    ║
+║  class ChocolateCake(Recipe):                      ║
+║      def __init__(self):                           ║
+║          self.ingredients = {                      ║
+║              'flour': 2.cups(),                    ║
+║              'sugar': 1.5.cups(),                  ║
+║              'cocoa': 0.75.cups(),                 ║
+║              'eggs': 3,                            ║
+║              'butter': 0.5.cups().melted()         ║
+║          }                                         ║
+║          self.temp = 350 # Fahrenheit              ║
+║          self.time = 30  # minutes                 ║
+║                                                    ║
+║      def bake(self):                              ║
+║          oven.preheat(self.temp)                  ║
+║          return mix(self.ingredients) >> oven     ║
+║                                                    ║
+║  Compiling recipe... [████████████░░] 80%         ║
+║  Warning: Taste testing may cause infinite loop   ║
+╚════════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Parsing ingredient dependencies...",
+    "Optimizing cooking algorithms...",
+    "Resolving flavor conflicts...",
+    "Importing grandmother's secret module...",
+    "Garbage collecting burnt attempts..."
+]
+
+# Additional styling
+css_classes = ["kitchen-code", "recipe-syntax"]

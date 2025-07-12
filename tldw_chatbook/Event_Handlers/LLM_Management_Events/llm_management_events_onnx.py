@@ -18,7 +18,8 @@ from textual.css.query import QueryError
 from textual.widgets import Input, RichLog, TextArea, Button
 #
 # Local Imports
-from ...Third_Party.textual_fspicker import Filters, FileOpen
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 # Import shared helpers
@@ -114,8 +115,12 @@ def run_onnx_server_worker(app_instance: "TldwCli", command: List[str]) -> str |
 async def handle_onnx_browse_python_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """Handles browse for Python executable for ONNX server."""
     await app.push_screen(
-        FileOpen(location=str(Path.home()), title="Select Python executable"),
-        callback=_make_path_update_callback(app, "onnx-python-path"),
+        FileOpen(
+            location=str(Path.home()),
+            title="Select Python executable",
+            context="onnx_models"
+        ),
+        callback=_make_path_update_callback(app, "onnx-python-path")
     )
 
 
@@ -124,8 +129,13 @@ async def handle_onnx_browse_script_button_pressed(app: "TldwCli", event: Button
     filters = Filters(("Python Scripts (*.py)", lambda p: p.suffix.lower() == ".py"),
                       ("All files (*.*)", lambda p: True))
     await app.push_screen(
-        FileOpen(location=str(Path.home()), title="Select ONNX server script", filters=filters),
-        callback=_make_path_update_callback(app, "onnx-script-path"),
+        FileOpen(
+            location=str(Path.home()),
+            title="Select ONNX server script",
+            filters=filters,
+            context="onnx_models"
+        ),
+        callback=_make_path_update_callback(app, "onnx-script-path")
     )
 
 
@@ -135,8 +145,9 @@ async def handle_onnx_browse_model_button_pressed(app: "TldwCli", event: Button.
         FileOpen(
             location=str(Path.home()),
             title="Select ONNX Model Directory (select any file inside)",
+            context="onnx_models"
         ),
-        callback=_make_path_update_callback(app, "onnx-model-path", is_directory=True),
+        callback=_make_path_update_callback(app, "onnx-model-path", is_directory=True)
     )
 
 

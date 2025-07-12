@@ -7,6 +7,7 @@ from .exceptions import (
 from .schemas import (
     ProcessVideoRequest, ProcessAudioRequest, ProcessPDFRequest,
     ProcessEbookRequest, ProcessDocumentRequest, ProcessXMLRequest, ProcessMediaWikiRequest,
+    ProcessPlaintextRequest,
     MediaItemProcessResult, BatchMediaProcessResponse,
     BatchProcessXMLResponse, ProcessedMediaWikiPage,
     MediaType, ChunkMethod, PdfEngine, ScrapeMethod # Export Enums/Literals
@@ -18,6 +19,7 @@ __all__ = [
     "APIResponseError", "AuthenticationError",
     "ProcessVideoRequest", "ProcessAudioRequest", "ProcessPDFRequest",
     "ProcessEbookRequest", "ProcessDocumentRequest", "ProcessXMLRequest", "ProcessMediaWikiRequest",
+    "ProcessPlaintextRequest",
     "MediaItemProcessResult", "BatchMediaProcessResponse",
     "BatchProcessXMLResponse", "ProcessedMediaWikiPage",
     "MediaType", "ChunkMethod", "PdfEngine", "ScrapeMethod"

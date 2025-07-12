@@ -1,0 +1,49 @@
+# Aztec Calendar splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "circuit_board"
+style = "rgb(255,150,0) on rgb(30,10,0)"
+
+# Circuit board effect parameters
+sun_stone_rotation = true
+quetzalcoatl_blessing = 0.9
+calendar_precision = 0.999
+
+content = """
+             ☀️ TONALAMATL DIGITAL ☀️
+                    
+           ╱═══════════════════╲
+         ╱ ╱═══════════════════╲ ╲
+       ╱ ╱ ╱═══════════════════╲ ╲ ╲
+     │ │ │  ┌─────────────┐   │ │ │
+     │ │ │  │   ☉ TLDW ☉  │   │ │ │
+     │ │ │  │  ╱───┬───╲  │   │ │ │
+     │ │ │  │ │ ◊ ╬ ◊ │  │   │ │ │
+     │ │ │  │  ╲───┴───╱  │   │ │ │
+     │ │ │  └─────────────┘   │ │ │
+       ╲ ╲ ╲═══════════════════╱ ╱ ╱
+         ╲ ╲═══════════════════╱ ╱
+           ╲═══════════════════╱
+                    
+    ┌─────────────────────────────────┐
+    │ Day: 4-Jaguar  |  Month: Toxcatl │
+    │ Year: 2-Reed   |  Cycle: 5th Sun │
+    │                                  │
+    │ QUETZALCOATL grants wisdom      │
+    │ TEZCATLIPOCA guards the shadows │
+    │ Digital serpent awakens...      │
+    └─────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Calculating Long Count cycles...",
+    "Offering digital cacao to the gods...",
+    "Aligning with cosmic server time...",
+    "Summoning feathered serpent protocols...",
+    "Reading obsidian mirror cache..."
+]
+
+# Additional styling
+css_classes = ["aztec-gold", "sun-stone"]

@@ -7,6 +7,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any, Optional, Dict, Tuple, TYPE_CHECKING
+import time
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -18,7 +19,9 @@ import yaml
 from ..Widgets.notes_sidebar_right import NotesSidebarRight
 from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError
 from ..Widgets.notes_sidebar_left import NotesSidebarLeft
-from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
+from ..Third_Party.textual_fspicker import Filters
+from ..config import get_cli_setting, load_cli_config_and_ensure_existence
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -46,6 +49,104 @@ async def handle_notes_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed)
 # Helper Functions (specific to Notes tab logic, moved from app.py)
 #
 ########################################################################################################################
+
+async def _perform_auto_save(app: 'TldwCli') -> None:
+    """Performs an auto-save of the current note without showing notifications."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    
+    if not app.notes_service:
+        logger_instance.error("Notes service not available for auto-save.")
+        return
+    
+    if not app.current_selected_note_id or app.current_selected_note_version is None:
+        logger_instance.warning("No note selected or version missing for auto-save.")
+        return
+    
+    # Check if auto-save is still enabled (might have been disabled while timer was running)
+    if not app.notes_auto_save_enabled:
+        logger_instance.debug("Auto-save disabled, skipping auto-save operation.")
+        return
+    
+    # Set auto-save status to saving
+    app.notes_auto_save_status = "saving"
+    
+    try:
+        # Get current content from UI
+        editor = app.query_one("#notes-editor-area", TextArea)
+        keywords_area = app.query_one("#notes-keywords-area", TextArea)
+        
+        # Query for the title input
+        try:
+            notes_sidebar_right_instance = app.query_one(NotesSidebarRight)
+            title_input = notes_sidebar_right_instance.query_one("#notes-title-input", Input)
+        except QueryError as e_query:
+            logger_instance.error(f"UI component not found during auto-save: {e_query}")
+            app.notes_auto_save_status = ""  # Clear status on error
+            return
+        
+        current_content = editor.text
+        current_title = title_input.value.strip()
+        
+        # Handle empty title - provide a default
+        if not current_title:
+            current_title = "Untitled Note"
+            logger_instance.debug("Empty title detected during auto-save, using default: 'Untitled Note'")
+        
+        logger_instance.debug(f"Auto-saving note ID: {app.current_selected_note_id}, Version: {app.current_selected_note_version}")
+        
+        # Save note content and title (empty content is allowed)
+        success = app.notes_service.update_note(
+            user_id=app.notes_user_id,
+            note_id=app.current_selected_note_id,
+            update_data={'title': current_title, 'content': current_content},
+            expected_version=app.current_selected_note_version
+        )
+        
+        if success:
+            logger_instance.info(f"Auto-saved note {app.current_selected_note_id} successfully.")
+            
+            # Update version tracking
+            app.current_selected_note_version += 1
+            app.current_selected_note_content = current_content
+            app.current_selected_note_title = current_title
+            
+            # Reset unsaved changes flag
+            app.notes_unsaved_changes = False
+            
+            # Set auto-save status to saved
+            app.notes_auto_save_status = "saved"
+            
+            # Update last save time
+            app.notes_last_save_time = time.time()
+            
+            # Optionally update the UI to show auto-save status (e.g., in footer)
+            if app.current_tab == "notes":
+                try:
+                    footer = app.query_one("AppFooterStatus")
+                    # You could add a method to show auto-save status in the footer
+                    # footer.show_auto_save_status("Auto-saved")
+                except QueryError:
+                    pass
+        else:
+            logger_instance.warning(f"Auto-save failed for note {app.current_selected_note_id}")
+            app.notes_auto_save_status = ""  # Clear status on failure
+            
+    except ConflictError as e_conflict:
+        logger_instance.error(f"Conflict during auto-save for note {app.current_selected_note_id}: {e_conflict}")
+        app.notes_auto_save_status = ""  # Clear status on error
+        # In case of conflict, we might want to notify the user
+        app.notify("Auto-save conflict: Note was modified elsewhere.", severity="warning", timeout=5)
+    except CharactersRAGDBError as e_db:
+        logger_instance.error(f"Database error during auto-save: {e_db}")
+        app.notes_auto_save_status = ""  # Clear status on error
+    except QueryError as e_query:
+        # This can happen if the app is shutting down and UI elements are being destroyed
+        logger_instance.warning(f"UI elements not available during auto-save (app may be shutting down): {e_query}")
+        app.notes_auto_save_status = ""  # Clear status on error
+    except Exception as e_unexp:
+        logger_instance.error(f"Unexpected error during auto-save: {e_unexp}", exc_info=True)
+        app.notes_auto_save_status = ""  # Clear status on error
+
 
 async def save_current_note_handler(app: 'TldwCli') -> bool:
     """Saves the currently selected note's title, content, and keywords to the database."""
@@ -75,11 +176,16 @@ async def save_current_note_handler(app: 'TldwCli') -> bool:
 
         current_content_from_ui = editor.text
         current_title_from_ui = title_input.value.strip()
+        
+        # Handle empty title - provide a default
+        if not current_title_from_ui:
+            current_title_from_ui = "Untitled Note"
+            logger.debug("Empty title detected during manual save, using default: 'Untitled Note'")
 
         logger.info(
             f"Attempting to save note ID: {app.current_selected_note_id}, Version: {app.current_selected_note_version}")
 
-        # Save note content and title
+        # Save note content and title (empty content is allowed)
         success = app.notes_service.update_note(
             user_id=app.notes_user_id,
             note_id=app.current_selected_note_id,
@@ -148,6 +254,8 @@ async def save_current_note_handler(app: 'TldwCli') -> bool:
             app.notify("Note and keywords saved!", severity="information")
             # Reset unsaved changes flag
             app.notes_unsaved_changes = False
+            # Show saved status briefly
+            app.notes_auto_save_status = "saved"
             return True
         else:
             logger.warning(
@@ -363,7 +471,7 @@ async def handle_notes_import_button_pressed(app: 'TldwCli', event: Button.Press
         ("All files (*.*)", lambda p: True)
     )
     await app.push_screen(
-        FileOpen(location=str(Path.home()), title="Select Note File to Import", filters=defined_filters),
+        FileOpen(location=str(Path.home()), title="Select Note File to Import", filters=defined_filters, context="notes"),
         callback=lambda path: _note_import_callback(app, path))
 
 
@@ -793,6 +901,12 @@ async def handle_notes_list_view_selected(app: 'TldwCli', list_view_id: str, ite
         logger.error("Notes service not available, cannot load selected note details.")
         app.notify("Notes service unavailable.", severity="error")
         return
+    
+    # Cancel any pending auto-save timer when switching notes
+    if hasattr(app, 'notes_auto_save_timer') and app.notes_auto_save_timer is not None:
+        app.notes_auto_save_timer.stop()
+        app.notes_auto_save_timer = None
+        logger.debug("Cancelled auto-save timer when switching notes")
 
     selected_list_item = item  # This is the ListItem widget
     if selected_list_item and hasattr(selected_list_item, 'note_id') and hasattr(selected_list_item, 'note_version'):
@@ -828,6 +942,8 @@ async def handle_notes_list_view_selected(app: 'TldwCli', list_view_id: str, ite
                 
                 # Reset unsaved changes flag when loading a note
                 app.notes_unsaved_changes = False
+                # Clear any auto-save status when loading a new note
+                app.notes_auto_save_status = ""
 
             else:
                 logger.warning(f"Could not retrieve details for note ID: {note_id_selected}. It may have been deleted.")
@@ -946,8 +1062,9 @@ async def handle_notes_export_markdown_button_pressed(app: 'TldwCli', event: But
     await app.push_screen(
         FileSave(
             location=str(Path.home()),
-            default_file=default_filename,
-            title="Export Note as Markdown"
+            default_filename=default_filename,
+            title="Export Note as Markdown",
+            context="notes"
         ),
         callback=lambda path: _note_export_callback(app, path, "markdown")
     )
@@ -975,8 +1092,9 @@ async def handle_notes_export_text_button_pressed(app: 'TldwCli', event: Button.
     await app.push_screen(
         FileSave(
             location=str(Path.home()),
-            default_file=default_filename,
-            title="Export Note as Text"
+            default_filename=default_filename,
+            title="Export Note as Text",
+            context="notes"
         ),
         callback=lambda path: _note_export_callback(app, path, "text")
     )
@@ -1015,7 +1133,7 @@ async def handle_notes_sidebar_emoji_button_pressed(app: 'TldwCli', event: Butto
             # Insert emoji at cursor in notes editor
             try:
                 editor = app.query_one("#notes-editor-area", TextArea)
-                editor.insert_text_at_cursor(emoji_char)
+                editor.insert(emoji_char)
                 editor.focus()
             except QueryError:
                 pass
@@ -1181,7 +1299,9 @@ NOTE_TEMPLATES = load_note_templates()
 # --- New UX Enhancement Handlers ---
 
 async def handle_notes_editor_changed(app: 'TldwCli', event) -> None:
-    """Handles text changes in the notes editor to track unsaved changes and word count."""
+    """Handles text changes in the notes editor to track unsaved changes, word count, and trigger auto-save."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    
     if hasattr(app, 'notes_unsaved_changes') and app.current_selected_note_id:
         # Mark as having unsaved changes if content differs from original
         current_content = event.text_area.text
@@ -1201,16 +1321,78 @@ async def handle_notes_editor_changed(app: 'TldwCli', event) -> None:
             footer.update_word_count(word_count)
     except QueryError:
         pass
+    
+    # Handle auto-save functionality
+    if app.current_selected_note_id and hasattr(app, 'notes_unsaved_changes') and app.notes_unsaved_changes:
+        # Get auto-save settings from config
+        config = load_cli_config_and_ensure_existence()
+        notes_settings = config.get('notes', {})
+        auto_save_enabled = notes_settings.get('auto_save_enabled', True)
+        auto_save_delay_ms = notes_settings.get('auto_save_delay_ms', 3000)
+        auto_save_on_every_key = notes_settings.get('auto_save_on_every_key', False)
+        
+        logger_instance.debug(f"Auto-save settings - enabled: {auto_save_enabled}, delay: {auto_save_delay_ms}ms, every_key: {auto_save_on_every_key}")
+        
+        if auto_save_enabled:
+            # Cancel any existing auto-save timer
+            if hasattr(app, 'notes_auto_save_timer') and app.notes_auto_save_timer is not None:
+                app.notes_auto_save_timer.stop()
+                app.notes_auto_save_timer = None
+                logger_instance.debug("Cancelled existing auto-save timer")
+            
+            if auto_save_on_every_key:
+                # Save immediately on every keystroke
+                logger_instance.debug("Auto-saving on keystroke")
+                await _perform_auto_save(app)
+            else:
+                # Set up a timer to save after the delay
+                async def delayed_auto_save():
+                    logger_instance.debug("Auto-save timer triggered")
+                    await _perform_auto_save(app)
+                    app.notes_auto_save_timer = None
+                
+                # Convert milliseconds to seconds for set_timer
+                delay_seconds = auto_save_delay_ms / 1000.0
+                app.notes_auto_save_timer = app.set_timer(delay_seconds, delayed_auto_save)
+                logger_instance.debug(f"Auto-save timer set for {delay_seconds} seconds")
 
 
 async def handle_notes_title_changed(app: 'TldwCli', event) -> None:
-    """Handles title input changes to track unsaved changes."""
+    """Handles title input changes to track unsaved changes and trigger auto-save."""
+    logger_instance = getattr(app, 'loguru_logger', logger)
+    
     if hasattr(app, 'notes_unsaved_changes') and app.current_selected_note_id:
         current_title = event.input.value
         if current_title != app.current_selected_note_title:
             app.notes_unsaved_changes = True
         else:
             app.notes_unsaved_changes = False
+    
+    # Handle auto-save functionality for title changes
+    if app.current_selected_note_id and hasattr(app, 'notes_unsaved_changes') and app.notes_unsaved_changes:
+        # Get auto-save settings from config
+        config = load_cli_config_and_ensure_existence()
+        notes_settings = config.get('notes', {})
+        auto_save_enabled = notes_settings.get('auto_save_enabled', True)
+        auto_save_delay_ms = notes_settings.get('auto_save_delay_ms', 3000)
+        
+        if auto_save_enabled:
+            # Cancel any existing auto-save timer
+            if hasattr(app, 'notes_auto_save_timer') and app.notes_auto_save_timer is not None:
+                app.notes_auto_save_timer.stop()
+                app.notes_auto_save_timer = None
+                logger_instance.debug("Cancelled existing auto-save timer (title change)")
+            
+            # Set up a timer to save after the delay
+            async def delayed_auto_save():
+                logger_instance.debug("Auto-save timer triggered (title change)")
+                await _perform_auto_save(app)
+                app.notes_auto_save_timer = None
+            
+            # Convert milliseconds to seconds for set_timer
+            delay_seconds = auto_save_delay_ms / 1000.0
+            app.notes_auto_save_timer = app.set_timer(delay_seconds, delayed_auto_save)
+            logger_instance.debug(f"Auto-save timer set for {delay_seconds} seconds (title change)")
 
 
 async def handle_notes_preview_toggle(app: 'TldwCli', event: Button.Pressed) -> None:

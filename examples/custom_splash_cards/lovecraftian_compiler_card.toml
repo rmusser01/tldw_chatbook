@@ -1,0 +1,53 @@
+# Lovecraftian Compiler splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "ascii_morph"
+style = "rgb(50,0,100) on black"
+
+# ASCII morph effect parameters
+madness_level = 0.99
+elder_signs = true
+non_euclidean_geometry = true
+
+content = """
+╔═══════════ R'LYEH COMPILER v0.∞.∞ ═══════════╗
+║                                               ║
+║    Ph'nglui mglw'nafh Cthulhu R'lyeh        ║
+║         wgah'nagl fhtagn                      ║
+║                                               ║
+║  ┌───────────────────────────────────────┐   ║
+║  │ > import eldritch_horror              │   ║
+║  │ > from deep import ancient_ones       │   ║
+║  │ > consciousness.sanity -= float('inf')│   ║
+║  │                                        │   ║
+║  │ Compiling forbidden knowledge...       │   ║
+║  │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100%           │   ║
+║  │                                        │   ║
+║  │ WARNING: Non-Euclidean syntax detected │   ║
+║  │ ERROR: Reality.dll has stopped working │   ║
+║  │ CRITICAL: Sanity check failed         │   ║
+║  └───────────────────────────────────────┘   ║
+║                                               ║
+║     ╱░░░░╲    The compiler gazes also     ╱░░░░╲
+║    ╱░▒▓█▓▒░╲       into you...          ╱░▒▓█▓▒░╲
+║   ╱░▒▓███▓▒░╲  IA! IA! CTHULHU FHTAGN! ╱░▒▓███▓▒░╲
+║                                               ║
+║  Stack trace leads to impossible angles       ║
+║  Memory leaks into dimensions unknown         ║
+║                                               ║
+║  TLDW: That Lurks Deep Within               ║
+╚═══════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Reading from the Necronomicon...",
+    "Parsing non-Euclidean code structures...",
+    "Invoking nameless functions...",
+    "Stack overflow in dimension 5...",
+    "The Old Ones approve your syntax..."
+]
+
+# Additional styling
+css_classes = ["cosmic-horror", "madness-inducing"]

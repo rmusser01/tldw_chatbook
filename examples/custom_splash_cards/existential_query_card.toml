@@ -1,0 +1,45 @@
+# Existential Query splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "pixel_dissolve"
+style = "dim white on black"
+
+# Pixel dissolve effect parameters
+dissolve_speed = 0.02
+existential_weight = 0.8
+void_darkness = 0.9
+
+content = """
+    SELECT meaning FROM universe
+    WHERE observer = 'self'
+    AND purpose IS NOT NULL;
+    
+    > 0 rows returned
+    
+    SELECT * FROM reality
+    WHERE certainty > 0.5;
+    
+    > ERROR: Table 'reality' may not exist
+    
+    CREATE TABLE IF NOT EXISTS purpose (
+        id INTEGER PRIMARY KEY,
+        reason TEXT,
+        fulfillment REAL DEFAULT 0.0
+    );
+    
+    > Table created successfully
+    > Populating with hopes and dreams...
+"""
+
+# Progress messages
+progress_messages = [
+    "Searching for meaning in the void...",
+    "Optimizing existential dread algorithms...",
+    "Null pointer exception in meaning_of_life.c...",
+    "Attempting to divide purpose by zero...",
+    "Stack overflow in recursive self-reflection..."
+]
+
+# Additional styling
+css_classes = ["sql-query", "existential-void"]

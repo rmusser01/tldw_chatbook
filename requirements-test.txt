@@ -1,0 +1,41 @@
+# Test dependencies
+pytest
+pytest-asyncio
+pytest-mock
+hypothesis
+aiohttp
+
+# Optional dependencies needed for tests
+numpy
+transformers
+torch
+chromadb
+sentence-transformers
+lxml
+beautifulsoup4
+pandas
+playwright
+trafilatura
+langdetect
+nltk
+scikit-learn
+jieba
+fugashi
+flashrank
+cohere
+textual-image[textual]>=0.6.0
+grep_ast
+pygments
+tqdm
+pymupdf
+pymupdf4llm
+docling
+defusedxml
+ebooklib
+html2text
+lxml
+markdownify
+beautifulsoup4
+
+# Additional test utilities
+anyio

@@ -1,0 +1,51 @@
+# Vampire Process Manager splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "fade"
+style = "rgb(150,0,0) on rgb(10,0,0)"
+
+# Fade effect parameters
+blood_drain_rate = 0.8
+sunlight_protection = true
+coffin_sleep_mode = true
+
+content = """
+╔════════════════ NOSFERATU OS ════════════════╗
+║        🦇 Process Blood Bank Manager 🦇       ║
+╠═══════════════════════════════════════════════╣
+║                                               ║
+║  RUNNING PROCESSES (Feeding Status):          ║
+║  ┌─────────────────────────────────────────┐ ║
+║  │ PID  │ NAME           │ CPU% │ BLOOD   │ ║
+║  ├─────────────────────────────────────────┤ ║
+║  │ 666  │ vampire.exe    │  13% │ ████░░░ │ ║
+║  │ 1897 │ dracula.service│  31% │ ██████░ │ ║
+║  │ 2001 │ bloodsucker.py │  66% │ ███████ │ ║
+║  │ 3333 │ nightwalker    │   2% │ █░░░░░░ │ ║
+║  └─────────────────────────────────────────┘ ║
+║                                               ║
+║  System Vitals:                               ║
+║  ├─ Sunrise Protection: [ACTIVE]              ║
+║  ├─ Garlic Firewall: [BYPASSED]              ║
+║  ├─ Mirror Reflection: [DISABLED]            ║
+║  └─ Stake Prevention: [ARMED]                ║
+║                                               ║
+║  Next feeding cycle: 00:00:00 (Midnight)     ║
+║  Victims in queue: 1,337                      ║
+║                                               ║
+║  TLDW: Thirst Lasts, Daylight Won't          ║
+╚═══════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Draining system resources...",
+    "Converting CPU cycles to blood...",
+    "Avoiding holy water cooling...",
+    "Compiling at the speed of bat...",
+    "Allocating memory from the crypt..."
+]
+
+# Additional styling
+css_classes = ["vampire-theme", "blood-mode"]

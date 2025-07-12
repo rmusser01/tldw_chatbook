@@ -1,0 +1,45 @@
+# Time Machine Interface splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "circuit_board"
+style = "rgb(255,100,255) on black"
+
+# Circuit board effect parameters  
+temporal_flux = 0.88
+paradox_probability = 0.23
+timeline_stability = 0.987
+
+content = """
+┌─────────── TEMPORAL NAVIGATOR v0.1β ───────────┐
+│                                                │
+│  Current Time: 2024.07.09.22:15:42.317        │
+│  Target Time:  ____.__.__.__:__:__.___        │
+│                                                │
+│  ◄◄ ◄ ■ ► ►►  [────████████────] 2024 CE     │
+│                                                │
+│  PARADOX PREVENTION: [ENABLED]                 │
+│  BUTTERFLY EFFECT:   [MINIMAL]                 │
+│  TIMELINE INTEGRITY: [98.7%]                   │
+│                                                │
+│  Recent Jumps:                                 │
+│  • 1969 - Fixed moon landing broadcast         │
+│  • 1985 - Prevented Skynet activation          │
+│  • 2000 - Patched Y2K bug                     │
+│  • 2024 - You are here                        │
+│                                                │
+│  ⚠️  WARNING: Do not meet yourself             │
+└────────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Charging flux capacitor...",
+    "Calculating temporal paradoxes...",
+    "Avoiding grandfather scenarios...",
+    "Syncing with alternate timelines...",
+    "Remembering to invest in Bitcoin..."
+]
+
+# Additional styling
+css_classes = ["time-circuits", "delorean-theme"]

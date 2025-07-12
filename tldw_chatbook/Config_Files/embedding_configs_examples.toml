@@ -1,0 +1,383 @@
+# Example Embedding Configurations for tldw_chatbook
+# 
+# This file contains example configurations for various embedding models.
+# Copy the desired configuration to your config.toml file under the [embedding_config] section.
+#
+# Author: tldw_chatbook Team
+# Last Updated: 2025-01-06
+
+# =============================================================================
+# QUICK START - Minimal Configuration
+# =============================================================================
+# This is the simplest configuration that works out of the box:
+
+[embedding_config_minimal]
+default_model_id = "mxbai-embed-large-v1"
+auto_download = true
+
+[embedding_config_minimal.models.mxbai-embed-large-v1]
+provider = "huggingface"
+model_name_or_path = "mixedbread-ai/mxbai-embed-large-v1"
+dimension = 1024  # Or 512 for faster/smaller
+
+
+# =============================================================================
+# DEVELOPMENT/TESTING - Small, Fast Models
+# =============================================================================
+# These models are ideal for development, testing, or resource-constrained environments.
+# They provide good performance with minimal resource usage.
+
+[embedding_config_development]
+default_model_id = "all-MiniLM-L6-v2"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = true
+cache_size_limit_gb = 5.0
+
+    # E5 Small - Best balance of quality and speed
+    [embedding_config_development.models.e5-small-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-small-v2"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 512
+    device = "auto"  # Auto-detect: cuda > mps > cpu
+    batch_size = 32
+    
+    # MiniLM - Fastest, good for prototyping
+    [embedding_config_development.models.all-MiniLM-L6-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-MiniLM-L6-v2"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 256  # Shorter context window
+    device = "auto"
+    batch_size = 64  # Can handle larger batches
+    
+    # BGE Small - Good multilingual support
+    [embedding_config_development.models.bge-small-en-v1.5]
+    provider = "huggingface"
+    model_name_or_path = "BAAI/bge-small-en-v1.5"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 512
+    device = "auto"
+    batch_size = 32
+
+
+# =============================================================================
+# PRODUCTION - Balanced Performance
+# =============================================================================
+# These models offer the best balance between quality and resource usage.
+# Recommended for most production use cases.
+
+[embedding_config_production]
+default_model_id = "e5-base-v2"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = true
+cache_size_limit_gb = 10.0
+
+    # E5 Base - Excellent general-purpose model
+    [embedding_config_production.models.e5-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-base-v2"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 512
+    device = "cuda"  # Explicitly use GPU in production
+    batch_size = 16
+    cache_dir = "/opt/models/embeddings"  # Custom cache location
+    
+    # MPNet - Great for semantic similarity
+    [embedding_config_production.models.all-mpnet-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-mpnet-base-v2"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 384
+    device = "cuda"
+    batch_size = 16
+    
+    # BGE Base - Strong retrieval performance
+    [embedding_config_production.models.bge-base-en-v1.5]
+    provider = "huggingface"
+    model_name_or_path = "BAAI/bge-base-en-v1.5"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 512
+    device = "cuda"
+    batch_size = 16
+
+
+# =============================================================================
+# HIGH QUALITY - Large Models
+# =============================================================================
+# These models provide the best embedding quality but require more resources.
+# Use when accuracy is more important than speed.
+
+[embedding_config_high_quality]
+default_model_id = "e5-large-v2"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = true
+cache_size_limit_gb = 20.0
+
+    # E5 Large - Top quality embeddings
+    [embedding_config_high_quality.models.e5-large-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-large-v2"
+    dimension = 1024
+    trust_remote_code = false
+    max_length = 512
+    device = "cuda"
+    batch_size = 8  # Smaller batch size for large model
+    
+    # Multilingual E5 - Best for multiple languages
+    [embedding_config_high_quality.models.multilingual-e5-large-instruct]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/multilingual-e5-large-instruct"
+    dimension = 1024
+    trust_remote_code = false
+    max_length = 512
+    device = "cuda"
+    batch_size = 8
+
+
+# =============================================================================
+# OPENAI API - Cloud-based Embeddings
+# =============================================================================
+# Use OpenAI's embedding API for convenience and quality.
+# Requires an OpenAI API key.
+
+[embedding_config_openai]
+default_model_id = "openai-3-small"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = false  # Not applicable for API models
+
+    # Ada v2 - Legacy model, still widely used
+    [embedding_config_openai.models.openai-ada-002]
+    provider = "openai"
+    model_name_or_path = "text-embedding-ada-002"
+    dimension = 1536
+    api_key = "${OPENAI_API_KEY}"  # Set via environment variable
+    
+    # Text Embedding 3 Small - New generation, efficient
+    [embedding_config_openai.models.openai-3-small]
+    provider = "openai"
+    model_name_or_path = "text-embedding-3-small"
+    dimension = 1536  # Can be 512, 1536
+    api_key = "${OPENAI_API_KEY}"
+    
+    # Text Embedding 3 Large - Highest quality
+    [embedding_config_openai.models.openai-3-large]
+    provider = "openai"
+    model_name_or_path = "text-embedding-3-large"
+    dimension = 3072  # Can be 256, 1024, 3072
+    api_key = "${OPENAI_API_KEY}"
+
+
+# =============================================================================
+# LOCAL OPENAI-COMPATIBLE - Self-hosted API Servers
+# =============================================================================
+# Configure local embedding servers that provide OpenAI-compatible APIs.
+# Examples: llama.cpp, text-embeddings-inference, infinity, etc.
+
+[embedding_config_local_api]
+default_model_id = "local-e5-base"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = false
+
+    # Local E5 Base via llama.cpp server
+    [embedding_config_local_api.models.local-e5-base]
+    provider = "openai"  # Uses OpenAI-compatible API
+    model_name_or_path = "e5-base-v2"  # Model name expected by server
+    base_url = "http://localhost:8080/v1"
+    dimension = 768
+    # api_key = "optional-key"  # Only if server requires auth
+    
+    # Local BGE via text-embeddings-inference
+    [embedding_config_local_api.models.local-bge-base]
+    provider = "openai"
+    model_name_or_path = "BAAI/bge-base-en-v1.5"
+    base_url = "http://localhost:8000/v1"
+    dimension = 768
+    
+    # Local multilingual model
+    [embedding_config_local_api.models.local-multilingual]
+    provider = "openai"
+    model_name_or_path = "intfloat/multilingual-e5-base"
+    base_url = "http://localhost:8001/v1"
+    dimension = 768
+
+
+# =============================================================================
+# HYBRID CONFIGURATION - Mix of Local and API Models
+# =============================================================================
+# Use different models for different purposes.
+
+[embedding_config_hybrid]
+default_model_id = "e5-base-v2"  # Default to local model
+default_llm_for_contextualization = "gpt-3.5-turbo"  # Use API for LLM tasks
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = true
+cache_size_limit_gb = 15.0
+
+    # Local models for general embedding
+    [embedding_config_hybrid.models.e5-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-base-v2"
+    dimension = 768
+    device = "auto"
+    batch_size = 16
+    
+    [embedding_config_hybrid.models.e5-small-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-small-v2"
+    dimension = 384
+    device = "auto"
+    batch_size = 32
+    
+    # API model for high-quality needs
+    [embedding_config_hybrid.models.openai-3-small]
+    provider = "openai"
+    model_name_or_path = "text-embedding-3-small"
+    dimension = 1536
+    api_key = "${OPENAI_API_KEY}"
+
+
+# =============================================================================
+# STATE-OF-THE-ART MODELS - Highest Quality
+# =============================================================================
+# These models provide the absolute best embedding quality but require more resources
+# and trust_remote_code=true for custom architectures.
+
+[embedding_config_sota]
+default_model_id = "stella_en_1.5B_v5"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = true
+cache_size_limit_gb = 30.0  # These models are large
+
+    # Stella - Supports 512-8192 dimensions via Matryoshka
+    [embedding_config_sota.models.stella_en_1.5B_v5]
+    provider = "huggingface"
+    model_name_or_path = "NovaSearch/stella_en_1.5B_v5"
+    dimension = 1024  # Can use 512, 768, 1024, 2048, 4096, 6144, 8192
+    trust_remote_code = true  # Required for custom architecture
+    revision = "4bbc0f1e9df5b9563d418e9b5663e98070713eb8"  # Pinned for security
+    max_length = 512
+    device = "cuda"  # Recommended for 1.5B parameter model
+    batch_size = 8
+    
+    # Stella with reduced dimensions for speed
+    [embedding_config_sota.models.stella_en_1.5B_v5_512d]
+    provider = "huggingface"
+    model_name_or_path = "NovaSearch/stella_en_1.5B_v5"
+    dimension = 512  # Still excellent quality, 2x faster
+    trust_remote_code = true
+    revision = "4bbc0f1e9df5b9563d418e9b5663e98070713eb8"
+    max_length = 512
+    device = "cuda"
+    batch_size = 16
+    
+    # Qwen3 - 4B parameters, 32k context, multilingual
+    [embedding_config_sota.models.qwen3-embedding-4b]
+    provider = "huggingface"
+    model_name_or_path = "Qwen/Qwen3-Embedding-4B"
+    dimension = 4096  # Flexible up to 4096
+    trust_remote_code = true  # Required for Qwen3 architecture
+    max_length = 32768  # 32k context!
+    device = "cuda"  # Required for 4B parameter model
+    batch_size = 4  # Small batch due to model size
+
+# =============================================================================
+# SPECIALIZED CONFIGURATIONS
+# =============================================================================
+
+# For Apple Silicon Macs (M1/M2/M3)
+[embedding_config_apple_silicon]
+default_model_id = "e5-small-v2"
+
+    [embedding_config_apple_silicon.models.e5-small-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-small-v2"
+    dimension = 384
+    device = "mps"  # Use Apple Metal Performance Shaders
+    batch_size = 32
+
+# For CPU-only environments
+[embedding_config_cpu_only]
+default_model_id = "all-MiniLM-L6-v2"
+
+    [embedding_config_cpu_only.models.all-MiniLM-L6-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-MiniLM-L6-v2"
+    dimension = 384
+    device = "cpu"
+    batch_size = 8  # Smaller batch for CPU
+
+# For systems with multiple GPUs
+[embedding_config_multi_gpu]
+default_model_id = "e5-large-v2"
+
+    [embedding_config_multi_gpu.models.e5-large-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-large-v2"
+    dimension = 1024
+    device = "cuda:0"  # Can specify GPU index
+    batch_size = 32
+
+
+# =============================================================================
+# MXBAI MATRYOSHKA CONFIGURATIONS
+# =============================================================================
+# The mxbai-embed-large-v1 model supports different dimension sizes
+# while maintaining high quality through Matryoshka Representation Learning
+
+[embedding_config_mxbai_full]
+default_model_id = "mxbai-embed-large-v1-full"
+
+    [embedding_config_mxbai_full.models.mxbai-embed-large-v1-full]
+    provider = "huggingface"
+    model_name_or_path = "mixedbread-ai/mxbai-embed-large-v1"
+    dimension = 1024  # Full dimensions for maximum quality
+    trust_remote_code = false
+    max_length = 512
+    device = "cuda"  # Recommended for full dimensions
+    batch_size = 8   # Smaller batch for full dimensions
+
+[embedding_config_mxbai_balanced]
+default_model_id = "mxbai-embed-large-v1-512"
+
+    [embedding_config_mxbai_balanced.models.mxbai-embed-large-v1-512]
+    provider = "huggingface"
+    model_name_or_path = "mixedbread-ai/mxbai-embed-large-v1"
+    dimension = 512  # 93% of full performance, 50% storage
+    trust_remote_code = false
+    max_length = 512
+    device = "auto"
+    batch_size = 16
+
+[embedding_config_mxbai_fast]
+default_model_id = "mxbai-embed-large-v1-256"
+
+    [embedding_config_mxbai_fast.models.mxbai-embed-large-v1-256]
+    provider = "huggingface"
+    model_name_or_path = "mixedbread-ai/mxbai-embed-large-v1"
+    dimension = 256  # Still good quality, very fast
+    trust_remote_code = false
+    max_length = 512
+    device = "auto"
+    batch_size = 32
+
+# =============================================================================
+# RAG-SPECIFIC EMBEDDING CONFIGURATION
+# =============================================================================
+# This configuration is specifically optimized for RAG use cases.
+# Place this under [rag.embedding] in your config.toml
+
+[rag.embedding_optimized]
+model = "mxbai-embed-large-v1"  # High quality for RAG
+device = "auto"                 # Auto-detect best device
+cache_size = 2                  # Keep 2 models in memory
+batch_size = 16                 # Optimized for throughput
+max_length = 512                # Standard context window
+# api_key = ""                  # For API models
+# base_url = ""                 # For local API servers

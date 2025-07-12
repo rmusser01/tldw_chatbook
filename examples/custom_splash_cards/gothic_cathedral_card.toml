@@ -1,0 +1,53 @@
+# Gothic Cathedral OS splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "spotlight"
+style = "rgb(150,150,180) on rgb(10,10,20)"
+
+# Spotlight effect parameters
+stained_glass = true
+gregorian_chant = 0.7
+cathedral_echo = 0.9
+
+content = """
+╔════════════════════════════════════════════════════╗
+║             ⛪ CATHEDRAL OS v1348 ⛪               ║
+╠════════════════════════════════════════════════════╣
+║                    ╱╲                              ║
+║                   ╱  ╲                             ║
+║                  ╱    ╲                            ║
+║                 ╱  ✝   ╲                           ║
+║                ╱────────╲                          ║
+║               ╱│┼┼┼┼┼┼┼┼│╲                         ║
+║              ╱ │┼┼┼┼┼┼┼┼│ ╲                        ║
+║             ╱  │▓▓▓▓▓▓▓▓│  ╲                       ║
+║            │   │▓▓╬╬╬╬▓▓│   │                      ║
+║            │   │▓╬╬╬╬╬╬▓│   │                      ║
+║            │   │▓▓▓██▓▓▓│   │                      ║
+║                                                    ║
+║  SYSTEM PRAYERS:                                   ║
+║  ├─ Morning_Compilation.exe    [CHANTING]          ║
+║  ├─ Vespers_Backup.bat         [IN PROGRESS]       ║
+║  ├─ Midnight_Defrag.ps1        [SCHEDULED]         ║
+║  └─ Sunday_SystemRestore.sh    [BLESSED]           ║
+║                                                    ║
+║  Confessional Logs: 1,337 errors absolved         ║
+║  Holy RAM Water: 16GB blessed                      ║
+║  Gargoyle Firewall: Watching for demons           ║
+║                                                    ║
+║  TLDW: Transcendent Liturgy, Divine Workstation   ║
+╚════════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Lighting digital candles...",
+    "Chanting in hexadecimal...",
+    "Blessing the source code...",
+    "Exorcising memory leaks...",
+    "Tolling the system bell..."
+]
+
+# Additional styling
+css_classes = ["gothic-architecture", "cathedral-shadows"]

@@ -1,0 +1,22 @@
+/* ========================================
+ * UTILITIES: States
+ * ======================================== 
+ * State modifiers: disabled, hidden, active, etc.
+ * ======================================== */
+
+/* --- Utility/Not-Tab Specific --- */
+
+.disabled {
+    /* Make the button semi-transparent. This is the most effective way
+       to show it's inactive and works just like web CSS. */
+    opacity: 0.6;
+
+    /* To achieve a "grayscale" effect, we manually set the colors
+       to be less vibrant, using Textual's design tokens for theming. */
+    background: $panel-darken-2;
+    color: $text-muted;
+
+    /* You can also ensure the border is muted. */
+    border: round $primary-darken-2;
+}
+/* --- End of Utility/Not-Tab Specific --- */

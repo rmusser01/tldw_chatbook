@@ -6,9 +6,11 @@ escape allowed directories.
 """
 
 import os
+import time
 from pathlib import Path
 from typing import Optional, Union
 from loguru import logger
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 def validate_path(user_path: Union[str, Path], base_directory: Union[str, Path]) -> Path:
@@ -25,6 +27,9 @@ def validate_path(user_path: Union[str, Path], base_directory: Union[str, Path])
     Raises:
         ValueError: If the path is invalid or attempts directory traversal
     """
+    start_time = time.time()
+    log_counter("path_validation_validate_path_attempt")
+    
     try:
         # Convert to Path objects
         user_path = Path(user_path)
@@ -41,16 +46,28 @@ def validate_path(user_path: Union[str, Path], base_directory: Union[str, Path])
             full_path.relative_to(base_directory)
         except ValueError:
             logger.warning(f"Path traversal attempt detected: {user_path} -> {full_path}")
+            log_counter("path_validation_security_violation", labels={"type": "directory_traversal"})
             raise ValueError(f"Path '{user_path}' is outside the allowed directory")
             
         # Additional checks for safety
         if any(part.startswith('.') for part in full_path.parts if part != '.'):
             logger.warning(f"Hidden file/directory access attempt: {full_path}")
+            log_counter("path_validation_security_violation", labels={"type": "hidden_file_access"})
             raise ValueError("Access to hidden files/directories is not allowed")
-            
+        
+        # Log success
+        duration = time.time() - start_time
+        log_histogram("path_validation_validate_path_duration", duration, labels={"status": "success"})
+        log_counter("path_validation_validate_path_success")
+        
         return full_path
         
     except Exception as e:
+        # Log error
+        duration = time.time() - start_time
+        log_histogram("path_validation_validate_path_duration", duration, labels={"status": "error"})
+        log_counter("path_validation_validate_path_error", labels={"error_type": type(e).__name__})
+        
         logger.error(f"Path validation error for '{user_path}': {e}")
         if isinstance(e, ValueError):
             raise
@@ -70,19 +87,26 @@ def validate_filename(filename: str) -> str:
     Raises:
         ValueError: If the filename is invalid
     """
+    start_time = time.time()
+    log_counter("path_validation_validate_filename_attempt")
+    
     if not filename:
+        log_counter("path_validation_validate_filename_error", labels={"error_type": "empty_filename"})
         raise ValueError("Filename cannot be empty")
         
     # Check for path separators
     if os.path.sep in filename or '/' in filename or '\\' in filename:
+        log_counter("path_validation_security_violation", labels={"type": "path_separator_in_filename"})
         raise ValueError("Filename cannot contain path separators")
         
     # Check for parent directory references
     if '..' in filename:
+        log_counter("path_validation_security_violation", labels={"type": "parent_directory_reference"})
         raise ValueError("Filename cannot contain parent directory references")
         
     # Check for null bytes
     if '\x00' in filename:
+        log_counter("path_validation_security_violation", labels={"type": "null_byte_in_filename"})
         raise ValueError("Filename cannot contain null bytes")
         
     # Check for reserved names on Windows
@@ -94,8 +118,14 @@ def validate_filename(filename: str) -> str:
     
     name_without_ext = filename.split('.')[0].upper()
     if name_without_ext in reserved_names:
+        log_counter("path_validation_security_violation", labels={"type": "reserved_filename"})
         raise ValueError(f"'{filename}' is a reserved filename")
-        
+    
+    # Log success
+    duration = time.time() - start_time
+    log_histogram("path_validation_validate_filename_duration", duration)
+    log_counter("path_validation_validate_filename_success")
+    
     return filename
 
 

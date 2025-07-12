@@ -1,0 +1,50 @@
+# Sushi Assembly Line splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "scrolling_credits"
+style = "white on rgb(10,10,20)"
+
+# Scrolling credits effect parameters
+conveyor_speed = 0.8
+wasabi_intensity = 0.9
+precision_cuts = true
+
+content = """
+╔═══════════════ 寿司 SUSHI OS 2.0 寿司 ═══════════════╗
+║                                                      ║
+║    ← ← ← ← CONVEYOR BELT ACTIVE ← ← ← ←            ║
+║  ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐ ┌────┐        ║
+║  │🍣│ │🍱│ │🍙│ │🍘│ │🍣│ │🍱│        ║
+║  └────┘ └────┘ └────┘ └────┘ └────┘ └────┘        ║
+║                                                      ║
+║  SUSHI ASSEMBLY PIPELINE:                           ║
+║  ╔════════════════════════════════════════╗        ║
+║  ║ rice.cook() | rice.season(vinegar,sugar)║        ║
+║  ║     ↓              ↓            ↓        ║        ║
+║  ║ nori.cut()   fish.slice()  roll.form()  ║        ║
+║  ║     ↓              ↓            ↓        ║        ║
+║  ║ [MAKI-ROLL] [NIGIRI-SUSHI] [SASHIMI]   ║        ║
+║  ╚════════════════════════════════════════╝        ║
+║                                                      ║
+║  Quality Control: おいしい (Oishii) ✓               ║
+║  Rice Temp: 37°C | Fish Grade: A5 | Wasabi: REAL   ║
+║                                                      ║
+║  Orders Queued: 42 | ETA: 5.2 minutes              ║
+║  Master Chef: Jiro-san (20 years experience)       ║
+║                                                      ║
+║       TLDW: TABEMASEN DESHITA WATCH                 ║
+╚══════════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Sharpening yanagiba knife...",
+    "Selecting premium tuna blocks...",
+    "Perfecting rice grain alignment...",
+    "Applying wasabi with precision...",
+    "Achieving umami optimization..."
+]
+
+# Additional styling
+css_classes = ["sushi-bar", "japanese-minimal"]

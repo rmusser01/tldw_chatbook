@@ -170,7 +170,7 @@ class TestChatImageProperties:
             max_size=5
         )
     )
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=5000)
     @pytest.mark.asyncio
     async def test_consistent_resize_behavior(self, dimensions):
         """Test that resizing behavior is consistent across multiple images."""

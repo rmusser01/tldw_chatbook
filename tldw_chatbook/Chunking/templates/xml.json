@@ -1,0 +1,20 @@
+{
+  "name": "xml",
+  "description": "XML-aware chunking that preserves document structure and paths",
+  "base_method": "xml",
+  "pipeline": [
+    {
+      "stage": "chunk",
+      "method": "xml",
+      "options": {
+        "max_size": 500,
+        "overlap": 5
+      }
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["xml_documents", "html", "markup_languages"],
+    "preserves_structure": true,
+    "includes_xpath": true
+  }
+}

@@ -27,7 +27,29 @@ import time
 import logging
 import psutil#
 # Third-party Imports
-from prometheus_client import Counter, Histogram, Gauge, start_http_server
+try:
+    from prometheus_client import Counter, Histogram, Gauge, start_http_server
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    # Create dummy classes to prevent errors when prometheus_client is not installed
+    class Counter:
+        def __init__(self, *args, **kwargs): pass
+        def inc(self, *args, **kwargs): pass
+        def labels(self, **kwargs): return self
+    
+    class Histogram:
+        def __init__(self, *args, **kwargs): pass
+        def observe(self, *args, **kwargs): pass
+        def labels(self, **kwargs): return self
+    
+    class Gauge:
+        def __init__(self, *args, **kwargs): pass
+        def set(self, *args, **kwargs): pass
+        def labels(self, **kwargs): return self
+    
+    def start_http_server(*args, **kwargs):
+        logging.warning("Prometheus client not installed. Metrics server not started.")
 #
 # Local Imports
 #
@@ -76,11 +98,17 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
     Increments a counter metric. The metric is created on first use.
     Documentation is only used during the initial creation of the metric.
     """
+    if not PROMETHEUS_AVAILABLE:
+        logging.debug(f"Prometheus not available. Would have logged counter: {metric_name}")
+        return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
         counter = _get_or_create_metric('counter', metric_name, documentation, label_keys)
-        counter.labels(**eff_labels).inc(value)
+        if label_keys:
+            counter.labels(**eff_labels).inc(value)
+        else:
+            counter.inc(value)
     except Exception as e:
         logging.error(f"Failed to log counter {metric_name}: {e}")
 
@@ -90,11 +118,17 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
     Observes a value for a histogram metric. The metric is created on first use.
     Documentation is only used during the initial creation of the metric.
     """
+    if not PROMETHEUS_AVAILABLE:
+        logging.debug(f"Prometheus not available. Would have logged histogram: {metric_name} = {value}")
+        return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
         histogram = _get_or_create_metric('histogram', metric_name, documentation, label_keys)
-        histogram.labels(**eff_labels).observe(value)
+        if label_keys:
+            histogram.labels(**eff_labels).observe(value)
+        else:
+            histogram.observe(value)
     except Exception as e:
         logging.error(f"Failed to log histogram {metric_name}: {e}")
 
@@ -105,11 +139,17 @@ def log_gauge(metric_name, value, labels=None, documentation=""):
     Sets the value of a gauge metric. The metric is created on first use.
     Documentation is only used during the initial creation of the metric.
     """
+    if not PROMETHEUS_AVAILABLE:
+        logging.debug(f"Prometheus not available. Would have logged gauge: {metric_name} = {value}")
+        return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
         gauge = _get_or_create_metric('gauge', metric_name, documentation, label_keys)
-        gauge.labels(**eff_labels).set(value)
+        if label_keys:
+            gauge.labels(**eff_labels).set(value)
+        else:
+            gauge.set(value)
     except Exception as e:
         logging.error(f"Failed to log gauge {metric_name}: {e}")
 
@@ -153,7 +193,7 @@ def timeit(metric_name=None, documentation="Execution time of a function."):
     return decorator
 
 
-def log_resource_usage():
+def log_resource_usage(labels=None):
     """Logs current CPU and Memory usage of the process as gauges."""
     process = psutil.Process()
     memory_mb = process.memory_info().rss / (1024 ** 2)
@@ -162,17 +202,22 @@ def log_resource_usage():
     log_gauge(
         "process_memory_mb",
         memory_mb,
+        labels=labels,
         documentation="Current memory usage of the process in Megabytes."
     )
     log_gauge(
         "process_cpu_percent",
         cpu_percent,
+        labels=labels,
         documentation="Current CPU usage of the process as a percentage."
     )
 
 
 def init_metrics_server(port=8000):
     """Starts the Prometheus HTTP server in a separate thread."""
+    if not PROMETHEUS_AVAILABLE:
+        logging.warning("Prometheus client not installed. Metrics server cannot be started.")
+        return
     start_http_server(port)
     logging.info(f"Prometheus metrics server started on port {port}")
 

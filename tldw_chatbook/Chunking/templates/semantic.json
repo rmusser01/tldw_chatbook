@@ -1,0 +1,42 @@
+{
+  "name": "semantic",
+  "description": "Semantic chunking that groups related content based on similarity",
+  "base_method": "semantic",
+  "pipeline": [
+    {
+      "stage": "preprocess",
+      "operations": [
+        {
+          "type": "normalize_whitespace",
+          "params": {}
+        }
+      ]
+    },
+    {
+      "stage": "chunk",
+      "method": "semantic",
+      "options": {
+        "max_size": 800,
+        "semantic_similarity_threshold": 0.5,
+        "semantic_overlap_sentences": 3,
+        "unit": "words"
+      }
+    },
+    {
+      "stage": "postprocess",
+      "operations": [
+        {
+          "type": "add_context",
+          "params": {
+            "context_size": 1
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["technical_documents", "research_papers", "complex_text"],
+    "requires_sklearn": true,
+    "preserves_semantic_coherence": true
+  }
+}

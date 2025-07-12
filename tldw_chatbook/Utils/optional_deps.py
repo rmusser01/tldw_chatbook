@@ -22,6 +22,14 @@ DEPENDENCIES_AVAILABLE = {
     'japanese_chunking': False,
     'token_chunking': False,
     'cohere': False,
+    # Audio/Video processing
+    'audio_processing': False,
+    'video_processing': False,
+    'faster_whisper': False,
+    'yt_dlp': False,
+    'soundfile': False,
+    'scipy': False,
+    'qwen2audio': False,
 }
 
 # Store actual modules for conditional use
@@ -165,6 +173,70 @@ def require_dependency(module_name: str, feature_name: Optional[str] = None) -> 
     
     return MODULES[module_name]
 
+def check_audio_processing_deps() -> bool:
+    """Check dependencies needed for audio processing functionality."""
+    # Core audio processing dependencies
+    core_deps = ['soundfile', 'scipy']
+    transcription_deps = ['faster_whisper']
+    download_deps = ['yt_dlp']
+    
+    # Check core deps
+    core_available = all(check_dependency(dep) for dep in core_deps)
+    
+    # Check transcription deps
+    faster_whisper_available = check_dependency('faster_whisper')
+    
+    # Check optional transcription backend
+    qwen2audio_available = check_dependency('qwen2_audio', 'qwen2audio')
+    
+    # Check download capability
+    yt_dlp_available = check_dependency('yt_dlp')
+    
+    # Overall audio processing available if core deps are present
+    audio_available = core_available
+    DEPENDENCIES_AVAILABLE['audio_processing'] = audio_available
+    DEPENDENCIES_AVAILABLE['faster_whisper'] = faster_whisper_available
+    DEPENDENCIES_AVAILABLE['qwen2audio'] = qwen2audio_available
+    DEPENDENCIES_AVAILABLE['yt_dlp'] = yt_dlp_available
+    
+    if audio_available:
+        logger.info("✅ Core audio processing dependencies found.")
+        enhanced_features = []
+        if faster_whisper_available:
+            enhanced_features.append("faster-whisper transcription")
+        if qwen2audio_available:
+            enhanced_features.append("Qwen2Audio transcription")
+        if yt_dlp_available:
+            enhanced_features.append("YouTube/URL downloading")
+        if enhanced_features:
+            logger.info(f"✅ Enhanced audio features available: {', '.join(enhanced_features)}")
+    else:
+        logger.warning("⚠️ Some core audio processing dependencies missing.")
+    
+    return audio_available
+
+def check_video_processing_deps() -> bool:
+    """Check dependencies needed for video processing functionality."""
+    # Video processing reuses audio processing capabilities
+    audio_available = DEPENDENCIES_AVAILABLE.get('audio_processing', False)
+    if not audio_available:
+        # Check audio deps if not already checked
+        check_audio_processing_deps()
+        audio_available = DEPENDENCIES_AVAILABLE.get('audio_processing', False)
+    
+    # Additional video-specific deps (if any)
+    # Currently video processing mainly relies on audio processing + ffmpeg (external)
+    
+    video_available = audio_available
+    DEPENDENCIES_AVAILABLE['video_processing'] = video_available
+    
+    if video_available:
+        logger.info("✅ Video processing dependencies found (via audio processing).")
+    else:
+        logger.warning("⚠️ Video processing unavailable due to missing audio dependencies.")
+    
+    return video_available
+
 def create_unavailable_feature_handler(feature_name: str, suggestion: str = "") -> Callable:
     """
     Create a function that raises an informative error when a feature is unavailable.
@@ -203,6 +275,14 @@ def reset_dependency_checks():
         'japanese_chunking': False,
         'token_chunking': False,
         'cohere': False,
+        # Audio/Video processing
+        'audio_processing': False,
+        'video_processing': False,
+        'faster_whisper': False,
+        'yt_dlp': False,
+        'soundfile': False,
+        'scipy': False,
+        'qwen2audio': False,
     }
     MODULES = {}
     logger.debug("Reset dependency checks")
@@ -226,6 +306,8 @@ def initialize_dependency_checks():
     check_embeddings_rag_deps()
     check_websearch_deps()
     check_chunker_deps()
+    check_audio_processing_deps()
+    check_video_processing_deps()
     
     # Log summary
     enabled_features = [name for name, available in DEPENDENCIES_AVAILABLE.items() if available]

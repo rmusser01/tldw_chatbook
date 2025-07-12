@@ -1,0 +1,43 @@
+# Waveform Visualizer splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "wave_ripple"
+style = "green on black"
+
+# Wave ripple effect parameters
+frequency_bands = 32
+amplitude_scale = 1.0
+stereo_separation = true
+
+content = """
+┌─────────────── SPECTRUM ANALYZER ────────────────┐
+│ L ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▁▂▃▄▅▆▇█▇▆▅ R │
+│                                                  │
+│   20Hz ────────────────────────────── 20kHz     │
+│    │                                      │      │
+│ 0dB├─╲    ╱╲      ╱╲    ╱╲      ╱╲    ╱─┤0dB   │
+│    │  ╲  ╱  ╲    ╱  ╲  ╱  ╲    ╱  ╲  ╱  │      │
+│-10 ├──╲╱────╲──╱────╲╱────╲──╱────╲╱───┤-10   │
+│    │         ╲╱              ╲╱           │      │
+│-20 ├──────────────────────────────────────┤-20   │
+│    │   ┌─────────────────────────────┐   │      │
+│-30 ├───┤  T L D W   A U D I O   1.0  ├───┤-30   │
+│    │   └─────────────────────────────┘   │      │
+│-40 └──────────────────────────────────────┘-40   │
+│                                                  │
+│ BPM: 128 | KEY: Am | RMS: -12.3dB | PEAK: -3dB │
+└──────────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Analyzing frequency spectrum...",
+    "Detecting transients...",
+    "Calculating RMS levels...",
+    "Identifying harmonic content...",
+    "Applying psychoacoustic modeling..."
+]
+
+# Additional styling
+css_classes = ["waveform-display", "spectrum-analyzer"]

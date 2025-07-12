@@ -1,0 +1,11 @@
+/* ========================================
+ * CORE: Base Styles
+ * ======================================== 
+ * Root elements: Screen, Header, Footer
+ * Foundation for the entire application
+ * ======================================== */
+
+Screen { layout: vertical; }
+Header { dock: top; height: 1; background: $accent-darken-1; }
+Footer { dock: bottom; height: 1; background: $accent-darken-1; }
+#content { height: 1fr; width: 100%; }

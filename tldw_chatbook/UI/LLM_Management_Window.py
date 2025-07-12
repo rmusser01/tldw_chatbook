@@ -317,6 +317,14 @@ class LLMManagementWindow(Container):
                                 yield Button("Browse", id="ollama-browse-modelfile-button", classes="browse_button_short")
                             yield Button("Create Model", id="ollama-create-model-button", classes="full_width_button")
 
+                    # --- Embeddings Section ---
+                    yield Label("Generate Embeddings:", classes="label section_label")
+                    with Horizontal(classes="embeddings_container"):
+                        with Vertical(classes="embeddings_inputs"):
+                            yield Input(id="ollama-embeddings-model-name", placeholder="Model name for embeddings", classes="input_field_long")
+                            yield Input(id="ollama-embeddings-prompt", placeholder="Text to generate embeddings for", classes="input_field_long")
+                        yield Button("Generate Embeddings", id="ollama-embeddings-button", classes="action_button_tall")
+
                     # --- Output Panes ---
                     yield Label("Result / Status:", classes="label section_label")
                     yield RichLog(id="ollama-combined-output", wrap=True, highlight=False, classes="output_textarea_medium")

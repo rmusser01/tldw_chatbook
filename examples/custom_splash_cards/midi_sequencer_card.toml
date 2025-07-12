@@ -1,0 +1,40 @@
+# MIDI Sequencer splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "scrolling_credits"
+style = "rgb(255,100,0) on black"
+
+# Scrolling credits effect parameters
+step_sequence = true
+bpm = 120
+pattern_length = 16
+
+content = """
+╔════════════════ TR-808 PATTERN ═════════════════╗
+║ STEP: 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 ║
+╠══════════════════════════════════════════════════════╣
+║ KICK  ● ─ ─ ─ ● ─ ─ ─ ● ─ ─ ─ ● ─ ─ ─  │ VOL: ████ ║
+║ SNARE ─ ─ ─ ─ ● ─ ─ ─ ─ ─ ─ ─ ● ─ ─ ─  │ VOL: ███░ ║
+║ HIHAT ● ● ● ● ● ● ● ● ● ● ● ● ● ● ● ●  │ VOL: ██░░ ║
+║ OPEN  ─ ─ ─ ─ ─ ─ ● ─ ─ ─ ─ ─ ─ ─ ● ─  │ VOL: ███░ ║
+║ CLAP  ─ ─ ─ ─ ● ─ ─ ─ ─ ─ ─ ─ ● ─ ─ ●  │ VOL: ████ ║
+║ COWBL ─ ─ ─ ─ ─ ─ ─ ─ ● ─ ─ ─ ─ ─ ─ ─  │ VOL: █░░░ ║
+╠══════════════════════════════════════════════════════╣
+║ TEMPO: 120 BPM │ SWING: 0% │ PATTERN: A1 │ BAR: 1/4 ║
+║                                                      ║
+║ ▶ PLAY  ■ STOP  ⚫ REC  ⟲ LOOP  ♫ TLDW GROOVE      ║
+╚══════════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Synchronizing MIDI clock...",
+    "Loading drum samples...",
+    "Quantizing to grid...",
+    "Applying swing groove...",
+    "Sending program change messages..."
+]
+
+# Additional styling
+css_classes = ["drum-machine", "step-sequencer"]

@@ -1,0 +1,48 @@
+# Molecular Gastronomy Lab splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "pixel_dissolve"
+style = "cyan on black"
+
+# Pixel dissolve effect parameters
+spherification = true
+liquid_nitrogen = -196
+molecular_precision = 0.001
+
+content = """
+╔═══════════ MOLECULAR GASTRONOMY LAB ═══════════╗
+║                                                ║
+║     ⚗️  EXPERIMENT #1337: Digital Spheres  ⚗️    ║
+║                                                ║
+║  ┌──────────────┬──────────────┬────────────┐ ║
+║  │ INGREDIENT   │ TEMPERATURE  │ PRESSURE   │ ║
+║  ├──────────────┼──────────────┼────────────┤ ║
+║  │ Data Purée   │ -196°C (LN₂) │ 1.2 bar    │ ║
+║  │ Code Foam    │  63°C (Sous) │ 0.85 bar   │ ║
+║  │ Logic Gel    │  4°C         │ 1.0 bar    │ ║
+║  └──────────────┴──────────────┴────────────┘ ║
+║                                                ║
+║     ○○○ Calcium-Alginate Reaction ○○○         ║
+║     ●●● Spherification Complete ●●●           ║
+║                                                ║
+║  Equipment Status:                             ║
+║  ├─ Centrifuge: 3000 RPM ████████             ║
+║  ├─ Ultrasonic Bath: ∿∿∿∿∿∿∿∿                ║
+║  └─ Rotary Evaporator: ⟲ Active              ║
+║                                                ║
+║  Serving: Deconstructed TLDW with foam       ║
+╚════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Spherifying liquid algorithms...",
+    "Deconstructing traditional functions...",
+    "Emulsifying incompatible data types...",
+    "Creating edible error messages...",
+    "Plating with tweezers at 300 DPI..."
+]
+
+# Additional styling
+css_classes = ["molecular-lab", "scientific-cuisine"]

@@ -1,0 +1,56 @@
+{
+  "name": "code_documentation",
+  "description": "Specialized for technical documentation with code examples",
+  "base_method": "tokens",
+  "pipeline": [
+    {
+      "stage": "preprocess",
+      "operations": [
+        {
+          "type": "code_block_detection",
+          "params": {}
+        },
+        {
+          "type": "section_detection",
+          "params": {
+            "headers": [
+              "Installation", "Setup", "Configuration", "Usage",
+              "API Reference", "Examples", "Tutorial", "FAQ",
+              "Troubleshooting", "Changelog", "Contributing"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "stage": "chunk",
+      "method": "tokens",
+      "options": {
+        "max_size": 600,
+        "overlap": 100
+      }
+    },
+    {
+      "stage": "postprocess",
+      "operations": [
+        {
+          "type": "merge_small",
+          "params": {
+            "min_size": 200
+          }
+        },
+        {
+          "type": "add_overlap",
+          "params": {
+            "overlap_size": 50
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["api_docs", "readme_files", "technical_guides"],
+    "preserves_code_blocks": true,
+    "language_agnostic": true
+  }
+}

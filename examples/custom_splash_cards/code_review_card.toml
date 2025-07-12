@@ -1,0 +1,46 @@
+# Code Review Trauma splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "glitch_reveal"
+style = "bold red on black"
+
+# Glitch reveal effect parameters
+trauma_intensity = 0.8
+comment_cascade = true
+approval_chance = 0.01
+
+content = """
+PR #1337: Fix minor typo
+
+Files changed: 847
+Additions: +23,847
+Deletions: -2
+
+Comments (473):
+├─ @senior_dev: "Why?"
+├─ @architect: "This violates 17 principles"
+├─ @junior: "LGTM! 👍" (approval revoked)
+├─ @bot: "72% test coverage is too low"
+├─ @manager: "Can we discuss offline?"
+└─ @you: "It... it was just a typo..."
+
+Status: Changes requested
+Required approvals: 0/5
+CI/CD: ❌ Failed (timeout after 6 hours)
+Conflicts: Yes (with main, develop, and reality)
+
+Last updated: 2 years ago
+"""
+
+# Progress messages
+progress_messages = [
+    "Defending variable naming choices...",
+    "Explaining why it works on localhost...",
+    "Adding more reviewers to spread blame...",
+    "Force pushing to hide shame...",
+    "Considering career change to farming..."
+]
+
+# Additional styling
+css_classes = ["code-review", "emotional-damage"]

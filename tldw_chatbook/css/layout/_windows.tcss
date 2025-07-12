@@ -1,0 +1,19 @@
+/* ========================================
+ * LAYOUT: Windows
+ * ======================================== 
+ * Base window styles and window management
+ * ======================================== */
+
+/* Base style for ALL windows. The watcher will set display: True/False */
+.window {
+    height: 100%;
+    width: 100%;
+    layout: horizontal; /* Or vertical if needed by default */
+    overflow: hidden;
+}
+
+.placeholder-window { 
+    align: center middle; 
+    background: $panel; 
+    display: none;  /* Placeholders should always be hidden */
+}

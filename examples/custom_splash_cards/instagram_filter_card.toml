@@ -1,0 +1,52 @@
+# Instagram Filter Loader splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "fade"
+style = "gradient(purple, pink, orange)"
+
+# Fade effect parameters
+filter_intensity = 0.95
+reality_distortion = 0.99
+valencia_preset = true
+
+content = """
+╔═══════════════ 📷 INSTAGRAM OS 📷 ═══════════════╗
+║                                                  ║
+║     APPLYING FILTERS TO REALITY.EXE             ║
+║                                                  ║
+║  ┌────────────────────────────────────────┐    ║
+║  │         🌅 Loading Valencia...          │    ║
+║  │  ░░░░▓▓▓▓████████████████████ 100%    │    ║
+║  │                                         │    ║
+║  │  BEFORE: 😔 | AFTER: 😍                │    ║
+║  │                                         │    ║
+║  │  Skin smoothing: ████████████ MAX      │    ║
+║  │  Reality warping: ███████████ 95%      │    ║
+║  │  Happiness boost: ████████░░░ 80%      │    ║
+║  │  Authenticity:    ░░░░░░░░░░░ 0%       │    ║
+║  └────────────────────────────────────────┘    ║
+║                                                  ║
+║  STORY QUEUE:                                    ║
+║  ⭕ "Living my best life!" (crying internally)  ║
+║  ⭕ Food pic (already cold)                     ║
+║  ⭕ Gym selfie (from parking lot)               ║
+║                                                  ║
+║  Suggested hashtags:                             ║
+║  #NoFilter #Blessed #TLDW #FakeItTillYouMakeIt  ║
+║                                                  ║
+║  Double-tap to hide existential dread ❤️         ║
+╚══════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Removing all imperfections...",
+    "Adding golden hour lighting...",
+    "Cropping out harsh reality...",
+    "Saturating colors to 11...",
+    "Making life look effortless..."
+]
+
+# Additional styling
+css_classes = ["instagram-gradient", "filtered-life"]

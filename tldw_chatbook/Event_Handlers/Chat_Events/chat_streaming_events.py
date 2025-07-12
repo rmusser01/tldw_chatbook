@@ -1,6 +1,7 @@
 # chat_streaming_events.py
 #
 # Imports
+import json
 import logging
 import re
 import threading
@@ -17,6 +18,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import InputError, CharactersRAGDBError
 from tldw_chatbook.Constants import TAB_CHAT, TAB_CCP
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
+from tldw_chatbook.Chat.Chat_Functions import parse_tool_calls_from_response
 #
 ########################################################################################################################
 #
@@ -105,8 +107,8 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             # Display partial text along with the error.
             error_message_content = event.full_text + f"\n\n[bold red]Stream Error:[/]\n{escape_markup(event.error)}"
 
-            ai_widget.message_text = event.full_text + f"\nStream Error: {event.error}"  # Update internal raw text
-            static_text_widget.update(Text.from_markup(error_message_content))
+            ai_widget.message_text = event.full_text + f"\n\nStream Error:\n{event.error}"  # Update internal raw text
+            static_text_widget.update(ai_widget.message_text)
             ai_widget.role = "System"  # Change role to "System" or "Error"
             try:
                 header_label = ai_widget.query_one(".message-header", Label)
@@ -120,8 +122,10 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             # Apply thinking tag stripping if enabled
             if event.full_text:  # Check if there's any text to process
                 strip_tags_setting = self.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                self.loguru_logger.info(f"Strip thinking tags setting: {strip_tags_setting} (from config: {self.app_config.get('chat_defaults', {})})")
                 if strip_tags_setting:
-                    think_blocks = list(re.finditer(r"<think>.*?</think>", event.full_text, re.DOTALL))
+                    # Match both <think> and <thinking> tags
+                    think_blocks = list(re.finditer(r"<think(?:ing)?>.*?</think(?:ing)?>", event.full_text, re.DOTALL))
                     if len(think_blocks) > 1:
                         self.loguru_logger.debug(
                             f"Stripping thinking tags from streamed response. Found {len(think_blocks)} blocks.")
@@ -135,13 +139,26 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                         event.full_text = "".join(text_parts)  # Modify the event's full_text
                         self.loguru_logger.debug(f"Streamed response after stripping: {event.full_text[:200]}...")
                     else:
-                        self.loguru_logger.debug(
+                        self.loguru_logger.info(
                             f"Not stripping tags from stream: {len(think_blocks)} block(s) found (need >1), setting is {strip_tags_setting}.")
                 else:
                     self.loguru_logger.debug("Not stripping tags from stream: strip_thinking_tags setting is disabled.")
 
             ai_widget.message_text = event.full_text  # Ensure internal state has the final, complete text
-            static_text_widget.update(escape_markup(event.full_text))  # Update display with final, escaped text
+            static_text_widget.update(event.full_text)  # Update display with final text
+
+            # Check for tool calls in the response
+            tool_calls = None
+            if hasattr(event, 'response_data') and event.response_data:
+                logger.debug(f"Checking for tool calls in response data: {type(event.response_data)}")
+                tool_calls = parse_tool_calls_from_response(event.response_data)
+                if tool_calls:
+                    logger.info(f"Detected {len(tool_calls)} tool call(s) in streaming response")
+                    # TODO: Handle tool calls here
+                    # For now, just append a notice to the message
+                    tool_notice = f"\n\n[Tool Calls Detected: {len(tool_calls)} function(s) to execute]"
+                    ai_widget.message_text += tool_notice
+                    static_text_widget.update(ai_widget.message_text)
 
             # Determine sender name for DB (already set on widget by handle_api_call_worker_state_changed)
             # This is just to ensure the correct name is used for DB saving if needed.
@@ -181,6 +198,13 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                 logger.info("Stream finished with no error but content was empty/whitespace. Not saving to DB.")
 
         ai_widget.mark_generation_complete()  # Mark as complete in both error/success cases if widget exists
+        
+        # Update token counter after AI response is complete
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(self)
+        except Exception as e:
+            logger.debug(f"Could not update token counter: {e}")
 
     except QueryError as e:
         logger.error(f"QueryError during StreamDone UI update (event.error='{event.error}'): {e}", exc_info=True)
@@ -196,6 +220,10 @@ async def handle_stream_done(self, event: StreamDone) -> None:
         # Crucial for resetting state and UI.
         self.current_ai_message_widget = None  # Clear the reference to the AI message widget
         logger.debug("Cleared current_ai_message_widget in on_stream_done's finally block.")
+        
+        # Reset streaming state using thread-safe method
+        self.set_current_chat_is_streaming(False)
+        logger.debug("Reset current_chat_is_streaming to False in on_stream_done's finally block.")
 
         # Focus the appropriate input based on the current tab
         input_id_to_focus = None

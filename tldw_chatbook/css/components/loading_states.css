@@ -1,0 +1,181 @@
+/* Loading States CSS for Evaluation UI */
+
+/* Button loading states */
+Button.loading {
+    opacity: 0.7;
+}
+
+Button.loading:disabled {
+    background: $panel;
+}
+
+/* Results loading animation */
+Static.loading-indicator {
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 0.4;
+    }
+    50% {
+        opacity: 1.0;
+    }
+}
+
+/* Workflow progress styling */
+.workflow-progress {
+    margin: 1 0;
+    padding: 1 2;
+    background: $surface;
+    border: round $border;
+}
+
+.workflow-progress .progress-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.workflow-progress .steps-container {
+    layout: horizontal;
+    height: 4;
+    align: center middle;
+}
+
+.workflow-progress .progress-step {
+    layout: horizontal;
+    align: center middle;
+}
+
+.workflow-progress .step-icon {
+    width: 3;
+    height: 3;
+    content-align: center middle;
+    background: $panel;
+    border: round $border;
+}
+
+.workflow-progress .step-icon.completed {
+    background: $success;
+    color: $text;
+}
+
+.workflow-progress .step-icon.active {
+    background: $primary;
+    color: $text;
+}
+
+.workflow-progress .step-icon.error {
+    background: $error;
+    color: $text;
+}
+
+.workflow-progress .step-icon.pending {
+    background: $panel;
+    color: $text-muted;
+}
+
+.workflow-progress .step-label {
+    margin-left: 1;
+    color: $text;
+}
+
+.workflow-progress .step-connector {
+    width: 2;
+    height: 1;
+    margin: 0 1;
+    border-top: dashed $border;
+}
+
+/* Data loading cards */
+.data-loading-card {
+    margin: 1 0;
+    padding: 1 2;
+    background: $surface;
+    border: round $border;
+}
+
+.data-loading-card .card-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.data-loading-card.loading {
+    min-height: 10;
+}
+
+.data-loading-card .skeleton-loader {
+    margin: 1 0;
+}
+
+.data-loading-card .skeleton-line {
+    height: 1;
+    margin-bottom: 1;
+    background: $panel;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+    0%, 100% {
+        opacity: 0.3;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+.skeleton-line.skeleton-title {
+    width: 60%;
+}
+
+.skeleton-line.skeleton-subtitle {
+    width: 40%;
+}
+
+.skeleton-line.skeleton-content {
+    width: 80%;
+}
+
+/* Loading overlay for sections */
+.section-container.loading {
+    position: relative;
+}
+
+.section-container.loading::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 100;
+}
+
+/* Smooth transitions */
+.evals-view-area {
+    transition: opacity 0.2s ease-in-out;
+}
+
+.evals-view-area.transitioning {
+    opacity: 0.5;
+}
+
+/* Cost estimation loading */
+#cost-estimator.loading .cost-display {
+    color: $text-muted;
+    animation: pulse 1s ease-in-out infinite;
+}
+
+/* Progress tracker enhancements */
+#progress-tracker.active {
+    border-color: $primary;
+}
+
+#progress-tracker.completed {
+    border-color: $success;
+}
+
+#progress-tracker.error {
+    border-color: $error;
+}

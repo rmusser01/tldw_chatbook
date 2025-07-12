@@ -1,0 +1,484 @@
+/* ========================================
+ * Embeddings Feature Styles
+ * ======================================== */
+
+/* ========================================
+ * Main Embeddings Window Container
+ * ======================================== */
+
+/* Main window layout that contains navigation and content */
+EmbeddingsWindow {
+    layout: horizontal;
+    height: 100%;
+    width: 100%;
+}
+
+/* Navigation pane (left sidebar) */
+#embeddings-nav-pane {
+    dock: left;
+    width: 25%;
+    min-width: 20;
+    max-width: 40;
+    background: $boost;
+    padding: 1 2;
+    border-right: thick $background-darken-1;
+    height: 100%;
+    overflow-y: auto;
+}
+
+/* Content pane (main area) */
+#embeddings-content-pane {
+    width: 1fr;
+    height: 100%;
+    overflow-y: auto;  /* Allow vertical scrolling on the content pane itself */
+    overflow-x: hidden;
+}
+
+/* View area containers */
+.embeddings-view-area {
+    width: 100%;
+    height: 100%;
+    display: none;
+}
+
+/* Both views should be properly sized when shown by the watcher */
+#embeddings-view-create {
+    height: 100%;
+}
+
+#embeddings-view-manage {
+    height: 100%;
+}
+
+/* Ensure VerticalScroll works properly as direct child */
+.embeddings-view-area > VerticalScroll {
+    height: 100%;
+}
+
+/* Navigation buttons */
+.embeddings-nav-button {
+    width: 100%;
+    margin-bottom: 1;
+    height: 3;
+    border: none;
+    background: $panel;
+    color: $text-muted;
+}
+
+.embeddings-nav-button:hover {
+    background: $primary 50%;
+    color: $text;
+}
+
+.embeddings-nav-button:focus {
+    background: $primary-lighten-1;
+    color: $text;
+}
+
+.embeddings-nav-button.-active {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
+
+/* ========================================
+ * Embeddings Creation Section
+ * ======================================== */
+
+.embeddings-creation-scroll {
+    width: 100%;
+    height: 100%;
+    padding: 1 2 3 2;  /* Added extra bottom padding to ensure buttons are visible */
+}
+
+.embeddings-form-title {
+    text-style: bold;
+    text-align: center;
+    background: $accent-darken-1;
+    color: $text;
+    padding: 0 1;
+    margin-bottom: 1;
+    border: round $accent;
+    width: 100%;
+    height: 3;
+}
+
+.embeddings-section-title {
+    text-style: bold;
+    margin-top: 2;
+    margin-bottom: 1;
+    background: $primary-background-lighten-1;
+    padding: 0 1;
+    border-left: thick $accent;
+    width: 100%;
+}
+
+.embeddings-form-row {
+    layout: horizontal;
+    margin-bottom: 1;
+    height: 3;
+    align: left middle;
+    width: 100%;
+}
+
+.embeddings-form-label {
+    width: 30%;
+    min-width: 25;
+    max-width: 40;
+    padding-right: 1;
+    text-align: right;
+}
+
+.embeddings-form-control {
+    width: 1fr;
+}
+
+.embeddings-form-full-row {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* Ensure inputs and selects use full available width */
+.embeddings-form-control Input,
+.embeddings-form-control Select,
+.embeddings-form-control TextArea {
+    width: 100%;
+}
+
+/* Ensure rules take full width */
+.embeddings-form-container Rule {
+    width: 100%;
+    margin: 1 0;
+}
+
+.embeddings-input-source-container {
+    width: 100%;
+    padding: 1;
+    border: round $surface;
+    margin-bottom: 1;
+}
+
+.embeddings-file-list {
+    height: 10;
+    width: 100%;
+    border: round $primary;
+    background: $surface;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+.embeddings-chunk-preview {
+    min-height: 10;
+    max-height: 20;
+    border: round $primary-lighten-1;
+    background: $surface-darken-1;
+    padding: 1;
+    margin-top: 1;
+}
+
+.embeddings-progress-container {
+    margin-top: 2;
+    padding: 1;
+    border: round $primary;
+    background: $surface;
+}
+
+.embeddings-progress-label {
+    text-align: center;
+    margin-bottom: 1;
+}
+
+/* Action buttons container no longer used - buttons yielded directly */
+
+.embeddings-action-button {
+    margin: 1 2;
+    min-width: 30;
+    width: 100%;
+    height: 3;
+    dock: none;
+    align: center middle;
+}
+
+.embeddings-status-output {
+    margin-top: 2;
+    margin-bottom: 2;  /* Added bottom margin for better visibility */
+    min-height: 8;
+    max-height: 15;
+    border: round $primary-background-lighten-2;
+    padding: 1;
+    background: $surface;
+}
+
+/* ContentSwitcher handles visibility automatically */
+#embeddings-source-switcher {
+    width: 100%;
+    height: auto;
+}
+
+#embeddings-progress-container {
+    display: none;
+}
+
+/* Mode-specific containers */
+.embeddings-mode-container {
+    width: 100%;
+    display: none;
+}
+
+#embeddings-search-container {
+    display: block;  /* Default mode */
+}
+
+#embeddings-specific-container {
+    display: none;
+}
+
+#embeddings-keywords-container {
+    display: none;
+}
+
+/* RadioSet styling */
+#embeddings-db-mode-set {
+    layout: horizontal;
+    margin: 1 0;
+    width: 100%;
+    padding: 1;
+    background: $surface;
+    border: round $primary;
+}
+
+#embeddings-db-mode-set RadioButton {
+    margin-right: 2;
+    padding: 0 1;
+}
+
+.embeddings-db-results-container {
+    width: 100%;
+    margin-top: 1;
+    border: round $primary;
+    background: $surface;
+    padding: 1;
+    /* Allow reasonable height for the table */
+    min-height: 10;
+    max-height: 40;
+    overflow-y: auto;
+}
+
+#embeddings-db-results {
+    /* Table fills container */
+    width: 100%;
+    height: auto;
+}
+
+.embeddings-db-selection-buttons {
+    layout: horizontal;
+    margin-bottom: 1;
+    align-horizontal: left;
+}
+
+.embeddings-db-selection-button {
+    margin-right: 1;
+    min-width: 10;
+}
+
+DataTable > .datatable--cursor {
+    background: $primary 20%;
+}
+
+DataTable > .datatable--hover {
+    background: $primary 10%;
+}
+
+DataTable > .datatable--selected {
+    background: $accent 30%;
+}
+
+/* Bottom spacer to ensure content is visible */
+.embeddings-bottom-spacer {
+    height: 5;
+    width: 100%;
+}
+
+/* ========================================
+ * Embeddings Management Window
+ * ======================================== */
+
+EmbeddingsManagementWindow {
+    layout: horizontal;
+    height: 100%;
+    width: 100%;
+}
+
+.embeddings-left-pane {
+    width: 40%;
+    min-width: 30;
+    max-width: 60;
+    height: 100%;
+    background: $boost;
+    padding: 1;
+    border-right: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.embeddings-left-pane.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-right: none !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: none !important;
+}
+
+.embeddings-right-pane {
+    width: 1fr;
+    height: 100%;
+    background: $surface;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+.embeddings-section-title {
+    text-style: bold underline;
+    margin-bottom: 1;
+    text-align: center;
+    width: 100%;
+}
+
+.embeddings-list-item {
+    width: 100%;
+    padding: 1;
+    margin-bottom: 1;
+    border: round $surface;
+    background: $panel;
+}
+
+.embeddings-list-item:hover {
+    background: $panel-lighten-1;
+    border: round $accent;
+}
+
+.embeddings-list-item.-selected {
+    background: $accent-darken-1;
+    border: round $accent;
+}
+
+.embeddings-info-label {
+    text-style: bold;
+    margin-top: 1;
+    margin-bottom: 0;
+}
+
+.embeddings-info-value {
+    margin-bottom: 1;
+    padding: 1;
+    background: $surface-darken-1;
+    border: round $primary-darken-1;
+}
+
+.embeddings-action-button {
+    width: auto;
+    min-width: 20;
+    margin: 1;
+}
+
+/* Buttons in horizontal layout need specific spacing */
+.embeddings-model-info-collapsible Horizontal .embeddings-action-button {
+    width: auto;
+    min-width: 15;
+    margin: 0 1;
+}
+
+.embeddings-test-area {
+    margin-top: 2;
+    padding: 1;
+    border: round $primary;
+    background: $surface;
+}
+
+.embeddings-loading {
+    align: center middle;
+    height: 100%;
+}
+
+.embeddings-error {
+    color: $error;
+    text-style: bold;
+    padding: 1;
+    border: round $error;
+    margin: 1;
+}
+
+.embeddings-toggle-button {
+    width: 5;
+    height: 100%;
+    min-width: 0;
+    border: none;
+    background: $surface-darken-1;
+    color: $text;
+}
+
+.embeddings-toggle-button:hover {
+    background: $surface;
+}
+
+/* Management specific styles */
+.embeddings-management-container {
+    width: 100%;
+    height: 1fr;
+    padding: 1 2;
+}
+
+.embeddings-management-title {
+    text-style: bold;
+    text-align: center;
+    background: $accent-darken-1;
+    color: $text;
+    padding: 1;
+    margin-bottom: 2;
+    border: round $accent;
+}
+
+.embeddings-collections-table {
+    height: 20;
+    margin-bottom: 2;
+    border: round $primary;
+}
+
+.embeddings-collection-details {
+    height: 15;
+    border: round $primary-lighten-1;
+    background: $surface;
+    padding: 1;
+    margin-bottom: 2;
+}
+
+.embeddings-management-buttons {
+    layout: horizontal;
+    align-horizontal: center;
+    margin-top: 1;
+}
+
+.embeddings-management-button {
+    margin: 0 1;
+    min-width: 15;
+}
+
+.embeddings-loading-label {
+    text-align: center;
+    margin-top: 1;
+}
+
+/* Tab content areas in management window */
+.embeddings-management-content {
+    width: 100%;
+    height: 1fr;
+}
+
+/* Sidebar title styling */
+.sidebar-title {
+    text-style: bold;
+    margin-bottom: 1;
+    padding: 0 1;
+    color: $text-muted;
+}

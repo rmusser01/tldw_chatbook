@@ -1,0 +1,49 @@
+# Alien First Contact splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "digital_rain"
+style = "green on black"
+
+# Digital rain effect parameters with alien twist
+transmission_strength = 0.78
+universal_translator = true
+alien_symbols = "⟨◎◉◎⟩∞∴∵⊙⊕⊗"
+
+content = """
+▓▓▓▓▓▓▓▓ INCOMING TRANSMISSION ▓▓▓▓▓▓▓▓
+
+FROM: Zeta Reticuli System
+UNIVERSAL TRANSLATOR: [ACTIVE]
+
+╔════════════════════════════════════╗
+║   ⟨ ◎ ◉ ◎ ⟩  GREETINGS EARTHLING  ║
+║                                    ║
+║   We have been monitoring your     ║
+║   Stack Overflow activity.         ║
+║                                    ║
+║   Your code... it concerns us.     ║
+║                                    ║
+║   We offer our assistance:         ║
+║   • Galactic-scale debugging       ║
+║   • Quantum computing tutorials    ║
+║   • Faster-than-light algorithms   ║
+║                                    ║
+║   Please respond in binary.        ║
+║                ∞                   ║
+╚════════════════════════════════════╝
+
+SIGNAL STRENGTH: ████████░░ 78%
+"""
+
+# Progress messages
+progress_messages = [
+    "Decoding alien regex patterns...",
+    "Installing universal translator npm package...",
+    "Converting to space-time complexity...",
+    "Uploading consciousness to mothership...",
+    "Teaching aliens about JavaScript quirks..."
+]
+
+# Additional styling
+css_classes = ["alien-transmission", "first-contact"]

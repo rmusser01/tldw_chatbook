@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.12 (tldw_tui)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.11 (tldw_chatbook)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.12 (tldw_chatbook_dev)" project-jdk-type="Python SDK" />
 </project>

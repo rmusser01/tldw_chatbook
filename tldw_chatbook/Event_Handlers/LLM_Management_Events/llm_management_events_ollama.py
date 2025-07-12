@@ -11,21 +11,28 @@ import asyncio
 
 import json
 import logging
+import shlex
+import subprocess
+import sys
 import time
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-#from cv2 import data
 from textual.containers import Container
 from textual.css.query import QueryError
 from textual.widgets import Input, TextArea, RichLog
 
-from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import _make_path_update_callback
+from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import (
+    _make_path_update_callback,
+    _stream_process,
+    stream_worker_output_to_log
+)
 from tldw_chatbook.Local_Inference.ollama_model_mgmt import ollama_list_local_models, ollama_model_info, ollama_delete_model, \
     ollama_copy_model, ollama_create_model, ollama_push_model, ollama_pull_model, ollama_list_running_models, \
     ollama_generate_embeddings
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -33,8 +40,10 @@ if TYPE_CHECKING:
 __all__ = [
     # ─── Ollama ───────────────────────────────────────────────────────────────
     "handle_ollama_nav_button_pressed",
-    # FIXME
-    #"handle_ollama_list_models_button_pressed",
+    "handle_ollama_browse_exec_button_pressed",
+    "handle_ollama_start_service_button_pressed",
+    "handle_ollama_stop_service_button_pressed",
+    "handle_ollama_list_models_button_pressed",
     "handle_ollama_show_model_button_pressed",
     "handle_ollama_delete_model_button_pressed",
     "handle_ollama_copy_model_button_pressed",
@@ -44,6 +53,7 @@ __all__ = [
     "handle_ollama_push_model_button_pressed",
     "handle_ollama_embeddings_button_pressed",
     "handle_ollama_ps_button_pressed",
+    "OLLAMA_BUTTON_HANDLERS",
 ]
 
 ###############################################################################
@@ -107,58 +117,151 @@ async def handle_ollama_nav_button_pressed(app: "TldwCli") -> None:
         app.notify("An unexpected error occurred while switching to Ollama view.", severity="error")
 
 
-# FIXME
-# async def handle_ollama_list_models_button_pressed(app: "TldwCli") -> None:
-#     """Handles the 'List Models' button press for Ollama."""
-#     logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
-#     logger.debug("Ollama 'List Models' button pressed.")
-#     try:
-#         base_url_input = app.query_one("#ollama-server-url", Input)
-#         log_output_widget = app.query_one("#ollama-combined-output", RichLog)
-#
-#         base_url = base_url_input.value.strip()
-#         if not base_url:
-#             app.notify("Ollama Server URL is required.", severity="error")
-#             base_url_input.focus()
-#             return
-#
-#         log_output_widget.clear()
-#         _update_ollama_combined_output(app, f"Attempting to list models from: {base_url}...")
-#
-#         app.run_worker(
-#             _worker_ollama_list_models,
-#             base_url,
-#             thread=True,
-#             name=f"ollama_list_models_{time.monotonic()}",
-#             group="ollama_api",
-#             description="Listing Ollama local models",
-#             on_success=partial(_on_list_models_success, app),
-#             on_error=partial(_on_ollama_worker_error, app, "list_models")
-#         )
-#         if logging.error:
-#             log_output_widget.write(f"Error listing models: {logging.error}")
-#
-#         if logging.error: # This is the original error check, the one above is newly added by script
-#             log_output_widget.write(f"Error listing models: {logging.error}")
-#             app.notify("Error listing Ollama models.", severity="error")
-#         elif data and data.get('models'):
-#             try:
-#                 # Assuming 'data' is the JSON response, and 'models' is a list within it.
-#                 formatted_models = json.dumps(data['models'], indent=2)
-#                 log_output_widget.write(formatted_models)
-#                 app.notify(f"Successfully listed {len(data['models'])} Ollama models.")
-#             except (TypeError, KeyError, json.JSONDecodeError) as e:
-#                 log_output_widget.write(f"Error processing model list response: {e}\nRaw data: {data}")
-#                 app.notify("Error processing model list from Ollama.", severity="error")
-#         else:
-#             log_output_widget.write("No models found or unexpected response.")
-#             app.notify("No Ollama models found or unexpected response.", severity="warning")
-#     except QueryError as e: # pragma: no cover
-#         logger.error(f"QueryError in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
-#         app.notify("Error accessing Ollama UI elements for listing models.", severity="error")
-#     except Exception as e: # pragma: no cover
-#         logger.error(f"Unexpected error in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
-#         app.notify("An unexpected error occurred while listing Ollama models.", severity="error")
+async def handle_ollama_browse_exec_button_pressed(app: "TldwCli") -> None:
+    """Handles the 'Browse' button press for Ollama executable path."""
+    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger.debug("Ollama browse executable button pressed.")
+
+    exec_filters = Filters(
+        ("Executables", lambda p: p.is_file() and p.name.lower() == "ollama"),
+        ("All files (*.*)", lambda p: True)
+    )
+    await app.push_screen(
+        FileOpen(
+            location=str(Path.home()),
+            title="Select Ollama Executable",
+            filters=exec_filters,
+            context="ollama_models"
+        ),
+        callback=_make_path_update_callback(app, "ollama-exec-path")
+    )
+
+
+async def handle_ollama_start_service_button_pressed(app: "TldwCli") -> None:
+    """Handles the 'Start Ollama Service' button press."""
+    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger.debug("Ollama 'Start Service' button pressed.")
+    
+    try:
+        exec_path_input = app.query_one("#ollama-exec-path", Input)
+        log_output_widget = app.query_one("#ollama-log-output", RichLog)
+        
+        exec_path = exec_path_input.value.strip()
+        
+        # Check if we have a valid executable path
+        if not exec_path:
+            # Try to find ollama in PATH
+            import shutil
+            exec_path = shutil.which("ollama")
+            if exec_path:
+                exec_path_input.value = exec_path
+                logger.info(f"Found ollama in PATH at: {exec_path}")
+            else:
+                app.notify("Ollama executable path is required. Please browse for the ollama executable or ensure it's in PATH.", severity="error")
+                exec_path_input.focus()
+                return
+        
+        # Verify the executable exists
+        if not Path(exec_path).is_file():
+            app.notify(f"Ollama executable not found at: {exec_path}", severity="error")
+            exec_path_input.focus()
+            return
+        
+        log_output_widget.clear()
+        log_output_widget.write(f"Starting Ollama service using: {exec_path}")
+        
+        # Start the Ollama service
+        cmd = [exec_path, "serve"]
+        
+        app.run_worker(
+            _stream_process,
+            cmd,
+            stream_worker_output_to_log(app, "ollama-log-output"),
+            thread=True,
+            name="ollama_serve_process",
+            group="ollama_serve",
+            exclusive=True,
+            description="Running Ollama service")
+        
+        app.notify("Ollama service starting...", severity="information")
+        
+    except QueryError as e:
+        logger.error(f"QueryError in handle_ollama_start_service_button_pressed: {e}", exc_info=True)
+        app.notify("Error accessing UI elements for starting Ollama service.", severity="error")
+    except Exception as e:
+        logger.error(f"Unexpected error in handle_ollama_start_service_button_pressed: {e}", exc_info=True)
+        app.notify("An unexpected error occurred while starting Ollama service.", severity="error")
+
+
+async def handle_ollama_stop_service_button_pressed(app: "TldwCli") -> None:
+    """Handles the 'Stop Ollama Service' button press."""
+    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger.debug("Ollama 'Stop Service' button pressed.")
+    
+    try:
+        log_output_widget = app.query_one("#ollama-log-output", RichLog)
+        
+        # Cancel any running Ollama service workers
+        cancelled = app.workers.cancel_group("ollama_serve")
+        
+        if cancelled:
+            log_output_widget.write("\n[bold yellow]Stopping Ollama service...[/bold yellow]")
+            app.notify("Ollama service stopped.", severity="information")
+        else:
+            log_output_widget.write("\n[bold yellow]No running Ollama service found.[/bold yellow]")
+            app.notify("No running Ollama service to stop.", severity="warning")
+            
+    except QueryError as e:
+        logger.error(f"QueryError in handle_ollama_stop_service_button_pressed: {e}", exc_info=True)
+        app.notify("Error accessing UI elements for stopping Ollama service.", severity="error")
+    except Exception as e:
+        logger.error(f"Unexpected error in handle_ollama_stop_service_button_pressed: {e}", exc_info=True)
+        app.notify("An unexpected error occurred while stopping Ollama service.", severity="error")
+
+
+async def handle_ollama_list_models_button_pressed(app: "TldwCli") -> None:
+    """Handles the 'List Models' button press for Ollama."""
+    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger.debug("Ollama 'List Models' button pressed.")
+    try:
+        base_url_input = app.query_one("#ollama-server-url", Input)
+        log_output_widget = app.query_one("#ollama-combined-output", RichLog)
+
+        base_url = base_url_input.value.strip()
+        if not base_url:
+            app.notify("Ollama Server URL is required.", severity="error")
+            base_url_input.focus()
+            return
+
+        log_output_widget.clear()
+        log_output_widget.write(f"Attempting to list models from: {base_url}...")
+
+        data, error = await asyncio.to_thread(
+            ollama_list_local_models,
+            base_url=base_url
+        )
+        
+        if error:
+            log_output_widget.write(f"Error listing models: {error}")
+            app.notify("Error listing Ollama models.", severity="error")
+        elif data and data.get('models'):
+            try:
+                # Format the models list
+                formatted_models = json.dumps(data['models'], indent=2)
+                log_output_widget.write(formatted_models)
+                app.notify(f"Successfully listed {len(data['models'])} Ollama models.")
+            except (TypeError, KeyError, json.JSONDecodeError) as e:
+                log_output_widget.write(f"Error processing model list response: {e}\nRaw data: {data}")
+                app.notify("Error processing model list from Ollama.", severity="error")
+        else:
+            log_output_widget.write("No models found or unexpected response.")
+            app.notify("No Ollama models found or unexpected response.", severity="warning")
+    except QueryError as e: # pragma: no cover
+        logger.error(f"QueryError in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
+        app.notify("Error accessing Ollama UI elements for listing models.", severity="error")
+    except Exception as e: # pragma: no cover
+        logger.error(f"Unexpected error in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
+        app.notify("An unexpected error occurred while listing Ollama models.", severity="error")
 
 
 async def handle_ollama_show_model_button_pressed(app: "TldwCli") -> None:
@@ -192,9 +295,6 @@ async def handle_ollama_show_model_button_pressed(app: "TldwCli") -> None:
             model_name=model_name
         )
         if error:
-            log_output_widget.write(f"Error showing model info for '{model_name}': {error}")
-
-        if error: # This is the original error check, the one above is newly added by script
             log_output_widget.write(f"Error showing model info for '{model_name}': {error}")
             app.notify(f"Error fetching info for {model_name}.", severity="error")
         elif data:
@@ -249,9 +349,6 @@ async def handle_ollama_delete_model_button_pressed(app: "TldwCli") -> None:
             stream_log_callback=stream_to_log
         )
         if error:
-            log_output_widget.write(f"[bold red]Error deleting model '{model_name}': {error}[/bold red]")
-
-        if error: # This is the original error check, the one above is newly added by script
             log_output_widget.write(f"[bold red]Error deleting model '{model_name}': {error}[/bold red]")
             app.notify(f"Error deleting {model_name}.", severity="error")
         else:
@@ -313,9 +410,6 @@ async def handle_ollama_copy_model_button_pressed(app: "TldwCli") -> None:
         )
         if error:
             log_output_widget.write(f"[bold red]Error copying model '{source_model}' to '{dest_model}': {error}[/bold red]")
-
-        if error: # This is the original error check, the one above is newly added by script
-            log_output_widget.write(f"[bold red]Error copying model '{source_model}' to '{dest_model}': {error}[/bold red]")
             app.notify(f"Error copying {source_model}.", severity="error")
         else:
             # Ollama copy API returns 200 OK on success with no body.
@@ -370,9 +464,6 @@ async def handle_ollama_pull_model_button_pressed(app: "TldwCli") -> None:
         )
         if error:
             log_output_widget.write(f"[bold red]Error pulling model '{model_name}': {error}[/bold red]")
-
-        if error: # This is the original error check, the one above is newly added by script
-            log_output_widget.write(f"[bold red]Error pulling model '{model_name}': {error}[/bold red]")
             app.notify(f"Error pulling {model_name}.", severity="error")
         else:
             log_output_widget.write(f"Model '{model_name}' pull process finished. Check logs above for status.")
@@ -398,11 +489,12 @@ async def handle_ollama_browse_modelfile_button_pressed(app: "TldwCli") -> None:
     )
     await app.push_screen(
         FileOpen(
-            location=str(Path.cwd()), # Start in current working directory or user's preferred location
+            location=str(Path.cwd()),
             title="Select Modelfile",
             filters=modelfile_filters,
+            context="ollama_models"
         ),
-        callback=_make_path_update_callback(app, "ollama-create-modelfile-path"),
+        callback=_make_path_update_callback(app, "ollama-create-modelfile-path")
     )
 
 
@@ -453,9 +545,6 @@ async def handle_ollama_create_model_button_pressed(app: "TldwCli") -> None:
         )
         if error:
             log_output_widget.write(f"[bold red]Error creating model '{model_name}': {error}[/bold red]")
-
-        if error: # This is the original error check, the one above is newly added by script
-            log_output_widget.write(f"[bold red]Error creating model '{model_name}': {error}[/bold red]")
             app.notify(f"Error creating {model_name}.", severity="error")
         else:
             log_output_widget.write(f"Model '{model_name}' creation process finished. Check logs above for status.")
@@ -502,9 +591,6 @@ async def handle_ollama_push_model_button_pressed(app: "TldwCli") -> None:
             stream_log_callback=stream_to_log
         )
         if error:
-            log_output_widget.write(f"[bold red]Error pushing model '{model_name}': {error}[/bold red]")
-
-        if error: # This is the original error check, the one above is newly added by script
             log_output_widget.write(f"[bold red]Error pushing model '{model_name}': {error}[/bold red]")
             app.notify(f"Error pushing {model_name}.", severity="error")
         else:
@@ -560,9 +646,6 @@ async def handle_ollama_embeddings_button_pressed(app: "TldwCli") -> None:
         )
         if error:
             embeddings_output_widget.write(f"Error generating embeddings: {error}")
-
-        if error: # This is the original error check, the one above is newly added by script
-            embeddings_output_widget.write(f"Error generating embeddings: {error}")
             app.notify("Error generating embeddings.", severity="error")
         elif data and data.get('embedding'):
             try:
@@ -609,9 +692,6 @@ async def handle_ollama_ps_button_pressed(app: "TldwCli") -> None:
         )
         if error:
             ps_output_widget.write(f"Error listing running models: {error}")
-
-        if error: # This is the original error check, the one above is newly added by script
-            ps_output_widget.write(f"Error listing running models: {error}")
             app.notify("Error listing running Ollama models.", severity="error")
         elif data and data.get('models'):
             try:
@@ -630,6 +710,23 @@ async def handle_ollama_ps_button_pressed(app: "TldwCli") -> None:
     except Exception as e: # pragma: no cover
         logger.error(f"Unexpected error in handle_ollama_ps_button_pressed: {e}", exc_info=True)
         app.notify("An unexpected error occurred while listing running models.", severity="error")
+
+# --- Button Handler Map ---
+OLLAMA_BUTTON_HANDLERS = {
+    "ollama-browse-exec-button": handle_ollama_browse_exec_button_pressed,
+    "ollama-start-service-button": handle_ollama_start_service_button_pressed,
+    "ollama-stop-service-button": handle_ollama_stop_service_button_pressed,
+    "ollama-list-models-button": handle_ollama_list_models_button_pressed,
+    "ollama-show-model-button": handle_ollama_show_model_button_pressed,
+    "ollama-delete-model-button": handle_ollama_delete_model_button_pressed,
+    "ollama-copy-model-button": handle_ollama_copy_model_button_pressed,
+    "ollama-pull-model-button": handle_ollama_pull_model_button_pressed,
+    "ollama-create-model-button": handle_ollama_create_model_button_pressed,
+    "ollama-browse-modelfile-button": handle_ollama_browse_modelfile_button_pressed,
+    "ollama-push-model-button": handle_ollama_push_model_button_pressed,
+    "ollama-embeddings-button": handle_ollama_embeddings_button_pressed,
+    "ollama-ps-button": handle_ollama_ps_button_pressed,
+}
 
 #
 # End of llm_management_events_ollama.py
