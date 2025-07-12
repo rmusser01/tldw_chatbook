@@ -443,6 +443,7 @@ async def perform_full_rag_pipeline(
     max_context_length: int = 10000,
     chunk_size: int = 400,
     chunk_overlap: int = 100,
+    chunk_type: str = "words",
     include_metadata: bool = True,
     enable_rerank: bool = True,
     reranker_model: str = "flashrank",
@@ -496,10 +497,11 @@ async def perform_full_rag_pipeline(
     config.search.include_citations = include_metadata
     config.chunking.chunk_size = chunk_size
     config.chunking.chunk_overlap = chunk_overlap
+    config.chunking.chunking_method = chunk_type
     
     # Generate a simple hash of the config for caching
     import hashlib
-    config_str = f"{persist_dir}_{chunk_size}_{chunk_overlap}"
+    config_str = f"{persist_dir}_{chunk_size}_{chunk_overlap}_{chunk_type}"
     config_hash = hashlib.md5(config_str.encode()).hexdigest()
     
     # Check if we can use cached service
@@ -884,6 +886,7 @@ async def perform_hybrid_rag_search(
     reranker_model: str = "flashrank",
     chunk_size: int = 400,
     chunk_overlap: int = 100,
+    chunk_type: str = "words",
     bm25_weight: float = 0.5,
     vector_weight: float = 0.5,
     keyword_filter_list: Optional[List[str]] = None
@@ -905,6 +908,7 @@ async def perform_hybrid_rag_search(
         reranker_model: Which re-ranker to use
         chunk_size: Size of chunks for vector search
         chunk_overlap: Overlap between chunks
+        chunk_type: Type of chunking (words, characters, tokens, sentences)
         bm25_weight: Weight for BM25 scores (0-1)
         vector_weight: Weight for vector search scores (0-1)
         
@@ -943,6 +947,7 @@ async def perform_hybrid_rag_search(
             config.search.default_top_k = top_k * 3
             config.chunking.chunk_size = chunk_size
             config.chunking.chunk_overlap = chunk_overlap
+            config.chunking.chunking_method = chunk_type
             
             rag_service = RAGService(config)
             
@@ -1241,6 +1246,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         
         chunk_size = int(app.query_one("#chat-rag-chunk-size").value or "400")
         chunk_overlap = int(app.query_one("#chat-rag-chunk-overlap").value or "100")
+        chunk_type = app.query_one("#chat-rag-chunk-type").value or "words"
         include_metadata = app.query_one("#chat-rag-include-metadata-checkbox").value
         
         # Query expansion settings
@@ -1323,7 +1329,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                     logger.info(f"Performing semantic RAG search for query: '{query}'")
                     results, _ = await perform_full_rag_pipeline(
                         app, query, sources, top_k, max_context_length,
-                        chunk_size, chunk_overlap, include_metadata,
+                        chunk_size, chunk_overlap, chunk_type, include_metadata,
                         enable_rerank=False, reranker_model=reranker_model,
                         keyword_filter_list=keyword_filter_list
                     )
@@ -1334,6 +1340,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                         app, query, sources, top_k, max_context_length,
                         enable_rerank=False, reranker_model=reranker_model,
                         chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+                        chunk_type=chunk_type,
                         bm25_weight=0.5, vector_weight=0.5,
                         keyword_filter_list=keyword_filter_list
                     )
@@ -1453,7 +1460,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 logger.info("Performing semantic RAG search (embeddings)")
                 results, context = await perform_full_rag_pipeline(
                     app, user_message, sources, top_k, max_context_length,
-                    chunk_size, chunk_overlap, include_metadata,
+                    chunk_size, chunk_overlap, chunk_type, include_metadata,
                     enable_rerank, reranker_model, keyword_filter_list
                 )
             elif search_mode == "hybrid":
@@ -1461,7 +1468,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 results, context = await perform_hybrid_rag_search(
                     app, user_message, sources, top_k, max_context_length,
                     enable_rerank, reranker_model, chunk_size, chunk_overlap,
-                    0.5, 0.5,  # Default weights for BM25 and vector search
+                    chunk_type, 0.5, 0.5,  # Default weights for BM25 and vector search
                     keyword_filter_list
                 )
             else:
@@ -1469,7 +1476,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
                 logger.warning(f"Unknown search mode '{search_mode}', defaulting to semantic")
                 results, context = await perform_full_rag_pipeline(
                     app, user_message, sources, top_k, max_context_length,
-                    chunk_size, chunk_overlap, include_metadata,
+                    chunk_size, chunk_overlap, chunk_type, include_metadata,
                     enable_rerank, reranker_model, keyword_filter_list
                 )
         

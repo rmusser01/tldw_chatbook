@@ -137,6 +137,15 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                     classes="attach-button-toggle",
                     tooltip="Show/hide the file attachment button in chat"
                 )
+            
+            # User Identifier for personalization
+            yield Static("User Identifier", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-llm-user-identifier", 
+                placeholder="e.g., user-123",
+                classes="sidebar-input",
+                tooltip="Optional user identifier for personalizing context"
+            )
 
         # -------------------------------------------------------------------
         # RAG Settings (Prominent Panel - Always visible)
@@ -252,6 +261,80 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 placeholder="1-5",
                 classes="sidebar-input"
             )
+            
+            # Chunking Settings
+            yield Static("", classes="sidebar-separator")
+            yield Static("Chunking Settings", classes="sidebar-label")
+            
+            yield Static("Chunk Type", classes="sidebar-label")
+            yield Select(
+                [
+                    ("Words", "words"),
+                    ("Sentences", "sentences"),
+                    ("Paragraphs", "paragraphs")
+                ],
+                id=f"{id_prefix}-rag-chunk-type",
+                value="words",
+                prompt="Select chunk type...",
+                allow_blank=False,
+                classes="sidebar-select"
+            )
+            
+            yield Static("Chunk Size", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-chunk-size",
+                value="400",
+                placeholder="e.g., 400",
+                classes="sidebar-input"
+            )
+            
+            yield Static("Chunk Overlap", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-chunk-overlap",
+                value="100",
+                placeholder="e.g., 100",
+                classes="sidebar-input"
+            )
+            
+            # Advanced RAG Settings Separator
+            yield Static("", classes="sidebar-separator")
+            yield Static("Advanced RAG Settings", classes="sidebar-label sidebar-section-header")
+            
+            # Re-ranking Options
+            yield Checkbox(
+                "Enable Re-ranking",
+                id=f"{id_prefix}-rag-rerank-enable-checkbox",
+                value=True,
+                classes="sidebar-checkbox"
+            )
+            
+            yield Static("Re-ranker Model", classes="sidebar-label")
+            yield Select(
+                [
+                    ("FlashRank (Local)", "flashrank"),
+                    ("Cohere Rerank", "cohere"),
+                    ("None", "none")
+                ],
+                id=f"{id_prefix}-rag-reranker-model",
+                value="flashrank",
+                prompt="Select Re-ranker...",
+                allow_blank=False
+            )
+            
+            yield Static("Max Context Length (chars)", classes="sidebar-label")
+            yield Input(
+                id=f"{id_prefix}-rag-max-context-length",
+                value="10000",
+                placeholder="e.g., 10000",
+                classes="sidebar-input"
+            )
+            
+            yield Checkbox(
+                "Include Context Metadata",
+                id=f"{id_prefix}-rag-include-metadata-checkbox",
+                value=True,
+                classes="sidebar-checkbox"
+            )
 
         # -------------------------------------------------------------------
         # Advanced Model Parameters (Hidden in Basic Mode)
@@ -300,85 +383,6 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             yield Static("Response Format", classes="sidebar-label")
             yield Select(options=[("text", "text"), ("json_object", "json_object")],
                          id=f"{id_prefix}-llm-response-format", value="text", allow_blank=False)
-
-        # -------------------------------------------------------------------
-        # Advanced RAG Settings (Hidden in Basic Mode)
-        # -------------------------------------------------------------------
-        with Collapsible(title="Advanced RAG", collapsed=True, id=f"{id_prefix}-advanced-rag", classes="settings-collapsible advanced-mode advanced-only"):
-            # Search Mode Selection
-            yield Static("Search Mode", classes="sidebar-label")
-            yield Select(
-                [
-                    ("Keyword (BM25)", "plain"),
-                    ("Semantic (Embeddings)", "semantic"),
-                    ("Hybrid (BM25 + Semantic)", "hybrid")
-                ],
-                id=f"{id_prefix}-rag-search-mode",
-                value="semantic",
-                prompt="Select Search Mode...",
-                allow_blank=False,
-                classes="sidebar-select"
-            )
-            
-            yield Checkbox(
-                "Plain RAG (BM25 only)",
-                id=f"{id_prefix}-rag-plain-enable-checkbox",
-                value=False,
-                classes="sidebar-checkbox"
-            )
-            
-            # Re-ranking Options
-            yield Checkbox(
-                "Enable Re-ranking",
-                id=f"{id_prefix}-rag-rerank-enable-checkbox",
-                value=True,
-                classes="sidebar-checkbox"
-            )
-            
-            yield Static("Re-ranker Model", classes="sidebar-label")
-            yield Select(
-                [
-                    ("FlashRank (Local)", "flashrank"),
-                    ("Cohere Rerank", "cohere"),
-                    ("None", "none")
-                ],
-                id=f"{id_prefix}-rag-reranker-model",
-                value="flashrank",
-                prompt="Select Re-ranker...",
-                allow_blank=False
-            )
-            
-            # Advanced RAG Options
-            yield Static("Chunk Size (words)", classes="sidebar-label")
-            yield Input(
-                id=f"{id_prefix}-rag-chunk-size",
-                value="400",
-                placeholder="e.g., 400",
-                classes="sidebar-input"
-            )
-            
-            yield Static("Chunk Overlap (words)", classes="sidebar-label")
-            yield Input(
-                id=f"{id_prefix}-rag-chunk-overlap",
-                value="100",
-                placeholder="e.g., 100",
-                classes="sidebar-input"
-            )
-            
-            yield Static("Max Context Length (chars)", classes="sidebar-label")
-            yield Input(
-                id=f"{id_prefix}-rag-max-context-length",
-                value="10000",
-                placeholder="e.g., 10000",
-                classes="sidebar-input"
-            )
-            
-            yield Checkbox(
-                "Include Context Metadata",
-                id=f"{id_prefix}-rag-include-metadata-checkbox",
-                value=True,
-                classes="sidebar-checkbox"
-            )
 
         # -------------------------------------------------------------------
         # Conversation Management (Always visible)
@@ -434,9 +438,6 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
             # More token parameters
             yield Static("N (Completions)", classes="sidebar-label")
             yield Input(id=f"{id_prefix}-llm-n", value="1", placeholder="e.g., 1", classes="sidebar-input")
-            yield Static("User Identifier", classes="sidebar-label")
-            yield Input(id=f"{id_prefix}-llm-user-identifier", placeholder="e.g., user-123",
-                        classes="sidebar-input")
             yield Checkbox("Logprobs", id=f"{id_prefix}-llm-logprobs", value=False)
             yield Static("Top Logprobs", classes="sidebar-label")
             yield Input(id=f"{id_prefix}-llm-top-logprobs", value="0", placeholder="e.g., 5",
