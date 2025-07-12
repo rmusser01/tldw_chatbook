@@ -228,3 +228,228 @@ async def test_handle_stream_done_no_widget(mock_app):
         severity="error",
         timeout=10
     )
+
+
+# ========== Edge Case Tests ==========
+
+async def test_handle_streaming_chunk_empty_text(mock_app):
+    """Test handling empty text chunks (should not cause errors)."""
+    event = StreamingChunk(text_chunk="")
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    mock_widget.message_text = "Initial text"
+
+    await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
+
+    # Should append empty string without error
+    assert mock_widget.message_text == "Initial text"
+    
+    # Update should still be called
+    mock_static = mock_widget.query_one(".message-text", Static)
+    mock_static.update.assert_called()
+
+
+async def test_handle_streaming_chunk_special_characters(mock_app):
+    """Test handling special characters in streaming chunks."""
+    # Test various special characters that might cause issues
+    special_chunks = [
+        "Hello\nWorld",  # Newline
+        "Test\tTab",     # Tab
+        "Quote\"Test",   # Double quote
+        "Quote'Test",    # Single quote  
+        "Backslash\\Test", # Backslash
+        "Unicode: 😀 🚀", # Unicode emojis
+        "<script>alert('xss')</script>", # HTML-like content
+        "```python\nprint('code')\n```", # Code blocks
+    ]
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    
+    for chunk in special_chunks:
+        mock_widget.message_text = ""
+        event = StreamingChunk(text_chunk=chunk)
+        
+        await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
+        
+        assert mock_widget.message_text == chunk
+        
+        # Verify proper Text object creation
+        mock_static = mock_widget.query_one(".message-text", Static)
+        update_call_arg = mock_static.update.call_args[0][0]
+        assert isinstance(update_call_arg, Text)
+        assert update_call_arg.plain == chunk
+
+
+async def test_handle_streaming_chunk_very_long_text(mock_app):
+    """Test handling very long streaming chunks."""
+    # Create a very long chunk (10KB)
+    long_chunk = "A" * 10240
+    event = StreamingChunk(text_chunk=long_chunk)
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    mock_widget.message_text = ""
+
+    await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
+
+    assert mock_widget.message_text == long_chunk
+    assert len(mock_widget.message_text) == 10240
+
+
+async def test_handle_streaming_chunk_unmounted_widget(mock_app):
+    """Test handling chunk when widget is unmounted."""
+    event = StreamingChunk(text_chunk="Test")
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    mock_widget.is_mounted = False  # Widget is not mounted
+
+    # Should handle gracefully without error
+    await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
+
+    # Update should not be called on unmounted widget
+    mock_static = mock_widget.query_one(".message-text", Static)
+    mock_static.update.assert_not_called()
+
+
+async def test_handle_stream_done_ephemeral_chat(mock_app):
+    """Test stream completion in ephemeral chat (should not save)."""
+    mock_app.current_chat_is_ephemeral = True
+    mock_app.current_chat_conversation_id = None
+    
+    event = StreamDone(full_text="Ephemeral response", error=None)
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
+        await streaming_events.handle_stream_done.__get__(mock_app)(event)
+
+        # Should NOT save to database
+        mock_ccl.add_message_to_conversation.assert_not_called()
+        
+        # But should still update UI
+        mock_static = mock_widget.query_one(".message-text", Static)
+        mock_static.update.assert_called_with("Ephemeral response")
+
+
+async def test_handle_stream_done_db_save_failure(mock_app):
+    """Test handling database save failure gracefully."""
+    event = StreamDone(full_text="Response to save", error=None)
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
+        # Mock DB failure
+        mock_ccl.add_message_to_conversation.side_effect = Exception("DB Error")
+        
+        await streaming_events.handle_stream_done.__get__(mock_app)(event)
+
+        # Should still update UI despite DB error
+        mock_static = mock_widget.query_one(".message-text", Static)
+        mock_static.update.assert_called_with("Response to save")
+        
+        # Widget should not have message_id since save failed
+        assert mock_widget.message_id_internal is None
+
+
+async def test_handle_stream_done_concurrent_streams(mock_app):
+    """Test handling multiple concurrent stream completions."""
+    # Simulate two streams finishing close together
+    event1 = StreamDone(full_text="Response 1", error=None)
+    event2 = StreamDone(full_text="Response 2", error=None)
+    
+    # Create two different widgets to simulate different streams
+    mock_widget1 = MagicMock()
+    mock_widget1.is_mounted = True
+    mock_widget1.message_text = ""
+    mock_widget1.role = "AI"
+    mock_widget1.query_one = MagicMock(return_value=MagicMock(update=MagicMock()))
+    mock_widget1.mark_generation_complete = MagicMock()
+    
+    mock_widget2 = MagicMock()
+    mock_widget2.is_mounted = True  
+    mock_widget2.message_text = ""
+    mock_widget2.role = "AI"
+    mock_widget2.query_one = MagicMock(return_value=MagicMock(update=MagicMock()))
+    mock_widget2.mark_generation_complete = MagicMock()
+
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
+        # First stream
+        mock_app.get_current_ai_message_widget.return_value = mock_widget1
+        await streaming_events.handle_stream_done.__get__(mock_app)(event1)
+        
+        # Second stream immediately after
+        mock_app.get_current_ai_message_widget.return_value = mock_widget2
+        await streaming_events.handle_stream_done.__get__(mock_app)(event2)
+        
+        # Both should complete successfully
+        assert mock_ccl.add_message_to_conversation.call_count == 2
+
+
+async def test_handle_stream_done_with_tool_calls(mock_app):
+    """Test stream completion with tool calling indicators."""
+    # Response with tool call syntax
+    full_text = """I'll help you with that calculation.
+
+<tool_call>
+{"name": "calculator", "arguments": {"a": 5, "b": 3, "operation": "add"}}
+</tool_call>
+
+The result should be 8."""
+    
+    event = StreamDone(full_text=full_text, error=None)
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
+        await streaming_events.handle_stream_done.__get__(mock_app)(event)
+
+        # Should save the full text including tool calls
+        mock_ccl.add_message_to_conversation.assert_called_once()
+        saved_text = mock_ccl.add_message_to_conversation.call_args[0][3]
+        assert "<tool_call>" in saved_text
+        assert "calculator" in saved_text
+
+
+async def test_handle_stream_done_strip_multiple_think_tags(mock_app):
+    """Test stripping multiple think tags correctly."""
+    full_text = """<think>First thought</think>
+Visible response part 1.
+<think>Second thought</think>
+Visible response part 2.
+<think>Third thought</think>"""
+    
+    expected_stripped = """Visible response part 1.
+
+Visible response part 2."""
+    
+    event = StreamDone(full_text=full_text, error=None)
+    mock_app.app_config["chat_defaults"]["strip_thinking_tags"] = True
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
+        await streaming_events.handle_stream_done.__get__(mock_app)(event)
+
+        # Check that multiple think tags are stripped
+        saved_text = mock_ccl.add_message_to_conversation.call_args[0][3]
+        # The implementation keeps the last think tag if there are multiple
+        assert saved_text == expected_stripped + "\n<think>Third thought</think>"
+
+
+async def test_handle_streaming_rapid_chunks(mock_app):
+    """Test handling rapid succession of streaming chunks."""
+    # Simulate rapid chunks that might arrive faster than UI can update
+    chunks = ["H", "e", "l", "l", "o", " ", "W", "o", "r", "l", "d", "!"]
+    
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    mock_widget.message_text = ""
+
+    for chunk in chunks:
+        event = StreamingChunk(text_chunk=chunk)
+        await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
+
+    # All chunks should be accumulated
+    assert mock_widget.message_text == "Hello World!"
+    
+    # Update should have been called multiple times
+    mock_static = mock_widget.query_one(".message-text", Static)
+    assert mock_static.update.call_count == len(chunks)

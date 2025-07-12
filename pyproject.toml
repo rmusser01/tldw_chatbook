@@ -104,6 +104,9 @@ websearch = [
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
 local_transformers = ["transformers"]
+mcp = [
+    "mcp[cli]>=1.0.0",
+]
 pdf = [
     "pymupdf",
     "pymupdf4llm",

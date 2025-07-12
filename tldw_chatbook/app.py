@@ -3770,6 +3770,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     @on(Collapsible.Toggled, "#chat-conversations")
     async def on_chat_conversations_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
         """Handles the expansion/collapse of the Conversations collapsible section in the chat sidebar."""
+        # Check if this is specifically the chat conversations collapsible
+        if event.collapsible.id != "chat-conversations":
+            return
+            
         if not event.collapsible.collapsed:  # If the collapsible was just expanded
             self.loguru_logger.info("Conversations collapsible opened in chat sidebar.")
             
@@ -3777,9 +3781,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # This avoids the database connection conflicts that occur during startup
             if not self._chat_character_filter_populated:
                 self.loguru_logger.info("Populating character filter for the first time.")
-                from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
-                await chat_events.populate_chat_conversation_character_filter_select(self)
-                self._chat_character_filter_populated = True
+                try:
+                    from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
+                    await chat_events.populate_chat_conversation_character_filter_select(self)
+                    self._chat_character_filter_populated = True
+                    self.loguru_logger.info("Character filter populated successfully.")
+                except Exception as e:
+                    self.loguru_logger.error(f"Failed to populate character filter: {e}", exc_info=True)
             else:
                 self.loguru_logger.debug("Character filter already populated, skipping.")
         else:
@@ -3918,6 +3926,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await notes_handlers.handle_notes_title_changed(self, event)
         # --- Chat Sidebar Conversation Search ---
         elif input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
+            await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
+        elif input_id == "chat-conversation-keyword-search-bar" and current_active_tab == TAB_CHAT:
+            await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
+        elif input_id == "chat-conversation-tags-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
         elif input_id == "conv-char-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_conversation_search_input_changed(self, event)

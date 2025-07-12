@@ -6,7 +6,8 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 #
 # 3rd-Party Imports
-from textual.widgets import Button, TextArea, VerticalScroll
+from textual.widgets import Button, TextArea
+from textual.containers import VerticalScroll
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
@@ -521,6 +522,303 @@ class TestChatEventsTabsEdgeCases:
             assert f"#chat-log-{session_data.tab_id}" in captured_selectors
             assert "#chat-conversation-title-input" in captured_selectors  # Not modified
             assert "#chat-system-prompt" in captured_selectors  # Not modified
+    
+    @pytest.mark.asyncio
+    async def test_tab_id_collision_handling(self, mock_app, mock_config):
+        """Test handling of potential tab ID collisions."""
+        # Create sessions with similar IDs that could cause conflicts
+        session1 = ChatSessionData(tab_id="tab", conversation_id="conv1")
+        session2 = ChatSessionData(tab_id="tab-1", conversation_id="conv2")
+        session3 = ChatSessionData(tab_id="tab1", conversation_id="conv3")
+        
+        captured_selectors = []
+        
+        def capture_query(selector, widget_type=None):
+            captured_selectors.append(selector)
+            return Mock()
+        
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed') as mock_handler:
+            mock_handler.return_value = None
+            original_query_one = Mock(side_effect=capture_query)
+            mock_app.query_one = original_query_one
+            
+            button = Mock(spec=Button)
+            event = Mock()
+            event.button = button
+            
+            # Test each session
+            for session in [session1, session2, session3]:
+                captured_selectors.clear()
+                await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                    mock_app, event, session
+                )
+                # Verify tab ID is correctly appended
+                assert mock_app._current_chat_tab_id == session.tab_id
+    
+    @pytest.mark.asyncio
+    async def test_empty_tab_id_handling(self, mock_app, mock_config):
+        """Test handling of empty or None tab IDs."""
+        # Create session with empty tab ID
+        session = ChatSessionData(tab_id="", conversation_id="conv1")
+        
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed') as mock_handler:
+            mock_handler.return_value = None
+            
+            button = Mock(spec=Button)
+            event = Mock()
+            event.button = button
+            
+            await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                mock_app, event, session
+            )
+            
+            # Should still work but use empty string
+            assert mock_app._current_chat_tab_id == ""
+
+########################################################################################################################
+#
+# Tool Calling Integration Tests:
+
+class TestChatEventsTabsToolCalling:
+    """Test tool calling functionality with tabs."""
+    
+    @pytest.mark.asyncio
+    async def test_tool_call_message_display_in_tab(self, mock_app, session_data, mock_config):
+        """Test tool call messages are displayed in correct tab."""
+        # Mock tool call data
+        tool_calls = [{
+            "id": "call_123",
+            "type": "function",
+            "function": {
+                "name": "calculator",
+                "arguments": '{"operation": "add", "a": 5, "b": 3}'
+            }
+        }]
+        
+        # Mock chat log widget
+        mock_chat_log = Mock()
+        mock_chat_log.mount = AsyncMock()
+        
+        def query_one_side_effect(selector, widget_type=None):
+            if f"#chat-log-{session_data.tab_id}" in selector:
+                return mock_chat_log
+            return Mock()
+        
+        original_query_one = Mock(side_effect=query_one_side_effect)
+        mock_app.query_one = original_query_one
+        
+        # Import ToolCallMessage
+        with patch('tldw_chatbook.Widgets.tool_message_widgets.ToolCallMessage') as MockToolCallMessage:
+            mock_tool_widget = Mock()
+            MockToolCallMessage.return_value = mock_tool_widget
+            
+            # Simulate displaying tool call message
+            from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import display_tool_call_message
+            
+            with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.display_tool_call_message') as mock_display:
+                await mock_display(mock_app, tool_calls, "msg_123")
+                
+                # Verify tool message widget was created
+                MockToolCallMessage.assert_called_with(
+                    tool_calls=tool_calls,
+                    message_id="msg_123"
+                )
+    
+    @pytest.mark.asyncio
+    async def test_tool_result_message_display_in_tab(self, mock_app, session_data, mock_config):
+        """Test tool result messages are displayed in correct tab."""
+        # Mock tool result data
+        tool_results = [{
+            "tool_call_id": "call_123",
+            "output": "Result: 8",
+            "is_error": False
+        }]
+        
+        # Mock chat log widget
+        mock_chat_log = Mock()
+        mock_chat_log.mount = AsyncMock()
+        
+        def query_one_side_effect(selector, widget_type=None):
+            if f"#chat-log-{session_data.tab_id}" in selector:
+                return mock_chat_log
+            return Mock()
+        
+        original_query_one = Mock(side_effect=query_one_side_effect)
+        mock_app.query_one = original_query_one
+        
+        # Import ToolResultMessage
+        with patch('tldw_chatbook.Widgets.tool_message_widgets.ToolResultMessage') as MockToolResultMessage:
+            mock_result_widget = Mock()
+            MockToolResultMessage.return_value = mock_result_widget
+            
+            # Simulate displaying tool result message
+            from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import display_tool_result_message
+            
+            with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.display_tool_result_message') as mock_display:
+                await mock_display(mock_app, tool_results)
+                
+                # Verify tool result widget was created
+                MockToolResultMessage.assert_called_with(results=tool_results)
+
+########################################################################################################################
+#
+# File Attachment Tests:
+
+class TestChatEventsTabsFileAttachments:
+    """Test file attachment functionality with tabs."""
+    
+    @pytest.mark.asyncio
+    async def test_file_attachment_in_tab_context(self, mock_app, session_data, mock_config):
+        """Test file attachments are properly associated with tab."""
+        # Mock attachment data
+        mock_app._current_chat_tab_id = session_data.tab_id
+        mock_app.chat_attached_files = {
+            session_data.tab_id: [
+                {"path": "/path/to/file.txt", "type": "text"},
+                {"path": "/path/to/image.png", "type": "image"}
+            ]
+        }
+        
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed') as mock_handler:
+            def handler_with_attachment_check(app, event):
+                # Handler should see tab-specific attachments
+                tab_id = getattr(app, '_current_chat_tab_id', 'default')
+                attachments = app.chat_attached_files.get(tab_id, [])
+                assert len(attachments) == 2
+                assert attachments[0]["type"] == "text"
+                assert attachments[1]["type"] == "image"
+            
+            mock_handler.side_effect = handler_with_attachment_check
+            
+            button = Mock(spec=Button)
+            event = Mock()
+            event.button = button
+            
+            await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                mock_app, event, session_data
+            )
+    
+    @pytest.mark.asyncio
+    async def test_attachment_indicator_update_per_tab(self, mock_app, session_data, mock_config):
+        """Test attachment indicator updates for specific tab."""
+        # Mock attachment indicator widget
+        mock_indicator = Mock()
+        mock_indicator.update = Mock()
+        
+        def query_one_side_effect(selector, widget_type=None):
+            if f"#image-attachment-indicator-{session_data.tab_id}" in selector:
+                return mock_indicator
+            return Mock()
+        
+        original_query_one = Mock(side_effect=query_one_side_effect)
+        mock_app.query_one = original_query_one
+        
+        # Set tab-specific attachments
+        mock_app.chat_attached_files = {
+            session_data.tab_id: [{"path": "/path/to/file.txt", "type": "text"}]
+        }
+        
+        # Simulate attachment update
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.update_attachment_indicator') as mock_update:
+            mock_update.return_value = None
+            
+            # Call a handler that would trigger attachment indicator update
+            button = Mock(spec=Button)
+            event = Mock()
+            event.button = button
+            
+            with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed'):
+                await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                    mock_app, event, session_data
+                )
+
+########################################################################################################################
+#
+# Settings Synchronization Tests:
+
+class TestChatEventsTabsSettings:
+    """Test settings synchronization across tabs."""
+    
+    @pytest.mark.asyncio
+    async def test_settings_apply_to_active_tab_only(self, mock_app, session_data, mock_config):
+        """Test that settings changes apply to active tab only."""
+        # Create multiple sessions
+        session1 = ChatSessionData(tab_id="tab1", conversation_id="conv1")
+        session2 = ChatSessionData(tab_id="tab2", conversation_id="conv2")
+        
+        # Mock settings widgets
+        mock_system_prompt = Mock()
+        mock_system_prompt.text = "New system prompt for tab1"
+        
+        mock_temperature = Mock()
+        mock_temperature.value = "0.8"
+        
+        def query_one_side_effect(selector, widget_type=None):
+            if "#chat-system-prompt" in selector:
+                return mock_system_prompt
+            elif "#chat-temperature" in selector:
+                return mock_temperature
+            return Mock()
+        
+        original_query_one = Mock(side_effect=query_one_side_effect)
+        mock_app.query_one = original_query_one
+        
+        # Apply settings to session1
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed') as mock_handler:
+            def handler_with_settings_check(app, event):
+                # Handler should use tab-specific settings
+                assert app.query_one("#chat-system-prompt").text == "New system prompt for tab1"
+                assert app.query_one("#chat-temperature").value == "0.8"
+            
+            mock_handler.side_effect = handler_with_settings_check
+            
+            button = Mock(spec=Button)
+            event = Mock()
+            event.button = button
+            
+            await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                mock_app, event, session1
+            )
+    
+    @pytest.mark.asyncio
+    async def test_rag_settings_per_tab(self, mock_app, session_data, mock_config):
+        """Test RAG settings are maintained per tab."""
+        # Mock RAG settings
+        mock_rag_enabled = Mock()
+        mock_rag_enabled.value = True
+        
+        mock_rag_preset = Mock()
+        mock_rag_preset.value = "full"
+        
+        def query_one_side_effect(selector, widget_type=None):
+            if "#chat-rag-enable-checkbox" in selector:
+                return mock_rag_enabled
+            elif "#chat-rag-preset" in selector:
+                return mock_rag_preset
+            return Mock()
+        
+        original_query_one = Mock(side_effect=query_one_side_effect)
+        mock_app.query_one = original_query_one
+        
+        # Store RAG settings in session data
+        session_data.rag_enabled = True
+        session_data.rag_preset = "full"
+        
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed') as mock_handler:
+            def handler_with_rag_check(app, event):
+                # Handler should see tab-specific RAG settings
+                assert app.query_one("#chat-rag-enable-checkbox").value is True
+                assert app.query_one("#chat-rag-preset").value == "full"
+            
+            mock_handler.side_effect = handler_with_rag_check
+            
+            button = Mock(spec=Button)
+            event = Mock()
+            event.button = button
+            
+            await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                mock_app, event, session_data
+            )
 
 #
 # End of test_chat_events_tabs.py

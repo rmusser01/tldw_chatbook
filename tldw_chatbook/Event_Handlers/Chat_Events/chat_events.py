@@ -2054,6 +2054,24 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
     try:
         search_bar = app.query_one("#chat-conversation-search-bar", Input)
         search_term = search_bar.value.strip()
+        
+        # Get keyword search term if it exists
+        keyword_search_term = ""
+        try:
+            keyword_search_bar = app.query_one("#chat-conversation-keyword-search-bar", Input)
+            keyword_search_term = keyword_search_bar.value.strip()
+        except QueryError:
+            # Keyword search bar doesn't exist yet, that's fine
+            pass
+            
+        # Get tag search term if it exists
+        tag_search_term = ""
+        try:
+            tag_search_bar = app.query_one("#chat-conversation-tags-search-bar", Input)
+            tag_search_term = tag_search_bar.value.strip()
+        except QueryError:
+            # Tag search bar doesn't exist yet, that's fine
+            pass
 
         include_char_chats_checkbox = app.query_one("#chat-conversation-search-include-character-checkbox", Checkbox)
         include_character_chats = include_char_chats_checkbox.value  # Currently unused in DB query, filtered client side
@@ -2133,6 +2151,48 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
                 character_id=effective_character_id_for_search,  # This will be None if searching all/all_chars checked
                 limit=100
             )
+        
+        # If keyword search is provided, further filter by content
+        if keyword_search_term and conversations:
+            # Get conversation IDs that match the keyword search
+            keyword_matches = db.search_conversations_by_content(keyword_search_term, limit=100)
+            keyword_conv_ids = {match['id'] for match in keyword_matches}
+            
+            # Filter conversations to only those that match keyword search
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations if conv['id'] in keyword_conv_ids]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                loguru_logger.debug(f"Keyword filter removed {filtered_count} conversations, keeping {len(conversations)} that match '{keyword_search_term}'")
+        
+        # If tag search is provided, filter by conversation keywords/tags
+        if tag_search_term and conversations:
+            # Parse comma-separated tags
+            search_tags = [tag.strip() for tag in tag_search_term.split(',') if tag.strip()]
+            
+            if search_tags:
+                # Get conversation IDs that have matching tags
+                matching_conv_ids = set()
+                
+                for tag in search_tags:
+                    # Search for keywords matching the tag
+                    keyword_results = db.search_keywords(tag, limit=10)
+                    
+                    # For each matching keyword, get conversations
+                    for keyword in keyword_results:
+                        keyword_id = keyword['id']
+                        tag_conversations = db.get_conversations_for_keyword(keyword_id, limit=100)
+                        
+                        # Add conversation IDs to our set
+                        for conv in tag_conversations:
+                            matching_conv_ids.add(conv['id'])
+                
+                # Filter conversations to only those that have matching tags
+                original_count = len(conversations)
+                conversations = [conv for conv in conversations if conv['id'] in matching_conv_ids]
+                filtered_count = original_count - len(conversations)
+                if filtered_count > 0:
+                    loguru_logger.debug(f"Tag filter removed {filtered_count} conversations, keeping {len(conversations)} that match tags: {search_tags}")
 
         # If include_character_chats is False, we need to filter client-side for regular chats only
         if filter_regular_chats_only and conversations:

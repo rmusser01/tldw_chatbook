@@ -386,7 +386,17 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         with Collapsible(title="Conversations", collapsed=True, id=f"{id_prefix}-conversations", classes="settings-collapsible basic-mode advanced-mode"):
             yield Input(
                 id=f"{id_prefix}-conversation-search-bar",
-                placeholder="Search all chats...",
+                placeholder="Search by title...",
+                classes="sidebar-input"
+            )
+            yield Input(
+                id=f"{id_prefix}-conversation-keyword-search-bar",
+                placeholder="Search by content keywords...",
+                classes="sidebar-input"
+            )
+            yield Input(
+                id=f"{id_prefix}-conversation-tags-search-bar",
+                placeholder="Filter by tags (comma-separated)...",
                 classes="sidebar-input"
             )
             yield Checkbox(

@@ -2136,6 +2136,44 @@ auto_analyze_transcripts = true
 
 # Parallel processing
 max_concurrent_processes = 2
+
+[mcp]
+# Model Context Protocol (MCP) settings
+enabled = false  # Enable MCP server functionality
+server_name = "tldw_chatbook"
+server_version = "0.1.0"
+transport = "stdio"  # "stdio" for Claude Desktop, "http" for web-based clients
+http_port = 3000  # Port for HTTP transport
+allowed_clients = ["claude-desktop", "localhost"]  # List of allowed client identifiers
+
+# Feature toggles
+expose_tools = true  # Expose tools (chat, search, etc.)
+expose_resources = true  # Expose resources (conversations, notes, etc.)
+expose_prompts = true  # Expose prompt templates
+
+# Security settings
+require_auth = false  # Require authentication (not implemented yet)
+rate_limit = 100  # Max requests per minute per client
+max_concurrent_requests = 10  # Max concurrent requests
+
+# Tool-specific settings
+[mcp.tools]
+chat_default_provider = "openai"
+chat_default_temperature = 0.7
+chat_default_max_tokens = 4096
+search_default_limit = 10
+enable_media_ingestion = true  # Allow media ingestion via MCP
+
+# Resource-specific settings
+[mcp.resources]
+max_list_limit = 100  # Maximum items to return in list operations
+default_list_limit = 10  # Default items to return in list operations
+enable_binary_resources = false  # Allow serving binary resources (images, etc.)
+
+# Prompt-specific settings
+[mcp.prompts]
+enable_custom_prompts = true  # Allow custom prompt creation
+max_prompt_length = 10000  # Maximum prompt length in characters
 """
 
 try:
