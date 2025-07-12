@@ -131,13 +131,20 @@ class TokenBasedChunker:
         Returns:
             List of text chunks
         """
+        # Import the constant from Chunk_Lib to avoid circular import
+        MAX_CHUNK_SIZE_TOKENS = 10000  # Maximum tokens per chunk
+        
         if max_tokens <= 0:
-            logger.warning("max_tokens must be positive")
-            return [text] if text.strip() else []
+            raise ValueError(f"max_tokens must be positive, got {max_tokens}")
+        
+        if max_tokens > MAX_CHUNK_SIZE_TOKENS:
+            raise ValueError(f"max_tokens {max_tokens} exceeds maximum allowed {MAX_CHUNK_SIZE_TOKENS}")
+        
+        if overlap_tokens < 0:
+            raise ValueError(f"overlap_tokens must be non-negative, got {overlap_tokens}")
         
         if overlap_tokens >= max_tokens:
-            logger.warning(f"Token overlap {overlap_tokens} >= max_tokens {max_tokens}. Setting overlap to 0.")
-            overlap_tokens = 0
+            raise ValueError(f"Token overlap {overlap_tokens} must be less than max_tokens {max_tokens}")
         
         # For fallback tokenizer, we need to use a different approach
         if isinstance(self.tokenizer, FallbackTokenizer):

@@ -21,7 +21,7 @@ from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, Label, Static
+from textual.widgets import Button, Label, Static, Markdown
 
 # Optional import for textual-image
 try:
@@ -76,6 +76,12 @@ class ChatMessageEnhanced(Widget):
         padding: 1;
         width: 100%;
         height: auto;
+    }
+    .message-text Markdown {
+        width: 100%;
+        background: transparent;
+        margin: 0;
+        padding: 0;
     }
     .message-image-container {
         width: 100%;
@@ -144,6 +150,8 @@ class ChatMessageEnhanced(Widget):
     # Store extracted files
     _extracted_files = None
     _file_extractor = None
+    # Track if this is the first chunk for streaming
+    _is_first_chunk = True
     
     def __init__(
         self,
@@ -169,6 +177,8 @@ class ChatMessageEnhanced(Widget):
         self.image_mime_type = image_mime_type
         self.feedback = feedback
         self._image_widget = None
+        # Initialize first chunk flag based on generation status
+        self._is_first_chunk = not generation_complete if role.lower() != "user" else True
         
         # Add role-specific class
         if role.lower() == "user":
@@ -190,7 +200,7 @@ class ChatMessageEnhanced(Widget):
             yield Label(header_text, classes="message-header")
             
             # Message content
-            yield Static(self.message_text, classes="message-text")
+            yield Markdown(self.message_text, classes="message-text")
             
             # Image display if present
             if self.image_data:
@@ -410,12 +420,24 @@ Preview: {preview}...
         logging.info(f"mark_generation_complete called")
         if self.has_class("-ai"):
             self._generation_complete_internal = True
+            self._is_first_chunk = True  # Reset for next streaming session
             self.refresh()
     
     def update_message_chunk(self, chunk: str):
         """Appends a chunk of text to an AI message during streaming."""
         if self.has_class("-ai") and not self._generation_complete_internal:
             self.message_text += chunk
+            try:
+                markdown_widget = self.query_one(".message-text", Markdown)
+                if self._is_first_chunk:
+                    # For the first chunk, use update to clear any placeholder text
+                    markdown_widget.update(chunk)
+                    self._is_first_chunk = False
+                else:
+                    # For subsequent chunks, use append for efficiency
+                    markdown_widget.append(chunk)
+            except Exception as e:
+                logging.error(f"Error updating markdown widget during streaming: {e}")
     
     def _check_for_files(self):
         """Check if the message contains extractable files."""

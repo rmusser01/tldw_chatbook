@@ -10,7 +10,7 @@ import threading
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
-from textual.widgets import Static, TextArea, Label
+from textual.widgets import Static, TextArea, Label, Markdown
 from rich.markup import escape as escape_markup
 #
 # Local Imports
@@ -34,16 +34,15 @@ async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
         try:
             # The thinking placeholder should have been cleared when the worker started.
             # The role and header should also have been set at the start of the AI turn.
-            static_text_widget = current_widget.query_one(".message-text", Static)
+            markdown_widget = current_widget.query_one(".message-text", Markdown)
 
             # Atomically append the clean text chunk and update display
             # This prevents race conditions during concurrent text updates
-            new_text = current_widget.message_text + event.text_chunk
-            current_widget.message_text = new_text
+            current_widget.message_text += event.text_chunk
 
-            # --- Update the display by wrapping the text in a Text object ---
-            # This is safer than escape_markup for arbitrary streaming content.
-            static_text_widget.update(Text(new_text))
+            # --- Append the new chunk to the markdown widget ---
+            # Using append() is more efficient for streaming as it only processes new content
+            markdown_widget.append(event.text_chunk)
 
             # Scroll the chat log to the end, conditionally
             chat_log_id_to_query = None
@@ -99,7 +98,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
         return
 
     try:
-        static_text_widget = ai_widget.query_one(".message-text", Static)
+        markdown_widget = ai_widget.query_one(".message-text", Markdown)
 
         if event.error:
             logger.error(f"Stream completed with error: {event.error}")
@@ -108,7 +107,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             error_message_content = event.full_text + f"\n\n[bold red]Stream Error:[/]\n{escape_markup(event.error)}"
 
             ai_widget.message_text = event.full_text + f"\n\nStream Error:\n{event.error}"  # Update internal raw text
-            static_text_widget.update(ai_widget.message_text)
+            markdown_widget.update(ai_widget.message_text)
             ai_widget.role = "System"  # Change role to "System" or "Error"
             try:
                 header_label = ai_widget.query_one(".message-header", Label)
@@ -145,7 +144,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                     self.loguru_logger.debug("Not stripping tags from stream: strip_thinking_tags setting is disabled.")
 
             ai_widget.message_text = event.full_text  # Ensure internal state has the final, complete text
-            static_text_widget.update(event.full_text)  # Update display with final text
+            markdown_widget.update(event.full_text)  # Update display with final text
 
             # Check for tool calls in the response
             tool_calls = None
@@ -158,7 +157,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                     # For now, just append a notice to the message
                     tool_notice = f"\n\n[Tool Calls Detected: {len(tool_calls)} function(s) to execute]"
                     ai_widget.message_text += tool_notice
-                    static_text_widget.update(ai_widget.message_text)
+                    markdown_widget.update(ai_widget.message_text)
 
             # Determine sender name for DB (already set on widget by handle_api_call_worker_state_changed)
             # This is just to ensure the correct name is used for DB saving if needed.

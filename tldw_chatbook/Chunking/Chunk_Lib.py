@@ -66,6 +66,22 @@ class LanguageDetectionError(ChunkingError):
     """Raised when language detection fails critically."""
     pass
 
+class MemoryLimitError(ChunkingError):
+    """Raised when input exceeds memory limits."""
+    pass
+
+#######################################################################################################################
+# Constants and Limits
+#
+
+# Maximum limits for chunk sizes to prevent memory issues
+MAX_CHUNK_SIZE_WORDS = 10000  # Maximum words per chunk
+MAX_CHUNK_SIZE_SENTENCES = 1000  # Maximum sentences per chunk
+MAX_CHUNK_SIZE_PARAGRAPHS = 100  # Maximum paragraphs per chunk
+MAX_CHUNK_SIZE_TOKENS = 10000  # Maximum tokens per chunk
+MAX_DOCUMENT_SIZE_MB = 100  # Maximum document size in MB
+MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024  # In bytes
+
 #######################################################################################################################
 # Config Settings & NLTK
 #
@@ -330,7 +346,15 @@ class Chunker:
         Raises:
             InvalidChunkingMethodError: If the method is not supported.
             ChunkingError: For errors during the chunking process.
+            MemoryLimitError: If the input text exceeds memory limits.
         """
+        # Check document size before processing
+        text_size_bytes = len(text.encode('utf-8'))
+        if text_size_bytes > MAX_DOCUMENT_SIZE_BYTES:
+            text_size_mb = text_size_bytes / (1024 * 1024)
+            raise MemoryLimitError(
+                f"Document size {text_size_mb:.2f} MB exceeds maximum allowed size of {MAX_DOCUMENT_SIZE_MB} MB"
+            )
         # Check if we should use template-based chunking
         if use_template is None:
             use_template = self.template is not None
@@ -431,6 +455,7 @@ class Chunker:
 
 
     def _chunk_text_by_words(self, text: str, max_words: int, overlap: int, language: str) -> List[str]:
+        start_time = time.time()
         logger.info(f"Chunking by words: max_words={max_words}, overlap={overlap}, language='{language}'")
         
         # Use language-specific chunker
@@ -439,11 +464,13 @@ class Chunker:
 
         logger.debug(f"Total words: {len(words)}")
         if max_words <= 0 :
-            logger.warning(f"max_words is {max_words}, must be positive. Defaulting to 1 if text exists, or empty list.")
-            return [text] if text else [] # Or raise error
+            raise ValueError(f"max_words must be positive, got {max_words}")
+        if max_words > MAX_CHUNK_SIZE_WORDS:
+            raise ValueError(f"max_words {max_words} exceeds maximum allowed {MAX_CHUNK_SIZE_WORDS}")
+        if overlap < 0:
+            raise ValueError(f"overlap must be non-negative, got {overlap}")
         if overlap >= max_words :
-            logger.warning(f"Overlap {overlap} is >= max_words {max_words}. Setting overlap to 0.")
-            overlap = 0
+            raise ValueError(f"Overlap {overlap} must be less than max_words {max_words}")
 
 
         chunks = []
@@ -478,11 +505,13 @@ class Chunker:
         sentences = language_chunker.tokenize_sentences(text)
 
         if max_sentences <= 0:
-            logger.warning(f"max_sentences is {max_sentences}, must be positive. Defaulting to 1 sentence if text exists.")
-            return [text] if text else []
+            raise ValueError(f"max_sentences must be positive, got {max_sentences}")
+        if max_sentences > MAX_CHUNK_SIZE_SENTENCES:
+            raise ValueError(f"max_sentences {max_sentences} exceeds maximum allowed {MAX_CHUNK_SIZE_SENTENCES}")
+        if overlap < 0:
+            raise ValueError(f"overlap must be non-negative, got {overlap}")
         if overlap >= max_sentences:
-            logger.warning(f"Overlap {overlap} >= max_sentences {max_sentences}. Setting overlap to 0.")
-            overlap = 0
+            raise ValueError(f"Overlap {overlap} must be less than max_sentences {max_sentences}")
 
         chunks = []
         step = max_sentences - overlap
@@ -507,11 +536,13 @@ class Chunker:
         if not paragraphs:
             return []
         if max_paragraphs <= 0:
-            logger.warning("max_paragraphs must be positive. Returning single chunk or empty.")
-            return [text] if text.strip() else []
+            raise ValueError(f"max_paragraphs must be positive, got {max_paragraphs}")
+        if max_paragraphs > MAX_CHUNK_SIZE_PARAGRAPHS:
+            raise ValueError(f"max_paragraphs {max_paragraphs} exceeds maximum allowed {MAX_CHUNK_SIZE_PARAGRAPHS}")
+        if overlap < 0:
+            raise ValueError(f"overlap must be non-negative, got {overlap}")
         if overlap >= max_paragraphs:
-            logger.warning(f"Overlap {overlap} >= max_paragraphs {max_paragraphs}. Setting overlap to 0.")
-            overlap = 0
+            raise ValueError(f"Overlap {overlap} must be less than max_paragraphs {max_paragraphs}")
 
         chunks = []
         step = max_paragraphs - overlap
@@ -645,8 +676,9 @@ class Chunker:
             if not valid_sentences: return [] # No valid sentences to process
             sentence_vectors = vectorizer.fit_transform(valid_sentences)
         except ValueError as ve: # TFidfVectorizer can raise ValueError if vocabulary is empty (e.g. all stop words)
-            logger.warning(f"TF-IDF Vectorizer error during semantic chunking (perhaps all stop words or very short text): {ve}. Returning single chunk.")
-            return [text] if text.strip() else []
+            logger.warning(f"TF-IDF Vectorizer error during semantic chunking (perhaps all stop words or very short text): {ve}. Falling back to simple chunking.")
+            # Fall back to sentence-based chunking
+            return self._chunk_text_by_sentences(text, max_sentences=max_chunk_size // 10, overlap=0, language=language)
 
 
         chunks = []
@@ -734,9 +766,10 @@ class Chunker:
         logger.debug(f"Chunking JSON list: max_items_per_chunk={max_size}, overlap_items={overlap}")
         if max_size <= 0:
             raise ValueError("max_size for JSON list chunking must be positive.")
+        if overlap < 0:
+            raise ValueError(f"overlap must be non-negative, got {overlap}")
         if overlap >= max_size:
-            logger.warning(f"JSON list overlap {overlap} >= max_size {max_size}. Setting overlap to 0.")
-            overlap = 0
+            raise ValueError(f"JSON list overlap {overlap} must be less than max_size {max_size}")
 
         chunks_output = []
         total_items = len(json_list)
@@ -772,9 +805,10 @@ class Chunker:
 
         if max_size <= 0:
             raise ValueError("max_size for JSON dict chunking must be positive.")
+        if overlap < 0:
+            raise ValueError(f"overlap must be non-negative, got {overlap}")
         if overlap >= max_size:
-            logger.warning(f"JSON dict overlap {overlap} >= max_size {max_size}. Setting overlap to 0.")
-            overlap = 0
+            raise ValueError(f"JSON dict overlap {overlap} must be less than max_size {max_size}")
 
         data_to_chunk = json_dict[chunkable_key]
         all_keys = list(data_to_chunk.keys())

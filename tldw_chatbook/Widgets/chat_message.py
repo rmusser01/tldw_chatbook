@@ -12,7 +12,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Static, Button, Label # Added Label
+from textual.widgets import Static, Button, Label, Markdown # Added Label and Markdown
 from textual.reactive import reactive
 #
 # Local Imports
@@ -59,6 +59,12 @@ class ChatMessage(Widget):
         padding: 1;
         width: 100%;
         height: auto;
+    }
+    .message-text Markdown {
+        width: 100%;
+        background: transparent;
+        margin: 0;
+        padding: 0;
     }
     .message-actions {
         height: auto;
@@ -151,7 +157,7 @@ class ChatMessage(Widget):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(f"{self.role}", classes="message-header")
-            yield Static(self.message_text, classes="message-text", markup=False)
+            yield Markdown(self.message_text, classes="message-text")
             actions_class = "message-actions"
             # Logic for the '-generating' class on the actions container
             # This should only apply if it's an AI message AND generation is not complete
@@ -262,11 +268,11 @@ class ChatMessage(Widget):
         # This method is called by handle_streaming_chunk.
         # The _generation_complete_internal should be False during streaming.
         if self.has_class("-ai") and not self._generation_complete_internal:
-            # The static_text_widget.update is handled in handle_streaming_chunk
+            # The markdown_widget.update is handled in handle_streaming_chunk
             # This method primarily updates the internal message_text.
             self.message_text += chunk
-        # If called at other times, ensure it doesn't break if static_text_widget not found.
-        # For streaming, handle_streaming_chunk updates the Static widget directly.
+        # If called at other times, ensure it doesn't break if markdown_widget not found.
+        # For streaming, handle_streaming_chunk updates the Markdown widget directly.
     
     def _check_for_files(self):
         """Check if the message contains extractable files."""

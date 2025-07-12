@@ -104,36 +104,44 @@ class ChunkingService:
                                 current_pos = word_start + len(word)
                 
                 # Map chunks to positions
+                # Calculate word indices for each chunk accounting for overlap
+                current_word_idx = 0
                 for i, chunk_text in enumerate(chunks):
                     if not chunk_text:
                         continue
                     
-                    # Count words to find position
                     chunk_words = chunk_text.split()
-                    words_before = sum(len(c.split()) for c in chunks[:i])
                     
-                    # Adjust for overlap
-                    if i > 0:
-                        words_before = max(0, words_before - chunk_overlap)
+                    # For chunks after the first, adjust for overlap
+                    if i > 0 and chunk_overlap > 0:
+                        # Move back by overlap amount
+                        current_word_idx = max(0, current_word_idx - chunk_overlap)
                     
-                    # Get start and end positions with proper bounds checking
-                    if word_positions and words_before < len(word_positions):
-                        start_char = word_positions[words_before][0]
-                        end_word_idx = min(words_before + len(chunk_words) - 1, len(word_positions) - 1)
-                        if 0 <= end_word_idx < len(word_positions):
+                    # Calculate start position
+                    if word_positions and current_word_idx < len(word_positions):
+                        start_char = word_positions[current_word_idx][0]
+                        
+                        # Calculate end position
+                        end_word_idx = min(current_word_idx + len(chunk_words) - 1, len(word_positions) - 1)
+                        if end_word_idx >= 0 and end_word_idx < len(word_positions):
                             end_char = word_positions[end_word_idx][1]
                         else:
-                            # Use chunk length as fallback
-                            end_char = start_char + len(chunk_text)
+                            # If we can't find the exact end, estimate it
+                            end_char = min(start_char + len(chunk_text), len(content))
                     else:
-                        # Fallback for edge cases - use approximate positions
+                        # Fallback for edge cases - shouldn't normally happen
+                        logger.warning(f"Word position calculation fallback for chunk {i}")
                         if i == 0:
                             start_char = 0
+                            end_char = min(len(chunk_text), len(content))
                         else:
-                            # Estimate based on previous chunks
-                            prev_chars = sum(len(chunks[j]) for j in range(i) if chunks[j])
-                            start_char = min(prev_chars, len(content) - 1)
-                        end_char = min(start_char + len(chunk_text), len(content))
+                            # Use the previous chunk's end as a starting point
+                            if result_chunks:
+                                start_char = result_chunks[-1]['end_char']
+                                end_char = min(start_char + len(chunk_text), len(content))
+                            else:
+                                start_char = 0
+                                end_char = min(len(chunk_text), len(content))
                     
                     result_chunks.append({
                         'text': chunk_text,
@@ -142,6 +150,9 @@ class ChunkingService:
                         'word_count': len(chunk_words),
                         'chunk_index': i
                     })
+                    
+                    # Update current position for next chunk
+                    current_word_idx += len(chunk_words)
             else:
                 # For other methods, use approximate positions
                 total_length = len(content)
