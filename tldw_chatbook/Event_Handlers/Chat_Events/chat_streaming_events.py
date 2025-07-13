@@ -38,12 +38,13 @@ async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
             if not hasattr(current_widget, '_streaming_started'):
                 # This is the first chunk - replace any placeholder content
                 current_widget.message_text = event.text_chunk
-                markdown_widget.update(event.text_chunk)
                 current_widget._streaming_started = True
             else:
-                # Subsequent chunks - append to both internal state and display
+                # Subsequent chunks - append to internal state
                 current_widget.message_text += event.text_chunk
-                markdown_widget.append(event.text_chunk)
+            
+            # Always update markdown widget with full text to prevent flickering
+            markdown_widget.update(current_widget.message_text)
 
             # Scroll the chat log to the end, conditionally
             chat_log_id_to_query = None

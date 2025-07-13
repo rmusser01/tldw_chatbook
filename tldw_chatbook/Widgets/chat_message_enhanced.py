@@ -134,7 +134,7 @@ class ChatMessageEnhanced(Widget):
     """
     
     # Reactive properties
-    message_text = reactive("", repaint=True)
+    message_text = reactive("")  # Remove repaint=True to prevent double rendering during streaming
     role = reactive("User", repaint=True)
     pixel_mode = reactive(False)
     _generation_complete_internal = reactive(True)

@@ -99,7 +99,7 @@ class ChatMessage(Widget):
     """
 
     # Store the raw text content
-    message_text = reactive("", repaint=True)
+    message_text = reactive("")  # Remove repaint=True to prevent double rendering during streaming
     role = reactive("User", repaint=True)
     # Use an internal reactive to manage generation status and trigger UI updates
     _generation_complete_internal = reactive(True)
