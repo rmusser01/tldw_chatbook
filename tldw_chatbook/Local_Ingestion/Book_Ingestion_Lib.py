@@ -68,8 +68,13 @@ except ImportError:
     epub = None
 
 # For type checking only
-if TYPE_CHECKING and EBOOKLIB_AVAILABLE:
-    from ebooklib import epub
+if TYPE_CHECKING:
+    if EBOOKLIB_AVAILABLE:
+        from ebooklib import epub
+    else:
+        # Create a dummy type for type hints when ebooklib is not available
+        class epub:
+            EpubBook = Any
 
 try:
     import html2text
@@ -271,9 +276,7 @@ def slugify(text: str) -> str:
 #
 # File Conversion Functions
 
-def epub_to_markdown(epub_path: str) -> Tuple[str, Optional[epub.EpubBook]]:
-    if not EBOOKLIB_AVAILABLE:
-        raise ImportError("ebooklib not available. Install with: pip install tldw_chatbook[ebook]")
+def epub_to_markdown(epub_path: str) -> Tuple[str, Optional['epub.EpubBook']]:
     """
     Converts an EPUB file to Markdown format.
 
@@ -286,14 +289,17 @@ def epub_to_markdown(epub_path: str) -> Tuple[str, Optional[epub.EpubBook]]:
         epub_path (str): Path to the EPUB file.
 
     Returns:
-        Tuple[str, Optional[epub.EpubBook]]: A tuple containing:
+        Tuple[str, Optional['epub.EpubBook']]: A tuple containing:
             - str: The Markdown-formatted content of the EPUB. If an error occurs
                    during conversion, this string will contain an error message
                    (e.g., "# Error converting EPUB\n\nDetails...").
-            - Optional[epub.EpubBook]: The `ebooklib.epub.EpubBook` object if the
+            - Optional['epub.EpubBook']: The `ebooklib.epub.EpubBook` object if the
                    EPUB was successfully read, otherwise None (e.g., if the file
                    is corrupted or parsing fails).
     """
+    if not EBOOKLIB_AVAILABLE:
+        raise ImportError("ebooklib not available. Install with: pip install tldw_chatbook[ebook]")
+    
     book = None # Initialize book
     try:
         logger.info(f"Converting EPUB to Markdown from {epub_path}")
@@ -350,14 +356,14 @@ def epub_to_markdown(epub_path: str) -> Tuple[str, Optional[epub.EpubBook]]:
         # Still return None for the book object on error
         return f"# Error converting EPUB\n\n{e}", book # Return error message and potentially None book
 
-def extract_epub_metadata_from_epub_obj(book: epub.EpubBook) -> Tuple[Optional[str], Optional[str]]:
+def extract_epub_metadata_from_epub_obj(book: 'epub.EpubBook') -> Tuple[Optional[str], Optional[str]]:
     """
     Extracts title and author directly from an `ebooklib.epub.EpubBook` object's metadata.
 
     It queries the Dublin Core (DC) metadata fields for 'title' and 'creator'.
 
     Args:
-        book (epub.EpubBook): The `ebooklib` book object from which to extract metadata.
+        book ('epub.EpubBook'): The `ebooklib` book object from which to extract metadata.
 
     Returns:
         Tuple[Optional[str], Optional[str]]: A tuple containing the extracted
@@ -395,7 +401,7 @@ def extract_epub_metadata_from_epub_obj(book: epub.EpubBook) -> Tuple[Optional[s
 #
 # epub parsing Functions
 
-def read_epub_filtered(epub_path) -> Tuple[str, Optional[epub.EpubBook]]:
+def read_epub_filtered(epub_path) -> Tuple[str, Optional['epub.EpubBook']]:
     if not EBOOKLIB_AVAILABLE:
         raise ImportError("ebooklib not available. Install with: pip install tldw_chatbook[ebook]")
     """
@@ -413,10 +419,10 @@ def read_epub_filtered(epub_path) -> Tuple[str, Optional[epub.EpubBook]]:
         epub_path (str): Path to the .epub file.
 
     Returns:
-        Tuple[str, Optional[epub.EpubBook]]: A tuple containing:
+        Tuple[str, Optional['epub.EpubBook']]: A tuple containing:
             - str: The cleaned-up text string of the book's main content.
                    Returns an empty string if parsing fails or no content is extracted.
-            - Optional[epub.EpubBook]: The `ebooklib.epub.EpubBook` object if the EPUB
+            - Optional['epub.EpubBook']: The `ebooklib.epub.EpubBook` object if the EPUB
                    was successfully read, otherwise None.
     """
     book = None
@@ -510,7 +516,7 @@ def read_epub_filtered(epub_path) -> Tuple[str, Optional[epub.EpubBook]]:
         logger.exception(f"Failed to parse EPUB: {str(e)}")
         return "", book # Return empty string and potentially None book
 
-def read_epub(file_path) -> Tuple[str, Optional[epub.EpubBook]]:
+def read_epub(file_path) -> Tuple[str, Optional['epub.EpubBook']]:
     """
     Reads and extracts text from an EPUB file, cleaning up messy spacing.
 
@@ -523,9 +529,9 @@ def read_epub(file_path) -> Tuple[str, Optional[epub.EpubBook]]:
         file_path (str): Path to the EPUB file.
 
     Returns:
-        Tuple[str, Optional[epub.EpubBook]]: A tuple containing:
+        Tuple[str, Optional['epub.EpubBook']]: A tuple containing:
             - str: The cleaned text content extracted from the EPUB.
-            - Optional[epub.EpubBook]: The `ebooklib.epub.EpubBook` object if
+            - Optional['epub.EpubBook']: The `ebooklib.epub.EpubBook` object if
                    successfully read.
 
     Raises:
@@ -795,7 +801,7 @@ def process_epub(
     log_counter("epub_processing_attempt", labels={"file_path": file_path, "extractor": extraction_method})
 
     extracted_text: Optional[str] = None
-    ebook_obj: Optional[epub.EpubBook] = None
+    ebook_obj: Optional['epub.EpubBook'] = None
 
     try:
         logger.info(f"Processing EPUB file from {file_path} using extractor '{extraction_method}'")
