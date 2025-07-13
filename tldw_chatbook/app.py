@@ -3792,6 +3792,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.loguru_logger.debug("Character filter already populated, skipping.")
         else:
             self.loguru_logger.info("Conversations collapsible closed in chat sidebar.")
+    
+    @on(Collapsible.Toggled, "#conv-char-conversations-collapsible")
+    async def on_ccp_conversations_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
+        """Handles the expansion/collapse of the Conversations collapsible section in the CCP tab."""
+        if not event.collapsible.collapsed:  # If the collapsible was just expanded
+            self.loguru_logger.info("Conversations collapsible opened in CCP tab.")
+            # Trigger initial search to populate the list
+            await ccp_handlers.perform_ccp_conversation_search(self)
+        else:
+            self.loguru_logger.info("Conversations collapsible closed in CCP tab.")
 
     ########################################################################
     #
@@ -3933,6 +3943,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
         elif input_id == "conv-char-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_conversation_search_input_changed(self, event)
+        elif input_id == "conv-char-keyword-search-input" and current_active_tab == TAB_CCP:
+            await ccp_handlers.handle_ccp_conversation_keyword_search_input_changed(self, event)
+        elif input_id == "conv-char-tags-search-input" and current_active_tab == TAB_CCP:
+            await ccp_handlers.handle_ccp_conversation_tags_search_input_changed(self, event)
         elif input_id == "ccp-prompt-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_prompt_search_input_changed(self, event)
         elif input_id == "ccp-worldbook-search-input" and current_active_tab == TAB_CCP:
@@ -4023,6 +4037,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         if checkbox_id.startswith("chat-conversation-search-") and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_search_checkbox_changed(self, checkbox_id, event.value)
+        elif checkbox_id.startswith("conv-char-search-") and current_active_tab == TAB_CCP:
+            await ccp_handlers.handle_ccp_search_checkbox_changed(self, checkbox_id, event.value)
         elif checkbox_id == "chat-show-attach-button-checkbox" and current_active_tab == TAB_CHAT:
             # Handle attach button visibility toggle
             from .config import save_setting_to_cli_config

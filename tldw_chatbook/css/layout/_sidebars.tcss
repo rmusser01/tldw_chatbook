@@ -95,7 +95,12 @@
 }
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input { width: 100%; margin-bottom: 1; }
-.sidebar-textarea { width: 100%; border: round $surface; margin-bottom: 1; }
+.sidebar-textarea { 
+    width: 100%; 
+    height: 5;  /* Default height for text areas */
+    border: round $surface; 
+    margin-bottom: 1; 
+}
 
 /* Notes content header and expand button */
 .notes-content-header {

@@ -14,9 +14,9 @@ import yaml
 # 3rd-Party Imports
 from loguru import logger as loguru_logger
 from textual.widgets import (
-    Input, ListView, TextArea, Label, Collapsible, Select, Static, ListItem, Button
+    Input, ListView, TextArea, Label, Collapsible, Select, Static, ListItem, Button, Checkbox
 )
-from textual.containers import VerticalScroll
+from textual.containers import VerticalScroll, Container
 from textual.css.query import QueryError
 from rich.text import Text # For displaying messages if needed
 #
@@ -604,18 +604,52 @@ async def handle_ccp_right_delete_character_button_pressed(app: 'TldwCli', event
 
 
 async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
-    """Performs conversation search for the CCP tab."""
+    """Performs conversation search for the CCP tab with enhanced capabilities."""
     logger = getattr(app, 'loguru_logger', logging)
     logger.debug("Performing CCP conversation search...")
     try:
+        # Get all search inputs
         search_input = app.query_one("#conv-char-search-input", Input)
         search_term = search_input.value.strip()
+        
+        # Get keyword/content search term
+        keyword_search_term = ""
+        try:
+            keyword_input = app.query_one("#conv-char-keyword-search-input", Input)
+            keyword_search_term = keyword_input.value.strip()
+        except QueryError:
+            pass
+            
+        # Get tag search term
+        tag_search_term = ""
+        try:
+            tags_input = app.query_one("#conv-char-tags-search-input", Input)
+            tag_search_term = tags_input.value.strip()
+        except QueryError:
+            pass
+        
+        # Get checkbox states
+        include_char_chats = True
+        try:
+            include_checkbox = app.query_one("#conv-char-search-include-character-checkbox", Checkbox)
+            include_char_chats = include_checkbox.value
+        except QueryError:
+            pass
+            
+        all_characters = True
+        try:
+            all_chars_checkbox = app.query_one("#conv-char-search-all-characters-checkbox", Checkbox)
+            all_characters = all_chars_checkbox.value
+        except QueryError:
+            pass
 
+        # Get character selection from dropdown
         char_select_widget = app.query_one("#conv-char-character-select", Select)
         selected_character_id = char_select_widget.value
-        if selected_character_id == Select.BLANK:  # Treat BLANK as None for filtering
+        if selected_character_id == Select.BLANK:
             selected_character_id = None
 
+        # Clear results
         results_list_view = app.query_one("#conv-char-search-results-list", ListView)
         await results_list_view.clear()
 
@@ -626,24 +660,88 @@ async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
 
         db = app.notes_service._get_db(app.notes_user_id)
         conversations: List[Dict[str, Any]] = []
+        
+        # Determine effective character filter
+        # If "All Characters" is checked, ignore specific character selection
+        effective_character_id = None if all_characters else selected_character_id
 
-        if selected_character_id:
-            logger.debug(f"CCP Search: Filtering for character ID: {selected_character_id}")
-            if search_term:
-                logger.debug(f"CCP Search: Term '{search_term}', CharID {selected_character_id}")
-                conversations = db.search_conversations_by_title(
-                    title_query=search_term, character_id=selected_character_id, limit=200
+        # Base search - by title or get all
+        if not search_term:
+            # No search term - get conversations based on filters
+            if effective_character_id is not None:
+                # Specific character selected
+                logger.debug(f"CCP Search: All conversations for CharID {effective_character_id}")
+                conversations = db.get_conversations_for_character(
+                    character_id=effective_character_id,
+                    limit=200
                 )
             else:
-                logger.debug(f"CCP Search: All conversations for CharID {selected_character_id}")
-                conversations = db.get_conversations_for_character(
-                    character_id=selected_character_id, limit=200
-                )
+                # All conversations
+                logger.debug("CCP Search: Getting all active conversations")
+                conversations = db.list_all_active_conversations(limit=200)
         else:
-            logger.debug(f"CCP Search: No character selected. Global search with term: '{search_term}'")
+            # Search by title
+            logger.debug(f"CCP Search: Term '{search_term}', CharID {effective_character_id}")
             conversations = db.search_conversations_by_title(
-                title_query=search_term, character_id=None, limit=200
+                title_query=search_term,
+                character_id=effective_character_id,
+                limit=200
             )
+        
+        # Apply keyword/content search filter if provided
+        if keyword_search_term and conversations:
+            logger.debug(f"Applying keyword filter: '{keyword_search_term}'")
+            # Get conversation IDs that match the keyword search
+            keyword_matches = db.search_conversations_by_content(keyword_search_term, limit=200)
+            keyword_conv_ids = {match['id'] for match in keyword_matches}
+            
+            # Filter conversations to only those that match keyword search
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations if conv['id'] in keyword_conv_ids]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                logger.debug(f"Keyword filter removed {filtered_count} conversations, keeping {len(conversations)}")
+        
+        # Apply tag search filter if provided
+        if tag_search_term and conversations:
+            logger.debug(f"Applying tag filter: '{tag_search_term}'")
+            # Parse comma-separated tags
+            search_tags = [tag.strip() for tag in tag_search_term.split(',') if tag.strip()]
+            
+            if search_tags:
+                # Get conversation IDs that have matching tags
+                matching_conv_ids = set()
+                
+                for tag in search_tags:
+                    # Search for keywords matching the tag
+                    keyword_results = db.search_keywords(tag, limit=10)
+                    
+                    # For each matching keyword, get conversations
+                    for keyword in keyword_results:
+                        keyword_id = keyword['id']
+                        tag_conversations = db.get_conversations_for_keyword(keyword_id, limit=200)
+                        
+                        # Add conversation IDs to our set
+                        for conv in tag_conversations:
+                            matching_conv_ids.add(conv['id'])
+                
+                # Filter conversations to only those that have matching tags
+                original_count = len(conversations)
+                conversations = [conv for conv in conversations if conv['id'] in matching_conv_ids]
+                filtered_count = original_count - len(conversations)
+                if filtered_count > 0:
+                    logger.debug(f"Tag filter removed {filtered_count} conversations, keeping {len(conversations)}")
+        
+        # Apply character chat filter if needed
+        if not include_char_chats and conversations:
+            # Filter out character chats - keep only regular chats (no character_id or DEFAULT_CHARACTER_ID)
+            original_count = len(conversations)
+            # Use the already imported ccl (Character_Chat_Lib) for DEFAULT_CHARACTER_ID
+            conversations = [conv for conv in conversations 
+                           if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                logger.debug(f"Character chat filter removed {filtered_count} conversations")
 
         if not conversations:
             msg = "Enter search term or select a character." if not search_term and not selected_character_id else "No items found matching your criteria."
@@ -672,7 +770,9 @@ async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
                 await results_list_view.append(item)
 
         logger.info(
-            f"CCP conversation search (Term: '{search_term}', CharID: {selected_character_id}) yielded {len(conversations)} results.")
+            f"CCP conversation search (Title: '{search_term}', Keywords: '{keyword_search_term}', Tags: '{tag_search_term}', "
+            f"CharID: {effective_character_id}, Include Chars: {include_char_chats}, All Chars: {all_characters}) "
+            f"yielded {len(conversations)} results.")
 
     except QueryError as e_query:
         logger.error(f"UI component not found during CCP conversation search: {e_query}", exc_info=True)
@@ -741,17 +841,54 @@ async def handle_ccp_load_conversation_button_pressed(app: 'TldwCli', event: But
         app.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = False
         app.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
 
-        center_pane = app.query_one("#conv-char-center-pane", VerticalScroll)
-        await center_pane.remove_children()
+        # First, ensure the conversation messages view is visible
+        # Hide other views in the center pane
+        try:
+            app.query_one("#ccp-character-card-view").add_class("hidden")
+        except QueryError:
+            pass
+        try:
+            app.query_one("#ccp-character-editor-view").add_class("hidden")
+        except QueryError:
+            pass
+        try:
+            app.query_one("#ccp-prompt-editor-view").add_class("hidden")
+        except QueryError:
+            pass
+        try:
+            app.query_one("#ccp-dictionary-view").add_class("hidden")
+        except QueryError:
+            pass
+        try:
+            app.query_one("#ccp-dictionary-editor-view").add_class("hidden")
+        except QueryError:
+            pass
+        
+        # Show the conversation messages view
+        messages_container = app.query_one("#ccp-conversation-messages-view", Container)
+        messages_container.remove_class("hidden")
+        
+        # Clear existing messages from the container (but keep the title)
+        # Keep the first child (title) and remove the rest
+        children = list(messages_container.children)
+        for child in children[1:]:  # Skip the first child (title)
+            await child.remove()
 
         if not app.notes_service:
             logger.error("Notes service not available for loading CCP messages.")
-            await center_pane.mount(Static("Error: Notes service unavailable for messages."))
+            await messages_container.mount(Static("Error: Notes service unavailable for messages."))
             return
 
-        # FIXME/TODO - Conversation Branching
-        await load_branched_conversation_history_ui(app, loaded_conversation_id, center_pane)
+        # Create a VerticalScroll to hold messages
+        messages_scroll = VerticalScroll(id="ccp-conversation-messages-scroll")
+        await messages_container.mount(messages_scroll)
 
+        # FIXME/TODO - Conversation Branching
+        # Pass the VerticalScroll widget for messages
+        await load_branched_conversation_history_ui(app, loaded_conversation_id, messages_scroll)
+
+        # Get the center pane to scroll to bottom
+        center_pane = app.query_one("#conv-char-center-pane", VerticalScroll)
         center_pane.scroll_end(animate=False)
         logger.info(f"Loaded messages into #conv-char-center-pane for conversation {loaded_conversation_id}.")
         app.notify(f"Conversation '{title_input_ccp.value}' loaded.", severity="information")
@@ -1089,6 +1226,39 @@ async def handle_ccp_conversation_search_input_changed(app: 'TldwCli', event: In
     if app._conv_char_search_timer:
         app._conv_char_search_timer.stop()
     app._conv_char_search_timer = app.set_timer(0.5, lambda: perform_ccp_conversation_search(app))
+
+
+async def handle_ccp_conversation_keyword_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:
+    """Handles input changes in the CCP keyword search bar with debouncing."""
+    if app._conv_char_search_timer:
+        app._conv_char_search_timer.stop()
+    app._conv_char_search_timer = app.set_timer(0.5, lambda: perform_ccp_conversation_search(app))
+
+
+async def handle_ccp_conversation_tags_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:
+    """Handles input changes in the CCP tags search bar with debouncing."""
+    if app._conv_char_search_timer:
+        app._conv_char_search_timer.stop()
+    app._conv_char_search_timer = app.set_timer(0.5, lambda: perform_ccp_conversation_search(app))
+
+
+async def handle_ccp_search_checkbox_changed(app: 'TldwCli', checkbox_id: str, value: bool) -> None:
+    """Handles checkbox state changes in CCP conversation search."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.debug(f"CCP search checkbox '{checkbox_id}' changed to {value}")
+    
+    if checkbox_id == "conv-char-search-all-characters-checkbox":
+        try:
+            # When "All Characters" is checked, disable character select dropdown
+            char_select_widget = app.query_one("#conv-char-character-select", Select)
+            char_select_widget.disabled = value
+            if value:
+                char_select_widget.value = Select.BLANK  # Clear selection when "All" is checked
+        except QueryError as e:
+            logger.error(f"Error accessing character select widget: {e}", exc_info=True)
+    
+    # Trigger a new search when checkbox state changes
+    await perform_ccp_conversation_search(app)
 
 
 async def handle_ccp_prompt_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:

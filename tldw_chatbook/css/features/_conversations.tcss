@@ -127,6 +127,14 @@
 #ccp-conversation-messages-view {
     /* display: block; /* or whatever its natural display is, usually block for Container */
 }
+
+/* Style for the messages scroll container */
+#ccp-conversation-messages-scroll {
+    width: 100%;
+    height: 1fr; /* Take remaining space after title */
+    overflow-y: auto;
+    padding: 1;
+}
 #ccp-prompt-editor-view {
     display: none; /* Initially hidden by CSS */
 }
@@ -303,6 +311,12 @@
 
 .ccp-dict-entry-controls Button:last-child {
     margin-right: 0;
+}
+
+/* Dictionary entry value textarea */
+#ccp-dict-entry-value-textarea {
+    height: 5; /* Make the textarea visible and editable */
+    min-height: 5;
 }
 
 /* --- End of Conversations, Characters & Prompts Window specific layouts --- */

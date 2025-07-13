@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
-from textual.widgets import Static, Button, Input, ListView, Select, Collapsible, Label, TextArea
+from textual.widgets import Static, Button, Input, ListView, Select, Collapsible, Label, TextArea, Checkbox
 #
 #
 # Local Imports
@@ -52,8 +52,19 @@ class CCPWindow(Container):
             with Collapsible(title="Conversations", id="conv-char-conversations-collapsible"):
                 yield Button("Import Conversation", id="ccp-import-conversation-button",
                              classes="sidebar-button")
-                yield Input(id="conv-char-search-input", placeholder="Search conversations...", classes="sidebar-input")
-                yield Button("Search", id="conv-char-conversation-search-button", classes="sidebar-button")
+                # Title search
+                yield Label("Search by Title:", classes="sidebar-label")
+                yield Input(id="conv-char-search-input", placeholder="Search by title...", classes="sidebar-input")
+                # Content/keyword search
+                yield Label("Search by Content:", classes="sidebar-label")
+                yield Input(id="conv-char-keyword-search-input", placeholder="Search by content keywords...", classes="sidebar-input")
+                # Tag search
+                yield Label("Filter by Tags:", classes="sidebar-label")
+                yield Input(id="conv-char-tags-search-input", placeholder="Filter by tags (comma-separated)...", classes="sidebar-input")
+                # Character filtering options
+                yield Checkbox("Include Character Chats", id="conv-char-search-include-character-checkbox", value=True)
+                yield Checkbox("All Characters", id="conv-char-search-all-characters-checkbox", value=True)
+                # Search results
                 yield ListView(id="conv-char-search-results-list")
                 yield Button("Load Selected", id="conv-char-load-button", classes="sidebar-button")
             with Collapsible(title="Prompts", id="ccp-prompts-collapsible"):
