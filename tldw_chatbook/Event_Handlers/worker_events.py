@@ -13,7 +13,7 @@ from rich.text import Text
 from rich.markup import escape as escape_markup
 from textual.message import Message
 from textual.worker import Worker, WorkerState
-from textual.widgets import Static, TextArea, Label, Button  # Added TextArea
+from textual.widgets import Static, TextArea, Label, Button, Markdown  # Added TextArea
 from textual.containers import VerticalScroll  # Added VerticalScroll
 from textual.css.query import QueryError  # Added QueryError
 #
@@ -193,7 +193,8 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 )
                 return
                 
-            static_text_widget_in_ai_msg = ai_message_widget.query_one(".message-text", Static)
+            # Query for the markdown widget used in both ChatMessage and ChatMessageEnhanced
+            markdown_widget_in_ai_msg = ai_message_widget.query_one(".message-text", Markdown)
 
             if worker_state is WorkerState.SUCCESS:
                 result = event.worker.result
@@ -222,9 +223,11 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 if current_message_text_strip.startswith(current_thinking_text_pattern) or \
                         current_message_text_strip.endswith(current_thinking_fallback_pattern) or \
                         current_message_text_strip == current_thinking_fallback_pattern:
-                    logger.debug(f"Clearing thinking placeholder: '{current_message_text_strip}'")
-                    ai_message_widget.message_text = ""
-                    static_text_widget_in_ai_msg.update("")
+                    logger.debug(f"Found thinking placeholder: '{current_message_text_strip}' - not clearing to prevent flicker")
+                    # DON'T clear it here - let the first chunk replace it directly
+                    # This prevents the blank state that causes flickering
+                    # ai_message_widget.message_text = ""
+                    # markdown_widget_in_ai_msg.update("")
                 else:
                     logger.debug(
                         f"Thinking placeholder not found or already cleared. Current text: '{current_message_text_strip}'")
@@ -302,11 +305,13 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                             f"[bold red]{escape_markup(original_text_for_storage)}[/]")
 
                     # Ensure thinking placeholder is cleared before updating with actual content
-                    if static_text_widget_in_ai_msg.renderable == f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}":
-                        static_text_widget_in_ai_msg.update("")  # Clear if it's still the placeholder
+                    # Check if markdown still contains thinking placeholder
+                    current_markdown_text = getattr(markdown_widget_in_ai_msg, 'markup', '')
+                    if f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}" in current_markdown_text:
+                        markdown_widget_in_ai_msg.update("")  # Clear if it's still the placeholder
 
                     ai_message_widget.message_text = original_text_for_storage
-                    static_text_widget_in_ai_msg.update(final_display_text_obj)
+                    markdown_widget_in_ai_msg.update(original_text_for_storage)
                     ai_message_widget.mark_generation_complete()
 
                     is_error_message = original_text_for_storage.startswith(
@@ -351,7 +356,7 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 except QueryError:
                     logger.warning("Could not update AI message header label for worker error state.")
 
-                static_text_widget_in_ai_msg.update(Text.from_markup(f"[bold red]{escaped_error_for_display}[/]"))
+                markdown_widget_in_ai_msg.update(f"**Error:** {event.worker.error}")
                 ai_message_widget.mark_generation_complete()
 
                 if app.current_chat_is_streaming:  # Should be false if non-streaming worker failed
@@ -395,10 +400,10 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 f"Unexpected outer error in handle_api_call_worker_state_changed for worker '{worker_name}': {exc_outer}")
             if ai_message_widget and ai_message_widget.is_mounted:
                 try:
-                    static_widget_unexp_err = ai_message_widget.query_one(".message-text", Static)
+                    markdown_widget_unexp_err = ai_message_widget.query_one(".message-text", Markdown)
                     error_update_text_unexp = Text.from_markup(
                         f"[bold red]Internal error handling AI response:[/]\n{escape_markup(str(exc_outer))}")
-                    static_widget_unexp_err.update(error_update_text_unexp)
+                    markdown_widget_unexp_err.update(f"**Internal error handling AI response:**\n{str(exc_outer)}")
                     ai_message_widget.role = "System"
                     try:
                         header_label = ai_message_widget.query_one(".message-header", Label)

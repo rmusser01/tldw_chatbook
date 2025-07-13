@@ -32,17 +32,18 @@ async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
     current_widget = self.get_current_ai_message_widget()
     if current_widget and current_widget.is_mounted:
         try:
-            # The thinking placeholder should have been cleared when the worker started.
-            # The role and header should also have been set at the start of the AI turn.
             markdown_widget = current_widget.query_one(".message-text", Markdown)
-
-            # Atomically append the clean text chunk and update display
-            # This prevents race conditions during concurrent text updates
-            current_widget.message_text += event.text_chunk
-
-            # --- Append the new chunk to the markdown widget ---
-            # Using append() is more efficient for streaming as it only processes new content
-            markdown_widget.append(event.text_chunk)
+            
+            # Check if we need to clear the thinking emoji (first real chunk)
+            if not hasattr(current_widget, '_streaming_started'):
+                # This is the first chunk - replace any placeholder content
+                current_widget.message_text = event.text_chunk
+                markdown_widget.update(event.text_chunk)
+                current_widget._streaming_started = True
+            else:
+                # Subsequent chunks - append to both internal state and display
+                current_widget.message_text += event.text_chunk
+                markdown_widget.append(event.text_chunk)
 
             # Scroll the chat log to the end, conditionally
             chat_log_id_to_query = None
@@ -197,6 +198,9 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                 logger.info("Stream finished with no error but content was empty/whitespace. Not saving to DB.")
 
         ai_widget.mark_generation_complete()  # Mark as complete in both error/success cases if widget exists
+        # Clean up streaming flag
+        if hasattr(ai_widget, '_streaming_started'):
+            delattr(ai_widget, '_streaming_started')
         
         # Update token counter after AI response is complete
         try:

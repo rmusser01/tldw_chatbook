@@ -24,7 +24,7 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import (
-    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch
+    Static, Button, Input, Header, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
 )
 
 from textual.containers import Container, VerticalScroll
@@ -1678,7 +1678,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     # Find the message widget and remove the generating class
                     for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
                         if getattr(message_widget, 'message_id_internal', None) == event.message_id:
-                            text_widget = message_widget.query_one(".message-text", Static)
+                            text_widget = message_widget.query_one(".message-text", Markdown)
                             text_widget.remove_class("tts-generating")
                             break
             except Exception as e:
@@ -1702,7 +1702,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 if event.message_id:
                     for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
                         if getattr(message_widget, 'message_id_internal', None) == event.message_id:
-                            text_widget = message_widget.query_one(".message-text", Static)
+                            text_widget = message_widget.query_one(".message-text", Markdown)
                             text_widget.remove_class("tts-generating")
                             break
             except Exception as e:
@@ -4449,11 +4449,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.loguru_logger.debug("Finalizing AI message widget UI due to worker CANCELLED state.")
                         # Attempt to update the message UI to reflect cancellation if not already handled by StreamDone
                         try:
-                            static_text_widget = self.current_ai_message_widget.query_one(".message-text", Static)
+                            markdown_widget = self.current_ai_message_widget.query_one(".message-text", Markdown)
                             # Check if already updated by handle_stop_chat_generation_pressed for non-streaming
-                            if "[italic]Chat generation cancelled by user.[/]" not in self.current_ai_message_widget.message_text:
-                                self.current_ai_message_widget.message_text += "\n[italic](Stream Cancelled)[/]"
-                                static_text_widget.update(Text.from_markup(self.current_ai_message_widget.message_text))
+                            if "Chat generation cancelled by user." not in self.current_ai_message_widget.message_text:
+                                self.current_ai_message_widget.message_text += "\n_(Stream Cancelled)_"
+                                markdown_widget.update(self.current_ai_message_widget.message_text)
 
                             self.current_ai_message_widget.mark_generation_complete()
                             self.current_ai_message_widget = None  # Clear ref

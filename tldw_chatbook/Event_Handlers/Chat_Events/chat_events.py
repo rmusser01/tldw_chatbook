@@ -15,7 +15,7 @@ from loguru import logger as loguru_logger
 from rich.text import Text
 from rich.markup import escape as escape_markup
 from textual.widgets import (
-    Button, Input, TextArea, Static, Select, Checkbox, ListView, ListItem, Label
+    Button, Input, TextArea, Static, Select, Checkbox, ListView, ListItem, Label, Markdown
 )
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
@@ -906,14 +906,15 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
     if "edit-button" in button_classes:
         loguru_logger.info("Action: Edit clicked for %s message: '%s...'", message_role, message_text[:50])
         is_editing = getattr(action_widget, "_editing", False)
-        static_text_widget: Static = action_widget.query_one(".message-text", Static)
+        # Query for Markdown widget (used in both ChatMessage and ChatMessageEnhanced)
+        markdown_widget = action_widget.query_one(".message-text", Markdown)
 
         if not is_editing:  # Start editing
             current_text_for_editing = message_text  # Use the internally stored raw text
-            static_text_widget.display = False
+            markdown_widget.display = False
             editor = TextArea(text=current_text_for_editing, id="edit-area", classes="edit-area")
             editor.styles.width = "100%"
-            await action_widget.mount(editor, before=static_text_widget)
+            await action_widget.mount(editor, before=markdown_widget)
             editor.focus()
             action_widget._editing = True
             button.label = get_char(EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT)
@@ -929,11 +930,11 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 # When updating the Static widget, explicitly pass the new_text
                 # as a plain rich.text.Text object. This tells Textual
                 # to render it as is, without trying to parse for markup.
-                static_text_widget.update(Text(new_text))
+                markdown_widget.update(new_text)
                 # --- DO NOT REMOVE ---
-                #static_text_widget.update(escape_markup(new_text))  # Update display with escaped text
+                #markdown_widget.update(escape_markup(new_text))  # Update display with escaped text
 
-                static_text_widget.display = True
+                markdown_widget.display = True
                 action_widget._editing = False
                 button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)  # Reset to Edit icon
                 loguru_logger.debug("Editing finished. New length: %d", len(new_text))
@@ -978,15 +979,15 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
 
             except QueryError:
                 loguru_logger.error("Edit TextArea not found when stopping edit. Restoring original.")
-                static_text_widget.update(Text(message_text))  # Restore original escaped text
-                static_text_widget.display = True
+                markdown_widget.update(message_text)  # Restore original text
+                markdown_widget.display = True
                 action_widget._editing = False
                 button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)
             except Exception as e_edit_stop:
                 loguru_logger.error(f"Error stopping edit: {e_edit_stop}", exc_info=True)
-                if 'static_text_widget' in locals() and static_text_widget.is_mounted:
-                    static_text_widget.update(Text(message_text))  # Restore with Text()
-                    static_text_widget.display = True
+                if 'markdown_widget' in locals() and markdown_widget.is_mounted:
+                    markdown_widget.update(message_text)  # Restore text
+                    markdown_widget.display = True
                 if hasattr(action_widget, '_editing'): action_widget._editing = False
                 if 'button' in locals() and button.is_mounted: button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)
 
@@ -1116,7 +1117,7 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
         
         # Update UI to show speaking status
         try:
-            text_widget = action_widget.query_one(".message-text", Static)
+            text_widget = action_widget.query_one(".message-text", Markdown)
             # Add a visual indicator that TTS is being generated
             text_widget.add_class("tts-generating")
             
@@ -3227,7 +3228,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
 
     continue_button_widget: Optional[Button] = None
     original_button_label: Optional[str] = None
-    static_text_widget: Optional[Static] = None
+    markdown_widget: Optional[Markdown] = None
     original_display_text_obj: Optional[Union[str, Text]] = None # renderable can be str or Text
 
     try:
@@ -3237,8 +3238,8 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         continue_button_widget.disabled = True
         continue_button_widget.label = get_char(EMOJI_THINKING, FALLBACK_THINKING) # "⏳" or similar
 
-        static_text_widget = message_widget.query_one(".message-text", Static)
-        original_display_text_obj = static_text_widget.renderable # Save the original renderable (Text object or str)
+        markdown_widget = message_widget.query_one(".message-text", Markdown)
+        original_display_text_obj = message_widget.message_text # Save the original text
     except QueryError as qe:
         loguru_logger.error(f"Error querying essential UI component for continuation: {qe}", exc_info=True)
         app.notify("Error initializing continuation: UI component missing.", severity="error")
@@ -3252,8 +3253,8 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         if continue_button_widget and original_button_label:
             continue_button_widget.disabled = False
             continue_button_widget.label = original_button_label
-        if static_text_widget and original_display_text_obj: # Restore text if changed
-             static_text_widget.update(original_display_text_obj)
+        if markdown_widget and original_display_text_obj: # Restore text if changed
+             markdown_widget.update(original_display_text_obj)
         return
 
     original_message_text = message_widget.message_text # Raw text content
@@ -3289,13 +3290,13 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         loguru_logger.error(f"Continue Response: Could not find UI elements for history: {e}", exc_info=True)
         app.notify("Error: Chat log or other UI element not found.", severity="error")
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
-        if static_text_widget: static_text_widget.update(original_display_text_obj)
+        if markdown_widget: markdown_widget.update(original_display_text_obj)
         return
     except Exception as e_hist:
         loguru_logger.error(f"Error building history for continuation: {e_hist}", exc_info=True)
         app.notify("Error preparing message history for continuation.", severity="error")
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
-        if static_text_widget: static_text_widget.update(original_display_text_obj)
+        if markdown_widget: markdown_widget.update(original_display_text_obj)
         return
 
     # --- 2. LLM Call Preparation ---
@@ -3307,9 +3308,9 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
             # Create a new Text object if the original was Text
             text_with_indicator = original_display_text_obj.copy()
             text_with_indicator.append(thinking_indicator_suffix)
-            static_text_widget.update(text_with_indicator)
+            markdown_widget.update(text_with_indicator.plain)
         else: # Assuming str
-            static_text_widget.update(original_message_text + thinking_indicator_suffix)
+            markdown_widget.update(original_message_text + thinking_indicator_suffix)
 
     except Exception as e_indicator: # Non-critical if this fails
         loguru_logger.warning(f"Could not update message with thinking indicator: {e_indicator}", exc_info=True)
@@ -3351,7 +3352,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     except QueryError as e:
         loguru_logger.error(f"Continue Response: Could not find UI settings widgets for '{prefix}': {e}", exc_info=True)
         app.notify("Error: Missing UI settings for continuation.", severity="error")
-        if static_text_widget: static_text_widget.update(original_display_text_obj) # Restore original text
+        if markdown_widget: markdown_widget.update(original_display_text_obj) # Restore original text
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
         return
 
@@ -3424,7 +3425,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     if selected_provider in providers_requiring_key and not api_key_for_call:
         loguru_logger.error(f"API Key for '{selected_provider}' is missing for continuation.")
         app.notify(f"API Key for {selected_provider} is missing.", severity="error")
-        if static_text_widget: static_text_widget.update(original_display_text_obj)
+        if markdown_widget: markdown_widget.update(original_display_text_obj)
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
         return
 
@@ -3477,18 +3478,18 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
                 # Remove thinking indicator from display.
                 # current_full_text already holds original_message_text.
                 # Static widget is updated with Text object to prevent markup issues.
-                if static_text_widget: static_text_widget.update(Text(current_full_text))
+                if markdown_widget: markdown_widget.update(current_full_text)
 
             if isinstance(chunk_data, str):
                 current_full_text += chunk_data
-                if static_text_widget: static_text_widget.update(Text(current_full_text))
+                if markdown_widget: markdown_widget.update(current_full_text)
             elif isinstance(chunk_data, dict) and 'error' in chunk_data:
                 error_detail = chunk_data['error']
                 loguru_logger.error(f"Error chunk received from LLM during continuation: {error_detail}")
                 app.notify(f"LLM Error: {str(error_detail)[:100]}", severity="error", timeout=7)
                 # Restore original state on error
                 message_widget.message_text = original_message_text # Restore internal text
-                if static_text_widget: static_text_widget.update(original_display_text_obj)
+                if markdown_widget: markdown_widget.update(original_display_text_obj)
                 if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
                 for btn_id, was_disabled in original_button_states.items():
                     try: message_widget.query_one(f"#{btn_id}", Button).disabled = was_disabled
@@ -3504,7 +3505,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         loguru_logger.error(f"Error during LLM call for continuation: {e_llm}", exc_info=True)
         app.notify(f"LLM call failed: {str(e_llm)[:100]}", severity="error")
         message_widget.message_text = original_message_text # Restore internal text
-        if static_text_widget: static_text_widget.update(original_display_text_obj) # Restore display
+        if markdown_widget: markdown_widget.update(original_display_text_obj) # Restore display
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
         for btn_id, was_disabled in original_button_states.items():
             try: message_widget.query_one(f"#{btn_id}", Button).disabled = was_disabled
@@ -3809,9 +3810,9 @@ async def handle_stop_chat_generation_pressed(app: 'TldwCli', event: Button.Pres
                 if app.current_ai_message_widget and app.current_ai_message_widget.is_mounted:
                     try:
                         # Update the placeholder message to indicate cancellation
-                        static_text_widget = app.current_ai_message_widget.query_one(".message-text", Static)
-                        cancelled_text = "[italic]Chat generation cancelled by user.[/]"
-                        static_text_widget.update(Text.from_markup(cancelled_text))
+                        markdown_widget = app.current_ai_message_widget.query_one(".message-text", Markdown)
+                        cancelled_text = "_Chat generation cancelled by user._"
+                        markdown_widget.update(cancelled_text)
 
                         app.current_ai_message_widget.message_text = "Chat generation cancelled by user." # Update raw text
                         app.current_ai_message_widget.role = "System" # Change role
