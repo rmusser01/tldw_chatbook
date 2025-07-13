@@ -13,7 +13,7 @@ import os
 import logging
 
 # Import the main config module to access existing configuration
-from tldw_chatbook.config import get_cli_setting, load_cli_config_and_ensure_existence
+from tldw_chatbook.config import get_cli_setting, load_cli_config_and_ensure_existence, get_user_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -299,10 +299,9 @@ class RAGConfig:
         if persist_dir:
             config.vector_store.persist_directory = Path(persist_dir)
         else:
-            # Default to user data directory
-            config.vector_store.persist_directory = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
-            )
+            # Default to user-specific data directory
+            user_dir = get_user_data_dir()
+            config.vector_store.persist_directory = user_dir / "chromadb"
         
         # Collection settings
         config.vector_store.collection_name = (

@@ -2684,29 +2684,66 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
 # --- CLI Database and Log File Path Getters ---
 BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli" # Renamed for clarity
 
+def get_user_folder_name() -> str:
+    """Get the current user folder name from configuration."""
+    default_user = DEFAULT_CONFIG_FROM_TOML.get("general", {}).get("users_name", "default_user")
+    user_name = get_cli_setting("general", "users_name", default_user)
+    # Sanitize user name to make it safe for folder names
+    # Replace spaces and special characters with underscores
+    import re
+    safe_user_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_name)
+    return safe_user_name if safe_user_name else "default_user"
+
+def get_user_data_dir() -> Path:
+    """Get the user-specific data directory."""
+    user_folder = get_user_folder_name()
+    user_dir = BASE_DATA_DIR_CLI / user_folder
+    # Create directory if it doesn't exist
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
+
 def get_chachanotes_db_path() -> Path:
-    default_db_path_str = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("chachanotes_db_path", str(BASE_DATA_DIR_CLI / "tldw_chatbook_ChaChaNotes.db"))
-    db_path_str = get_cli_setting("database", "chachanotes_db_path", default_db_path_str)
-    db_path = Path(db_path_str).expanduser().resolve()
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "chachanotes_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("chachanotes_db_path"):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_ChaChaNotes.db"
     return db_path
 
 def get_prompts_db_path() -> Path:
-    default_db_path_str = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("prompts_db_path", str(BASE_DATA_DIR_CLI / "tldw_chatbook_prompts.db"))
-    db_path_str = get_cli_setting("database", "prompts_db_path", default_db_path_str)
-    db_path = Path(db_path_str).expanduser().resolve()
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "prompts_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("prompts_db_path"):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_prompts.db"
     return db_path
 
 def get_media_db_path() -> Path:
-    default_db_path_str = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("media_db_path", str(BASE_DATA_DIR_CLI / "tldw_chatbook_media_v2.db"))
-    db_path_str = get_cli_setting("database", "media_db_path", default_db_path_str)
-    db_path = Path(db_path_str).expanduser().resolve()
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "media_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("media_db_path"):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_media_v2.db"
     return db_path
 
 def get_cli_log_file_path() -> Path:
-    chachanotes_parent_dir = get_chachanotes_db_path().parent
+    # Use user-specific folder for logs
+    user_dir = get_user_data_dir()
     default_log_filename = DEFAULT_CONFIG_FROM_TOML.get("logging", {}).get("log_filename", "tldw_cli_app.log")
     log_filename = get_cli_setting("logging", "log_filename", default_log_filename)
-    log_file_path = chachanotes_parent_dir / log_filename
+    log_file_path = user_dir / log_filename
     try:
         log_file_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -2716,9 +2753,30 @@ def get_cli_log_file_path() -> Path:
 
 def get_cli_data_dir() -> Path:
     """Get the CLI data directory for storing application data."""
+    # Return user-specific directory
+    return get_user_data_dir()
+
+def get_model_cache_dir() -> Path:
+    """Get the user-specific model cache directory for embeddings."""
+    # Check if a custom cache dir is configured
+    default_cache_dir = DEFAULT_CONFIG_FROM_TOML.get("embedding_config", {}).get("model_cache_dir", None)
+    custom_cache_dir = get_cli_setting("embedding_config", "model_cache_dir", default_cache_dir)
+    
+    if custom_cache_dir and custom_cache_dir != default_cache_dir:
+        # Use custom path if explicitly configured
+        cache_path = Path(custom_cache_dir).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        cache_path = user_dir / "models" / "embeddings"
+    
     # Create directory if it doesn't exist
-    BASE_DATA_DIR_CLI.mkdir(parents=True, exist_ok=True)
-    return BASE_DATA_DIR_CLI
+    try:
+        cache_path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Could not create model cache directory {cache_path}: {e}", exc_info=True)
+    
+    return cache_path
 
 # --- Global CLI Database Instances ---
 chachanotes_db: Optional[CharactersRAGDB] = None

@@ -92,10 +92,16 @@ class RAGService:
         
         # Initialize embeddings using wrapper around existing library
         logger.info(f"Initializing embeddings service with model: {self.config.embedding_model}")
+        
+        # Get model cache directory from config
+        from tldw_chatbook.config import get_model_cache_dir
+        cache_dir = str(get_model_cache_dir())
+        
         self.embeddings = EmbeddingsServiceWrapper(
             model_name=self.config.embedding_model,
             cache_size=self.config.embedding_cache_size,
-            device=self.config.device
+            device=self.config.device,
+            cache_dir=cache_dir
         )
         
         # Initialize vector store
@@ -601,7 +607,8 @@ class RAGService:
         try:
             # Get database path from vector store persist directory
             db_path = None
-            base_dir = Path.home() / ".local" / "share" / "tldw_cli"
+            from tldw_chatbook.config import get_user_data_dir
+            base_dir = get_user_data_dir()
             
             if self.config.persist_directory:
                 # Try common locations for the media database

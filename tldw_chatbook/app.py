@@ -1,6 +1,14 @@
 # tldw_cli - Textual CLI for LLMs
 # Description: This file contains the main application logic for the tldw_cli, a Textual-based CLI for interacting with various LLM APIs.
 #
+# Disable progress bars early to prevent interference with TUI
+import os
+os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+os.environ['TQDM_DISABLE'] = '1'
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
 # Imports
 import asyncio
 import concurrent.futures
@@ -55,6 +63,7 @@ from .Widgets.AppFooterStatus import AppFooterStatus
 from .Utils import Utils
 from .config import (
     get_media_db_path,
+    get_prompts_db_path,
 )
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
@@ -1227,8 +1236,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Initialize prompts service - for parallel execution."""
         self.prompts_service_initialized = False
         try:
-            prompts_db_path_str = get_cli_setting("database", "prompts_db_path", str(Path.home() / ".local/share/tldw_cli/tldw_cli_prompts_v2.db"))
-            prompts_db_path = Path(prompts_db_path_str).expanduser().resolve()
+            prompts_db_path = get_prompts_db_path()
             prompts_db_path.parent.mkdir(parents=True, exist_ok=True)
             prompts_interop.initialize_interop(db_path=prompts_db_path, client_id=self.prompts_client_id)
             self.prompts_service_initialized = True
@@ -2863,8 +2871,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         try:
             # Prompts DB
-            prompts_db_path_str = get_cli_setting("database", "prompts_db_path", str(Path.home() / ".local/share/tldw_cli/tldw_cli_prompts_v2.db"))
-            prompts_db_file = Path(prompts_db_path_str).expanduser().resolve()
+            prompts_db_file = get_prompts_db_path()
             prompts_size_str = Utils.get_formatted_file_size(prompts_db_file)
             if prompts_size_str is None:
                 prompts_size_str = "N/A"
@@ -4256,7 +4263,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             # Get RAG-related widgets
             rag_enable = self.query_one("#chat-rag-enable-checkbox", Checkbox)
-            plain_rag = self.query_one("#chat-rag-plain-enable-checkbox", Checkbox) 
             top_k = self.query_one("#chat-rag-top-k", Input)
             
             # Apply preset configurations
@@ -4265,18 +4271,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.notify("RAG disabled")
             elif preset == "light":
                 rag_enable.value = True
-                plain_rag.value = True
                 top_k.value = "3"
-                # Also update the search mode dropdown if it exists (in advanced mode)
-                try:
-                    search_mode = self.query_one("#chat-rag-search-mode", Select)
-                    search_mode.value = "plain"
-                except QueryError:
-                    pass  # Search mode dropdown is in advanced mode
                 self.notify("Light RAG: BM25 only, top 3 results")
             elif preset == "full":
                 rag_enable.value = True
-                plain_rag.value = False
                 top_k.value = "10"
                 # Try to enable reranking if in advanced mode
                 try:
@@ -4284,12 +4282,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     rerank.value = True
                 except QueryError:
                     pass  # Reranking is in advanced mode
-                # Also update the search mode dropdown if it exists
-                try:
-                    search_mode = self.query_one("#chat-rag-search-mode", Select)
-                    search_mode.value = "semantic"
-                except QueryError:
-                    pass  # Search mode dropdown is in advanced mode
                 self.notify("Full RAG: Embeddings + reranking, top 10 results")
             elif preset == "custom":
                 rag_enable.value = True

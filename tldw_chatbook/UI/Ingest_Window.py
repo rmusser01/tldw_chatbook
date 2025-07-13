@@ -3042,6 +3042,102 @@ class IngestWindow(Container):
             self.app_instance.notify("Error: UI elements not found", severity="error")
             return
         
+        # Collect all UI values before starting the worker
+        try:
+            # Get selected files
+            local_key = "local_video"
+            selected_files = self.selected_local_files.get(local_key, [])
+            
+            # Get URL input
+            url_input = self.query_one("#local-url-video", Input).value.strip()
+            
+            # Prepare inputs list
+            all_inputs = []
+            if url_input:
+                all_inputs.append(url_input)
+            
+            all_inputs.extend(selected_files)
+            
+            if not all_inputs:
+                self.app_instance.notify("No video files or URLs selected for processing", severity="warning")
+                loading_indicator.display = False
+                loading_indicator.classes = loading_indicator.classes | {"hidden"}
+                process_button.disabled = False
+                return
+            
+            # Collect all processing options
+            options = {
+                "inputs": all_inputs,
+                "download_video": self.query_one("#local-download-video", Checkbox).value,
+                "extract_audio_only": self.query_one("#local-extract-audio-only-video", Checkbox).value,
+                "start_time": self.query_one("#local-start-time-video", Input).value.strip(),
+                "end_time": self.query_one("#local-end-time-video", Input).value.strip(),
+                "title_override": self.query_one("#local-title-override-video", Input).value.strip(),
+                "author": self.query_one("#local-author-video", Input).value.strip(),
+                
+                # Transcription options
+                "transcription_provider": self.query_one("#local-transcription-provider-video", Select).value,
+                "transcription_model": self.query_one("#local-transcription-model-video", Input).value.strip(),
+                "transcription_language": self.query_one("#local-transcription-language-video", Input).value.strip(),
+                "translation_target": self.query_one("#local-translation-target-video", Input).value.strip(),
+                
+                "vad_filter": self.query_one("#local-vad-filter-video", Checkbox).value,
+                "diarize": self.query_one("#local-diarize-video", Checkbox).value,
+                "timestamps": self.query_one("#local-timestamps-video", Checkbox).value,
+                
+                # Processing options
+                "perform_analysis": self.query_one("#local-perform-analysis-video", Checkbox).value,
+                "custom_prompt": self.query_one("#local-custom-prompt-video", TextArea).text.strip(),
+                "system_prompt": self.query_one("#local-system-prompt-video", TextArea).text.strip(),
+                
+                # Chunking options
+                "perform_chunking": self.query_one("#local-perform-chunking-video", Checkbox).value,
+                "chunk_method": self.query_one("#local-chunk-method-video", Select).value,
+                "chunk_size": int(self.query_one("#local-chunk-size-video", Input).value or "500"),
+                "chunk_overlap": int(self.query_one("#local-chunk-overlap-video", Input).value or "200"),
+                "use_adaptive_chunking": self.query_one("#local-use-adaptive-chunking-video", Checkbox).value,
+                "use_multi_level_chunking": self.query_one("#local-use-multi-level-chunking-video", Checkbox).value,
+                "chunk_language": self.query_one("#local-chunk-language-video", Input).value.strip(),
+                "summarize_recursively": self.query_one("#local-summarize-recursively-video", Checkbox).value,
+                
+                # Cookie options
+                "use_cookies": self.query_one("#local-use-cookies-video", Checkbox).value,
+                "cookies": self.query_one("#local-cookies-video", TextArea).text.strip(),
+                
+                # Other options
+                "keep_original": self.query_one("#local-keep-original-video", Checkbox).value,
+            }
+            
+            # Get API options for analysis if needed
+            if options["perform_analysis"]:
+                api_name_select = self.query_one("#local-analysis-api-name-video", Select)
+                if api_name_select.value != Select.BLANK:
+                    options["api_name"] = str(api_name_select.value)
+                    api_key_input = self.query_one("#local-analysis-api-key-video", Input)
+                    options["api_key"] = api_key_input.value.strip() if api_key_input.value else None
+                    
+                    # Try to get analysis model if available
+                    try:
+                        analysis_model_select = self.query_one("#local-analysis-model-video", Select)
+                        if analysis_model_select.value != Select.BLANK:
+                            options["analysis_model"] = str(analysis_model_select.value)
+                    except Exception:
+                        # Field might not exist in older UI versions
+                        pass
+                    
+                    # If no API key provided in UI, try to get from config
+                    if not options.get("api_key") and options.get("api_name"):
+                        from ..config import get_api_key
+                        options["api_key"] = get_api_key(options["api_name"])
+            
+        except Exception as e:
+            logger.error(f"Error collecting UI values: {e}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+            return
+        
         # Show loading state
         loading_indicator.display = True
         loading_indicator.classes = loading_indicator.classes - {"hidden"}
@@ -3051,191 +3147,165 @@ class IngestWindow(Container):
         status_area.classes = status_area.classes - {"hidden"}
         process_button.disabled = True
         
+        # Run the actual processing in a worker thread with the collected options
+        worker = self.run_worker(
+            self._process_video_files_worker, 
+            options,
+            exclusive=True, 
+            thread=True
+        )
+        worker.add_done_callback(self._on_video_processing_complete)
+    
+    def _on_video_processing_complete(self, worker: Worker) -> None:
+        """Handle completion of video processing worker."""
         try:
-            # Get selected files
-            local_key = "local_video"
-            selected_files = self.selected_local_files.get(local_key, [])
+            # Get UI elements
+            loading_indicator = self.query_one("#local-loading-indicator-video", LoadingIndicator)
+            status_area = self.query_one("#local-status-video", TextArea)
+            process_button = self.query_one("#local-submit-video", Button)
             
-            # Also check URLs
-            urls_textarea = self.query_one("#local-urls-video", TextArea)
-            urls_text = urls_textarea.text.strip()
-            urls = [url.strip() for url in urls_text.split('\n') if url.strip()]
+            # Get the result from the worker
+            result = worker.result()
             
-            # Combine all inputs
-            all_inputs = []
-            if selected_files:
-                all_inputs.extend([str(f) for f in selected_files])
-            if urls:
-                all_inputs.extend(urls)
+            if result["success"]:
+                # Process the results
+                results = result["results"]
+                processed_count = results.get("processed_count", 0)
+                errors_count = results.get("errors_count", 0)
+                
+                status_messages = [f"Processing complete: {processed_count} succeeded, {errors_count} failed\n"]
+                
+                for video_result in results.get("results", []):
+                    input_ref = video_result.get("input_ref", "Unknown")
+                    status = video_result.get("status", "Unknown")
+                    title = video_result.get("metadata", {}).get("title", "Untitled")
+                    
+                    if status == "Success":
+                        status_messages.append(f"✓ {title} ({input_ref})")
+                    else:
+                        error = video_result.get("error", "Unknown error")
+                        status_messages.append(f"✗ {input_ref}: {error}")
+                
+                status_area.load_text("\n".join(status_messages))
+                
+                if processed_count > 0:
+                    self.app_instance.notify(f"Successfully processed {processed_count} video file(s)", severity="information")
+                if errors_count > 0:
+                    self.app_instance.notify(f"{errors_count} file(s) failed to process", severity="warning")
+            else:
+                # Show error
+                error_msg = result.get("error", "Unknown error occurred")
+                logger.error(f"Video processing failed: {error_msg}")
+                self.app_instance.notify(f"Error: {error_msg}", severity="error")
+                status_area.load_text(f"Error: {error_msg}")
+                
+        except Exception as e:
+            logger.error(f"Error in video processing completion handler: {e}", exc_info=True)
+            self.app_instance.notify(f"Error: {str(e)}", severity="error")
+            
+        finally:
+            # Hide loading state
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+
+    @work(thread=True)
+    def _process_video_files_worker(self, options: dict) -> dict:
+        """Process video files in a background worker thread.
+        
+        Args:
+            options: Dictionary containing all processing options collected from UI
+        
+        Returns:
+            Dictionary with success status and results or error message
+        """
+        try:
+            # Extract all options from the passed dictionary
+            all_inputs = options.get("inputs", [])
             
             if not all_inputs:
-                self.app_instance.notify("Please select at least one video file or provide URLs", severity="warning")
-                return
-            
-            # Get metadata
-            title_override = self.query_one("#local-title-video", Input).value.strip()
-            author = self.query_one("#local-author-video", Input).value.strip()
-            keywords_text = self.query_one("#local-keywords-video", TextArea).text.strip()
-            keywords = [k.strip() for k in keywords_text.split(',') if k.strip()] if keywords_text else []
-            
-            # Get video processing options
-            extract_audio_only = self.query_one("#local-extract-audio-only-video", Checkbox).value
-            download_video = self.query_one("#local-download-video-video", Checkbox).value
-            start_time = self.query_one("#local-start-time-video", Input).value.strip()
-            end_time = self.query_one("#local-end-time-video", Input).value.strip()
-            
-            # Get transcription options
-            transcription_provider = self.query_one("#local-transcription-provider-video", Select).value
-            transcription_model = self.query_one("#local-transcription-model-video", Select).value
-            transcription_language = self.query_one("#local-transcription-language-video", Input).value.strip() or "en"
-            # Get translation target if available
-            translation_target = None
-            try:
-                translation_container = self.query_one("#local-translation-container-video", Container)
-                if not translation_container.has_class("hidden"):
-                    translation_target_input = self.query_one("#local-translation-target-video", Input)
-                    translation_target = translation_target_input.value.strip() if translation_target_input.value else None
-            except Exception:
-                pass
-            vad_filter = self.query_one("#local-vad-filter-video", Checkbox).value
-            diarize = self.query_one("#local-diarize-video", Checkbox).value
-            timestamps = self.query_one("#local-timestamps-video", Checkbox).value
-            
-            # Get processing options
-            perform_analysis = self.query_one("#local-perform-analysis-video", Checkbox).value
-            custom_prompt = self.query_one("#local-custom-prompt-video", TextArea).text.strip()
-            system_prompt = self.query_one("#local-system-prompt-video", TextArea).text.strip()
-            
-            # Get API options for analysis
-            api_name = None
-            api_key = None
-            analysis_model = None
-            if perform_analysis:
-                api_name_select = self.query_one("#local-analysis-api-name-video", Select)
-                if api_name_select.value != Select.BLANK:
-                    api_name = str(api_name_select.value)
-                    api_key_input = self.query_one("#local-analysis-api-key-video", Input)
-                    api_key = api_key_input.value.strip() if api_key_input.value else None
-                    
-                    # Try to get analysis model if available
-                    try:
-                        analysis_model_select = self.query_one("#local-analysis-model-video", Select)
-                        if analysis_model_select.value != Select.BLANK:
-                            analysis_model = str(analysis_model_select.value)
-                    except Exception:
-                        # Field might not exist in older UI versions
-                        pass
-                    
-                    # If no API key provided in UI, try to get from config
-                    if not api_key and api_name:
-                        from ..config import get_api_key
-                        api_key = get_api_key(api_name)
-            
-            # Get chunking options
-            perform_chunking = self.query_one("#local-perform-chunking-video", Checkbox).value
-            chunk_method = self.query_one("#local-chunk-method-video", Select).value
-            chunk_size = int(self.query_one("#local-chunk-size-video", Input).value or "500")
-            chunk_overlap = int(self.query_one("#local-chunk-overlap-video", Input).value or "200")
-            use_adaptive_chunking = self.query_one("#local-use-adaptive-chunking-video", Checkbox).value
-            use_multi_level_chunking = self.query_one("#local-use-multi-level-chunking-video", Checkbox).value
-            chunk_language = self.query_one("#local-chunk-language-video", Input).value.strip()
-            summarize_recursively = self.query_one("#local-summarize-recursively-video", Checkbox).value
-            
-            # Get cookie options
-            use_cookies = self.query_one("#local-use-cookies-video", Checkbox).value
-            cookies = self.query_one("#local-cookies-video", TextArea).text.strip()
-            
-            # Other options
-            keep_original = self.query_one("#local-keep-original-video", Checkbox).value
+                return {
+                    "success": False,
+                    "error": "No video files or URLs selected for processing"
+                }
             
             # Check if media DB is available
             if not self.app_instance.media_db:
                 logger.error("Media database not initialized")
-                self.app_instance.notify("Error: Media database not available", severity="error")
-                status_area.load_text("Error: Media database not available")
-                return
+                return {
+                    "success": False,
+                    "error": "Media database not available"
+                }
             
             # Import the video processing function
             try:
                 from ..Local_Ingestion import LocalVideoProcessor
             except ImportError as e:
                 logger.error(f"Failed to import video processing library: {e}")
-                self.app_instance.notify("Error: Video processing library not available. Please install with: pip install tldw-chatbook[video]", severity="error")
-                status_area.load_text("Error: Video processing library not available.\nPlease install with: pip install tldw-chatbook[video]")
-                return
+                return {
+                    "success": False,
+                    "error": "Video processing library not available. Please install with: pip install tldw-chatbook[video]"
+                }
             
             # Create processor instance
             processor = LocalVideoProcessor(self.app_instance.media_db)
             
-            # Process video files
-            status_area.load_text("Processing video files...\n")
+            # Update UI from worker thread
+            self.call_from_thread(self._update_status_area, "Processing video files...\n")
             
+            # Process video files
             results = processor.process_videos(
                 inputs=all_inputs,
-                download_video_flag=download_video and not extract_audio_only,
-                start_time=start_time,
-                end_time=end_time,
-                transcription_provider=transcription_provider,
-                transcription_model=transcription_model,
-                transcription_language=transcription_language,
-                translation_target_language=translation_target,
-                perform_chunking=perform_chunking,
-                chunk_method=chunk_method,
-                max_chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                use_adaptive_chunking=use_adaptive_chunking,
-                use_multi_level_chunking=use_multi_level_chunking,
-                chunk_language=chunk_language or transcription_language,
-                diarize=diarize,
-                vad_use=vad_filter,
-                timestamp_option=timestamps,
-                perform_analysis=perform_analysis,
-                api_name=api_name,
-                api_key=api_key,
-                analysis_model=analysis_model,
-                custom_prompt=custom_prompt,
-                system_prompt=system_prompt,
-                summarize_recursively=summarize_recursively,
-                use_cookies=use_cookies,
-                cookies=cookies,
-                keep_original=keep_original,
-                custom_title=title_override,
-                author=author
+                download_video_flag=options["download_video"] and not options["extract_audio_only"],
+                start_time=options["start_time"],
+                end_time=options["end_time"],
+                transcription_provider=options["transcription_provider"],
+                transcription_model=options["transcription_model"],
+                transcription_language=options["transcription_language"],
+                translation_target_language=options["translation_target"],
+                perform_chunking=options["perform_chunking"],
+                chunk_method=options["chunk_method"],
+                max_chunk_size=options["chunk_size"],
+                chunk_overlap=options["chunk_overlap"],
+                use_adaptive_chunking=options["use_adaptive_chunking"],
+                use_multi_level_chunking=options["use_multi_level_chunking"],
+                chunk_language=options["chunk_language"] or options["transcription_language"],
+                diarize=options["diarize"],
+                vad_use=options["vad_filter"],
+                timestamp_option=options["timestamps"],
+                perform_analysis=options["perform_analysis"],
+                api_name=options.get("api_name"),
+                api_key=options.get("api_key"),
+                analysis_model=options.get("analysis_model"),
+                custom_prompt=options["custom_prompt"],
+                system_prompt=options["system_prompt"],
+                summarize_recursively=options["summarize_recursively"],
+                use_cookies=options["use_cookies"],
+                cookies=options["cookies"],
+                keep_original=options["keep_original"],
+                custom_title=options["title_override"],
+                author=options["author"]
             )
             
-            # Display results
-            processed_count = results.get("processed_count", 0)
-            errors_count = results.get("errors_count", 0)
-            
-            status_messages = [f"Processing complete: {processed_count} succeeded, {errors_count} failed\n"]
-            
-            for result in results.get("results", []):
-                input_ref = result.get("input_ref", "Unknown")
-                status = result.get("status", "Unknown")
-                title = result.get("metadata", {}).get("title", "Untitled")
-                
-                if status == "Success":
-                    status_messages.append(f"✓ {title} ({input_ref})")
-                else:
-                    error = result.get("error", "Unknown error")
-                    status_messages.append(f"✗ {input_ref}: {error}")
-            
-            status_area.load_text("\n".join(status_messages))
-            
-            if processed_count > 0:
-                self.app_instance.notify(f"Successfully processed {processed_count} video file(s)", severity="information")
-            if errors_count > 0:
-                self.app_instance.notify(f"{errors_count} file(s) failed to process", severity="warning")
+            return {
+                "success": True,
+                "results": results
+            }
             
         except Exception as e:
             logger.error(f"Error processing video files: {e}", exc_info=True)
-            self.app_instance.notify(f"Error: {str(e)}", severity="error")
-            status_area.load_text(f"Error: {str(e)}")
-        finally:
-            # Hide loading state
-            loading_indicator.display = False
-            loading_indicator.classes = loading_indicator.classes | {"hidden"}
-            process_button.disabled = False
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    def _update_status_area(self, text: str) -> None:
+        """Update the status area from the worker thread."""
+        try:
+            status_area = self.query_one("#local-status-video", TextArea)
+            status_area.load_text(text)
+        except Exception:
+            pass
 
 #
 # End of Ingest_Window.py

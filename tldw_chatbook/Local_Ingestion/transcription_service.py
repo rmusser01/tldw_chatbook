@@ -9,15 +9,21 @@ import subprocess
 import tempfile
 import time
 import logging
+import sys
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union
 import json
+
+# Fix for multiprocessing issues in some environments
+os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+os.environ['TQDM_DISABLE'] = '1'
 
 import numpy as np
 
 # Local imports  
 from ..config import get_cli_setting
 from ..Utils.text import sanitize_filename
+from contextlib import contextmanager
 
 # Optional imports with graceful degradation
 try:
@@ -59,6 +65,86 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@contextmanager
+def protect_file_descriptors():
+    """Context manager to protect file descriptors during subprocess operations.
+    
+    This fixes the "bad value(s) in fds_to_keep" error on macOS when the 
+    transformers library spawns subprocesses for model downloads.
+    """
+    # Save original file descriptors
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    original_stdin = sys.stdin
+    
+    # Save original environment
+    env_backup = os.environ.copy()
+    
+    # Save original subprocess.Popen to restore later
+    original_popen = subprocess.Popen
+    
+    try:
+        # Ensure we have real file descriptors, not wrapped objects
+        # This is crucial for subprocess operations
+        try:
+            # Test if stdout/stderr are real files with valid file descriptors
+            stdout_fd = sys.stdout.fileno()
+            stderr_fd = sys.stderr.fileno()
+            # Verify they're valid by attempting to use them
+            os.fstat(stdout_fd)
+            os.fstat(stderr_fd)
+        except (AttributeError, ValueError, OSError):
+            # stdout/stderr are wrapped/captured or invalid, create new ones
+            # Use the original file descriptors 1 and 2 directly
+            try:
+                sys.stdout = os.fdopen(1, 'w')
+                sys.stderr = os.fdopen(2, 'w')
+            except OSError:
+                # If that fails, use devnull as a fallback
+                devnull = open(os.devnull, 'w')
+                sys.stdout = devnull
+                sys.stderr = devnull
+        
+        # Set environment to prevent subprocess issues
+        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+        os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+        
+        # For macOS specifically
+        if sys.platform == 'darwin':
+            os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
+            # Ensure subprocess doesn't inherit bad file descriptors
+            os.environ['PYTHONNOUSERSITE'] = '1'
+            # Force subprocess to close all file descriptors except 0,1,2
+            os.environ['PYTHON_SUBPROCESS_CLOSE_FDS'] = '1'
+        
+        yield
+        
+    finally:
+        # Restore original file descriptors
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        sys.stdin = original_stdin
+        
+        # Close any temporary files we created
+        if sys.stdout != original_stdout and hasattr(sys.stdout, 'close'):
+            try:
+                sys.stdout.close()
+            except:
+                pass
+        if sys.stderr != original_stderr and hasattr(sys.stderr, 'close'):
+            try:
+                sys.stderr.close()
+            except:
+                pass
+        
+        # Restore environment
+        os.environ.clear()
+        os.environ.update(env_backup)
+        
+        # Restore subprocess.Popen
+        subprocess.Popen = original_popen
+
+
 class TranscriptionError(Exception):
     """Base exception for transcription errors."""
     pass
@@ -75,14 +161,14 @@ class TranscriptionService:
     def __init__(self):
         """Initialize the transcription service."""
         self.config = {
-            'default_provider': get_cli_setting('transcription.default_provider', 'faster-whisper'),
-            'default_model': get_cli_setting('transcription.default_model', 'base'),
-            'default_language': get_cli_setting('transcription.default_language', 'en'),
-            'default_source_language': get_cli_setting('transcription.default_source_language', ''),
-            'default_target_language': get_cli_setting('transcription.default_target_language', ''),
-            'device': get_cli_setting('transcription.device', 'cpu'),
-            'compute_type': get_cli_setting('transcription.compute_type', 'int8'),
-            'chunk_length_seconds': get_cli_setting('transcription.chunk_length_seconds', 40.0),
+            'default_provider': get_cli_setting('transcription.default_provider', 'faster-whisper') or 'faster-whisper',
+            'default_model': get_cli_setting('transcription.default_model', 'base') or 'base',
+            'default_language': get_cli_setting('transcription.default_language', 'en') or 'en',
+            'default_source_language': get_cli_setting('transcription.default_source_language', '') or '',
+            'default_target_language': get_cli_setting('transcription.default_target_language', '') or '',
+            'device': get_cli_setting('transcription.device', 'cpu') or 'cpu',
+            'compute_type': get_cli_setting('transcription.compute_type', 'int8') or 'int8',
+            'chunk_length_seconds': get_cli_setting('transcription.chunk_length_seconds', 40.0) or 40.0,
         }
         
         # Model cache
@@ -274,13 +360,27 @@ class TranscriptionService:
         if cache_key not in self._model_cache:
             logger.info(f"Loading Whisper model: {model}")
             try:
-                self._model_cache[cache_key] = WhisperModel(
-                    model,
-                    device=self.config['device'],
-                    compute_type=self.config['compute_type']
-                )
+                # Use protect_file_descriptors to handle the file descriptor issue
+                with protect_file_descriptors():
+                    self._model_cache[cache_key] = WhisperModel(
+                        model,
+                        device=self.config['device'],
+                        compute_type=self.config['compute_type'],
+                        download_root=None,  # Use default cache directory
+                        local_files_only=False  # Allow downloading if needed
+                    )
             except Exception as e:
-                raise TranscriptionError(f"Failed to load model {model}: {str(e)}") from e
+                # Provide more helpful error message
+                error_msg = f"Failed to load model {model}: {str(e)}"
+                if "bad value(s) in fds_to_keep" in str(e):
+                    error_msg += "\n\nThis error typically occurs when file descriptors are not properly handled."
+                    error_msg += "\nPossible solutions:"
+                    error_msg += "\n1. Restart the application"
+                    error_msg += "\n2. Pre-download the model manually:"
+                    error_msg += f"\n   huggingface-cli download openai/whisper-{model}"
+                    error_msg += "\n3. Set environment variable before starting:"
+                    error_msg += "\n   export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES"
+                raise TranscriptionError(error_msg) from e
         
         whisper_model = self._model_cache[cache_key]
         

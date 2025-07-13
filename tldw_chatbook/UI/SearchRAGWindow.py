@@ -311,7 +311,7 @@ class SearchRAGWindow(Container):
         self.current_search_id: Optional[int] = None
         
         # Initialize components
-        history_db_path = get_user_data_dir() / "default_user" / "search_history.db"
+        history_db_path = get_user_data_dir() / "search_history.db"
         self.search_history_db = SearchHistoryDB(history_db_path)
         self._load_recent_search_history()
         

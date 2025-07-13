@@ -56,6 +56,8 @@ class LocalVideoProcessor:
         self.media_db = media_db
         self.audio_processor = LocalAudioProcessor(media_db)
         self.max_file_size_mb = get_cli_setting('media_processing.max_video_file_size_mb', 2000)
+        if self.max_file_size_mb is None:
+            self.max_file_size_mb = 2000
         self.max_file_size = self.max_file_size_mb * 1024 * 1024
         
     def download_video(
@@ -451,6 +453,10 @@ class LocalVideoProcessor:
                 processing_dir=temp_dir,
                 **kwargs
             )
+            
+            # Check if audio processing failed
+            if audio_result is None:
+                raise Exception("Audio processing failed - no result returned")
             
             # Merge results
             result.update({

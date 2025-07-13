@@ -61,11 +61,13 @@ class LocalAudioProcessor:
             media_db: Optional MediaDatabase instance for storage
         """
         self.media_db = media_db
-        self.config = get_media_ingestion_defaults()
+        self.config = get_media_ingestion_defaults("audio")
         self.chunking_service = ChunkingService()
         
         # Get configuration settings
         self.max_file_size_mb = get_cli_setting('media_processing.max_audio_file_size_mb', 500)
+        if self.max_file_size_mb is None:
+            self.max_file_size_mb = 500
         self.max_file_size = self.max_file_size_mb * 1024 * 1024
         
     def download_audio_file(self, url: str, target_dir: str, 

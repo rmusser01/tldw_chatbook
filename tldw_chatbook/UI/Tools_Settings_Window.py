@@ -24,7 +24,7 @@ from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, 
     API_MODELS_BY_PROVIDER, check_encryption_needed, get_detected_api_providers,
     enable_config_encryption, disable_config_encryption, change_encryption_password,
-    get_encryption_password, get_cli_setting
+    get_encryption_password, get_cli_setting, get_prompts_db_path
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
@@ -2925,7 +2925,7 @@ Thank you for using tldw-chatbook! 🎉
                 vacuumed.append("ChaChaNotes")
             
             # Vacuum Prompts database
-            prompts_path = Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db")).expanduser()
+            prompts_path = get_prompts_db_path()
             if prompts_path.exists():
                 db = PromptsDatabase(str(prompts_path), "vacuum_operation")
                 db.vacuum()
@@ -2989,7 +2989,7 @@ Thank you for using tldw-chatbook! 🎉
                 backed_up.append(("ChaChaNotes", backup_path))
             
             # Backup Prompts database
-            prompts_path = Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db")).expanduser()
+            prompts_path = get_prompts_db_path()
             if prompts_path.exists():
                 backup_path = backup_dir / f"tldw_cli_prompts_{timestamp}.db"
                 shutil.copy2(prompts_path, backup_path)
@@ -3051,7 +3051,7 @@ Thank you for using tldw-chatbook! 🎉
                 results.append(f"ChaChaNotes: {'OK' if result else 'FAILED'}")
             
             # Check Prompts database
-            prompts_path = Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db")).expanduser()
+            prompts_path = get_prompts_db_path()
             if prompts_path.exists():
                 db = PromptsDatabase(str(prompts_path), "integrity_check")
                 result = db.check_integrity()
@@ -3284,7 +3284,7 @@ Thank you for using tldw-chatbook! 🎉
                     pass
             
             # Update Prompts size
-            prompts_path = Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db")).expanduser()
+            prompts_path = get_prompts_db_path()
             if prompts_path.exists():
                 size = self._format_file_size(prompts_path.stat().st_size)
                 try:
