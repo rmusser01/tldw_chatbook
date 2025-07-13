@@ -2374,9 +2374,36 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 
 
 # --- CLI Setting Getter ---
-def get_cli_setting(section: str, key: str, default: Any = None) -> Any:
-    """Helper to get a specific setting from the loaded CLI configuration."""
+def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
+    """Helper to get a specific setting from the loaded CLI configuration.
+    
+    Can be called in two ways:
+    1. get_cli_setting("section", "key", default)  # Traditional format
+    2. get_cli_setting("section.key", default)     # Dotted format
+    """
     config = load_cli_config_and_ensure_existence() # Ensures config is loaded
+    
+    # Handle dotted notation when key is None (called with positional args)
+    if key is None and '.' in section:
+        # Split on first dot only to handle nested keys
+        parts = section.split('.', 1)
+        section = parts[0]
+        key = parts[1]
+    elif key is None:
+        # No dot found and no key provided - invalid call
+        return default
+    
+    # Handle the case where default was passed as second argument in dotted notation
+    # e.g., get_cli_setting("section.key", 500) where 500 is the default
+    if not isinstance(key, str) and default is None:
+        default = key
+        if '.' in section:
+            parts = section.split('.', 1)
+            section = parts[0]
+            key = parts[1]
+        else:
+            return default
+    
     # Use `config.get(section, {})` to safely access potentially missing sections
     section_data = config.get(section)
     if isinstance(section_data, dict):
