@@ -76,3 +76,27 @@ async def handle_local_audio_video_submit_button_pressed(app: 'TldwCli', event: 
     except Exception as e:
         logger.error(f"Error handling local {media_type} button: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
+
+async def handle_local_document_submit_button_pressed(app: 'TldwCli', event: 'Button.Pressed') -> None:
+    """Handle local document processing button presses."""
+    try:
+        ingest_window = app.query_one("#ingest-window", IngestWindow)
+        await ingest_window.handle_local_document_process()
+            
+    except QueryError:
+        logger.error(f"Could not find IngestWindow to handle document button")
+    except Exception as e:
+        logger.error(f"Error handling local document button: {e}")
+        app.notify(f"Error: {str(e)}", severity="error")
+
+async def handle_local_plaintext_submit_button_pressed(app: 'TldwCli', event: 'Button.Pressed') -> None:
+    """Handle local plaintext processing button presses."""
+    try:
+        ingest_window = app.query_one("#ingest-window", IngestWindow)
+        await ingest_window.handle_local_plaintext_process()
+            
+    except QueryError:
+        logger.error(f"Could not find IngestWindow to handle plaintext button")
+    except Exception as e:
+        logger.error(f"Error handling local plaintext button: {e}")
+        app.notify(f"Error: {str(e)}", severity="error")

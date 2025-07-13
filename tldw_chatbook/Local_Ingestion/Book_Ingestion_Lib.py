@@ -40,7 +40,7 @@ import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple, Union
+from typing import Dict, Any, Optional, List, Tuple, Union, TYPE_CHECKING
 #
 # External Imports
 # Handle optional ebook processing dependencies
@@ -67,6 +67,10 @@ except ImportError:
     ebooklib = None
     epub = None
 
+# For type checking only
+if TYPE_CHECKING and EBOOKLIB_AVAILABLE:
+    from ebooklib import epub
+
 try:
     import html2text
     HTML2TEXT_AVAILABLE = True
@@ -80,7 +84,7 @@ EBOOK_PROCESSING_AVAILABLE = EBOOKLIB_AVAILABLE and DEFUSEDXML_AVAILABLE
 #
 # Import Local
 from ..LLM_Calls.Summarization_General_Lib import analyze
-from ..RAG_Search.chunking_service import improved_chunking_process, ChunkingError, InvalidChunkingMethodError
+# Moved chunking imports to be lazy to avoid circular dependency
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from loguru import logger
 from ..Utils.optional_deps import get_safe_import
@@ -208,7 +212,7 @@ def extract_epub_metadata_from_text(content: str) -> Tuple[Optional[str], Option
 
     return title, author
 
-def format_toc_item(item: Union[epub.Link, epub.Section, Any], level: int) -> str:
+def format_toc_item(item: Union['epub.Link', 'epub.Section', Any], level: int) -> str:
     """
     Formats a table of contents item into Markdown list format.
 
@@ -868,6 +872,8 @@ def process_epub(
 
             logger.info(f"Chunking ebook content with options: {effective_chunk_options}")
             try:
+                # Lazy import to avoid circular dependency
+                from ..RAG_Search.chunking_service import improved_chunking_process
                 # Use improved_chunking_process, which handles Chunker instantiation and metadata enrichment.
                 # It will use the 'method' from effective_chunk_options to dispatch correctly.
                 processed_chunks = improved_chunking_process(
@@ -896,23 +902,26 @@ def process_epub(
 
                 result["chunks"] = processed_chunks # Assign the list of chunk dictionaries
 
-            # Catch specific exceptions from Chunker/improved_chunking_process
-            except InvalidChunkingMethodError as icme:
-                logger.error(f"Invalid chunking method specified for {file_path}: {icme}", exc_info=True)
-                result["warnings"].append(f"Chunking failed (invalid method): {str(icme)}")
-                processed_chunks = [{'text': extracted_text, 'metadata': {'chunk_num': 0, 'error': f"Chunking failed (invalid method): {str(icme)}"}}]
-                result["chunks"] = processed_chunks
-            except ChunkingError as ce:
-                logger.error(f"ChunkingError during chunking for {file_path}: {ce}", exc_info=True)
-                result["warnings"].append(f"Chunking failed: {str(ce)}")
-                processed_chunks = [{'text': extracted_text, 'metadata': {'chunk_num': 0, 'error': f"Chunking failed: {str(ce)}"}}]
-                result["chunks"] = processed_chunks
-            except Exception as chunk_err: # Catch any other unexpected errors during chunking
-                logger.error(f"Unexpected error during chunking for {file_path}: {chunk_err}", exc_info=True)
-                result["warnings"].append(f"Chunking failed (unexpected): {str(chunk_err)}")
-                # Fallback: use full text as one chunk
-                processed_chunks = [{'text': extracted_text, 'metadata': {'chunk_num': 0, 'error': f"Chunking failed (unexpected): {str(chunk_err)}"}}]
-                result["chunks"] = processed_chunks
+            # Catch all exceptions and handle based on type
+            except Exception as e:
+                error_class_name = e.__class__.__name__
+                if error_class_name == 'InvalidChunkingMethodError':
+                    logger.error(f"Invalid chunking method specified for {file_path}: {e}", exc_info=True)
+                    result["warnings"].append(f"Chunking failed (invalid method): {str(e)}")
+                    processed_chunks = [{'text': extracted_text, 'metadata': {'chunk_num': 0, 'error': f"Chunking failed (invalid method): {str(e)}"}}]
+                    result["chunks"] = processed_chunks
+                elif error_class_name == 'ChunkingError':
+                    logger.error(f"ChunkingError during chunking for {file_path}: {e}", exc_info=True)
+                    result["warnings"].append(f"Chunking failed: {str(e)}")
+                    processed_chunks = [{'text': extracted_text, 'metadata': {'chunk_num': 0, 'error': f"Chunking failed: {str(e)}"}}]
+                    result["chunks"] = processed_chunks
+                else:
+                    # Any other unexpected error
+                    logger.error(f"Unexpected error during chunking for {file_path}: {e}", exc_info=True)
+                    result["warnings"].append(f"Chunking failed (unexpected): {str(e)}")
+                    # Fallback: use full text as one chunk
+                    processed_chunks = [{'text': extracted_text, 'metadata': {'chunk_num': 0, 'error': f"Chunking failed (unexpected): {str(e)}"}}]
+                    result["chunks"] = processed_chunks
 
         else:
              # If not chunking, create a single chunk containing the whole text
@@ -1365,6 +1374,8 @@ def _process_markup_or_plain_text(
 
             logger.info(f"Chunking {file_type} content with options: {effective_chunk_options}")
             try:
+                # Lazy import to avoid circular dependency
+                from ..RAG_Search.chunking_service import improved_chunking_process
                 # Use a more generic chunking function
                 processed_chunks = improved_chunking_process(markdown_content, effective_chunk_options)
 
@@ -1730,6 +1741,8 @@ def process_mobi(
                 effective_chunk_options.setdefault('overlap', 200)
                 
                 try:
+                    # Lazy import to avoid circular dependency
+                    from ..RAG_Search.chunking_service import improved_chunking_process
                     processed_chunks = improved_chunking_process(
                         text=extracted_text,
                         chunk_options_dict=effective_chunk_options
@@ -1884,6 +1897,8 @@ def process_fb2(
             effective_chunk_options.setdefault('overlap', 200)
             
             try:
+                # Lazy import to avoid circular dependency
+                from ..RAG_Search.chunking_service import improved_chunking_process
                 processed_chunks = improved_chunking_process(
                     text=extracted_text,
                     chunk_options_dict=effective_chunk_options

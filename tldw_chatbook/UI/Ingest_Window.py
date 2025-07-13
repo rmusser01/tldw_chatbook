@@ -601,36 +601,6 @@ class IngestWindow(Container):
             event.stop()
             await self._handle_remove_duplicate_urls()
         
-        # Handle local PDF process button
-        elif button_id == "local-submit-pdf":
-            event.stop()
-            await self.handle_local_pdf_process()
-        
-        # Handle local ebook process button
-        elif button_id == "local-submit-ebook":
-            event.stop()
-            await self.handle_local_ebook_process()
-        
-        # Handle local document process button
-        elif button_id == "local-process-button-document":
-            event.stop()
-            await self.handle_local_document_process()
-        
-        # Handle local plaintext process button
-        elif button_id == "ingest-local-plaintext-process":
-            event.stop()
-            await self.handle_local_plaintext_process()
-        
-        # Handle web article process button
-        elif button_id == "ingest-local-web-process":
-            event.stop()
-            await self.handle_local_web_article_process()
-        
-        # Handle web article stop button
-        elif button_id == "ingest-local-web-stop":
-            event.stop()
-            await self._handle_stop_web_scraping()
-        
         # Handle local clear files buttons
         elif button_id.startswith("local-clear-files-"):
             event.stop()

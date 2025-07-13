@@ -74,7 +74,9 @@ from .media_ingest_workers import (
 from .local_ingest_events import (
     handle_ingest_local_web_button_pressed,
     handle_local_pdf_ebook_submit_button_pressed,
-    handle_local_audio_video_submit_button_pressed
+    handle_local_audio_video_submit_button_pressed,
+    handle_local_document_submit_button_pressed,
+    handle_local_plaintext_submit_button_pressed
 )
 
 # --- Button Handler Map ---
@@ -114,6 +116,10 @@ INGEST_BUTTON_HANDLERS = {
     # Local Audio and Video buttons
     "local-submit-audio": handle_local_audio_video_submit_button_pressed,
     "local-submit-video": handle_local_audio_video_submit_button_pressed,
+    # Local Document button
+    "local-process-button-document": handle_local_document_submit_button_pressed,
+    # Local Plaintext button
+    "ingest-local-plaintext-process": handle_local_plaintext_submit_button_pressed,
 }
 
 # Export all symbols for backward compatibility
@@ -167,6 +173,9 @@ __all__ = [
     # Local ingestion handlers
     'handle_ingest_local_web_button_pressed',
     'handle_local_pdf_ebook_submit_button_pressed',
+    'handle_local_audio_video_submit_button_pressed',
+    'handle_local_document_submit_button_pressed',
+    'handle_local_plaintext_submit_button_pressed',
     # Main export
     'INGEST_BUTTON_HANDLERS'
 ]
