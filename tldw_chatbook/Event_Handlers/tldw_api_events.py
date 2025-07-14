@@ -94,6 +94,7 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
     try:
         current_field_template_for_error = f"#tldw-api-urls-{media_type}"
         data["urls"] = [url.strip() for url in app.query_one(f"#tldw-api-urls-{media_type}", TextArea).text.splitlines() if url.strip()]
+        logger.debug(f"Collected URLs for {media_type}: {data['urls']}")
 
         # Try to get local files from the individual window's selected_local_files
         data["local_files"] = []
@@ -133,6 +134,12 @@ def _collect_common_form_data(app: 'TldwCli', media_type: str) -> Dict[str, Any]
             except:
                 # If we can't find the window, just use empty list
                 pass
+        
+        logger.debug(f"Collected local files for {media_type}: {data['local_files']}")
+        
+        # Double-check that URLs and local files are separate
+        if data['urls'] and data['local_files']:
+            logger.warning(f"Both URLs and local files present for {media_type}. URLs: {data['urls']}, Files: {data['local_files']}")
 
         current_field_template_for_error = f"#tldw-api-title-{media_type}"
         data["title"] = app.query_one(f"#tldw-api-title-{media_type}", Input).value or None
@@ -484,6 +491,7 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
 
         if selected_media_type == "video":
             request_model = _collect_video_specific_data(app, common_data, selected_media_type)
+            logger.debug(f"Video request model URLs: {request_model.urls}")
         elif selected_media_type == "audio":
             request_model = _collect_audio_specific_data(app, common_data, selected_media_type)
         elif selected_media_type == "pdf":
@@ -561,6 +569,8 @@ async def handle_tldw_api_submit_button_pressed(app: 'TldwCli', event: Button.Pr
         nonlocal request_model
         try:
             if selected_media_type == "video":
+                logger.debug(f"Processing video with URLs: {getattr(request_model, 'urls', None)}")
+                logger.debug(f"Processing video with local_file_paths: {local_file_paths}")
                 return await api_client.process_video(request_model, local_file_paths)
             elif selected_media_type == "audio":
                 return await api_client.process_audio(request_model, local_file_paths)

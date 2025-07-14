@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from urllib.parse import urlparse
-import logging
+from loguru import logger
 
 # External imports
 import requests
@@ -35,7 +35,7 @@ except ImportError:
     YT_DLP_AVAILABLE = False
     logging.warning("yt-dlp not available. YouTube/URL downloading will be disabled.")
 
-logger = logging.getLogger(__name__)
+# Using loguru logger imported above
 
 class AudioProcessingError(Exception):
     """Base exception for audio processing errors."""
@@ -322,9 +322,9 @@ class LocalAudioProcessor:
                 result["metadata"]["title"] = Path(audio_path).stem
             
             # Transcribe audio
-            provider = kwargs.get("transcription_provider", "faster-whisper")
-            model = kwargs.get("transcription_model", "base")
-            language = kwargs.get("transcription_language", "en")
+            provider = kwargs.get("transcription_provider", None)
+            model = kwargs.get("transcription_model", None)
+            language = kwargs.get("transcription_language", None)
             
             logger.info(f"Starting transcription: provider={provider}, model={model}, language={language}")
             logger.debug(f"Transcription audio file: {audio_path}, size: {Path(audio_path).stat().st_size / 1024 / 1024:.2f} MB")

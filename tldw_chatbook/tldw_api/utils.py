@@ -55,6 +55,7 @@ def prepare_files_for_httpx(
     if not file_paths:
         return None
 
+    logging.debug(f"prepare_files_for_httpx called with file_paths: {file_paths}")
     httpx_files_list = []
     for file_path_str in file_paths:
         file_obj = None

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlparse
 import subprocess
+from loguru import logger
 
 # Local imports
 from .audio_processing import LocalAudioProcessor, AudioProcessingError
@@ -30,7 +31,7 @@ except ImportError:
     YT_DLP_AVAILABLE = False
     logging.warning("yt-dlp not available. Video downloading will be disabled.")
 
-logger = logging.getLogger(__name__)
+# Using loguru logger imported above
 
 
 class VideoProcessingError(Exception):
@@ -379,6 +380,7 @@ class LocalVideoProcessor:
         start_time = time.time()
         logger.info(f"Starting single video processing for: {input_item}")
         logger.debug(f"Video processing kwargs: {kwargs}")
+        logger.debug(f"Original input_item: '{input_item}'")
         
         result = {
             "status": "Pending",
@@ -397,7 +399,24 @@ class LocalVideoProcessor:
         
         try:
             # Determine if input is URL or local file
-            is_url = urlparse(input_item).scheme in ('http', 'https')
+            # Check if it has a scheme or looks like a URL without scheme
+            parsed = urlparse(input_item)
+            is_url = parsed.scheme in ('http', 'https')
+            
+            # If no scheme, check if it looks like a URL (e.g., www.youtube.com, youtube.com)
+            if not is_url and not os.path.exists(input_item):
+                # Common URL patterns without scheme
+                url_patterns = [
+                    'www.', 'youtube.com', 'youtu.be', 'vimeo.com', 'dailymotion.com',
+                    'twitch.tv', 'twitter.com', 'x.com', 'instagram.com', 'facebook.com'
+                ]
+                # Check if it contains common domain patterns
+                if any(pattern in input_item for pattern in url_patterns) or '.' in input_item and '/' in input_item:
+                    # Add https:// prefix and update input_item
+                    input_item = f"https://{input_item}"
+                    is_url = True
+                    logger.info(f"Added https:// prefix to URL: {input_item}")
+            
             logger.debug(f"Input type for {input_item}: {'URL' if is_url else 'Local file'}")
             
             log_counter("video_processing_single_attempt", labels={
@@ -406,6 +425,10 @@ class LocalVideoProcessor:
             })
             
             if is_url:
+                # Update result with the corrected URL
+                result["input_ref"] = input_item
+                result["processing_source"] = input_item
+                
                 # Extract metadata
                 metadata = self.extract_metadata(
                     input_item,

@@ -1,6 +1,6 @@
 # tldw_chatbook/Widgets/IngestLocalAudioWindow.py
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Tuple
 from pathlib import Path
 from loguru import logger
 from textual.app import ComposeResult
@@ -84,17 +84,13 @@ class IngestLocalAudioWindow(Vertical):
                 
                 # Model selection (will be populated based on provider)
                 yield Label("Transcription Model:")
-                models = self.transcription_service.list_available_models(default_provider)
-                model_list = models.get(default_provider, [])
-                default_model = audio_defaults.get("transcription_model", "base")
-                if default_model not in model_list and model_list:
-                    default_model = model_list[0]
-                model_options = [(m, m) for m in model_list] if model_list else [("No models available", "")]
+                
+                # Start with an empty Select widget that will be populated when provider is selected
                 yield Select(
-                    model_options,
+                    [],
                     id="local-transcription-model-audio",
-                    value=default_model if model_list else "",
-                    prompt="Select model..."
+                    prompt="Select a provider first...",
+                    allow_blank=True
                 )
             
             yield Label("Source Language (ISO code):")
@@ -188,11 +184,20 @@ class IngestLocalAudioWindow(Vertical):
             # --- Submit Button ---
             yield Button("Submit", id="local-submit-audio", variant="primary")
     
-    @on(Select.Changed, "#local-transcription-provider-audio")
-    def on_provider_changed(self, event: Select.Changed) -> None:
-        """Update available models when provider changes."""
-        provider = str(event.value)
-        logger.debug(f"Transcription provider changed to: {provider}")
+    def on_mount(self) -> None:
+        """Called when widget is mounted. Initialize model options for default provider."""
+        try:
+            # Get the provider select widget
+            provider_select = self.query_one("#local-transcription-provider-audio", Select)
+            if provider_select.value and provider_select.value != Select.BLANK:
+                # Trigger the provider change handler to populate models
+                self._update_models_for_provider(str(provider_select.value))
+        except Exception as e:
+            logger.error(f"Error initializing model options: {e}")
+    
+    def _update_models_for_provider(self, provider: str) -> None:
+        """Update model options for the given provider."""
+        logger.debug(f"Updating models for provider: {provider}")
         
         # Get model select widget
         model_select = self.query_one("#local-transcription-model-audio", Select)
@@ -201,19 +206,107 @@ class IngestLocalAudioWindow(Vertical):
         models = self.transcription_service.list_available_models(provider)
         model_list = models.get(provider, [])
         
+        logger.debug(f"Available models for {provider}: {model_list}")
+        
         # Update model options
         if model_list:
-            model_options = [(m, m) for m in model_list]
+            # Create user-friendly display names for models
+            model_options = self._get_model_display_options(provider, model_list)
             model_select.set_options(model_options)
-            # Set first model as default
-            model_select.value = model_list[0]
+            model_select.prompt = "Select model..."
+            # The Select widget will automatically select the first option
+            logger.debug(f"Updated model options for {provider}, count: {len(model_options)}")
         else:
-            model_select.set_options([("No models available", "")])
-            model_select.value = ""
-        
-        # Show/hide translation options based on provider
-        translation_container = self.query_one("#local-translation-container-audio", Container)
-        if provider in ["faster-whisper", "canary"]:
-            translation_container.remove_class("hidden")
+            logger.warning(f"No models available for provider {provider}")
+            # Clear options when no models available
+            model_select.set_options([])
+            model_select.prompt = "No models available"
+    
+    def _get_model_display_options(self, provider: str, model_list: List[str]) -> List[Tuple[str, str]]:
+        """Generate user-friendly display names for models based on provider."""
+        if provider == 'parakeet-mlx':
+            return [(m, "Parakeet TDT 0.6B v2 (Real-time ASR)") for m in model_list]
+        elif provider == 'lightning-whisper-mlx':
+            # Map Whisper model names to friendly names
+            whisper_names = {
+                'tiny': 'Tiny (39M params, fastest)',
+                'tiny.en': 'Tiny English (39M params)',
+                'base': 'Base (74M params)',
+                'base.en': 'Base English (74M params)',
+                'small': 'Small (244M params)',
+                'small.en': 'Small English (244M params)',
+                'medium': 'Medium (769M params)',
+                'medium.en': 'Medium English (769M params)',
+                'large-v1': 'Large v1 (1.5B params)',
+                'large-v2': 'Large v2 (1.5B params)',
+                'large-v3': 'Large v3 (1.5B params, latest)',
+                'large': 'Large (1.5B params)',
+                'distil-large-v2': 'Distil Large v2 (faster)',
+                'distil-large-v3': 'Distil Large v3 (faster)',
+                'distil-medium.en': 'Distil Medium English',
+                'distil-small.en': 'Distil Small English'
+            }
+            return [(m, whisper_names.get(m, m)) for m in model_list]
+        elif provider == 'faster-whisper':
+            # Similar mapping for faster-whisper
+            whisper_names = {
+                'tiny': 'Tiny (39M params, fastest)',
+                'tiny.en': 'Tiny English (39M params)',
+                'base': 'Base (74M params)',
+                'base.en': 'Base English (74M params)',
+                'small': 'Small (244M params)',
+                'small.en': 'Small English (244M params)',
+                'medium': 'Medium (769M params)',
+                'medium.en': 'Medium English (769M params)',
+                'large-v1': 'Large v1 (1.5B params)',
+                'large-v2': 'Large v2 (1.5B params)',
+                'large-v3': 'Large v3 (1.5B params, latest)',
+                'large': 'Large (1.5B params)',
+                'distil-large-v2': 'Distil Large v2 (faster)',
+                'distil-large-v3': 'Distil Large v3 (faster)',
+                'distil-medium.en': 'Distil Medium English',
+                'distil-small.en': 'Distil Small English',
+                'deepdml/faster-distil-whisper-large-v3.5': 'Distil Large v3.5 (DeepDML)',
+                'deepdml/faster-whisper-large-v3-turbo-ct2': 'Large v3 Turbo (DeepDML)',
+                'nyrahealth/faster_CrisperWhisper': 'CrisperWhisper (NyraHealth)'
+            }
+            return [(m, whisper_names.get(m, m)) for m in model_list]
+        elif provider == 'qwen2audio':
+            return [(m, "Qwen2 Audio 7B Instruct") for m in model_list]
+        elif provider == 'parakeet':
+            # NVIDIA Parakeet models
+            parakeet_names = {
+                'nvidia/parakeet-tdt-1.1b': 'Parakeet TDT 1.1B',
+                'nvidia/parakeet-rnnt-1.1b': 'Parakeet RNN-T 1.1B',
+                'nvidia/parakeet-ctc-1.1b': 'Parakeet CTC 1.1B',
+                'nvidia/parakeet-tdt-0.6b': 'Parakeet TDT 0.6B',
+                'nvidia/parakeet-rnnt-0.6b': 'Parakeet RNN-T 0.6B',
+                'nvidia/parakeet-ctc-0.6b': 'Parakeet CTC 0.6B',
+                'nvidia/parakeet-tdt-0.6b-v2': 'Parakeet TDT 0.6B v2'
+            }
+            return [(m, parakeet_names.get(m, m)) for m in model_list]
+        elif provider == 'canary':
+            # NVIDIA Canary models
+            canary_names = {
+                'nvidia/canary-1b-flash': 'Canary 1B Flash (fastest)',
+                'nvidia/canary-1b': 'Canary 1B'
+            }
+            return [(m, canary_names.get(m, m)) for m in model_list]
         else:
-            translation_container.add_class("hidden")
+            # Default: use model name as-is
+            return [(m, m) for m in model_list]
+    
+    @on(Select.Changed, "#local-transcription-provider-audio")
+    def on_provider_changed(self, event: Select.Changed) -> None:
+        """Update available models when provider changes."""
+        if event.value and event.value != Select.BLANK:
+            provider = str(event.value)
+            logger.debug(f"Transcription provider changed to: {provider}")
+            self._update_models_for_provider(provider)
+            
+            # Show/hide translation options based on provider
+            translation_container = self.query_one("#local-translation-container-audio", Container)
+            if provider in ["faster-whisper", "canary"]:
+                translation_container.remove_class("hidden")
+            else:
+                translation_container.add_class("hidden")
