@@ -8,7 +8,7 @@ embeddings, vector stores, chunking, and search operations.
 import asyncio
 from typing import List, Optional, Dict, Any, Literal, Union, Tuple
 from pathlib import Path
-import logging
+from loguru import logger
 from dataclasses import dataclass
 import time
 import numpy as np
@@ -32,7 +32,6 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.config import load_settings
 
-logger = logging.getLogger(__name__)
 
 # Load constants from config with fallbacks
 _config = load_settings()

@@ -19,6 +19,7 @@ from textual.widgets import (
 )
 from textual.binding import Binding
 from textual.reactive import reactive
+from textual.css.query import NoMatches
 from rich.markup import escape
 from rich.text import Text
 from loguru import logger
@@ -280,8 +281,9 @@ class SavedSearchesPanel(Container):
             # Enable/disable action buttons based on selection
             self.query_one("#load-saved-search").disabled = True
             self.query_one("#delete-saved-search").disabled = True
-        except:
+        except NoMatches:
             # List view doesn't exist, we're showing empty state
+            logger.debug("Saved searches list view not found, showing empty state")
             pass
 
 class SearchRAGWindow(Container):
@@ -537,8 +539,9 @@ class SearchRAGWindow(Container):
                 loading.add_class("hidden")
                 search_btn.disabled = False
                 search_btn.label = "Search"
-        except:
+        except NoMatches:
             # Widgets not yet created, ignore
+            logger.debug("Search loading/button widgets not yet created")
             pass
     
     @on(Input.Changed, "#rag-search-input")
@@ -793,7 +796,8 @@ class SearchRAGWindow(Container):
             # Ensure maintenance menu is hidden
             try:
                 self.query_one("#maintenance-menu").add_class("hidden")
-            except:
+            except NoMatches:
+                logger.debug("Maintenance menu not found, likely not created yet")
                 pass
     
     async def _display_results_page(self, context: str) -> None:

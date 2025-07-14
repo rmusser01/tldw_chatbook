@@ -2,9 +2,10 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING, List, Dict, Any
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from pathlib import Path
 import asyncio
+import time
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -3048,13 +3049,15 @@ class IngestWindow(Container):
             local_key = "local_video"
             selected_files = self.selected_local_files.get(local_key, [])
             
-            # Get URL input
-            url_input = self.query_one("#local-url-video", Input).value.strip()
+            # Get URL input (TextArea for multiple URLs)
+            url_input = self.query_one("#local-urls-video", TextArea).text.strip()
             
             # Prepare inputs list
             all_inputs = []
             if url_input:
-                all_inputs.append(url_input)
+                # Split by newlines for multiple URLs
+                urls = [url.strip() for url in url_input.split('\n') if url.strip()]
+                all_inputs.extend(urls)
             
             all_inputs.extend(selected_files)
             
@@ -3068,16 +3071,19 @@ class IngestWindow(Container):
             # Collect all processing options
             options = {
                 "inputs": all_inputs,
-                "download_video": self.query_one("#local-download-video", Checkbox).value,
+                "download_video": self.query_one("#local-download-video-video", Checkbox).value,
                 "extract_audio_only": self.query_one("#local-extract-audio-only-video", Checkbox).value,
                 "start_time": self.query_one("#local-start-time-video", Input).value.strip(),
                 "end_time": self.query_one("#local-end-time-video", Input).value.strip(),
-                "title_override": self.query_one("#local-title-override-video", Input).value.strip(),
+                "title_override": self.query_one("#local-title-video", Input).value.strip(),
                 "author": self.query_one("#local-author-video", Input).value.strip(),
+                
+                # Keywords
+                "keywords": [k.strip() for k in self.query_one("#local-keywords-video", TextArea).text.strip().split(',') if k.strip()],
                 
                 # Transcription options
                 "transcription_provider": self.query_one("#local-transcription-provider-video", Select).value,
-                "transcription_model": self.query_one("#local-transcription-model-video", Input).value.strip(),
+                "transcription_model": str(self.query_one("#local-transcription-model-video", Select).value),
                 "transcription_language": self.query_one("#local-transcription-language-video", Input).value.strip(),
                 "translation_target": self.query_one("#local-translation-target-video", Input).value.strip(),
                 
@@ -3148,25 +3154,267 @@ class IngestWindow(Container):
         process_button.disabled = True
         
         # Run the actual processing in a worker thread with the collected options
+        # Create a closure to pass the options parameter
+        def video_worker():
+            return self._process_video_files_worker(options)
+        
         worker = self.run_worker(
-            self._process_video_files_worker, 
-            options,
+            video_worker,
             exclusive=True, 
-            thread=True
+            thread=True,
+            name="video_processing_worker",
+            description="Processing video files"
         )
-        worker.add_done_callback(self._on_video_processing_complete)
-    
-    def _on_video_processing_complete(self, worker: Worker) -> None:
-        """Handle completion of video processing worker."""
+
+    def _process_video_files_worker(self, options: dict) -> dict:
+        """Process video files in a background worker thread.
+        
+        Args:
+            options: Dictionary containing all processing options collected from UI
+        
+        Returns:
+            Dictionary with success status and results or error message
+        """
+        result = {"success": False, "error": "Unknown error"}
+        
         try:
-            # Get UI elements
-            loading_indicator = self.query_one("#local-loading-indicator-video", LoadingIndicator)
-            status_area = self.query_one("#local-status-video", TextArea)
-            process_button = self.query_one("#local-submit-video", Button)
+            # Extract all options from the passed dictionary
+            all_inputs = options.get("inputs", [])
             
-            # Get the result from the worker
-            result = worker.result()
+            if not all_inputs:
+                result = {
+                    "success": False,
+                    "error": "No video files or URLs selected for processing"
+                }
+            elif not self.app_instance.media_db:
+                logger.error("Media database not initialized")
+                result = {
+                    "success": False,
+                    "error": "Media database not available"
+                }
+            else:
+                # Import the video processing function
+                try:
+                    from ..Local_Ingestion import LocalVideoProcessor
+                except ImportError as e:
+                    logger.error(f"Failed to import video processing library: {e}")
+                    result = {
+                        "success": False,
+                        "error": "Video processing library not available. Please install with: pip install tldw-chatbook[video]"
+                    }
+                else:
+                    # Create processor instance
+                    processor = LocalVideoProcessor(self.app_instance.media_db)
+                    
+                    # Process each video individually to provide progress updates
+                    results_list = []
+                    errors_list = []
+                    
+                    logger.info(f"Starting video processing batch with {len(all_inputs)} inputs")
+                    logger.debug(f"Video processing options: {options}")
+                    
+                    # Initial status
+                    self.app_instance.call_from_thread(
+                        self._update_status_area, 
+                        f"Starting video processing for {len(all_inputs)} file(s)...\n\n"
+                    )
+                    
+                    for idx, input_item in enumerate(all_inputs, 1):
+                        # Update progress
+                        logger.info(f"Processing video {idx}/{len(all_inputs)}: {input_item}")
+                        progress_msg = f"\n[{idx}/{len(all_inputs)}] Processing: {input_item}\n"
+                        self.app_instance.call_from_thread(self._append_to_status_area, progress_msg)
+                        
+                        # Show processing stages
+                        logger.debug(f"Stage: Downloading/Loading video for {input_item}")
+                        self.app_instance.call_from_thread(
+                            self._append_to_status_area, 
+                            "  → Downloading/Loading video...\n"
+                        )
+                        
+                        try:
+                            # Process single video with stage updates
+                            # We'll wrap the processor call to add stage updates
+                            start_time = time.time()
+                            logger.debug(f"Started processing {input_item} at {start_time}")
+                            
+                            # Show initial transcription stage message
+                            logger.info(f"Stage: Preparing to transcribe audio for {input_item} using {options['transcription_provider']}")
+                            self.app_instance.call_from_thread(
+                                self._append_to_status_area, 
+                                f"  → Transcribing audio (using {options['transcription_provider']})...\n"
+                            )
+                            
+                            # Create transcription progress callback
+                            def transcription_progress(progress: float, status: str, data: Optional[Dict] = None):
+                                """Handle transcription progress updates."""
+                                # Update the last line with progress info
+                                progress_msg = f"  → Transcription: {status} [{progress:.0f}%]"
+                                
+                                # Add segment preview if available
+                                if data and data.get("segment_text"):
+                                    preview = data["segment_text"][:40].strip()
+                                    if len(data["segment_text"]) > 40:
+                                        preview += "..."
+                                    if preview:  # Only add if there's actual text
+                                        progress_msg += f' - "{preview}"'
+                                
+                                # Log that we're updating progress
+                                logger.debug(f"Updating UI with: {progress_msg}")
+                                
+                                # Use update instead of append to overwrite the line
+                                try:
+                                    self.app_instance.call_from_thread(
+                                        self._update_transcription_progress,
+                                        progress_msg
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Failed to update progress via call_from_thread: {e}")
+                                    # Try direct append as fallback
+                                    try:
+                                        self.app_instance.call_from_thread(
+                                            self._append_to_status_area,
+                                            f"\n{progress_msg}"
+                                        )
+                                    except Exception as e2:
+                                        logger.error(f"Fallback also failed: {e2}")
+                                
+                                # Log detailed progress
+                                if data:
+                                    logger.debug(f"Transcription progress: {progress:.0f}% - {status} - segment {data.get('segment_num', 0)}")
+                            
+                            # Process single video with progress callback
+                            single_result = processor.process_videos(
+                                inputs=[input_item],
+                                download_video_flag=options["download_video"] and not options["extract_audio_only"],
+                                transcription_progress_callback=transcription_progress,
+                                start_time=options["start_time"],
+                                end_time=options["end_time"],
+                                transcription_provider=options["transcription_provider"],
+                                transcription_model=options["transcription_model"],
+                                transcription_language=options["transcription_language"],
+                                translation_target_language=options["translation_target"],
+                                perform_chunking=options["perform_chunking"],
+                                chunk_method=options["chunk_method"],
+                                max_chunk_size=options["chunk_size"],
+                                chunk_overlap=options["chunk_overlap"],
+                                use_adaptive_chunking=options["use_adaptive_chunking"],
+                                use_multi_level_chunking=options["use_multi_level_chunking"],
+                                chunk_language=options["chunk_language"] or options["transcription_language"],
+                                diarize=options["diarize"],
+                                vad_use=options["vad_filter"],
+                                timestamp_option=options["timestamps"],
+                                perform_analysis=options["perform_analysis"],
+                                api_name=options.get("api_name"),
+                                api_key=options.get("api_key"),
+                                analysis_model=options.get("analysis_model"),
+                                custom_prompt=options["custom_prompt"],
+                                system_prompt=options["system_prompt"],
+                                summarize_recursively=options["summarize_recursively"],
+                                use_cookies=options["use_cookies"],
+                                cookies=options["cookies"],
+                                keep_original=options["keep_original"],
+                                custom_title=options["title_override"],
+                                author=options["author"],
+                                keywords=options["keywords"]
+                            )
+                            
+                            # Log result details
+                            logger.debug(f"Process result for {input_item}: {single_result}")
+                            
+                            # Add result to list
+                            if single_result.get("results"):
+                                results_list.extend(single_result["results"])
+                                logger.debug(f"Added {len(single_result['results'])} results from {input_item}")
+                            
+                            # Calculate processing time
+                            elapsed_time = time.time() - start_time
+                            time_str = f"{elapsed_time:.1f}s"
+                            logger.info(f"Completed processing {input_item} in {elapsed_time:.2f} seconds")
+                            
+                            # Update status with result
+                            if single_result.get("processed_count", 0) > 0:
+                                # Extract some useful info from the result
+                                result_info = ""
+                                if single_result.get("results") and len(single_result["results"]) > 0:
+                                    first_result = single_result["results"][0]
+                                    if first_result.get("metadata", {}).get("duration"):
+                                        duration = first_result["metadata"]["duration"]
+                                        result_info = f" (duration: {duration:.1f}s)"
+                                        logger.debug(f"Video duration for {input_item}: {duration:.1f}s")
+                                    
+                                    # Log additional metadata
+                                    metadata = first_result.get("metadata", {})
+                                    logger.debug(f"Video metadata for {input_item}: {metadata}")
+                                
+                                logger.info(f"Successfully processed {input_item} - Success")
+                                status_update = f"  ✓ Completed in {time_str}{result_info}\n"
+                            else:
+                                logger.warning(f"Failed to process {input_item}")
+                                status_update = f"  ✗ Failed after {time_str}\n"
+                                if single_result.get("errors"):
+                                    errors_list.extend(single_result["errors"])
+                                    error_msg = single_result["errors"][0] if single_result["errors"] else "Unknown error"
+                                    logger.error(f"Processing error for {input_item}: {error_msg}")
+                                    status_update += f"     Error: {error_msg}\n"
+                            
+                            self.app_instance.call_from_thread(
+                                self._append_to_status_area, status_update
+                            )
+                            
+                        except Exception as e:
+                            elapsed_time = time.time() - start_time
+                            logger.error(f"Exception processing {input_item} after {elapsed_time:.2f}s: {e}", exc_info=True)
+                            error_msg = f"  ✗ Error after {elapsed_time:.1f}s: {str(e)}\n"
+                            self.app_instance.call_from_thread(
+                                self._append_to_status_area, error_msg
+                            )
+                            errors_list.append(str(e))
+                            results_list.append({
+                                "status": "Error",
+                                "input_ref": input_item,
+                                "error": str(e)
+                            })
+                            logger.debug(f"Added error result for {input_item}: {str(e)}")
+                    
+                    # Aggregate results
+                    processed_count = sum(1 for r in results_list if r.get("status") == "Success")
+                    errors_count = len(results_list) - processed_count
+                    
+                    logger.info(f"Video batch processing complete: {processed_count} succeeded, {errors_count} failed out of {len(all_inputs)} total")
+                    
+                    # Add final summary
+                    summary_msg = f"\n{'='*50}\n"
+                    summary_msg += f"Processing Complete: {processed_count} succeeded, {errors_count} failed\n"
+                    summary_msg += f"{'='*50}\n"
+                    self.app_instance.call_from_thread(
+                        self._append_to_status_area, summary_msg
+                    )
+                    
+                    # Log summary of results
+                    if errors_count > 0:
+                        logger.warning(f"Failed inputs: {[r['input_ref'] for r in results_list if r.get('status') != 'Success']}")
+                    
+                    result = {
+                        "success": True,
+                        "results": {
+                            "processed_count": processed_count,
+                            "errors_count": errors_count,
+                            "errors": errors_list,
+                            "results": results_list
+                        }
+                    }
+                    logger.debug(f"Final batch result: {processed_count} processed, {errors_count} errors")
             
+        except Exception as e:
+            logger.error(f"Error processing video files: {e}", exc_info=True)
+            result = {
+                "success": False,
+                "error": str(e)
+            }
+        
+        # Handle completion - update UI with results
+        try:
             if result["success"]:
                 # Process the results
                 results = result["results"]
@@ -3186,118 +3434,44 @@ class IngestWindow(Container):
                         error = video_result.get("error", "Unknown error")
                         status_messages.append(f"✗ {input_ref}: {error}")
                 
-                status_area.load_text("\n".join(status_messages))
+                self.app_instance.call_from_thread(self._update_status_area, "\n".join(status_messages))
                 
                 if processed_count > 0:
-                    self.app_instance.notify(f"Successfully processed {processed_count} video file(s)", severity="information")
+                    self.app_instance.call_from_thread(
+                        self.app_instance.notify,
+                        f"Successfully processed {processed_count} video file(s)",
+                        severity="information"
+                    )
                 if errors_count > 0:
-                    self.app_instance.notify(f"{errors_count} file(s) failed to process", severity="warning")
+                    self.app_instance.call_from_thread(
+                        self.app_instance.notify,
+                        f"{errors_count} file(s) failed to process",
+                        severity="warning"
+                    )
             else:
                 # Show error
                 error_msg = result.get("error", "Unknown error occurred")
                 logger.error(f"Video processing failed: {error_msg}")
-                self.app_instance.notify(f"Error: {error_msg}", severity="error")
-                status_area.load_text(f"Error: {error_msg}")
+                self.app_instance.call_from_thread(
+                    self.app_instance.notify,
+                    f"Error: {error_msg}",
+                    severity="error"
+                )
+                self.app_instance.call_from_thread(self._update_status_area, f"Error: {error_msg}")
                 
         except Exception as e:
-            logger.error(f"Error in video processing completion handler: {e}", exc_info=True)
-            self.app_instance.notify(f"Error: {str(e)}", severity="error")
-            
-        finally:
-            # Hide loading state
-            loading_indicator.display = False
-            loading_indicator.classes = loading_indicator.classes | {"hidden"}
-            process_button.disabled = False
-
-    @work(thread=True)
-    def _process_video_files_worker(self, options: dict) -> dict:
-        """Process video files in a background worker thread.
-        
-        Args:
-            options: Dictionary containing all processing options collected from UI
-        
-        Returns:
-            Dictionary with success status and results or error message
-        """
-        try:
-            # Extract all options from the passed dictionary
-            all_inputs = options.get("inputs", [])
-            
-            if not all_inputs:
-                return {
-                    "success": False,
-                    "error": "No video files or URLs selected for processing"
-                }
-            
-            # Check if media DB is available
-            if not self.app_instance.media_db:
-                logger.error("Media database not initialized")
-                return {
-                    "success": False,
-                    "error": "Media database not available"
-                }
-            
-            # Import the video processing function
-            try:
-                from ..Local_Ingestion import LocalVideoProcessor
-            except ImportError as e:
-                logger.error(f"Failed to import video processing library: {e}")
-                return {
-                    "success": False,
-                    "error": "Video processing library not available. Please install with: pip install tldw-chatbook[video]"
-                }
-            
-            # Create processor instance
-            processor = LocalVideoProcessor(self.app_instance.media_db)
-            
-            # Update UI from worker thread
-            self.call_from_thread(self._update_status_area, "Processing video files...\n")
-            
-            # Process video files
-            results = processor.process_videos(
-                inputs=all_inputs,
-                download_video_flag=options["download_video"] and not options["extract_audio_only"],
-                start_time=options["start_time"],
-                end_time=options["end_time"],
-                transcription_provider=options["transcription_provider"],
-                transcription_model=options["transcription_model"],
-                transcription_language=options["transcription_language"],
-                translation_target_language=options["translation_target"],
-                perform_chunking=options["perform_chunking"],
-                chunk_method=options["chunk_method"],
-                max_chunk_size=options["chunk_size"],
-                chunk_overlap=options["chunk_overlap"],
-                use_adaptive_chunking=options["use_adaptive_chunking"],
-                use_multi_level_chunking=options["use_multi_level_chunking"],
-                chunk_language=options["chunk_language"] or options["transcription_language"],
-                diarize=options["diarize"],
-                vad_use=options["vad_filter"],
-                timestamp_option=options["timestamps"],
-                perform_analysis=options["perform_analysis"],
-                api_name=options.get("api_name"),
-                api_key=options.get("api_key"),
-                analysis_model=options.get("analysis_model"),
-                custom_prompt=options["custom_prompt"],
-                system_prompt=options["system_prompt"],
-                summarize_recursively=options["summarize_recursively"],
-                use_cookies=options["use_cookies"],
-                cookies=options["cookies"],
-                keep_original=options["keep_original"],
-                custom_title=options["title_override"],
-                author=options["author"]
+            logger.error(f"Error in video processing completion: {e}", exc_info=True)
+            self.app_instance.call_from_thread(
+                self.app_instance.notify,
+                f"Error: {str(e)}",
+                severity="error"
             )
             
-            return {
-                "success": True,
-                "results": results
-            }
+        finally:
+            # Reset UI state
+            self.app_instance.call_from_thread(self._reset_video_ui_state)
             
-        except Exception as e:
-            logger.error(f"Error processing video files: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e)
-            }
+        return result
     
     def _update_status_area(self, text: str) -> None:
         """Update the status area from the worker thread."""
@@ -3306,6 +3480,58 @@ class IngestWindow(Container):
             status_area.load_text(text)
         except Exception:
             pass
+    
+    def _reset_video_ui_state(self) -> None:
+        """Reset the video UI state after processing completes."""
+        try:
+            loading_indicator = self.query_one("#local-loading-indicator-video", LoadingIndicator)
+            process_button = self.query_one("#local-submit-video", Button)
+            
+            loading_indicator.display = False
+            loading_indicator.classes = loading_indicator.classes | {"hidden"}
+            process_button.disabled = False
+        except Exception:
+            pass
+    
+    def _append_to_status_area(self, text: str) -> None:
+        """Append text to the status area."""
+        try:
+            status_area = self.query_one("#local-status-video", TextArea)
+            current_text = status_area.text
+            status_area.load_text(current_text + text)
+        except Exception:
+            pass
+    
+    def _update_transcription_progress(self, text: str) -> None:
+        """Update the last line in status area for transcription progress."""
+        try:
+            status_area = self.query_one("#local-status-video", TextArea)
+            current_text = status_area.text
+            lines = current_text.split('\n')
+            
+            # Find the last transcription line and update it
+            for i in range(len(lines) - 1, -1, -1):
+                if "→ Transcription:" in lines[i] or "→ Transcribing audio" in lines[i]:
+                    lines[i] = text.rstrip()
+                    break
+            else:
+                # If no transcription line found, append
+                lines.append(text.rstrip())
+            
+            # Ensure we don't have extra blank lines at the end
+            while len(lines) > 1 and lines[-1] == '':
+                lines.pop()
+            
+            status_area.load_text('\n'.join(lines))
+            # Scroll to bottom to show latest progress
+            status_area.scroll_end(animate=False)
+        except Exception as e:
+            logger.error(f"Error updating transcription progress: {e}")
+            # Fallback to append if update fails
+            try:
+                self._append_to_status_area(f"\n{text}")
+            except Exception as e2:
+                logger.error(f"Fallback append also failed: {e2}")
 
 #
 # End of Ingest_Window.py

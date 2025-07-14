@@ -276,6 +276,7 @@ class LocalAudioProcessor:
         self,
         input_item: str,
         processing_dir: str,
+        transcription_progress_callback=None,
         **kwargs
     ) -> Dict[str, Any]:
         """Process a single audio file or URL."""
@@ -321,29 +322,47 @@ class LocalAudioProcessor:
                 result["metadata"]["title"] = Path(audio_path).stem
             
             # Transcribe audio
+            provider = kwargs.get("transcription_provider", "faster-whisper")
+            model = kwargs.get("transcription_model", "base")
+            language = kwargs.get("transcription_language", "en")
+            
+            logger.info(f"Starting transcription: provider={provider}, model={model}, language={language}")
+            logger.debug(f"Transcription audio file: {audio_path}, size: {Path(audio_path).stat().st_size / 1024 / 1024:.2f} MB")
+            
+            transcription_start = time.time()
             transcription_result = self._transcribe_audio(
                 audio_path,
-                provider=kwargs.get("transcription_provider", "faster-whisper"),
-                model=kwargs.get("transcription_model", "base"),
-                language=kwargs.get("transcription_language", "en"),
+                provider=provider,
+                model=model,
+                language=language,
                 target_lang=kwargs.get("translation_target_language"),
                 vad_filter=kwargs.get("vad_use", False),
-                diarize=kwargs.get("diarize", False)
+                diarize=kwargs.get("diarize", False),
+                progress_callback=transcription_progress_callback
             )
+            
+            transcription_time = time.time() - transcription_start
+            logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
             
             result["segments"] = transcription_result.get("segments", [])
             result["content"] = transcription_result.get("text", "")
             
+            logger.debug(f"Transcription result: {len(result['content'])} chars, {len(result['segments'])} segments")
+            
             # Perform chunking if requested
             if kwargs.get("perform_chunking") and result["content"]:
+                chunk_method = kwargs.get("chunk_method", "sentences")
+                logger.info(f"Starting text chunking: method={chunk_method}, max_size={kwargs.get('max_chunk_size', 500)}")
+                
                 chunks = self._chunk_text(
                     result["content"],
-                    method=kwargs.get("chunk_method", "sentences"),
+                    method=chunk_method,
                     max_size=kwargs.get("max_chunk_size", 500),
                     overlap=kwargs.get("chunk_overlap", 200),
                     language=kwargs.get("chunk_language") or kwargs.get("transcription_language", "en")
                 )
                 result["chunks"] = chunks
+                logger.debug(f"Chunking completed: {len(chunks)} chunks created")
             
             # Perform analysis if requested
             if kwargs.get("perform_analysis") and kwargs.get("api_name") and result["content"]:
@@ -407,16 +426,20 @@ class LocalAudioProcessor:
         
         return result
     
-    def _transcribe_audio(self, audio_path: str, **kwargs) -> Dict[str, Any]:
+    def _transcribe_audio(self, audio_path: str, progress_callback=None, **kwargs) -> Dict[str, Any]:
         """
         Transcribe audio using available transcription service.
-        This is a placeholder - actual implementation would use faster-whisper or other service.
+        
+        Args:
+            audio_path: Path to audio file
+            progress_callback: Optional callback for progress updates
+            **kwargs: Additional transcription parameters
         """
         # Import transcription service when available
         try:
             from .transcription_service import TranscriptionService
             service = TranscriptionService()
-            return service.transcribe(audio_path, **kwargs)
+            return service.transcribe(audio_path, progress_callback=progress_callback, **kwargs)
         except ImportError:
             # Fallback for testing
             logger.warning("Transcription service not available, using placeholder")
@@ -515,7 +538,7 @@ class LocalAudioProcessor:
                 media_data["transcription"] = result["content"]
             
             # Add media entry
-            media_id = self.media_db.add_media(**media_data)
+            media_id, _, _ = self.media_db.add_media_with_keywords(**media_data)
             
             # Store chunks if available
             if result.get("chunks"):

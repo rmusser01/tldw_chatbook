@@ -3492,8 +3492,8 @@ async def handle_ccp_dict_apply_button_pressed(app: 'TldwCli', event: Button.Pre
                 # Update the active dictionaries list in right pane if visible
                 try:
                     await populate_active_dictionaries_list(app)
-                except:
-                    pass
+                except Exception as e:
+                    loguru_logger.warning(f"Failed to update active dictionaries list: {e}")
             else:
                 app.notify("Dictionary is already applied to this conversation.", severity="information")
         else:

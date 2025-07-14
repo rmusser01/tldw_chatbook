@@ -365,8 +365,8 @@ class CodeExecutionRunner(BaseEvalRunner):
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
                     return node.name
-        except:
-            pass
+        except (SyntaxError, AttributeError) as e:
+            logger.debug(f"Failed to parse function name from code using AST: {e}")
         
         # Fallback: regex
         match = re.search(r'def\s+(\w+)\s*\(', code)

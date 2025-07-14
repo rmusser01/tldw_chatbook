@@ -187,15 +187,7 @@ AVAILABLE_PROVIDERS = list(ALL_API_MODELS.keys()) # If needed
 # --- Global variable for config ---
 APP_CONFIG = load_settings()
 
-# Configure root logger based on config BEFORE app starts fully
-_initial_log_level_str = APP_CONFIG.get("general", {}).get("log_level", "INFO").upper()
-_initial_log_level = getattr(logging, _initial_log_level_str, logging.INFO)
-# Define a basic initial format
-_initial_log_format = "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s"
-# Remove existing handlers before basicConfig to avoid duplicates if script is re-run
-logging.basicConfig(level=_initial_log_level, format=_initial_log_format,
-                    force=True)  # force=True might help override defaults
-logging.info("Initial basic logging configured.")
+# Early logging configuration removed - handled by configure_application_logging() during app initialization
 
 
 class ThemeProvider(Provider):

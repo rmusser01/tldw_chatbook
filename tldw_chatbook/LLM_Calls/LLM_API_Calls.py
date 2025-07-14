@@ -34,7 +34,6 @@ from urllib3.util.retry import Retry
 from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatAuthenticationError, ChatRateLimitError, \
     ChatBadRequestError, ChatProviderError, ChatConfigurationError
 from tldw_chatbook.config import load_settings, settings
-from tldw_chatbook.Utils.Utils import logging
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
@@ -69,25 +68,25 @@ def _safe_cast(value: Any, cast_to: type, default: Any = None) -> Any:
     try:
         return cast_to(value)
     except (ValueError, TypeError):
-        logging.warning(f"Could not cast '{value}' to {cast_to}. Using default: {default}")
+        logger.warning(f"Could not cast '{value}' to {cast_to}. Using default: {default}")
         return default
 
 def extract_text_from_segments(segments):
-    logging.debug(f"Segments received: {segments}")
-    logging.debug(f"Type of segments: {type(segments)}")
+    logger.debug(f"Segments received: {segments}")
+    logger.debug(f"Type of segments: {type(segments)}")
 
     text = ""
 
     if isinstance(segments, list):
         for segment in segments:
-            logging.debug(f"Current segment: {segment}")
-            logging.debug(f"Type of segment: {type(segment)}")
+            logger.debug(f"Current segment: {segment}")
+            logger.debug(f"Type of segment: {type(segment)}")
             if 'Text' in segment:
                 text += segment['Text'] + " "
             else:
-                logging.warning(f"Skipping segment due to missing 'Text' key: {segment}")
+                logger.warning(f"Skipping segment due to missing 'Text' key: {segment}")
     else:
-        logging.warning(f"Unexpected type of 'segments': {type(segments)}")
+        logger.warning(f"Unexpected type of 'segments': {type(segments)}")
 
     return text.strip()
 
@@ -100,9 +99,9 @@ def _parse_data_url_for_multimodal(data_url: str) -> Optional[Tuple[str, str]]:
             mime_type = header.split("data:", 1)[1]
             return mime_type, b64_data
         except Exception as e:
-            logging.warning(f"Could not parse data URL: {data_url[:60]}... Error: {e}")
+            logger.warning(f"Could not parse data URL: {data_url[:60]}... Error: {e}")
             return None
-    logging.debug(f"Data URL did not match expected format: {data_url[:60]}...")
+    logger.debug(f"Data URL did not match expected format: {data_url[:60]}...")
     return None
 
 
@@ -119,12 +118,12 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
     api_key = loaded_config_data['openai_api']['api_key']
 
     if not api_key:
-        logging.error("OpenAI Embeddings: API key not found or is empty")
+        logger.error("OpenAI Embeddings: API key not found or is empty")
         raise ValueError("OpenAI Embeddings: API Key Not Provided/Found in Config file or is empty")
 
-    logging.debug(f"OpenAI Embeddings: Using API Key: {api_key[:5]}...{api_key[-5:]}")
-    logging.debug(f"OpenAI Embeddings: Raw input data (first 500 chars): {str(input_data)[:500]}...")
-    logging.debug(f"OpenAI Embeddings: Using model: {model}")
+    logger.debug(f"OpenAI Embeddings: Using API Key: {api_key[:5]}...{api_key[-5:]}")
+    logger.debug(f"OpenAI Embeddings: Raw input data (first 500 chars): {str(input_data)[:500]}...")
+    logger.debug(f"OpenAI Embeddings: Using model: {model}")
 
     headers = {
         'Authorization': f'Bearer {api_key}',
@@ -135,31 +134,31 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         "model": model,
     }
     try:
-        logging.debug("OpenAI Embeddings: Posting request to embeddings API")
+        logger.debug("OpenAI Embeddings: Posting request to embeddings API")
         response = requests.post('https://api.openai.com/v1/embeddings', headers=headers, json=request_data)
-        logging.debug(f"Full API response data: {response}")
+        logger.debug(f"Full API response data: {response}")
         if response.status_code == 200:
             response_data = response.json()
             if 'data' in response_data and len(response_data['data']) > 0:
                 embedding = response_data['data'][0]['embedding']
-                logging.debug("OpenAI Embeddings: Embeddings retrieved successfully")
+                logger.debug("OpenAI Embeddings: Embeddings retrieved successfully")
                 return embedding
             else:
-                logging.warning("OpenAI Embeddings: Embedding data not found in the response")
+                logger.warning("OpenAI Embeddings: Embedding data not found in the response")
                 raise ValueError("OpenAI Embeddings: Embedding data not available in the response")
         else:
-            logging.error(f"OpenAI Embeddings: request failed with status code {response.status_code}")
-            logging.error(f"OpenAI Embeddings: Error response: {response.text}")
+            logger.error(f"OpenAI Embeddings: request failed with status code {response.status_code}")
+            logger.error(f"OpenAI Embeddings: Error response: {response.text}")
             # Propagate HTTPError to be caught by chat_api_call's handler (if this were called from there)
             # Or raise specific error if called directly
             response.raise_for_status() # This will raise HTTPError
             # Fallback if raise_for_status doesn't cover it (it should)
             raise ValueError(f"OpenAI Embeddings: Failed to retrieve. Status code: {response.status_code}")
     except requests.RequestException as e:
-        logging.error(f"OpenAI Embeddings: Error making API request: {str(e)}", exc_info=True)
+        logger.error(f"OpenAI Embeddings: Error making API request: {str(e)}", exc_info=True)
         raise ValueError(f"OpenAI Embeddings: Error making API request: {str(e)}")
     except Exception as e:
-        logging.error(f"OpenAI Embeddings: Unexpected error: {str(e)}", exc_info=True)
+        logger.error(f"OpenAI Embeddings: Unexpected error: {str(e)}", exc_info=True)
         raise ValueError(f"OpenAI Embeddings: Unexpected error occurred: {str(e)}")
 
 
@@ -218,11 +217,11 @@ def chat_with_openai(
 
     final_api_key = api_key or openai_config.get('api_key')
     if not final_api_key:
-        logging.error("OpenAI: API key is missing.")
+        logger.error("OpenAI: API key is missing.")
         raise ChatConfigurationError(provider="openai", message="OpenAI API Key is required but not found.")
 
     log_key_display = f"{final_api_key[:5]}...{final_api_key[-5:]}" if final_api_key and len(final_api_key) > 9 else "Key Provided"
-    logging.debug(f"OpenAI: Using API Key: {log_key_display}")
+    logger.debug(f"OpenAI: Using API Key: {log_key_display}")
 
     # Resolve parameters: User-provided > Function arg default > Config default > Hardcoded default
     final_model = model if model is not None else openai_config.get('model', 'gpt-4o-mini')
@@ -237,7 +236,7 @@ def chat_with_openai(
     final_max_tokens = max_tokens if max_tokens is not None else _safe_cast(openai_config.get('max_tokens'), int)
 
     if custom_prompt_arg:
-        logging.warning(
+        logger.warning(
             "OpenAI: 'custom_prompt_arg' was provided but is generally ignored if 'input_data' and 'system_message' are used correctly.")
 
     # Construct messages for OpenAI API
@@ -268,7 +267,7 @@ def chat_with_openai(
     if top_logprobs is not None and payload.get("logprobs") is True:
         payload["top_logprobs"] = top_logprobs
     elif top_logprobs is not None:
-         logging.warning("OpenAI: 'top_logprobs' provided but 'logprobs' is not true. 'top_logprobs' will be ignored.")
+         logger.warning("OpenAI: 'top_logprobs' provided but 'logprobs' is not true. 'top_logprobs' will be ignored.")
     if n is not None:
         payload["n"] = n
     if presence_penalty is not None:
@@ -295,7 +294,7 @@ def chat_with_openai(
         'Authorization': f'Bearer {final_api_key}',
         'Content-Type': 'application/json'
     }
-    logging.debug(f"OpenAI Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
+    logger.debug(f"OpenAI Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
 
     api_url = openai_config.get('api_base_url', 'https://api.openai.com/v1').rstrip('/') + '/chat/completions'
     
@@ -304,7 +303,7 @@ def chat_with_openai(
     
     try:
         if final_streaming:
-            logging.debug("OpenAI: Posting request (streaming)")
+            logger.debug("OpenAI: Posting request (streaming)")
             with requests.Session() as session:
                 response = session.post(api_url, headers=headers, json=payload, stream=True, timeout=180)
                 response.raise_for_status()
@@ -318,12 +317,12 @@ def chat_with_openai(
                                 # OpenAI's SSE usually includes double newlines.
                                 yield line if line.endswith("\n") else line + "\n"
                     except requests.exceptions.ChunkedEncodingError as e_chunk:
-                        logging.error(f"OpenAI: ChunkedEncodingError during stream: {e_chunk}", exc_info=True)
+                        logger.error(f"OpenAI: ChunkedEncodingError during stream: {e_chunk}", exc_info=True)
                         error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_chunk)}",
                                                               "type": "openai_stream_error"}})
                         yield f"data: {error_content}\n\n" # Yield as SSE error
                     except Exception as e_stream:
-                        logging.error(f"OpenAI: Error during stream iteration: {e_stream}", exc_info=True)
+                        logger.error(f"OpenAI: Error during stream iteration: {e_stream}", exc_info=True)
                         error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
                                                               "type": "openai_stream_error"}})
                         yield f"data: {error_content}\n\n" # Yield as SSE error
@@ -336,7 +335,7 @@ def chat_with_openai(
                 return stream_generator()
 
         else:  # Non-streaming
-            logging.debug("OpenAI: Posting request (non-streaming)")
+            logger.debug("OpenAI: Posting request (non-streaming)")
             retry_count = int(openai_config.get('api_retries', 3))
             retry_delay = float(openai_config.get('api_retry_delay', 1.0))  # Ensure float
 
@@ -353,7 +352,7 @@ def chat_with_openai(
                 response = session.post(api_url, headers=headers, json=payload,
                                         timeout=float(openai_config.get('api_timeout', 90.0)))
 
-            logging.debug(f"OpenAI: Full API response status: {response.status_code}")
+            logger.debug(f"OpenAI: Full API response status: {response.status_code}")
             response.raise_for_status()  # Raise HTTPError for 4xx/5xx AFTER retries
             response_data = response.json()
             
@@ -373,7 +372,7 @@ def chat_with_openai(
                 log_histogram("openai_api_completion_tokens", usage.get("completion_tokens", 0), labels={"model": final_model})
                 log_histogram("openai_api_total_tokens", usage.get("total_tokens", 0), labels={"model": final_model})
             
-            logging.debug("OpenAI: Non-streaming request successful.")
+            logger.debug("OpenAI: Non-streaming request successful.")
             return response_data
 
     except requests.exceptions.HTTPError as e:
@@ -394,9 +393,9 @@ def chat_with_openai(
         })
         
         if e.response is not None:
-            logging.error(f"OpenAI Full Error Response (status {e.response.status_code}): {e.response.text}")
+            logger.error(f"OpenAI Full Error Response (status {e.response.status_code}): {e.response.text}")
         else:
-            logging.error(f"OpenAI HTTPError with no response object: {e}")
+            logger.error(f"OpenAI HTTPError with no response object: {e}")
         raise
         # if e.response is not None:
         #     error_content_text = e.response.text
@@ -404,7 +403,7 @@ def chat_with_openai(
         #         error_content_json = e.response.json()
         #     except json.JSONDecodeError:
         #         pass
-        # logging.error(
+        # logger.error(
         #     f"OpenAI HTTPError {e.response.status_code if e.response is not None else 'Unknown'}. Text: {error_content_text}. JSON: {error_content_json}",
         #     exc_info=True)
         # raise
@@ -419,7 +418,7 @@ def chat_with_openai(
             "model": final_model,
             "error_type": "network"
         })
-        logging.error(f"OpenAI RequestException: {e}", exc_info=True)
+        logger.error(f"OpenAI RequestException: {e}", exc_info=True)
         raise
     except Exception as e: # Catch any other unexpected error
         # Log unexpected error metrics
@@ -428,7 +427,7 @@ def chat_with_openai(
             "model": final_model,
             "error_type": "unexpected"
         })
-        logging.error(f"OpenAI: Unexpected error in chat_with_openai: {e}", exc_info=True)
+        logger.error(f"OpenAI: Unexpected error in chat_with_openai: {e}", exc_info=True)
         raise ChatProviderError(provider="openai", message=f"Unexpected error: {e}")
 
 
@@ -457,7 +456,7 @@ def chat_with_anthropic(
         raise ChatConfigurationError(provider="anthropic", message="Anthropic API Key is required.")
 
     log_key = f"{final_api_key[:5]}...{final_api_key[-5:]}" if final_api_key and len(final_api_key) > 9 else "Key Provided"
-    logging.debug(f"Anthropic: Using API Key: {log_key}")
+    logger.debug(f"Anthropic: Using API Key: {log_key}")
 
     current_model = model or anthropic_config.get('model', 'claude-3-haiku-20240307')
     current_temp = temp if temp is not None else float(anthropic_config.get('temperature', 0.7))
@@ -477,7 +476,7 @@ def chat_with_anthropic(
         role = msg.get("role")
         content = msg.get("content")
         if role not in ["user", "assistant"]:
-            logging.warning(f"Anthropic: Skipping message with unsupported role: {role}")
+            logger.warning(f"Anthropic: Skipping message with unsupported role: {role}")
             continue
         # ... (multimodal content processing for Anthropic from your existing function) ...
         anthropic_content_parts = []
@@ -524,7 +523,7 @@ def chat_with_anthropic(
     if tools is not None: data["tools"] = tools # Assuming 'tools' is already in Anthropic's required format
 
     api_url = anthropic_config.get('api_base_url', 'https://api.anthropic.com/v1').rstrip('/') + '/messages'
-    logging.debug(f"Anthropic Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
+    logger.debug(f"Anthropic Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
 
     start_time = time.time()
     log_counter("anthropic_api_request", labels={"model": current_model, "streaming": str(current_streaming)})
@@ -540,7 +539,7 @@ def chat_with_anthropic(
         response.raise_for_status()
 
         if current_streaming:
-            logging.debug("Anthropic: Streaming response received. Normalizing to OpenAI SSE.")
+            logger.debug("Anthropic: Streaming response received. Normalizing to OpenAI SSE.")
             def stream_generator():
                 completion_id = f"chatcmpl-anthropic-{time.time_ns()}"
                 created_time = int(time.time())
@@ -583,7 +582,7 @@ def chat_with_anthropic(
                                     # This event confirms the end. If no explicit finish_reason was in message_delta,
                                     # the previous one (or lack thereof) stands.
                                     # It's a good place to emit the [DONE] signal.
-                                    # logging.debug(f"Anthropic stream: message_stop received. Full event: {anthropic_event}")
+                                    # logger.debug(f"Anthropic stream: message_stop received. Full event: {anthropic_event}")
                                     pass # The [DONE] is yielded in finally or after loop.
 
                                 sse_choice_payload = {}
@@ -604,12 +603,12 @@ def chat_with_anthropic(
                                     }
                                     yield f"data: {json.dumps(sse_chunk)}\n\n"
                             except json.JSONDecodeError:
-                                logging.warning(f"Anthropic Stream: Could not decode JSON: {event_data_str}")
+                                logger.warning(f"Anthropic Stream: Could not decode JSON: {event_data_str}")
                 except requests.exceptions.ChunkedEncodingError as e: # ... error handling ...
-                    logging.error(f"Anthropic: ChunkedEncodingError during stream: {e}", exc_info=True)
+                    logger.error(f"Anthropic: ChunkedEncodingError during stream: {e}", exc_info=True)
                     yield f"data: {json.dumps({'error': {'message': f'Stream connection error: {str(e)}', 'type': 'anthropic_stream_error'}})}\n\n"
                 except Exception as e: # ... error handling ...
-                    logging.error(f"Anthropic: Error during stream iteration: {e}", exc_info=True)
+                    logger.error(f"Anthropic: Error during stream iteration: {e}", exc_info=True)
                     yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'anthropic_stream_error'}})}\n\n"
                 finally:
                     yield "data: [DONE]\n\n"
@@ -617,9 +616,9 @@ def chat_with_anthropic(
             return stream_generator()
         else:
             # ... (non-streaming logic remains the same) ...
-            logging.debug("Anthropic: Non-streaming request successful.")
+            logger.debug("Anthropic: Non-streaming request successful.")
             response_data = response.json()
-            logging.debug("Anthropic: Non-streaming request successful. Normalizing response.")
+            logger.debug("Anthropic: Non-streaming request successful. Normalizing response.")
             assistant_content_parts = []
             if response_data.get("content"):
                 for part in response_data.get("content", []):
@@ -701,7 +700,7 @@ def chat_with_anthropic(
             "model": current_model,
             "error_type": "unexpected_error"
         })
-        logging.error(f"Anthropic: Unexpected error: {e}", exc_info=True)
+        logger.error(f"Anthropic: Unexpected error: {e}", exc_info=True)
         raise ChatProviderError(provider="anthropic", message=f"Unexpected error: {e}")
 
 
@@ -724,14 +723,14 @@ def chat_with_cohere(
         custom_prompt_arg: Optional[str] = None # Kept for legacy, but focus on structured input
 ):
     start_time = time.time()
-    logging.debug(f"Cohere Chat: Request process starting for model '{model}' (Streaming: {streaming})")
+    logger.debug(f"Cohere Chat: Request process starting for model '{model}' (Streaming: {streaming})")
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
     cohere_config = cli_api_settings.get('cohere', {})  # Get the [api_settings.cohere] sub-table
 
     final_api_key = api_key or cohere_config.get('api_key')
     if not final_api_key:
         raise ChatAuthenticationError(provider="cohere", message="Cohere API key is missing.")
-    logging.debug(f"Cohere: Using API Key: {final_api_key[:5]}...{final_api_key[-5:]}")
+    logger.debug(f"Cohere: Using API Key: {final_api_key[:5]}...{final_api_key[-5:]}")
 
     final_model = model or cohere_config.get('model', 'command-r')
     
@@ -762,14 +761,14 @@ def chat_with_cohere(
 
     if not preamble_str and temp_messages and temp_messages[0]['role'] == 'system':
         preamble_str = temp_messages.pop(0)['content']
-        logging.debug(f"Cohere: Using system message from input_data as preamble: '{preamble_str[:100]}...'")
+        logger.debug(f"Cohere: Using system message from input_data as preamble: '{preamble_str[:100]}...'")
 
     if not temp_messages: # Ensure there are messages left after potential preamble extraction
         # If custom_prompt_arg is provided and meaningful as a user query, consider using it.
         # For now, raising an error if no user/assistant messages remain.
         if custom_prompt_arg:
             current_user_message_str = custom_prompt_arg
-            logging.warning("Cohere: No user/assistant messages in input_data, using custom_prompt_arg as user message.")
+            logger.warning("Cohere: No user/assistant messages in input_data, using custom_prompt_arg as user message.")
         else:
             raise ChatBadRequestError(provider="cohere",
                                       message="No user/assistant messages found for Cohere chat after processing system message.")
@@ -784,13 +783,13 @@ def chat_with_cohere(
     else: # Last message is not 'user', problematic for Cohere's /chat
         current_user_message_str = custom_prompt_arg or "Please respond." # Fallback user message
         chat_history_for_cohere = temp_messages # Keep all as history, and append the placeholder user message
-        logging.warning(
+        logger.warning(
             f"Cohere: Last message in payload was not 'user'. Using fallback user message: '{current_user_message_str}'.")
 
     # Append custom_prompt_arg to the current user message if it exists
     if custom_prompt_arg and current_user_message_str != custom_prompt_arg: # Avoid duplication if already used as fallback
         current_user_message_str += f"\n{custom_prompt_arg}"
-        logging.debug(f"Cohere: Appended custom_prompt_arg to current user message.")
+        logger.debug(f"Cohere: Appended custom_prompt_arg to current user message.")
 
 
     if not current_user_message_str.strip():
@@ -836,11 +835,11 @@ def chat_with_cohere(
         if num_generations is not None and num_generations > 0 : # num_generations is for non-streaming
             payload["num_generations"] = num_generations
         elif num_generations is not None and num_generations <=0:
-             logging.warning("Cohere: 'num_generations' must be > 0. Ignoring.")
+             logger.warning("Cohere: 'num_generations' must be > 0. Ignoring.")
 
 
-    logging.debug(f"Cohere Request Payload: {json.dumps(payload, indent=2)}")
-    logging.debug(f"Cohere Request URL: {COHERE_CHAT_URL}")
+    logger.debug(f"Cohere Request Payload: {json.dumps(payload, indent=2)}")
+    logger.debug(f"Cohere Request URL: {COHERE_CHAT_URL}")
 
     # --- Retry Mechanism ---
     session = requests.Session()
@@ -864,7 +863,7 @@ def chat_with_cohere(
             # The timeout applies to each attempt for connection and then for pauses in stream.
             response = session.post(COHERE_CHAT_URL, headers=headers, json=payload, stream=True, timeout=timeout_seconds)
             response.raise_for_status() # Check for HTTP errors on initial connection
-            logging.debug("Cohere: Streaming response connection established.")
+            logger.debug("Cohere: Streaming response connection established.")
             
             # Log streaming success metrics
             duration = time.time() - start_time
@@ -913,14 +912,14 @@ def chat_with_cohere(
                                                 "USER_CANCEL": "stop",
                                                 "TOOL_CALLS": "tool_calls"}
                                     openai_fr = fr_map.get(finish_reason, finish_reason.lower() if finish_reason else "unknown")
-                                    logging.info(
+                                    logger.info(
                                         f"Cohere stream: 'stream-end' event. Finish: {finish_reason} (Mapped: {openai_fr}). Fragments: {len(accumulated_text_for_log)}")
                                     sse_payload_for_choice = {"delta": {}, "finish_reason": openai_fr, "index": 0}
                                     # After sending this, we'll send [DONE]
                                 elif event_type == "stream-start": # Cohere sends this
-                                    logging.debug(f"Cohere stream: 'stream-start' event. Gen ID: {cohere_event.get('generation_id')}")
+                                    logger.debug(f"Cohere stream: 'stream-start' event. Gen ID: {cohere_event.get('generation_id')}")
                                 elif event_type: # Log other known event types if curious
-                                     logging.debug(f"Cohere stream event type: {event_type}, data: {cohere_event}")
+                                     logger.debug(f"Cohere stream event type: {event_type}, data: {cohere_event}")
 
                                 if sse_payload_for_choice:
                                     sse_chunk = {"id": completion_id, "object": "chat.completion.chunk",
@@ -932,23 +931,23 @@ def chat_with_cohere(
                                         return # End generator
 
                             except json.JSONDecodeError:
-                                logging.warning(f"Cohere Stream: JSON decode error for data: '{json_data_str}' from line: '{decoded_line}'")
+                                logger.warning(f"Cohere Stream: JSON decode error for data: '{json_data_str}' from line: '{decoded_line}'")
                         elif decoded_line.startswith("event:"):
                             # This line just declares the event type, data line follows.
-                            # logging.trace(f"Cohere stream saw event line: {decoded_line}")
+                            # logger.trace(f"Cohere stream saw event line: {decoded_line}")
                             pass # Handled by the data line's event_type
                         else:
-                            logging.warning(f"Cohere Stream: Unexpected line format: '{decoded_line}'")
+                            logger.warning(f"Cohere Stream: Unexpected line format: '{decoded_line}'")
 
                 except requests.exceptions.ChunkedEncodingError as e:
-                    logging.warning(f"Cohere stream: ChunkedEncodingError: {e}. Stream may have been interrupted.")
+                    logger.warning(f"Cohere stream: ChunkedEncodingError: {e}. Stream may have been interrupted.")
                 except Exception as e_stream:
-                    logging.error(f"Cohere stream: Error during streaming: {e_stream}", exc_info=True)
+                    logger.error(f"Cohere stream: Error during streaming: {e_stream}", exc_info=True)
                 finally:  # Ensure [DONE] is sent if loop terminates unexpectedly
                     if not stream_properly_closed:
-                        logging.warning("Cohere stream generator loop finished without explicit 'stream-end'.")
+                        logger.warning("Cohere stream generator loop finished without explicit 'stream-end'.")
                     yield "data: [DONE]\n\n"
-                    logging.debug(
+                    logger.debug(
                         f"Cohere SSE stream_generator for {final_model} finished. Total text: {''.join(accumulated_text_for_log)[:100]}...")
                     if response: response.close()
             return stream_generator_cohere_sse(response.iter_lines())
@@ -958,7 +957,7 @@ def chat_with_cohere(
             # No params={"stream": "false"} needed; payload["stream"] = False handles it.
             response.raise_for_status() # Will raise HTTPError for bad responses (4xx or 5xx) after retries
             response_data = response.json()
-            logging.debug(f"Cohere non-streaming response data: {json.dumps(response_data, indent=2)}")
+            logger.debug(f"Cohere non-streaming response data: {json.dumps(response_data, indent=2)}")
 
             # ---- Standard OpenAI-like Response Mapping ----
             # Based on Cohere /v1/chat non-streaming response structure:
@@ -993,7 +992,7 @@ def chat_with_cohere(
                     "finish_reason": "tool_calls", "index": 0
                 })
             else: # Fallback for unexpected empty response
-                logging.warning(f"Cohere non-streaming response missing 'text' or 'tool_calls': {response_data}")
+                logger.warning(f"Cohere non-streaming response missing 'text' or 'tool_calls': {response_data}")
                 choices_payload.append({
                     "message": {"role": "assistant", "content": ""},
                     "finish_reason": finish_reason, "index": 0
@@ -1039,7 +1038,7 @@ def chat_with_cohere(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
-        logging.error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}", exc_info=False)
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -1061,7 +1060,7 @@ def chat_with_cohere(
         else: # 5xx
             raise ChatProviderError(provider="cohere", message=f"Server error (Status {status_code}). Detail: {error_text[:200]}", status_code=status_code)
     except requests.exceptions.RequestException as e: # Includes ReadTimeout, ConnectionError etc.
-        logging.error(f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}", exc_info=True)
+        logger.error(f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}", exc_info=True)
         
         # Log network error metrics
         duration = time.time() - start_time
@@ -1076,7 +1075,7 @@ def chat_with_cohere(
         # This will catch the ReadTimeout after retries are exhausted
         raise ChatProviderError(provider="cohere", message=f"Network error after retries: {e}", status_code=504) # 504 for gateway timeout like
     except Exception as e:
-        logging.error(f"Cohere API call: Unexpected error: {e}", exc_info=True)
+        logger.error(f"Cohere API call: Unexpected error: {e}", exc_info=True)
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -1131,7 +1130,7 @@ def chat_with_deepseek(
     # ... (logging key, model, temp, streaming, top_p setup) ...
     log_key = f"{final_api_key[:5]}...{final_api_key[-5:]}" if final_api_key and len(
         final_api_key) > 9 else "Key Provided"
-    logging.debug(f"DeepSeek: Using API Key: {log_key}")
+    logger.debug(f"DeepSeek: Using API Key: {log_key}")
     current_model = model or deepseek_config.get('model', 'deepseek-chat')  # Or deepseek-coder
     current_temp = temp if temp is not None else float(deepseek_config.get('temperature', 0.1))
     current_top_p = topp  # Deepseek uses top_p
@@ -1171,7 +1170,7 @@ def chat_with_deepseek(
     if logit_bias is not None: data["logit_bias"] = logit_bias
 
     api_url = deepseek_config.get('api_base_url', 'https://api.deepseek.com').rstrip('/') + '/chat/completions'
-    logging.debug(
+    logger.debug(
         f"DeepSeek Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
 
     try:
@@ -1196,7 +1195,7 @@ def chat_with_deepseek(
                             if line and line.strip():  # DeepSeek provides OpenAI-compatible SSE
                                 yield line if line.endswith("\n") else line + "\n"
                     except Exception as e_stream:
-                        logging.error(f"DeepSeek: Error during stream iteration: {e_stream}", exc_info=True)
+                        logger.error(f"DeepSeek: Error during stream iteration: {e_stream}", exc_info=True)
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e_stream)}', 'type': 'deepseek_stream_error'}})}\n\n"
                     finally:
                         yield "data: [DONE]\n\n"
@@ -1331,8 +1330,8 @@ def chat_with_google(
     stream_suffix = ":streamGenerateContent?alt=sse" if current_streaming else ":generateContent"
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}{stream_suffix}"
     headers = {'x-goog-api-key': final_api_key, 'Content-Type': 'application/json'}
-    logging.debug(f"Google Gemini Request Payload (excluding contents): {{k: v for k,v in payload.items() if k != 'contents'}}")
-    logging.debug(f"Google Gemini Contents (first item parts): {payload.get('contents', [{}])[0].get('parts', [])[:2] if payload.get('contents') else 'No contents'}")
+    logger.debug(f"Google Gemini Request Payload (excluding contents): {{k: v for k,v in payload.items() if k != 'contents'}}")
+    logger.debug(f"Google Gemini Contents (first item parts): {payload.get('contents', [{}])[0].get('parts', [])[:2] if payload.get('contents') else 'No contents'}")
 
 
     response = None # Initialize response to None for the finally block
@@ -1346,7 +1345,7 @@ def chat_with_google(
         response.raise_for_status()
 
         if current_streaming:
-            logging.debug("Google Gemini: Streaming response received.")
+            logger.debug("Google Gemini: Streaming response received.")
             
             # Log streaming success metrics
             duration = time.time() - start_time
@@ -1399,12 +1398,12 @@ def chat_with_google(
                                     }
                                     yield f"data: {json.dumps(sse_chunk)}\n\n"
                             except json.JSONDecodeError:
-                                logging.warning(f"Google Gemini: Could not decode JSON line: {json_str}")
+                                logger.warning(f"Google Gemini: Could not decode JSON line: {json_str}")
                 except requests.exceptions.ChunkedEncodingError as e:
-                    logging.error(f"Google Gemini: ChunkedEncodingError during stream: {e}", exc_info=True)
+                    logger.error(f"Google Gemini: ChunkedEncodingError during stream: {e}", exc_info=True)
                     yield f"data: {json.dumps({'error': {'message': f'Stream connection error: {str(e)}', 'type': 'gemini_stream_error'}})}\n\n"
                 except Exception as e_stream:
-                    logging.error(f"Google Gemini: Error during stream iteration: {e_stream}", exc_info=True)
+                    logger.error(f"Google Gemini: Error during stream iteration: {e_stream}", exc_info=True)
                     yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e_stream)}', 'type': 'gemini_stream_error'}})}\n\n"
                 finally:
                     yield "data: [DONE]\n\n"
@@ -1413,7 +1412,7 @@ def chat_with_google(
             return stream_generator()
         else: # Non-streaming
             response_data = response.json()
-            logging.debug("Google Gemini: Non-streaming request successful.")
+            logger.debug("Google Gemini: Non-streaming request successful.")
             assistant_content = ""
             finish_reason = "unknown"
             tool_calls = None
@@ -1450,7 +1449,7 @@ def chat_with_google(
 
             prompt_feedback = response_data.get("promptFeedback")
             if prompt_feedback and prompt_feedback.get("blockReason"):
-                logging.warning(f"Google Gemini: Prompt blocked. Reason: {prompt_feedback.get('blockReason')}, Safety Ratings: {prompt_feedback.get('safetyRatings')}")
+                logger.warning(f"Google Gemini: Prompt blocked. Reason: {prompt_feedback.get('blockReason')}, Safety Ratings: {prompt_feedback.get('safetyRatings')}")
                 if not response_data.get("candidates"):
                     message_content["content"] = "[Blocked by API due to safety settings]"
                     finish_reason = "content_filter"
@@ -1488,7 +1487,7 @@ def chat_with_google(
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
         error_text = e.response.text if e.response is not None else "No response text"
-        logging.error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}", exc_info=False)
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -1526,7 +1525,7 @@ def chat_with_google(
         })
         raise ChatProviderError(provider="google", message=f"Network error: {str(e)}", status_code=504) from e
     except Exception as e:
-        logging.error(f"Google Gemini: Unexpected error: {e}", exc_info=True)
+        logger.error(f"Google Gemini: Unexpected error: {e}", exc_info=True)
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -1559,7 +1558,7 @@ def chat_with_google(
             except AttributeError: # `response.raw` might not exist if connection failed early
                 pass
             except Exception as e_close:
-                logging.warning(f"Google Gemini: Error during explicit response.close in outer finally: {e_close}")
+                logger.warning(f"Google Gemini: Error during explicit response.close in outer finally: {e_close}")
 
 
 # https://console.groq.com/docs/quickstart
@@ -1596,7 +1595,7 @@ def chat_with_groq(
     # ... (logging key, model, temp, streaming setup as before) ...
     log_key = f"{final_api_key[:5]}...{final_api_key[-5:]}" if final_api_key and len(
         final_api_key) > 9 else "Key Provided"
-    logging.debug(f"Groq: Using API Key: {log_key}")
+    logger.debug(f"Groq: Using API Key: {log_key}")
 
     current_model = model or groq_config.get('model', 'llama3-8b-8192')
     current_temp = temp if temp is not None else float(groq_config.get('temperature', 0.2))
@@ -1637,7 +1636,7 @@ def chat_with_groq(
     if top_logprobs is not None and data.get("logprobs") is True: data["top_logprobs"] = top_logprobs
 
     api_url = groq_config.get('api_base_url', 'https://api.groq.com/openai/v1').rstrip('/') + '/chat/completions'
-    logging.debug(f"Groq Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
+    logger.debug(f"Groq Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
     try:
         if current_streaming:
             # ... (OpenAI-like streaming logic, ensure "Groq" in logs) ...
@@ -1660,10 +1659,10 @@ def chat_with_groq(
                             if line and line.strip():  # Groq provides OpenAI-compatible SSE
                                 yield line if line.endswith("\n") else line + "\n"
                     except requests.exceptions.ChunkedEncodingError as e:  # ... error handling ...
-                        logging.error(f"Groq: ChunkedEncodingError: {e}", exc_info=True)
+                        logger.error(f"Groq: ChunkedEncodingError: {e}", exc_info=True)
                         yield f"data: {json.dumps({'error': {'message': f'Stream error: {str(e)}', 'type': 'groq_stream_error'}})}\n\n"
                     except Exception as e:  # ... error handling ...
-                        logging.error(f"Groq: Stream iteration error: {e}", exc_info=True)
+                        logger.error(f"Groq: Stream iteration error: {e}", exc_info=True)
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'groq_stream_error'}})}\n\n"
                     finally:
                         yield "data: [DONE]\n\n"
@@ -1751,16 +1750,16 @@ def chat_with_huggingface(
         custom_prompt_arg: Optional[str] = None  # Legacy
 ):
     start_time = time.time()
-    logging.debug(f"HuggingFace Chat: Request process starting for model '{model}' (Streaming: {streaming})")
+    logger.debug(f"HuggingFace Chat: Request process starting for model '{model}' (Streaming: {streaming})")
     loaded_config_data = load_settings()
     hf_config = loaded_config_data.get('huggingface_api', loaded_config_data.get('API', {}).get('huggingface', {}))
 
     final_api_key = api_key or hf_config.get('api_key')
     if final_api_key:
         log_key_display = f"{final_api_key[:5]}...{final_api_key[-5:]}" if len(final_api_key) > 9 else "Key Provided"
-        logging.debug(f"HuggingFace: Using API Key: {log_key_display}")
+        logger.debug(f"HuggingFace: Using API Key: {log_key_display}")
     else:
-        logging.warning("HuggingFace: API key is missing. Public Inference API or unsecured TGI assumed.")
+        logger.warning("HuggingFace: API key is missing. Public Inference API or unsecured TGI assumed.")
 
     headers = {"Content-Type": "application/json"}
     if final_api_key:
@@ -1770,7 +1769,7 @@ def chat_with_huggingface(
     if not final_model_for_payload:
         raise ChatConfigurationError(provider="huggingface",
                                      message="HuggingFace model ID is required (must be passed as 'model' or configured).")
-    logging.info(f"HuggingFace: Using model_id for payload: {final_model_for_payload}")
+    logger.info(f"HuggingFace: Using model_id for payload: {final_model_for_payload}")
 
     # --- URL Construction ---
     api_url: str
@@ -1784,7 +1783,7 @@ def chat_with_huggingface(
         chat_path = hf_config.get('api_chat_path', 'v1/chat/completions').lstrip('/')
         # Constructs URL like: {router_base}/models/{model_path_part}/{chat_path}
         api_url = f"{router_base}/models/{model_path_part}/{chat_path}"
-        logging.info(f"HuggingFace: Using explicit 'use_router_url_format=true'. Target URL: {api_url}")
+        logger.info(f"HuggingFace: Using explicit 'use_router_url_format=true'. Target URL: {api_url}")
     else: # use_router_url_format is false, standard URL construction
         configured_api_base_url = hf_config.get('api_base_url')
         # Default chat path can be just "chat/completions" if base_url includes /v1, or "v1/chat/completions" if not.
@@ -1798,14 +1797,14 @@ def chat_with_huggingface(
             # The model is expected to be in the payload.
             # If the endpoint needs the model_id in the path, configured_api_base_url should include it fully.
             api_url = f"{configured_api_base_url.rstrip('/')}/{chat_completions_path}"
-            logging.info(f"HuggingFace: Using configured 'api_base_url' ('{configured_api_base_url}') and 'api_chat_path' ('{chat_completions_path}'). Target URL: {api_url}. Model is in payload.")
+            logger.info(f"HuggingFace: Using configured 'api_base_url' ('{configured_api_base_url}') and 'api_chat_path' ('{chat_completions_path}'). Target URL: {api_url}. Model is in payload.")
         else:
             # Fallback if no api_base_url is configured.
             # Use the public Hugging Face Inference API endpoint for OpenAI-like chat completions.
             default_hf_api_base = 'https://api-inference.huggingface.co/v1' # Base includes /v1
             default_chat_path_for_api_inference = 'chat/completions' # Path relative to /v1 base
             api_url = f"{default_hf_api_base.rstrip('/')}/{default_chat_path_for_api_inference}"
-            logging.warning(
+            logger.warning(
                 f"HuggingFace: 'api_base_url' not configured. Defaulting to public Inference API endpoint: {api_url}. Model is in payload."
             )
     # --- End URL Construction ---
@@ -1865,9 +1864,9 @@ def chat_with_huggingface(
     # Remove None values from payload before sending, common practice
     payload = {k: v for k, v in payload.items() if v is not None}
 
-    logging.debug(f"HuggingFace Final Payload (excluding messages, tools): {{ {', '.join(f'{k}: {v}' for k, v in payload.items() if k not in ['messages', 'tools'])} }}")
-    if 'tools' in payload: logging.debug(f"HuggingFace Tools: {payload['tools']}")
-    logging.debug(f"HuggingFace Headers: {headers}")
+    logger.debug(f"HuggingFace Final Payload (excluding messages, tools): {{ {', '.join(f'{k}: {v}' for k, v in payload.items() if k not in ['messages', 'tools'])} }}")
+    if 'tools' in payload: logger.debug(f"HuggingFace Tools: {payload['tools']}")
+    logger.debug(f"HuggingFace Headers: {headers}")
 
     timeout_seconds = float(hf_config.get('api_timeout', 120.0))
     # For streaming, timeout applies to initial connection and pauses between data.
@@ -1875,7 +1874,7 @@ def chat_with_huggingface(
 
     try:
         if final_streaming_payload_val: # Check the boolean intended for payload
-            logging.debug(f"HuggingFace: Posting streaming request to {api_url}")
+            logger.debug(f"HuggingFace: Posting streaming request to {api_url}")
             # Session might not be strictly necessary for a single streaming POST, but good for potential keep-alive
             response = requests.post(api_url, headers=headers, json=payload, stream=True, timeout=timeout_seconds)
             response.raise_for_status()
@@ -1896,11 +1895,11 @@ def chat_with_huggingface(
                             decoded_line = line_bytes.decode('utf-8').strip()
                             if not decoded_line: continue # Skip empty keep-alive lines
 
-                            # logging.debug(f"HF Stream raw line: {decoded_line}")
+                            # logger.debug(f"HF Stream raw line: {decoded_line}")
                             if decoded_line.startswith("data:"):
                                 data_content = decoded_line[len("data:"):].strip()
                                 if data_content == "[DONE]":
-                                    logging.debug("HuggingFace stream received [DONE] marker.")
+                                    logger.debug("HuggingFace stream received [DONE] marker.")
                                     break
                                 try:
                                     chunk_json = json.loads(data_content)
@@ -1910,18 +1909,18 @@ def chat_with_huggingface(
                                     # Consider if other parts of the chunk are needed, e.g., finish_reason in delta
                                     # For now, just yielding content as per OpenAI's typical text stream delta.
                                 except json.JSONDecodeError:
-                                    logging.warning(f"HuggingFace stream: JSON decode error for data: '{data_content}'")
+                                    logger.warning(f"HuggingFace stream: JSON decode error for data: '{data_content}'")
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
-                    logging.error(f"HuggingFace stream: ChunkedEncodingError during streaming: {e_chunked}")
+                    logger.error(f"HuggingFace stream: ChunkedEncodingError during streaming: {e_chunked}")
                 except Exception as e_stream:
-                    logging.error(f"HuggingFace stream: Unexpected error during streaming: {e_stream}", exc_info=True)
+                    logger.error(f"HuggingFace stream: Unexpected error during streaming: {e_stream}", exc_info=True)
                 finally:
                     if response:
                         response.close() # Ensure response is closed
-                    logging.debug("HuggingFace stream generator finished.")
+                    logger.debug("HuggingFace stream generator finished.")
             return stream_generator_huggingface()
         else: # Non-streaming
-            logging.debug(f"HuggingFace: Posting non-streaming request to {api_url}")
+            logger.debug(f"HuggingFace: Posting non-streaming request to {api_url}")
             adapter = HTTPAdapter(max_retries=Retry(
                 total=int(hf_config.get('api_retries', 3)),
                 backoff_factor=float(hf_config.get('api_retry_delay', 1)),
@@ -1958,7 +1957,7 @@ def chat_with_huggingface(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
-        logging.error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}", exc_info=False)
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -1982,7 +1981,7 @@ def chat_with_huggingface(
         else: # 5xx
             raise ChatProviderError(provider="huggingface", message=f"Server error (Status {status_code}) from {api_url}. Detail: {error_text[:200]}", status_code=status_code)
     except requests.exceptions.RequestException as e: # Covers DNS, Connection, Timeout errors
-        logging.error(f"HuggingFace API request failed to {api_url} (network error): {e}", exc_info=True)
+        logger.error(f"HuggingFace API request failed to {api_url} (network error): {e}", exc_info=True)
         
         # Log network error metrics
         duration = time.time() - start_time
@@ -1996,7 +1995,7 @@ def chat_with_huggingface(
         })
         raise ChatProviderError(provider="huggingface", message=f"Network error connecting to {api_url}: {e}", status_code=504) # 504 for timeout/gateway like
     except Exception as e:
-        logging.error(f"HuggingFace API call to {api_url}: Unexpected error: {e}", exc_info=True)
+        logger.error(f"HuggingFace API call to {api_url}: Unexpected error: {e}", exc_info=True)
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -2041,7 +2040,7 @@ def chat_with_mistral(
     # ... (logging key, model, temp, streaming, top_p setup) ...
     log_key = f"{final_api_key[:5]}...{final_api_key[-5:]}" if final_api_key and len(
         final_api_key) > 9 else "Key Provided"
-    logging.debug(f"Mistral: Using API Key: {log_key}")
+    logger.debug(f"Mistral: Using API Key: {log_key}")
     current_model = model or mistral_config.get('model', 'mistral-large-latest')  # or mistral-small, mistral-medium
     current_temp = temp if temp is not None else float(
         mistral_config.get('temperature', 0.1))  # Mistral defaults to 0.7
@@ -2081,7 +2080,7 @@ def chat_with_mistral(
     if response_format is not None: data["response_format"] = response_format  # {"type": "json_object"}
 
     api_url = mistral_config.get('api_base_url', 'https://api.mistral.ai/v1').rstrip('/') + '/chat/completions'
-    logging.debug(f"Mistral Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
+    logger.debug(f"Mistral Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
 
     try:
         if current_streaming:
@@ -2238,7 +2237,7 @@ def chat_with_openrouter(
     if top_logprobs is not None and data.get("logprobs"): data["top_logprobs"] = top_logprobs
 
     api_url = openrouter_config.get('api_base_url', "https://openrouter.ai/api/v1").rstrip('/') + "/chat/completions"
-    logging.debug(
+    logger.debug(
         f"OpenRouter Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")
 
     try:

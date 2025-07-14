@@ -66,7 +66,7 @@ except ImportError:
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
-from tldw_chatbook.Logging_Config import logging
+from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
@@ -169,7 +169,7 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
         ValueError: If the input parameters are invalid.
     """
     start_time = time.time()
-    logging.info(f"Starting generate_and_search with query: {question}")
+    logger.info(f"Starting generate_and_search with query: {question}")
     
     # Log search attempt
     engine = search_params.get('engine', 'unknown')
@@ -191,7 +191,7 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
             raise ValueError(f"Missing required key in search_params: {key}")
 
     # 1. Generate sub-queries if requested
-    logging.info(f"Generating sub-queries for the query: {question}")
+    logger.info(f"Generating sub-queries for the query: {question}")
     sub_query_dict = {
         "main_goal": question,
         "sub_questions": [],
@@ -200,13 +200,13 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     }
 
     if search_params.get("subquery_generation", False):
-        logging.info("Sub-query generation enabled")
+        logger.info("Sub-query generation enabled")
         api_endpoint = search_params.get("subquery_generation_llm", "openai")
         sub_query_dict = analyze_question(question, api_endpoint)
 
     # Merge original question with sub-queries
     sub_queries = sub_query_dict.get("sub_questions", [])
-    logging.info(f"Sub-queries generated: {sub_queries}")
+    logger.info(f"Sub-queries generated: {sub_queries}")
     all_queries = [question] + sub_queries
 
     # 2. Initialize a single web_search_results_dict
@@ -216,7 +216,7 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     # 3. Perform searches and accumulate all raw results
     for q in all_queries:
         sleep_time = random.uniform(1, 1.5)  # Add a random delay to avoid rate limiting
-        logging.info(f"Performing web search for query: {q}")
+        logger.info(f"Performing web search for query: {q}")
         raw_results = perform_websearch(
             search_engine=search_params.get('engine'),
             search_query=q,
@@ -236,21 +236,21 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
         )
 
         # Debug: Inspect raw results
-        logging.debug(f"Raw results for query '{q}': {raw_results}")
+        logger.debug(f"Raw results for query '{q}': {raw_results}")
 
         # Check for errors or invalid data
         if not isinstance(raw_results, dict) or raw_results.get("processing_error"):
-            logging.error(f"Error or invalid data returned for query '{q}': {raw_results}")
-            logging.error(f"Error or invalid data returned for query '{q}': {raw_results}")
+            logger.error(f"Error or invalid data returned for query '{q}': {raw_results}")
+            logger.error(f"Error or invalid data returned for query '{q}': {raw_results}")
             continue
 
-        logging.info(f"Search results found for query '{q}': {len(raw_results.get('results', []))}")
+        logger.info(f"Search results found for query '{q}': {len(raw_results.get('results', []))}")
 
         # Append results to the single web_search_results_dict
         web_search_results_dict["results"].extend(raw_results["results"])
         web_search_results_dict["total_results_found"] += raw_results.get("total_results_found", 0)
         web_search_results_dict["search_time"] += raw_results.get("search_time", 0.0)
-        logging.info(f"Total results found so far: {len(web_search_results_dict['results'])}")
+        logger.info(f"Total results found so far: {len(web_search_results_dict['results'])}")
 
     return {
         "web_search_results_dict": web_search_results_dict,
@@ -289,10 +289,10 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
         ...     search_params
         ... )
     """
-    logging.info("Starting analyze_and_aggregate")
+    logger.info("Starting analyze_and_aggregate")
 
     # 4. Score/filter results
-    logging.info("Scoring and filtering search results")
+    logger.info("Scoring and filtering search results")
     sub_questions = sub_query_dict.get("sub_questions", [])
     relevant_results = await search_result_relevance(
         web_search_results_dict["results"],
@@ -301,13 +301,13 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
         search_params.get('relevance_analysis_llm')
     )
     # FIXME
-    logging.debug("Relevant results returned by search_result_relevance:")
-    logging.debug(json.dumps(relevant_results, indent=2))
+    logger.debug("Relevant results returned by search_result_relevance:")
+    logger.debug(json.dumps(relevant_results, indent=2))
 
     # 5. Allow user to review and select relevant results (if enabled)
-    logging.info("Reviewing and selecting relevant results")
+    logger.info("Reviewing and selecting relevant results")
     if search_params.get("user_review", False):
-        logging.info("User review enabled")
+        logger.info("User review enabled")
         relevant_results = review_and_select_results({"results": list(relevant_results.values())})
 
     # 6. Summarize/aggregate final answer
@@ -319,7 +319,7 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
     )
 
     # 7. Return the final data
-    logging.info("Returning final websearch results")
+    logger.info("Returning final websearch results")
     
     # Log success metrics
     duration = time.time() - start_time
@@ -369,7 +369,7 @@ async def test_perplexity_pipeline():
     # Review the results here if needed
     # Phase 2: Analyze relevance and aggregate final answer
     phase2_results = await analyze_and_aggregate(phase1_results["web_search_results_dict"], phase1_results["sub_query_dict"], search_params)
-    logging.info(phase2_results["final_answer"])
+    logger.info(phase2_results["final_answer"])
 
 
 ######################### Question Analysis #########################
@@ -403,7 +403,7 @@ def analyze_question(question: str, api_endpoint) -> Dict:
          "battery disposal environmental impact",
          "electricity source for EV charging", ...]
     """
-    logging.debug(f"Analyzing question: {question} with API endpoint: {api_endpoint}")
+    logger.debug(f"Analyzing question: {question} with API endpoint: {api_endpoint}")
     """
     Analyzes the input question and generates sub-questions
 
@@ -452,7 +452,7 @@ def analyze_question(question: str, api_endpoint) -> Dict:
     sub_questions: List[str] = []
     for attempt in range(3):
         try:
-            logging.info(f"Generating sub-questions (attempt {attempt + 1})")
+            logger.info(f"Generating sub-questions (attempt {attempt + 1})")
 
             response = chat_api_call(api_endpoint, None, input_data, sub_question_generation_prompt, temp=0.7, system_message=None, streaming=False, minp=None, maxp=None, model=None)
             if response:
@@ -461,26 +461,26 @@ def analyze_question(question: str, api_endpoint) -> Dict:
                     parsed_response = json.loads(response)
                     sub_questions = parsed_response.get("sub_questions", [])
                     if sub_questions:
-                        logging.info("Successfully generated sub-questions from JSON")
+                        logger.info("Successfully generated sub-questions from JSON")
                         break
                 except json.JSONDecodeError:
                     # If JSON parsing fails, attempt a regex-based fallback
-                    logging.warning("Failed to parse as JSON. Attempting regex extraction.")
+                    logger.warning("Failed to parse as JSON. Attempting regex extraction.")
                     matches = re.findall(r'"([^"]*)"', response)
                     sub_questions = matches if matches else []
                     if sub_questions:
-                        logging.info("Successfully extracted sub-questions using regex")
+                        logger.info("Successfully extracted sub-questions using regex")
                         break
 
         except Exception as e:
-            logging.error(f"Error generating sub-questions: {str(e)}")
+            logger.error(f"Error generating sub-questions: {str(e)}")
 
     if not sub_questions:
-        logging.error("Failed to extract sub-questions from API response after all attempts.")
+        logger.error("Failed to extract sub-questions from API response after all attempts.")
         sub_questions = [original_query]  # Fallback to the original query
 
     # Construct and return the result dictionary
-    logging.info("Sub-questions generated successfully")
+    logger.info("Sub-questions generated successfully")
     return {
         "main_goal": original_query,
         "sub_questions": sub_questions,
@@ -553,7 +553,7 @@ async def search_result_relevance(
     for idx, result in enumerate(search_results):
         content = result.get("content", "")
         if not content:
-            logging.error("No Content found in search results array!")
+            logger.error("No Content found in search results array!")
             continue
 
         # First, evaluate relevance
@@ -598,11 +598,11 @@ async def search_result_relevance(
             )
 
             # FIXME
-            logging.debug(f"[DEBUG] Relevancy LLM response for index {idx}:\n{relevancy_result}\n---")
+            logger.debug(f"[DEBUG] Relevancy LLM response for index {idx}:\n{relevancy_result}\n---")
 
             if relevancy_result:
                 # Extract the selected answer and reasoning via regex
-                logging.debug(f"LLM Relevancy Response for item:", relevancy_result)
+                logger.debug(f"LLM Relevancy Response for item:", relevancy_result)
                 selected_answer_match = re.search(
                     r"Selected Answer:\s*(True|False)",
                     relevancy_result,
@@ -619,14 +619,14 @@ async def search_result_relevance(
                     reasoning = reasoning_match.group(1).strip()
 
                     if is_relevant:
-                        logging.debug("Relevant result found.")
+                        logger.debug("Relevant result found.")
                         # Use the 'id' from the result if available, otherwise use idx
                         result_id = result.get("id", str(idx))
                         # Scrape the content of the relevant result
                         scraped_content = await scrape_article(result['url'])
 
                         # Create Summarization prompt
-                        logging.debug(f"Creating Summarization Prompt for result idx={idx}")
+                        logger.debug(f"Creating Summarization Prompt for result idx={idx}")
                         summary_prompt = summarization_prompt.format(
                             question=original_question,
                             content=scraped_content['content']
@@ -636,7 +636,7 @@ async def search_result_relevance(
                         await asyncio.sleep(sleep_time)
 
                         # Generate summary using the summarize function
-                        logging.info(f"Summarizing relevant result: ID={result_id}")
+                        logger.info(f"Summarizing relevant result: ID={result_id}")
                         summary = analyze(
                             input_data=scraped_content['content'],
                             custom_prompt_arg=summary_prompt,
@@ -652,14 +652,14 @@ async def search_result_relevance(
                             "original_content": scraped_content['content'],  # Keep original content if needed
                             "reasoning": reasoning
                         }
-                        logging.info(f"Relevant result found and summarized: ID={result_id}; Reasoning={reasoning}")
+                        logger.info(f"Relevant result found and summarized: ID={result_id}; Reasoning={reasoning}")
                     else:
-                        logging.info(f"Irrelevant result: {reasoning}")
+                        logger.info(f"Irrelevant result: {reasoning}")
 
                 else:
-                    logging.warning("Failed to parse the API response for relevance analysis.")
+                    logger.warning("Failed to parse the API response for relevance analysis.")
         except Exception as e:
-            logging.error(f"Error during relevance evaluation/summarization for result idx={idx}: {e}")
+            logger.error(f"Error during relevance evaluation/summarization for result idx={idx}: {e}")
 
     return relevant_results
 
@@ -675,12 +675,12 @@ def review_and_select_results(web_search_results_dict: Dict) -> Dict:
         Dict: A dictionary containing only the user-selected relevant results.
     """
     relevant_results = {}
-    logging.info("Review the search results and select the relevant ones:")
+    logger.info("Review the search results and select the relevant ones:")
     for idx, result in enumerate(web_search_results_dict["results"]):
-        logging.info(f"\nResult {idx + 1}:")
-        logging.info(f"Title: {result['title']}")
-        logging.info(f"URL: {result['url']}")
-        logging.info(f"Content: {result['content'][:200]}...")  # Show a preview of the content
+        logger.info(f"\nResult {idx + 1}:")
+        logger.info(f"Title: {result['title']}")
+        logger.info(f"URL: {result['url']}")
+        logger.info(f"Content: {result['content'][:200]}...")  # Show a preview of the content
         user_input = input("Is this result relevant? (y/n): ").strip().lower()
         if user_input == 'y':
             relevant_results[str(idx)] = result
@@ -711,7 +711,7 @@ def aggregate_results(
         - evidence (List[Dict]): List of relevant content items included in the summary.
         - confidence (float): A rough confidence score (placeholder).
     """
-    logging.info("Aggregating and summarizing relevant results")
+    logger.info("Aggregating and summarizing relevant results")
     if not relevant_results:
         return {
             "Report": "No relevant results found. Unable to provide an answer.",
@@ -720,7 +720,7 @@ def aggregate_results(
         }
 
     # FIXME - Add summarization loop
-    logging.info("Summarizing relevant results")
+    logger.info("Summarizing relevant results")
     # ADD Code here to summarize the relevant results
 
 
@@ -859,7 +859,7 @@ def aggregate_results(
     input_data = "Follow the above instructions."
 
     try:
-        logging.info("Generating the report")
+        logger.info("Generating the report")
         returned_response = chat_api_call(
             api_endpoint=api_endpoint,
             api_key=None,
@@ -874,7 +874,7 @@ def aggregate_results(
             topk=None,
             topp=None,
         )
-        logging.debug(f"Returned response from LLM: {returned_response}")
+        logger.debug(f"Returned response from LLM: {returned_response}")
         if returned_response:
             # You could do further parsing or confidence estimation here
             return {
@@ -883,9 +883,9 @@ def aggregate_results(
                 "confidence": 0.9  # Hardcoded or computed as needed
             }
     except Exception as e:
-        logging.error(f"Error aggregating results: {e}")
+        logger.error(f"Error aggregating results: {e}")
 
-    logging.error("Could not create the report due to an error.")
+    logger.error("Could not create the report due to an error.")
     return {
         "summary": "Could not create the report due to an error.",
         "evidence": list(relevant_results.values()),
@@ -1068,8 +1068,8 @@ def perform_websearch(search_engine, search_query, content_country, search_lang,
         # Process the raw search results
         web_search_results_dict = process_web_search_results(web_search_results, search_engine)
         # FIXME
-        #logging.debug("After process_web_search_results:")
-        #logging.debug(json.dumps(web_search_results_dict, indent=2))
+        #logger.debug("After process_web_search_results:")
+        #logger.debug(json.dumps(web_search_results_dict, indent=2))
         
         # Log success metrics
         duration = time.time() - start_time
@@ -1336,7 +1336,7 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
 
     except Exception as e:
         web_search_results_dict["processing_error"] = f"Error processing search results: {str(e)}"
-        logging.error(f"Error in process_web_search_results: {str(e)}")
+        logger.error(f"Error in process_web_search_results: {str(e)}")
 
     return web_search_results_dict
 
@@ -1427,11 +1427,11 @@ def search_web_bing(search_query, bing_lang, bing_country, result_count=None, bi
         response = requests.get(search_url, headers=headers, params=params)
         response.raise_for_status()
 
-        logging.debug("Headers:  ")
-        logging.debug(response.headers)
+        logger.debug("Headers:  ")
+        logger.debug(response.headers)
 
-        logging.debug("JSON Response: ")
-        logging.debug(response.json())
+        logger.debug("JSON Response: ")
+        logger.debug(response.json())
         bing_search_results = response.json()
         return bing_search_results
     except Exception as ex:
@@ -1464,7 +1464,7 @@ def parse_bing_results(raw_results: Dict, output_dict: Dict) -> None:
         raw_results (Dict): Raw Bing API response
         output_dict (Dict): Dictionary to store processed results
     """
-    logging.info(f"Raw Bing results received: {json.dumps(raw_results, indent=2)}")
+    logger.info(f"Raw Bing results received: {json.dumps(raw_results, indent=2)}")
     try:
         # Initialize results list if not present
         if "results" not in output_dict:
@@ -1521,7 +1521,7 @@ def parse_bing_results(raw_results: Dict, output_dict: Dict) -> None:
             ]
 
     except Exception as e:
-        logging.error(f"Error processing Bing results: {str(e)}")
+        logger.error(f"Error processing Bing results: {str(e)}")
         output_dict["processing_error"] = f"Error processing Bing results: {str(e)}"
 
 
@@ -1645,7 +1645,7 @@ def parse_brave_results(raw_results: Dict, output_dict: Dict) -> None:
             output_dict["family_friendly"] = raw_results.get("family_friendly", True)
 
     except Exception as e:
-        logging.error(f"Error processing Brave results: {str(e)}")
+        logger.error(f"Error processing Brave results: {str(e)}")
         output_dict["processing_error"] = f"Error processing Brave results: {str(e)}"
 
 def test_parse_brave_results():
@@ -1800,11 +1800,11 @@ def parse_duckduckgo_results(raw_results: Dict, output_dict: Dict) -> None:
 
             # Log warnings for missing data
             if not title:
-                logging.warning("Missing title in result")
+                logger.warning("Missing title in result")
             if not url:
-                logging.warning("Missing URL in result")
+                logger.warning("Missing URL in result")
             if not snippet:
-                logging.warning("Missing snippet in result")
+                logger.warning("Missing snippet in result")
 
             # Add the processed result to the output dictionary
             processed_result = {
@@ -1827,7 +1827,7 @@ def parse_duckduckgo_results(raw_results: Dict, output_dict: Dict) -> None:
         output_dict["total_results_found"] = len(output_dict["results"])
 
     except Exception as e:
-        logging.error(f"Error processing DuckDuckGo results: {str(e)}")
+        logger.error(f"Error processing DuckDuckGo results: {str(e)}")
         output_dict["processing_error"] = f"Error processing DuckDuckGo results: {str(e)}"
 
 
@@ -1904,7 +1904,7 @@ def search_web_google(
     try:
         # Load Search API URL from config file
         search_url = loaded_config_data['search_engines']['google_search_api_url']
-        logging.info(f"Using search URL: {search_url}")
+        logger.info(f"Using search URL: {search_url}")
 
         # Initialize params dictionary
         params: Dict[str, Any] = {"q": search_query}
@@ -1961,27 +1961,27 @@ def search_web_google(
         if sort_results_by:
             params["sort"] = sort_results_by
 
-        logging.info(f"Prepared parameters for Google Search: {params}")
+        logger.info(f"Prepared parameters for Google Search: {params}")
 
         # Make the API call
         response = requests.get(search_url, params=params)
         response.raise_for_status()
         google_search_results = response.json()
 
-        logging.info(f"Successfully retrieved search results. Items found: {len(google_search_results.get('items', []))}")
+        logger.info(f"Successfully retrieved search results. Items found: {len(google_search_results.get('items', []))}")
 
         return google_search_results
 
     except ValueError as ve:
-        logging.error(f"Configuration error: {str(ve)}")
+        logger.error(f"Configuration error: {str(ve)}")
         raise
 
     except RequestException as re:
-        logging.error(f"Error during API request: {str(re)}")
+        logger.error(f"Error during API request: {str(re)}")
         raise
 
     except Exception as e:
-        logging.error(f"Unexpected error occurred: {str(e)}")
+        logger.error(f"Unexpected error occurred: {str(e)}")
         raise
 
 
@@ -2031,10 +2031,10 @@ def parse_google_results(raw_results: Dict, output_dict: Dict) -> None:
         raw_results (Dict): Raw Google API response.
         output_dict (Dict): Dictionary to store processed results.
     """
-    logging.info(f"Raw results received: {json.dumps(raw_results, indent=2)}")
+    logger.info(f"Raw results received: {json.dumps(raw_results, indent=2)}")
     # For debugging only FIXME
-    logging.debug("Raw web_search_results from Google:")
-    logging.debug(json.dumps(raw_results, indent=2))
+    logger.debug("Raw web_search_results from Google:")
+    logger.debug(json.dumps(raw_results, indent=2))
     try:
         # Initialize results list if not present
         if "results" not in output_dict:
@@ -2115,7 +2115,7 @@ def parse_google_results(raw_results: Dict, output_dict: Dict) -> None:
         }
 
     except Exception as e:
-        logging.error(f"Error processing Google results: {str(e)}")
+        logger.error(f"Error processing Google results: {str(e)}")
         output_dict["processing_error"] = f"Error processing Google results: {str(e)}"
 
 
@@ -2152,7 +2152,7 @@ def search_web_kagi(query: str, limit: int = 10) -> Dict:
 
     response = requests.get(endpoint, headers=headers, params=params)
     response.raise_for_status()
-    logging.debug(response.json())
+    logger.debug(response.json())
     return response.json()
 
 
@@ -2275,7 +2275,7 @@ def search_web_searx(search_query, language='auto', time_range='', safesearch=0,
             'categories': categories
         }
         search_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}?{urlencode(params)}"
-        logging.info(f"Search URL: {search_url}")
+        logger.info(f"Search URL: {search_url}")
     except Exception as e:
         return json.dumps({"error": f"Invalid URL configuration: {str(e)}"})
 
@@ -2325,7 +2325,7 @@ def search_web_searx(search_query, language='auto', time_range='', safesearch=0,
         return json.dumps(data)
 
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error searching for content: {str(e)}")
+        logger.error(f"Error searching for content: {str(e)}")
         return json.dumps({"error": f"There was an error searching for content. {str(e)}"})
 
 def test_search_searx():

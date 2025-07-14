@@ -11,13 +11,12 @@ import time
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from collections import OrderedDict
-import logging
+from loguru import logger
 import sys
 import asyncio
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 
-logger = logging.getLogger(__name__)
 
 
 @dataclass

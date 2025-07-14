@@ -5,14 +5,13 @@ Prevents cascading failures by temporarily disabling calls to failing services.
 """
 
 import time
-import logging
+from loguru import logger
 from typing import Callable, Any, Optional, TypeVar, Generic
 from dataclasses import dataclass, field
 from enum import Enum
 import asyncio
 from functools import wraps
 
-logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
 

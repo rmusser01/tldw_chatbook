@@ -9,13 +9,12 @@ import asyncio
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from enum import Enum
-import logging
+from loguru import logger
 import psutil
 import traceback
 
 from .circuit_breaker import get_all_circuit_breaker_stats
 
-logger = logging.getLogger(__name__)
 
 
 class HealthStatus(Enum):

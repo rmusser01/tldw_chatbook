@@ -3140,7 +3140,7 @@ class MediaDatabase:
         
         Returns:
             List[Dict[str, Any]]: List of dictionaries containing keyword info and usage count
-                Each dict contains: id, keyword, uuid, usage_count, created_at, last_modified
+                Each dict contains: id, keyword, uuid, usage_count, last_modified
                 
         Raises:
             DatabaseError: For database operation errors
@@ -3151,13 +3151,12 @@ class MediaDatabase:
                     k.id,
                     k.keyword,
                     k.uuid,
-                    k.created_at,
                     k.last_modified,
                     COUNT(DISTINCT mk.media_id) as usage_count
                 FROM Keywords k
                 LEFT JOIN MediaKeywords mk ON k.id = mk.keyword_id
                 WHERE k.deleted = 0
-                GROUP BY k.id, k.keyword, k.uuid, k.created_at, k.last_modified
+                GROUP BY k.id, k.keyword, k.uuid, k.last_modified
                 ORDER BY usage_count DESC, k.keyword COLLATE NOCASE
             """
             

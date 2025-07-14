@@ -26,6 +26,8 @@ DEPENDENCIES_AVAILABLE = {
     'audio_processing': False,
     'video_processing': False,
     'faster_whisper': False,
+    'lightning_whisper_mlx': False,
+    'parakeet_mlx': False,
     'yt_dlp': False,
     'soundfile': False,
     'scipy': False,
@@ -230,6 +232,20 @@ def check_audio_processing_deps() -> bool:
     # Check transcription deps
     faster_whisper_available = check_dependency('faster_whisper')
     
+    # Check lightning-whisper-mlx (macOS only)
+    lightning_whisper_available = False
+    if sys.platform == 'darwin':
+        lightning_whisper_available = check_dependency('lightning_whisper_mlx')
+    else:
+        DEPENDENCIES_AVAILABLE['lightning_whisper_mlx'] = False
+    
+    # Check parakeet-mlx (macOS only)
+    parakeet_mlx_available = False
+    if sys.platform == 'darwin':
+        parakeet_mlx_available = check_dependency('parakeet_mlx')
+    else:
+        DEPENDENCIES_AVAILABLE['parakeet_mlx'] = False
+    
     # Check optional transcription backend
     qwen2audio_available = check_dependency('qwen2_audio', 'qwen2audio')
     
@@ -240,12 +256,18 @@ def check_audio_processing_deps() -> bool:
     audio_available = core_available
     DEPENDENCIES_AVAILABLE['audio_processing'] = audio_available
     DEPENDENCIES_AVAILABLE['faster_whisper'] = faster_whisper_available
+    DEPENDENCIES_AVAILABLE['lightning_whisper_mlx'] = lightning_whisper_available
+    DEPENDENCIES_AVAILABLE['parakeet_mlx'] = parakeet_mlx_available
     DEPENDENCIES_AVAILABLE['qwen2audio'] = qwen2audio_available
     DEPENDENCIES_AVAILABLE['yt_dlp'] = yt_dlp_available
     
     if audio_available:
         logger.info("✅ Core audio processing dependencies found.")
         enhanced_features = []
+        if parakeet_mlx_available:
+            enhanced_features.append("parakeet-mlx (Real-time ASR for Apple Silicon)")
+        if lightning_whisper_available:
+            enhanced_features.append("lightning-whisper-mlx (Apple Silicon optimized)")
         if faster_whisper_available:
             enhanced_features.append("faster-whisper transcription")
         if qwen2audio_available:
@@ -513,6 +535,8 @@ def reset_dependency_checks():
         'audio_processing': False,
         'video_processing': False,
         'faster_whisper': False,
+        'lightning_whisper_mlx': False,
+        'parakeet_mlx': False,
         'yt_dlp': False,
         'soundfile': False,
         'scipy': False,

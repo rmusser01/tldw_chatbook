@@ -4,18 +4,87 @@ This guide helps you choose the right transcription provider for your use case.
 
 ## Quick Comparison Table
 
-| Feature | Faster-Whisper | Qwen2Audio | Parakeet | Canary |
-|---------|----------------|------------|----------|---------|
-| **Speed** | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Accuracy** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Language Support** | 100+ | Multiple | English | 4 (en,de,es,fr) |
-| **Translation** | To English | ❌ | ❌ | Any direction |
-| **Model Sizes** | 39MB-1.5GB | 15GB | 600MB-1.1GB | 1GB |
-| **GPU Required** | Optional | Recommended | Optional | Recommended |
-| **Real-time** | ❌ | ❌ | ✅ | ✅ |
-| **Long Audio** | ✅ | ✅ | ✅ | ✅ (chunked) |
+| Feature | Parakeet-MLX | Lightning-Whisper-MLX | Faster-Whisper | Qwen2Audio | Parakeet | Canary |
+|---------|--------------|----------------------|----------------|------------|----------|---------|
+| **Speed** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Accuracy** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Language Support** | English | 100+ | 100+ | Multiple | English | 4 (en,de,es,fr) |
+| **Translation** | ❌ | To English | To English | ❌ | ❌ | Any direction |
+| **Model Sizes** | 600MB | 39MB-1.5GB | 39MB-1.5GB | 15GB | 600MB-1.1GB | 1GB |
+| **GPU Required** | Apple Silicon | Apple Silicon | Optional | Recommended | Optional | Recommended |
+| **Real-time** | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| **Long Audio** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (chunked) |
+| **Platform** | macOS only | macOS only | All | All | All | All |
 
 ## Detailed Provider Profiles
+
+### Parakeet-MLX (macOS Only)
+
+**Best for:** Real-time transcription and streaming audio on Apple Silicon
+
+**Strengths:**
+- Extremely fast real-time transcription
+- Optimized specifically for Apple Silicon using MLX
+- Supports streaming audio input
+- Low latency for live applications
+- Precise word-level timestamps
+- Efficient memory usage
+- Works great for both real-time and file transcription
+
+**Limitations:**
+- macOS only (requires Apple Silicon)
+- English only
+- No translation support
+- Limited model selection
+
+**Model:**
+- `mlx-community/parakeet-tdt-0.6b-v2` (default and recommended)
+
+**Configuration Options:**
+- `precision`: 'fp32' or 'bf16' (default: 'bf16')
+- `attention_type`: 'local' or 'full' (default: 'local')
+
+**Use Cases:**
+- Real-time voice assistants
+- Live transcription for meetings
+- Streaming audio transcription
+- Voice commands and dictation
+- Quick file transcription on Mac
+
+### Lightning-Whisper-MLX (macOS Only)
+
+**Best for:** Ultra-fast transcription on Apple Silicon Macs
+
+**Strengths:**
+- 10x faster than Whisper CPP
+- 4x faster than standard MLX implementations  
+- Optimized specifically for Apple Silicon
+- Batched decoding for higher throughput
+- Support for quantized models (4-bit, 8-bit)
+- Uses unified memory efficiently
+- Same accuracy as OpenAI Whisper
+
+**Limitations:**
+- macOS only (requires Apple Silicon)
+- Translation only to English
+- Requires lightning-whisper-mlx package
+
+**Recommended Models:**
+- `tiny` or `base`: Lightning fast, good for real-time
+- `small` or `medium`: Great balance of speed and accuracy
+- `distil-large-v3`: Excellent accuracy with faster speed
+- `large-v3`: Best accuracy, still much faster than alternatives
+
+**Quantization Options:**
+- `None`: Best accuracy, moderate speed
+- `8bit`: Slightly faster, minimal accuracy loss
+- `4bit`: Fastest, small accuracy trade-off
+
+**Use Cases:**
+- Rapid podcast transcription on Mac
+- Real-time meeting notes
+- Quick content processing
+- High-volume transcription workflows
 
 ### Faster-Whisper
 
@@ -132,8 +201,9 @@ This guide helps you choose the right transcription provider for your use case.
 - Need translation: Canary (for supported languages) or Faster-Whisper (to English)
 
 **Real-time/Streaming:**
-- First choice: Parakeet (tdt models)
-- Alternative: Canary with small chunks
+- First choice: Parakeet-MLX (macOS)
+- Alternative: Parakeet (tdt models)
+- Fallback: Canary with small chunks
 
 **Multilingual Content:**
 - Many languages: Faster-Whisper
@@ -149,6 +219,12 @@ This guide helps you choose the right transcription provider for your use case.
 - Canary (for supported languages)
 
 ### By Hardware
+
+**Apple Silicon Mac:**
+- Parakeet-MLX (best for real-time)
+- Lightning-Whisper-MLX (best for batch processing)
+- All other providers work well
+- Leverage unified memory architecture
 
 **CPU Only:**
 - Faster-Whisper with int8 compute
@@ -208,8 +284,18 @@ This guide helps you choose the right transcription provider for your use case.
 
 ## Common Combinations
 
+### "Real-Time on Mac"
+- Provider: Parakeet-MLX
+- Model: mlx-community/parakeet-tdt-0.6b-v2
+- Settings: precision=bf16, attention=local
+
+### "Ultra-Fast Batch on Mac"
+- Provider: Lightning-Whisper-MLX
+- Model: distil-medium.en or distil-large-v3
+- Settings: batch_size=12, quant=None
+
 ### "Fast and Good Enough"
-- Provider: Faster-Whisper
+- Provider: Faster-Whisper (or Lightning-Whisper-MLX on Mac)
 - Model: base or small
 - Settings: CPU with int8
 

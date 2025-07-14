@@ -274,7 +274,8 @@ class TesseractOCRBackend(OCRBackend):
         try:
             pytesseract.get_tesseract_version()
             return True
-        except:
+        except (pytesseract.TesseractNotFoundError, OSError, FileNotFoundError) as e:
+            logger.debug(f"Tesseract not available: {e}")
             return False
     
     def initialize(self) -> None:
@@ -825,8 +826,8 @@ Prefer using ☐ and ☑ for check boxes."""
                 try:
                     with Image.open(image_path) as img:
                         image_size = img.size
-                except:
-                    pass
+                except (OSError, IOError, AttributeError) as e:
+                    logger.debug(f"Could not get image size from {image_path}: {e}")
             
             return OCRResult(
                 text=text,
@@ -877,8 +878,8 @@ Prefer using ☐ and ☑ for check boxes."""
                     # Clean up temp file
                     try:
                         os.unlink(tmp_path)
-                    except:
-                        pass
+                    except (OSError, FileNotFoundError) as e:
+                        logger.debug(f"Failed to clean up temporary file {tmp_path}: {e}")
             
             doc.close()
             return results

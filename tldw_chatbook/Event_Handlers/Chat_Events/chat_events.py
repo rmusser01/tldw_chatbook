@@ -1185,8 +1185,8 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                         try:
                             other_button = action_widget.query_one("#thumb-down", Button)
                             other_button.label = "👎"
-                        except:
-                            pass
+                        except QueryError:
+                            loguru_logger.debug("Thumb down button not found, likely already updated")
                             
                         loguru_logger.info(f"Message {action_widget.message_id_internal} feedback updated")
                     else:
@@ -1212,8 +1212,8 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                 try:
                     other_button = action_widget.query_one("#thumb-down", Button)
                     other_button.label = "👎"
-                except:
-                    pass
+                except QueryError:
+                    loguru_logger.debug("Thumb down button not found when updating thumb-up feedback (no DB)")
         
         # Show the dialog
         dialog = FeedbackDialog(
@@ -1282,8 +1282,8 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                         try:
                             other_button = action_widget.query_one("#thumb-up", Button)
                             other_button.label = "👍"
-                        except:
-                            pass
+                        except QueryError:
+                            loguru_logger.debug("Thumb up button not found when updating thumb-down feedback")
                             
                         loguru_logger.info(f"Message {action_widget.message_id_internal} feedback updated")
                     else:
@@ -1309,8 +1309,8 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                 try:
                     other_button = action_widget.query_one("#thumb-up", Button)
                     other_button.label = "👍"
-                except:
-                    pass
+                except QueryError:
+                    loguru_logger.debug("Thumb up button not found when updating thumb-down feedback (no DB)")
         
         # Show the dialog
         dialog = FeedbackDialog(

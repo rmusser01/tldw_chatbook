@@ -8,6 +8,7 @@ from loguru import logger
 from pathlib import Path
 import uuid
 import os
+from textual.css.query import NoMatches
 #
 # Local Imports
 from ...DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError
@@ -1204,7 +1205,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
     try:
         rag_enabled = app.query_one("#chat-rag-enable-checkbox").value
         plain_rag_enabled = app.query_one("#chat-rag-plain-enable-checkbox").value
-    except:
+    except NoMatches:
         logger.debug("RAG checkboxes not found, RAG disabled")
         return None
     
@@ -1218,7 +1219,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         search_mode_widget = app.query_one("#chat-rag-search-mode")
         search_mode = search_mode_widget.value
         logger.info(f"RAG search mode from dropdown: {search_mode}")
-    except:
+    except NoMatches:
         # Fallback to checkbox-based detection for backward compatibility
         logger.debug("Search mode dropdown not found, using checkbox-based detection")
         search_mode = "plain" if plain_rag_enabled else "semantic"

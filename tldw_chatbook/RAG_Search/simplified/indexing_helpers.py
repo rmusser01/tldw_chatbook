@@ -4,7 +4,7 @@ Helper functions for RAG indexing operations.
 This module contains extracted functions to reduce complexity in the main RAG service.
 """
 
-import logging
+from loguru import logger
 import time
 from typing import List, Dict, Any, Tuple, Optional, Union
 
@@ -21,7 +21,6 @@ except ImportError:
 
 from .data_models import IndexingResult
 
-logger = logging.getLogger(__name__)
 
 # Constants from rag_service
 CHUNK_PROGRESS_INTERVAL = 10  # Show progress every N documents

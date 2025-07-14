@@ -7,7 +7,7 @@ that provides thread-safe caching, multiple providers, and async support.
 
 from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
-import logging
+from loguru import logger
 import os
 import time
 import psutil
@@ -28,7 +28,6 @@ from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingC
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 from .circuit_breaker import get_circuit_breaker, CircuitBreakerConfig, CircuitBreakerOpenError
 
-logger = logging.getLogger(__name__)
 
 
 class EmbeddingsServiceWrapper:

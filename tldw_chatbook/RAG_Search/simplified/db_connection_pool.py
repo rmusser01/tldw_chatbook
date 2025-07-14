@@ -12,9 +12,8 @@ import time
 from typing import Optional, Dict, Any, ContextManager
 from pathlib import Path
 from contextlib import contextmanager
-import logging
+from loguru import logger
 
-logger = logging.getLogger(__name__)
 
 
 class ConnectionPool:

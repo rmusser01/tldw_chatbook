@@ -11,7 +11,7 @@ import time
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union, Callable
 import json
 
 # Fix for multiprocessing issues in some environments
@@ -32,6 +32,28 @@ try:
 except ImportError:
     FASTER_WHISPER_AVAILABLE = False
     logging.warning("faster-whisper not available. Install with: pip install faster-whisper")
+
+try:
+    if sys.platform == 'darwin':
+        from lightning_whisper_mlx import LightningWhisperMLX
+        LIGHTNING_WHISPER_AVAILABLE = True
+    else:
+        LIGHTNING_WHISPER_AVAILABLE = False
+except ImportError:
+    LIGHTNING_WHISPER_AVAILABLE = False
+    if sys.platform == 'darwin':
+        logging.warning("lightning-whisper-mlx not available. Install with: pip install lightning-whisper-mlx")
+
+try:
+    if sys.platform == 'darwin':
+        from parakeet_mlx import from_pretrained as parakeet_from_pretrained
+        PARAKEET_MLX_AVAILABLE = True
+    else:
+        PARAKEET_MLX_AVAILABLE = False
+except ImportError:
+    PARAKEET_MLX_AVAILABLE = False
+    if sys.platform == 'darwin':
+        logging.warning("parakeet-mlx not available. Install with: pip install parakeet-mlx")
 
 try:
     import torch
@@ -160,8 +182,18 @@ class TranscriptionService:
     
     def __init__(self):
         """Initialize the transcription service."""
+        logger.info("Initializing TranscriptionService...")
+        
+        # Determine default provider based on platform and availability
+        default_provider_fallback = 'faster-whisper'
+        if sys.platform == 'darwin':
+            if PARAKEET_MLX_AVAILABLE:
+                default_provider_fallback = 'parakeet-mlx'
+            elif LIGHTNING_WHISPER_AVAILABLE:
+                default_provider_fallback = 'lightning-whisper-mlx'
+        
         self.config = {
-            'default_provider': get_cli_setting('transcription.default_provider', 'faster-whisper') or 'faster-whisper',
+            'default_provider': get_cli_setting('transcription.default_provider', default_provider_fallback) or default_provider_fallback,
             'default_model': get_cli_setting('transcription.default_model', 'base') or 'base',
             'default_language': get_cli_setting('transcription.default_language', 'en') or 'en',
             'default_source_language': get_cli_setting('transcription.default_source_language', '') or '',
@@ -171,19 +203,48 @@ class TranscriptionService:
             'chunk_length_seconds': get_cli_setting('transcription.chunk_length_seconds', 40.0) or 40.0,
         }
         
+        logger.debug(f"Transcription service configuration: {self.config}")
+        
         # Model cache
         self._model_cache = {}
+        logger.debug("Initialized empty model cache for faster-whisper models")
         
         # Qwen2Audio models (lazy loaded)
         self._qwen_processor = None
         self._qwen_model = None
+        logger.debug("Qwen2Audio models will be lazy-loaded on first use")
         
         # Parakeet/NeMo models (lazy loaded)
         self._parakeet_model = None
+        logger.debug("Parakeet model will be lazy-loaded on first use")
         
         # Canary model (lazy loaded)
         self._canary_model = None
         self._canary_decoding = None
+        logger.debug("Canary model will be lazy-loaded on first use")
+        
+        # Lightning Whisper MLX model (lazy loaded, macOS only)
+        self._lightning_whisper_model = None
+        self._lightning_whisper_config = {
+            'batch_size': get_cli_setting('transcription.lightning_batch_size', 12) or 12,
+            'quant': get_cli_setting('transcription.lightning_quant', None),  # None, '4bit', '8bit'
+        }
+        if LIGHTNING_WHISPER_AVAILABLE:
+            logger.debug("Lightning Whisper MLX model will be lazy-loaded on first use")
+        
+        # Parakeet MLX model (lazy loaded, macOS only)
+        self._parakeet_mlx_model = None
+        self._parakeet_mlx_config = {
+            'model': get_cli_setting('transcription.parakeet_model', 'mlx-community/parakeet-tdt-0.6b-v2') or 'mlx-community/parakeet-tdt-0.6b-v2',
+            'precision': get_cli_setting('transcription.parakeet_precision', 'bf16') or 'bf16',
+            'attention_type': get_cli_setting('transcription.parakeet_attention', 'local') or 'local',
+        }
+        if PARAKEET_MLX_AVAILABLE:
+            logger.debug("Parakeet MLX model will be lazy-loaded on first use")
+        
+        # Log available providers on initialization
+        available_providers = self.get_available_providers()
+        logger.info(f"TranscriptionService initialized with {len(available_providers)} available providers")
         
     def transcribe(
         self,
@@ -195,6 +256,7 @@ class TranscriptionService:
         target_lang: Optional[str] = None,  # Translation target language
         vad_filter: bool = False,
         diarize: bool = False,
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -209,6 +271,7 @@ class TranscriptionService:
             target_lang: Target language for translation (if supported)
             vad_filter: Apply voice activity detection
             diarize: Perform speaker diarization (placeholder)
+            progress_callback: Optional callback for progress updates (progress: 0-100, status: str, data: dict)
             
         Returns:
             Dict with 'text' and 'segments' keys
@@ -222,32 +285,61 @@ class TranscriptionService:
         # For backward compatibility, set language to source_lang if not specified
         language = language or source_lang
         
+        logger.info(f"Starting transcription with provider={provider}, model={model}, source_lang={source_lang}, target_lang={target_lang}")
+        logger.debug(f"Audio path: {audio_path}, VAD filter: {vad_filter}, Diarize: {diarize}")
+        logger.debug(f"Additional kwargs: {kwargs}")
+        
         # Convert to WAV if needed
+        logger.debug(f"Checking if audio format conversion needed for: {audio_path}")
         wav_path = self._ensure_wav_format(audio_path)
+        if wav_path != audio_path:
+            logger.info(f"Converted audio to WAV format: {audio_path} -> {wav_path}")
         
         try:
-            if provider == 'faster-whisper':
-                return self._transcribe_with_faster_whisper(
-                    wav_path, model, language, vad_filter, source_lang, target_lang, **kwargs
+            logger.info(f"Starting transcription with {provider} provider")
+            transcription_start_time = time.time()
+            
+            if provider == 'parakeet-mlx' and PARAKEET_MLX_AVAILABLE:
+                result = self._transcribe_with_parakeet_mlx(
+                    wav_path, model, source_lang,
+                    progress_callback=progress_callback, **kwargs
+                )
+            elif provider == 'lightning-whisper-mlx' and LIGHTNING_WHISPER_AVAILABLE:
+                result = self._transcribe_with_lightning_whisper_mlx(
+                    wav_path, model, source_lang, target_lang,
+                    progress_callback=progress_callback, **kwargs
+                )
+            elif provider == 'faster-whisper':
+                result = self._transcribe_with_faster_whisper(
+                    wav_path, model, language, vad_filter, source_lang, target_lang, 
+                    progress_callback=progress_callback, **kwargs
                 )
             elif provider == 'qwen2audio':
-                return self._transcribe_with_qwen2audio(wav_path, **kwargs)
+                result = self._transcribe_with_qwen2audio(wav_path, progress_callback=progress_callback, **kwargs)
             elif provider == 'parakeet':
-                return self._transcribe_with_parakeet(wav_path, model, source_lang, **kwargs)
+                result = self._transcribe_with_parakeet(wav_path, model, source_lang, progress_callback=progress_callback, **kwargs)
             elif provider == 'canary':
-                return self._transcribe_with_canary(
-                    wav_path, model, source_lang, target_lang, **kwargs
+                result = self._transcribe_with_canary(
+                    wav_path, model, source_lang, target_lang, progress_callback=progress_callback, **kwargs
                 )
             else:
                 raise ValueError(f"Unknown transcription provider: {provider}")
+            
+            transcription_time = time.time() - transcription_start_time
+            logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
+            logger.info(f"Result: {len(result.get('text', ''))} characters, {len(result.get('segments', []))} segments")
+            logger.debug(f"First 200 chars of transcription: {result.get('text', '')[:200]}...")
+            
+            return result
                 
         finally:
             # Clean up temporary WAV if created
             if wav_path != audio_path and os.path.exists(wav_path):
                 try:
                     os.unlink(wav_path)
-                except:
-                    pass
+                    logger.debug(f"Cleaned up temporary WAV file: {wav_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temporary WAV file {wav_path}: {e}")
     
     def _ensure_wav_format(self, audio_path: str) -> str:
         """
@@ -257,9 +349,11 @@ class TranscriptionService:
             Path to WAV file (may be same as input if already WAV)
         """
         audio_path = Path(audio_path)
+        logger.debug(f"Checking audio format for: {audio_path}, suffix: {audio_path.suffix}")
         
         # Check if already WAV
         if audio_path.suffix.lower() == '.wav':
+            logger.debug(f"Audio is already in WAV format: {audio_path}")
             return str(audio_path)
         
         # Convert to WAV
@@ -272,12 +366,15 @@ class TranscriptionService:
             temp_file.close()
         
         try:
+            logger.info(f"Converting audio to WAV: {audio_path} -> {wav_path}")
             self._convert_to_wav(str(audio_path), str(wav_path))
+            logger.info(f"Successfully converted to WAV: {wav_path}")
             return str(wav_path)
         except Exception as e:
             # Clean up on error
             if wav_path.exists() and wav_path != audio_path:
                 wav_path.unlink()
+                logger.debug(f"Cleaned up failed conversion output: {wav_path}")
             raise ConversionError(f"Failed to convert to WAV: {str(e)}") from e
     
     def _convert_to_wav(self, input_path: str, output_path: str):
@@ -298,6 +395,8 @@ class TranscriptionService:
             output_path
         ]
         
+        logger.debug(f"Running FFmpeg command: {' '.join(command)}")
+        
         try:
             result = subprocess.run(
                 command,
@@ -305,7 +404,10 @@ class TranscriptionService:
                 text=True,
                 check=True
             )
-            logger.info(f"Converted audio to WAV: {output_path}")
+            logger.info(f"FFmpeg conversion successful: {output_path}")
+            logger.debug(f"FFmpeg stdout: {result.stdout}")
+            if result.stderr:
+                logger.debug(f"FFmpeg stderr: {result.stderr}")
             
         except subprocess.CalledProcessError as e:
             raise ConversionError(
@@ -347,18 +449,24 @@ class TranscriptionService:
         vad_filter: bool,
         source_lang: Optional[str] = None,
         target_lang: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """Transcribe using faster-whisper."""
         
         if not FASTER_WHISPER_AVAILABLE:
+            logger.error("faster-whisper is not installed")
             raise TranscriptionError("faster-whisper is not installed")
+        
+        logger.info(f"Starting faster-whisper transcription: model={model}, language={language}, source_lang={source_lang}, target_lang={target_lang}")
+        logger.debug(f"VAD filter: {vad_filter}, additional kwargs: {kwargs}")
         
         # Get or create model instance
         cache_key = (model, self.config['device'], self.config['compute_type'])
         
         if cache_key not in self._model_cache:
-            logger.info(f"Loading Whisper model: {model}")
+            logger.info(f"Loading Whisper model: {model} (device: {self.config['device']}, compute_type: {self.config['compute_type']})")
+            model_load_start = time.time()
             try:
                 # Use protect_file_descriptors to handle the file descriptor issue
                 with protect_file_descriptors():
@@ -369,7 +477,10 @@ class TranscriptionService:
                         download_root=None,  # Use default cache directory
                         local_files_only=False  # Allow downloading if needed
                     )
+                model_load_time = time.time() - model_load_start
+                logger.info(f"Whisper model loaded successfully in {model_load_time:.2f} seconds")
             except Exception as e:
+                logger.error(f"Failed to load Whisper model: {str(e)}", exc_info=True)
                 # Provide more helpful error message
                 error_msg = f"Failed to load model {model}: {str(e)}"
                 if "bad value(s) in fds_to_keep" in str(e):
@@ -383,12 +494,15 @@ class TranscriptionService:
                 raise TranscriptionError(error_msg) from e
         
         whisper_model = self._model_cache[cache_key]
+        logger.debug(f"Using cached Whisper model for {cache_key}")
         
         # Use source_lang if provided, otherwise fall back to language
         transcribe_language = source_lang or language
         
         # Determine task - translate if target language is specified and different from source
         task = 'translate' if target_lang and target_lang == 'en' and transcribe_language != 'en' else 'transcribe'
+        
+        logger.info(f"Transcription task: {task}, language: {transcribe_language}")
         
         # Transcription options
         options = {
@@ -401,11 +515,39 @@ class TranscriptionService:
         
         try:
             # Perform transcription
+            if progress_callback:
+                progress_callback(0, "Starting transcription...", None)
+            
+            logger.info(f"Starting Whisper transcription with options: {options}")
+            transcribe_start = time.time()
+            
             segments_generator, info = whisper_model.transcribe(audio_path, **options)
+            
+            logger.debug(f"Whisper transcription started, processing segments...")
+            
+            # Get total duration for progress calculation
+            total_duration = info.duration if info.duration else 0
+            logger.info(f"Audio duration: {total_duration:.2f} seconds")
+            
+            # Log detection info
+            if info.language:
+                logger.info(
+                    f"Detected language: {info.language} "
+                    f"(confidence: {info.language_probability:.2f})"
+                )
+                if progress_callback:
+                    progress_callback(
+                        5, 
+                        f"Language detected: {info.language} (confidence: {info.language_probability:.2f})",
+                        {"language": info.language, "confidence": info.language_probability}
+                    )
             
             # Collect segments
             segments = []
             full_text = []
+            segment_count = 0
+            last_progress = 5  # Start after language detection
+            segment_start_time = time.time()
             
             for segment in segments_generator:
                 segment_dict = {
@@ -418,13 +560,32 @@ class TranscriptionService:
                 }
                 segments.append(segment_dict)
                 full_text.append(segment.text.strip())
+                segment_count += 1
+                
+                if segment_count % 10 == 0:
+                    logger.debug(f"Processed {segment_count} segments, last segment: {segment.start:.1f}s - {segment.end:.1f}s")
+                
+                # Calculate and report progress
+                if progress_callback and total_duration > 0:
+                    # Calculate progress based on time (5-95% range, leaving room for finalization)
+                    time_progress = 5 + (segment.end / total_duration) * 90
+                    
+                    # Only update if progress increased by at least 1%
+                    if time_progress - last_progress >= 1:
+                        progress_callback(
+                            time_progress,
+                            f"Transcribing: {segment.end:.1f}s / {total_duration:.1f}s",
+                            {
+                                "segment_num": segment_count,
+                                "segment_text": segment.text.strip(),
+                                "current_time": segment.end,
+                                "total_time": total_duration
+                            }
+                        )
+                        last_progress = time_progress
             
-            # Log detection info
-            if info.language:
-                logger.info(
-                    f"Detected language: {info.language} "
-                    f"(confidence: {info.language_probability:.2f})"
-                )
+            segment_time = time.time() - segment_start_time
+            total_time = time.time() - transcribe_start
             
             result = {
                 "text": " ".join(full_text),
@@ -436,6 +597,12 @@ class TranscriptionService:
                 "model": model,
             }
             
+            logger.info(f"Faster-whisper transcription complete:")
+            logger.info(f"  - Total segments: {len(segments)}")
+            logger.info(f"  - Total characters: {len(result['text'])}")
+            logger.info(f"  - Processing time: {total_time:.2f}s (segment collection: {segment_time:.2f}s)")
+            logger.info(f"  - Speed: {total_duration / total_time:.2f}x realtime" if total_duration > 0 else "  - Speed: N/A")
+            
             # Add translation info if applicable
             if task == 'translate':
                 result["task"] = "translation"
@@ -443,9 +610,22 @@ class TranscriptionService:
                 result["target_language"] = "en"
                 result["translation"] = result["text"]
             
+            # Final progress update
+            if progress_callback:
+                progress_callback(
+                    100,
+                    f"Transcription complete: {len(segments)} segments, {len(result['text'])} characters",
+                    {
+                        "total_segments": len(segments),
+                        "total_chars": len(result["text"]),
+                        "duration": info.duration
+                    }
+                )
+            
             return result
             
         except Exception as e:
+            logger.error(f"Faster-whisper transcription failed: {str(e)}", exc_info=True)
             raise TranscriptionError(
                 f"Transcription failed: {str(e)}"
             ) from e
@@ -458,17 +638,22 @@ class TranscriptionService:
         """Transcribe using Qwen2Audio model."""
         
         if not QWEN2AUDIO_AVAILABLE:
+            logger.error("Qwen2Audio dependencies not installed")
             raise TranscriptionError(
                 "Qwen2Audio dependencies not installed. "
                 "Install with: pip install transformers torch"
             )
+        
+        logger.info("Starting Qwen2Audio transcription")
+        transcribe_start = time.time()
         
         if not SOUNDFILE_AVAILABLE:
             raise TranscriptionError("soundfile required for Qwen2Audio")
         
         # Lazy load Qwen2Audio models
         if self._qwen_processor is None:
-            logger.info("Loading Qwen2Audio model...")
+            logger.info("Loading Qwen2Audio model for first time...")
+            model_load_start = time.time()
             try:
                 self._qwen_processor = AutoProcessor.from_pretrained(
                     "Qwen/Qwen2-Audio-7B-Instruct"
@@ -478,14 +663,19 @@ class TranscriptionService:
                     torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
                     device_map="auto"
                 )
+                model_load_time = time.time() - model_load_start
+                logger.info(f"Qwen2Audio model loaded successfully in {model_load_time:.2f} seconds")
             except Exception as e:
+                logger.error(f"Failed to load Qwen2Audio model: {str(e)}", exc_info=True)
                 raise TranscriptionError(
                     f"Failed to load Qwen2Audio: {str(e)}"
                 ) from e
         
         try:
             # Load audio
+            logger.debug(f"Loading audio file: {audio_path}")
             audio_data, sample_rate = sf.read(audio_path)
+            logger.info(f"Loaded audio: sample_rate={sample_rate}, duration={len(audio_data)/sample_rate:.2f}s")
             
             # Prepare prompt for transcription
             prompt_text = (
@@ -495,12 +685,18 @@ class TranscriptionService:
             )
             
             # Process audio
+            logger.debug("Processing audio with Qwen2Audio processor")
+            process_start = time.time()
+            
             inputs = self._qwen_processor(
                 text=prompt_text,
                 audios=audio_data,
                 return_tensors="pt",
                 sampling_rate=sample_rate
             )
+            
+            process_time = time.time() - process_start
+            logger.debug(f"Audio processing completed in {process_time:.2f} seconds")
             
             # Move to device
             device = self._qwen_model.device
@@ -509,11 +705,17 @@ class TranscriptionService:
                     inputs[k] = v.to(device)
             
             # Generate transcription
+            logger.info("Generating transcription with Qwen2Audio")
+            generate_start = time.time()
+            
             with torch.no_grad():
                 generated_ids = self._qwen_model.generate(
                     **inputs,
                     max_new_tokens=512
                 )
+            
+            generate_time = time.time() - generate_start
+            logger.info(f"Generation completed in {generate_time:.2f} seconds")
             
             # Decode output
             transcription = self._qwen_processor.decode(
@@ -526,6 +728,13 @@ class TranscriptionService:
                 transcription = transcription.split("Assistant:")[-1].strip()
             
             # Create segment (Qwen2Audio doesn't provide timestamps)
+            total_time = time.time() - transcribe_start
+            
+            logger.info(f"Qwen2Audio transcription complete:")
+            logger.info(f"  - Total characters: {len(transcription)}")
+            logger.info(f"  - Total time: {total_time:.2f}s")
+            logger.debug(f"First 200 chars: {transcription[:200]}...")
+            
             return {
                 "text": transcription,
                 "segments": [{
@@ -540,6 +749,7 @@ class TranscriptionService:
             }
             
         except Exception as e:
+            logger.error(f"Qwen2Audio transcription failed: {str(e)}", exc_info=True)
             raise TranscriptionError(
                 f"Qwen2Audio transcription failed: {str(e)}"
             ) from e
@@ -554,14 +764,20 @@ class TranscriptionService:
         """Transcribe using NVIDIA Parakeet models via NeMo."""
         
         if not NEMO_AVAILABLE:
+            logger.error("NeMo toolkit not installed")
             raise TranscriptionError(
                 "NeMo toolkit not installed. "
                 "Install with: pip install nemo-toolkit[asr]"
             )
         
+        logger.info(f"Starting Parakeet transcription with model: {model or 'nvidia/parakeet-tdt-1.1b'}")
+        transcribe_start = time.time()
+        
         # Lazy load Parakeet model
         if self._parakeet_model is None:
-            logger.info(f"Loading Parakeet model: {model or 'nvidia/parakeet-tdt-1.1b'}")
+            model_name = model or "nvidia/parakeet-tdt-1.1b"
+            logger.info(f"Loading Parakeet model: {model_name} for first time...")
+            model_load_start = time.time()
             try:
                 model_name = model or "nvidia/parakeet-tdt-1.1b"
                 self._parakeet_model = nemo_asr.models.ASRModel.from_pretrained(
@@ -579,19 +795,30 @@ class TranscriptionService:
                 if self.config['device'] == 'cuda' and torch.cuda.is_available():
                     self._parakeet_model = self._parakeet_model.cuda()
                 
+                model_load_time = time.time() - model_load_start
+                logger.info(f"Parakeet model loaded successfully in {model_load_time:.2f} seconds")
+                logger.debug(f"Model device: {self._parakeet_model.device}")
+                
             except Exception as e:
+                logger.error(f"Failed to load Parakeet model: {str(e)}", exc_info=True)
                 raise TranscriptionError(
                     f"Failed to load Parakeet model: {str(e)}"
                 ) from e
         
         try:
             # Transcribe the audio
+            logger.info(f"Transcribing audio file: {audio_path}")
+            transcribe_audio_start = time.time()
+            
             transcripts = self._parakeet_model.transcribe(
                 paths2audio_files=[audio_path],
                 batch_size=1,
                 return_hypotheses=True,
                 verbose=False
             )
+            
+            transcribe_audio_time = time.time() - transcribe_audio_start
+            logger.info(f"Parakeet transcription completed in {transcribe_audio_time:.2f} seconds")
             
             # Process results
             if transcripts and len(transcripts) > 0:
@@ -609,6 +836,13 @@ class TranscriptionService:
                     text = str(transcript)
                 
                 # Create segments (Parakeet doesn't provide timestamps by default)
+                total_time = time.time() - transcribe_start
+                
+                logger.info(f"Parakeet transcription complete:")
+                logger.info(f"  - Total characters: {len(text)}")
+                logger.info(f"  - Total time: {total_time:.2f}s")
+                logger.debug(f"First 200 chars: {text[:200]}...")
+                
                 return {
                     "text": text,
                     "segments": [{
@@ -624,9 +858,11 @@ class TranscriptionService:
                     "model": model or "nvidia/parakeet-tdt-1.1b"
                 }
             else:
+                logger.error("Parakeet produced no transcription output")
                 raise TranscriptionError("No transcription produced")
                 
         except Exception as e:
+            logger.error(f"Parakeet transcription failed: {str(e)}", exc_info=True)
             raise TranscriptionError(
                 f"Parakeet transcription failed: {str(e)}"
             ) from e
@@ -645,7 +881,12 @@ class TranscriptionService:
         # Use configured chunk length if not specified
         chunk_len_in_secs = chunk_len_in_secs or self.config['chunk_length_seconds']
         
+        logger.info(f"Starting Canary transcription with model: {model or 'nvidia/canary-1b-flash'}")
+        logger.info(f"Source language: {source_lang}, Target language: {target_lang}, Chunk length: {chunk_len_in_secs}s")
+        transcribe_start = time.time()
+        
         if not NEMO_AVAILABLE:
+            logger.error("NeMo toolkit not installed")
             raise TranscriptionError(
                 "NeMo toolkit not installed. "
                 "Install with: pip install nemo-toolkit[asr]"
@@ -665,7 +906,9 @@ class TranscriptionService:
         
         # Lazy load Canary model
         if self._canary_model is None:
-            logger.info(f"Loading Canary model: {model or 'nvidia/canary-1b-flash'}")
+            model_name = model or "nvidia/canary-1b-flash"
+            logger.info(f"Loading Canary model: {model_name} for first time...")
+            model_load_start = time.time()
             try:
                 model_name = model or "nvidia/canary-1b-flash"
                 self._canary_model = EncDecMultiTaskModel.from_pretrained(
@@ -682,7 +925,12 @@ class TranscriptionService:
                 # Set to evaluation mode
                 self._canary_model.eval()
                 
+                model_load_time = time.time() - model_load_start
+                logger.info(f"Canary model loaded successfully in {model_load_time:.2f} seconds")
+                logger.debug(f"Model device: {self._canary_model.device}")
+                
             except Exception as e:
+                logger.error(f"Failed to load Canary model: {str(e)}", exc_info=True)
                 raise TranscriptionError(
                     f"Failed to load Canary model: {str(e)}"
                 ) from e
@@ -690,6 +938,7 @@ class TranscriptionService:
         try:
             # Determine task type based on target language
             taskname = "s2t_translation" if target_lang and target_lang != source_lang else "asr"
+            logger.info(f"Canary task type: {taskname}")
             
             # Map language codes to Canary format
             lang_map = {
@@ -717,13 +966,16 @@ class TranscriptionService:
             }
             
             # Get audio duration
+            logger.debug(f"Getting audio info for: {audio_path}")
             audio_info = sf.info(audio_path)
             duration = audio_info.duration
             manifest_entry["duration"] = duration
+            logger.info(f"Audio duration: {duration:.2f} seconds")
             
             # Use chunked inference for long audio
             if duration > chunk_len_in_secs:
-                logger.info(f"Using chunked inference for {duration:.1f}s audio")
+                logger.info(f"Using chunked inference for {duration:.1f}s audio (chunk size: {chunk_len_in_secs}s)")
+                chunk_start = time.time()
                 
                 # Prepare for chunked processing
                 model_stride_in_secs = 0.04  # 40ms model stride
@@ -742,8 +994,15 @@ class TranscriptionService:
                 # Extract transcription text
                 text = hyps[0] if hyps else ""
                 
+                chunk_time = time.time() - chunk_start
+                logger.info(f"Chunked transcription completed in {chunk_time:.2f} seconds")
+                logger.debug(f"Number of chunks processed: {int(duration / chunk_len_in_secs) + 1}")
+                
             else:
                 # For short audio, use regular inference
+                logger.info(f"Using regular inference for {duration:.1f}s audio")
+                regular_start = time.time()
+                
                 transcripts = self._canary_model.transcribe(
                     audio=[audio_path],
                     batch_size=1,
@@ -755,8 +1014,20 @@ class TranscriptionService:
                 )
                 
                 text = transcripts[0] if transcripts else ""
+                
+                regular_time = time.time() - regular_start
+                logger.info(f"Regular transcription completed in {regular_time:.2f} seconds")
             
             # Create response
+            total_time = time.time() - transcribe_start
+            
+            logger.info(f"Canary transcription complete:")
+            logger.info(f"  - Task: {taskname}")
+            logger.info(f"  - Total characters: {len(text)}")
+            logger.info(f"  - Total time: {total_time:.2f}s")
+            logger.info(f"  - Speed: {duration / total_time:.2f}x realtime" if duration > 0 else "  - Speed: N/A")
+            logger.debug(f"First 200 chars: {text[:200]}...")
+            
             result = {
                 "text": text,
                 "segments": [{
@@ -782,29 +1053,370 @@ class TranscriptionService:
             return result
             
         except Exception as e:
+            logger.error(f"Canary transcription failed: {str(e)}", exc_info=True)
             raise TranscriptionError(
                 f"Canary transcription failed: {str(e)}"
             ) from e
     
+    def _transcribe_with_lightning_whisper_mlx(
+        self,
+        audio_path: str,
+        model: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        batch_size: Optional[int] = None,
+        quant: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Transcribe using Lightning Whisper MLX (Apple Silicon optimized)."""
+        
+        if not LIGHTNING_WHISPER_AVAILABLE:
+            logger.error("lightning-whisper-mlx is not installed")
+            raise TranscriptionError("lightning-whisper-mlx is not installed")
+        
+        # Use configured settings or provided parameters
+        batch_size = batch_size or self._lightning_whisper_config['batch_size']
+        quant = quant or self._lightning_whisper_config['quant']
+        
+        # Map model names to lightning-whisper-mlx format
+        model = model or self.config['default_model']
+        
+        # Lightning Whisper MLX supports same model names as Whisper
+        # but may need mapping for some variants
+        model_mapping = {
+            'large': 'large-v3',
+            'distil-large-v2': 'distil-large-v2',
+            'distil-large-v3': 'distil-large-v3',
+            'distil-medium.en': 'distil-medium.en',
+            'distil-small.en': 'distil-small.en',
+        }
+        
+        model = model_mapping.get(model, model)
+        
+        logger.info(f"Starting Lightning Whisper MLX transcription: model={model}, batch_size={batch_size}, quant={quant}")
+        logger.info(f"Source language: {source_lang}, Target language: {target_lang}")
+        transcribe_start = time.time()
+        
+        # Lazy load Lightning Whisper MLX model
+        if self._lightning_whisper_model is None or \
+           getattr(self._lightning_whisper_model, '_model_name', None) != model or \
+           getattr(self._lightning_whisper_model, '_batch_size', None) != batch_size or \
+           getattr(self._lightning_whisper_model, '_quant', None) != quant:
+            
+            logger.info(f"Loading Lightning Whisper MLX model: {model}")
+            model_load_start = time.time()
+            
+            try:
+                self._lightning_whisper_model = LightningWhisperMLX(
+                    model=model,
+                    batch_size=batch_size,
+                    quant=quant
+                )
+                # Store config for cache comparison
+                self._lightning_whisper_model._model_name = model
+                self._lightning_whisper_model._batch_size = batch_size
+                self._lightning_whisper_model._quant = quant
+                
+                model_load_time = time.time() - model_load_start
+                logger.info(f"Lightning Whisper MLX model loaded successfully in {model_load_time:.2f} seconds")
+                
+            except Exception as e:
+                logger.error(f"Failed to load Lightning Whisper MLX model: {str(e)}", exc_info=True)
+                raise TranscriptionError(
+                    f"Failed to load Lightning Whisper MLX model: {str(e)}"
+                ) from e
+        
+        try:
+            # Report progress
+            if progress_callback:
+                progress_callback(0, "Starting transcription with Lightning Whisper MLX...", None)
+            
+            logger.info(f"Transcribing audio file: {audio_path}")
+            transcribe_audio_start = time.time()
+            
+            # Transcribe the audio
+            # Lightning Whisper MLX returns a dict with 'text' and possibly other fields
+            result_dict = self._lightning_whisper_model.transcribe(audio_path)
+            
+            transcribe_audio_time = time.time() - transcribe_audio_start
+            logger.info(f"Lightning Whisper MLX transcription completed in {transcribe_audio_time:.2f} seconds")
+            
+            # Extract text from result
+            text = result_dict.get('text', '')
+            
+            # Get segments if available (Lightning Whisper MLX may not provide detailed segments)
+            segments = result_dict.get('segments', [])
+            
+            # If no segments provided, create a single segment
+            if not segments and text:
+                segments = [{
+                    "start": 0.0,
+                    "end": 0.0,  # Duration unknown
+                    "text": text,
+                    "Time_Start": 0.0,
+                    "Time_End": 0.0,
+                    "Text": text
+                }]
+            else:
+                # Ensure segments have the expected format
+                formatted_segments = []
+                for seg in segments:
+                    formatted_segments.append({
+                        "start": seg.get('start', 0.0),
+                        "end": seg.get('end', 0.0),
+                        "text": seg.get('text', '').strip(),
+                        "Time_Start": seg.get('start', 0.0),
+                        "Time_End": seg.get('end', 0.0),
+                        "Text": seg.get('text', '').strip()
+                    })
+                segments = formatted_segments
+            
+            # Create response
+            total_time = time.time() - transcribe_start
+            
+            logger.info(f"Lightning Whisper MLX transcription complete:")
+            logger.info(f"  - Model: {model}")
+            logger.info(f"  - Batch size: {batch_size}")
+            logger.info(f"  - Quantization: {quant or 'None'}")
+            logger.info(f"  - Total characters: {len(text)}")
+            logger.info(f"  - Total segments: {len(segments)}")
+            logger.info(f"  - Total time: {total_time:.2f}s")
+            logger.debug(f"First 200 chars: {text[:200]}...")
+            
+            result = {
+                "text": text,
+                "segments": segments,
+                "language": result_dict.get('language', source_lang or 'unknown'),
+                "provider": "lightning-whisper-mlx",
+                "model": model,
+                "batch_size": batch_size,
+                "quantization": quant
+            }
+            
+            # Check if translation was performed
+            if 'translation' in result_dict:
+                result["translation"] = result_dict['translation']
+                result["source_language"] = source_lang or result_dict.get('language', 'unknown')
+                result["target_language"] = target_lang or 'en'
+            
+            # Final progress update
+            if progress_callback:
+                progress_callback(
+                    100,
+                    f"Transcription complete: {len(segments)} segments, {len(text)} characters",
+                    {
+                        "total_segments": len(segments),
+                        "total_chars": len(text),
+                        "model": model,
+                        "batch_size": batch_size
+                    }
+                )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Lightning Whisper MLX transcription failed: {str(e)}", exc_info=True)
+            raise TranscriptionError(
+                f"Lightning Whisper MLX transcription failed: {str(e)}"
+            ) from e
+    
+    def _transcribe_with_parakeet_mlx(
+        self,
+        audio_path: str,
+        model: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        precision: Optional[str] = None,
+        attention_type: Optional[str] = None,
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Transcribe using Parakeet MLX (Apple Silicon optimized real-time ASR)."""
+        
+        if not PARAKEET_MLX_AVAILABLE:
+            logger.error("parakeet-mlx is not installed")
+            raise TranscriptionError("parakeet-mlx is not installed")
+        
+        # Use configured settings or provided parameters
+        model = model or self._parakeet_mlx_config['model']
+        precision = precision or self._parakeet_mlx_config['precision']
+        attention_type = attention_type or self._parakeet_mlx_config['attention_type']
+        
+        logger.info(f"Starting Parakeet MLX transcription: model={model}, precision={precision}")
+        transcribe_start = time.time()
+        
+        # Lazy load Parakeet MLX model
+        if self._parakeet_mlx_model is None or \
+           getattr(self._parakeet_mlx_model, '_model_name', None) != model:
+            
+            logger.info(f"Loading Parakeet MLX model: {model}")
+            model_load_start = time.time()
+            
+            try:
+                # Map precision to MLX dtype
+                import mlx.core as mx
+                dtype_map = {
+                    'fp32': mx.float32,
+                    'fp16': mx.float16,
+                    'bf16': mx.bfloat16,
+                    'bfloat16': mx.bfloat16
+                }
+                dtype = dtype_map.get(precision, mx.bfloat16)
+                
+                self._parakeet_mlx_model = parakeet_from_pretrained(
+                    model,
+                    dtype=dtype
+                )
+                # Store model name for cache comparison
+                self._parakeet_mlx_model._model_name = model
+                
+                model_load_time = time.time() - model_load_start
+                logger.info(f"Parakeet MLX model loaded successfully in {model_load_time:.2f} seconds")
+                
+            except Exception as e:
+                logger.error(f"Failed to load Parakeet MLX model: {str(e)}", exc_info=True)
+                raise TranscriptionError(
+                    f"Failed to load Parakeet MLX model: {str(e)}"
+                ) from e
+        
+        try:
+            # Report progress
+            if progress_callback:
+                progress_callback(0, "Starting transcription with Parakeet MLX...", None)
+            
+            logger.info(f"Transcribing audio file: {audio_path}")
+            transcribe_audio_start = time.time()
+            
+            # Transcribe the audio
+            result = self._parakeet_mlx_model.transcribe(audio_path)
+            
+            transcribe_audio_time = time.time() - transcribe_audio_start
+            logger.info(f"Parakeet MLX transcription completed in {transcribe_audio_time:.2f} seconds")
+            
+            # Extract text from result
+            text = result.text if hasattr(result, 'text') else str(result)
+            
+            # Parakeet MLX provides sentence-level timestamps
+            segments = []
+            if hasattr(result, 'sentences') and result.sentences:
+                for sentence in result.sentences:
+                    segment_dict = {
+                        "start": sentence.start if hasattr(sentence, 'start') else 0.0,
+                        "end": sentence.end if hasattr(sentence, 'end') else 0.0,
+                        "text": sentence.text.strip() if hasattr(sentence, 'text') else str(sentence),
+                        "Time_Start": sentence.start if hasattr(sentence, 'start') else 0.0,
+                        "Time_End": sentence.end if hasattr(sentence, 'end') else 0.0,
+                        "Text": sentence.text.strip() if hasattr(sentence, 'text') else str(sentence)
+                    }
+                    segments.append(segment_dict)
+            else:
+                # No sentence-level timing, create single segment
+                segments = [{
+                    "start": 0.0,
+                    "end": 0.0,
+                    "text": text,
+                    "Time_Start": 0.0,
+                    "Time_End": 0.0,
+                    "Text": text
+                }]
+            
+            # Create response
+            total_time = time.time() - transcribe_start
+            
+            logger.info(f"Parakeet MLX transcription complete:")
+            logger.info(f"  - Model: {model}")
+            logger.info(f"  - Precision: {precision}")
+            logger.info(f"  - Total characters: {len(text)}")
+            logger.info(f"  - Total segments: {len(segments)}")
+            logger.info(f"  - Total time: {total_time:.2f}s")
+            
+            # Calculate speed if we have duration info
+            if hasattr(result, 'duration'):
+                speed = result.duration / total_time
+                logger.info(f"  - Speed: {speed:.2f}x realtime")
+            
+            logger.debug(f"First 200 chars: {text[:200]}...")
+            
+            result_dict = {
+                "text": text,
+                "segments": segments,
+                "language": source_lang or 'en',  # Parakeet is English-only
+                "provider": "parakeet-mlx",
+                "model": model,
+                "precision": precision
+            }
+            
+            # Add duration if available
+            if hasattr(result, 'duration'):
+                result_dict["duration"] = result.duration
+            
+            # Final progress update
+            if progress_callback:
+                progress_callback(
+                    100,
+                    f"Transcription complete: {len(segments)} segments, {len(text)} characters",
+                    {
+                        "total_segments": len(segments),
+                        "total_chars": len(text),
+                        "model": model
+                    }
+                )
+            
+            return result_dict
+            
+        except Exception as e:
+            logger.error(f"Parakeet MLX transcription failed: {str(e)}", exc_info=True)
+            raise TranscriptionError(
+                f"Parakeet MLX transcription failed: {str(e)}"
+            ) from e
+    
     def get_available_providers(self) -> List[str]:
         """Get list of available transcription providers based on installed dependencies."""
+        logger.debug("Checking available transcription providers...")
         providers = []
+        
+        if PARAKEET_MLX_AVAILABLE:
+            providers.append('parakeet-mlx')
+            logger.debug("parakeet-mlx is available (Real-time ASR for Apple Silicon)")
+        
+        if LIGHTNING_WHISPER_AVAILABLE:
+            providers.append('lightning-whisper-mlx')
+            logger.debug("lightning-whisper-mlx is available (Apple Silicon optimized)")
         
         if FASTER_WHISPER_AVAILABLE:
             providers.append('faster-whisper')
+            logger.debug("faster-whisper is available")
         
         if QWEN2AUDIO_AVAILABLE:
             providers.append('qwen2audio')
+            logger.debug("qwen2audio is available")
             
         if NEMO_AVAILABLE:
             providers.extend(['parakeet', 'canary'])
+            logger.debug("parakeet and canary are available (NeMo installed)")
             
+        logger.info(f"Available transcription providers: {providers}")
         return providers
     
     def list_available_models(self, provider: Optional[str] = None) -> Dict[str, List[str]]:
         """List available models for each provider."""
+        logger.debug(f"Listing available models for provider: {provider or 'all'}")
         
         models = {}
+        
+        if PARAKEET_MLX_AVAILABLE:
+            models['parakeet-mlx'] = [
+                'mlx-community/parakeet-tdt-0.6b-v2',  # Default model
+                # Additional models can be added here as they become available
+            ]
+        
+        if LIGHTNING_WHISPER_AVAILABLE:
+            models['lightning-whisper-mlx'] = [
+                'tiny', 'tiny.en', 'base', 'base.en', 
+                'small', 'small.en', 'medium', 'medium.en',
+                'large-v1', 'large-v2', 'large-v3', 'large',
+                'distil-large-v2', 'distil-medium.en', 'distil-small.en', 'distil-large-v3'
+            ]
         
         if FASTER_WHISPER_AVAILABLE:
             models['faster-whisper'] = [
@@ -834,12 +1446,17 @@ class TranscriptionService:
             ]
         
         if provider:
-            return {provider: models.get(provider, [])}
+            result = {provider: models.get(provider, [])}
+            logger.info(f"Available models for {provider}: {len(result[provider])} models")
+            return result
         
+        total_models = sum(len(m) for m in models.values())
+        logger.info(f"Total available models across all providers: {total_models}")
         return models
     
     def get_device_info(self) -> Dict[str, Any]:
         """Get information about available compute devices."""
+        logger.debug("Getting compute device information...")
         
         info = {
             'cpu': True,
@@ -852,10 +1469,18 @@ class TranscriptionService:
             if info['cuda']:
                 info['cuda_device_count'] = torch.cuda.device_count()
                 info['cuda_device_name'] = torch.cuda.get_device_name(0)
+                logger.info(f"CUDA available: {info['cuda_device_count']} device(s), primary: {info['cuda_device_name']}")
+            else:
+                logger.debug("CUDA not available")
         
         if torch and hasattr(torch.backends, 'mps'):
             info['mps'] = torch.backends.mps.is_available()
+            if info['mps']:
+                logger.info("Apple Silicon MPS available")
+            else:
+                logger.debug("Apple Silicon MPS not available")
         
+        logger.debug(f"Device info: {info}")
         return info
     
     def format_segments_with_timestamps(
@@ -886,3 +1511,151 @@ class TranscriptionService:
                 lines.append(text)
         
         return '\n'.join(lines)
+    
+    def create_streaming_transcriber(
+        self,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        **kwargs
+    ):
+        """
+        Create a streaming transcriber for real-time STT.
+        Currently only supported with parakeet-mlx on macOS.
+        
+        Returns:
+            StreamingTranscriber object or None if not supported
+        """
+        provider = provider or self.config['default_provider']
+        
+        if provider == 'parakeet-mlx' and PARAKEET_MLX_AVAILABLE:
+            logger.info("Creating Parakeet MLX streaming transcriber")
+            
+            # Use configured settings or provided parameters
+            model = model or self._parakeet_mlx_config['model']
+            precision = kwargs.get('precision', self._parakeet_mlx_config['precision'])
+            attention_type = kwargs.get('attention_type', self._parakeet_mlx_config['attention_type'])
+            
+            # Load model if not already loaded
+            if self._parakeet_mlx_model is None or \
+               getattr(self._parakeet_mlx_model, '_model_name', None) != model:
+                
+                logger.info(f"Loading Parakeet MLX model for streaming: {model}")
+                try:
+                    # Map precision to MLX dtype
+                    import mlx.core as mx
+                    dtype_map = {
+                        'fp32': mx.float32,
+                        'fp16': mx.float16,
+                        'bf16': mx.bfloat16,
+                        'bfloat16': mx.bfloat16
+                    }
+                    dtype = dtype_map.get(precision, mx.bfloat16)
+                    
+                    self._parakeet_mlx_model = parakeet_from_pretrained(
+                        model,
+                        dtype=dtype
+                    )
+                    self._parakeet_mlx_model._model_name = model
+                    logger.info("Model loaded successfully")
+                except Exception as e:
+                    logger.error(f"Failed to load model: {str(e)}")
+                    return None
+            
+            # Return a streaming transcriber wrapper
+            return ParakeetMLXStreamingTranscriber(
+                self._parakeet_mlx_model,
+                source_lang=source_lang or 'en'
+            )
+        else:
+            logger.warning(f"Streaming transcription not supported for provider: {provider}")
+            return None
+
+
+class ParakeetMLXStreamingTranscriber:
+    """Wrapper for Parakeet MLX streaming transcription."""
+    
+    def __init__(self, model, source_lang='en'):
+        self.model = model
+        self.source_lang = source_lang
+        self.audio_buffer = []
+        self.sample_rate = 16000  # Parakeet expects 16kHz
+        self.context_window = 3.0  # seconds of context to keep
+        
+    def add_audio(self, audio_chunk: np.ndarray, sample_rate: int = 16000):
+        """
+        Add audio chunk to the buffer and transcribe.
+        
+        Args:
+            audio_chunk: Audio data as numpy array
+            sample_rate: Sample rate of the audio
+            
+        Returns:
+            Dict with transcription results or None
+        """
+        # Resample if needed
+        if sample_rate != self.sample_rate:
+            # Simple resampling - for production use a proper resampling library
+            factor = self.sample_rate / sample_rate
+            indices = np.arange(0, len(audio_chunk), 1/factor).astype(int)
+            indices = indices[indices < len(audio_chunk)]
+            audio_chunk = audio_chunk[indices]
+        
+        # Add to buffer
+        self.audio_buffer.extend(audio_chunk)
+        
+        # Keep only context_window seconds
+        max_samples = int(self.context_window * self.sample_rate)
+        if len(self.audio_buffer) > max_samples:
+            self.audio_buffer = self.audio_buffer[-max_samples:]
+        
+        # Transcribe if we have enough audio (at least 0.5 seconds)
+        min_samples = int(0.5 * self.sample_rate)
+        if len(self.audio_buffer) >= min_samples:
+            try:
+                # Convert buffer to numpy array
+                audio_array = np.array(self.audio_buffer, dtype=np.float32)
+                
+                # Transcribe using the model's streaming capability
+                # According to the documentation, parakeet-mlx uses transcribe_stream context manager
+                # For now, we'll use regular transcribe on the buffer
+                result = self.model.transcribe(audio_array)
+                
+                # Return formatted result
+                return {
+                    'text': result.text if hasattr(result, 'text') else str(result),
+                    'partial': True,
+                    'timestamp': time.time()
+                }
+            except Exception as e:
+                logger.error(f"Streaming transcription error: {str(e)}")
+                return None
+        
+        return None
+    
+    def finalize(self):
+        """
+        Finalize transcription and return any remaining text.
+        
+        Returns:
+            Dict with final transcription or None
+        """
+        if len(self.audio_buffer) > 0:
+            try:
+                audio_array = np.array(self.audio_buffer, dtype=np.float32)
+                result = self.model.transcribe(audio_array)
+                
+                return {
+                    'text': result.text if hasattr(result, 'text') else str(result),
+                    'partial': False,
+                    'timestamp': time.time()
+                }
+            except Exception as e:
+                logger.error(f"Final transcription error: {str(e)}")
+                return None
+        
+        return None
+    
+    def reset(self):
+        """Reset the audio buffer for a new session."""
+        self.audio_buffer = []

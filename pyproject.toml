@@ -103,6 +103,10 @@ websearch = [
 ]
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
+mlx_whisper = [
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
+    "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
+]
 local_transformers = ["transformers"]
 mcp = [
     "mcp[cli]>=1.0.0",
@@ -124,6 +128,8 @@ audio = [
     "soundfile",
     "scipy",
     "faster-whisper",
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
+    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
     "yt-dlp",
     "numpy",
 ]
@@ -131,6 +137,8 @@ video = [
     "soundfile",
     "scipy",
     "faster-whisper",
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
+    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
     "yt-dlp",
     "numpy",
 ]
@@ -138,6 +146,8 @@ media_processing = [
     "soundfile",
     "scipy",
     "faster-whisper",
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
+    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
     "yt-dlp",
     "numpy",
 ]

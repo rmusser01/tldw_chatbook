@@ -19,7 +19,7 @@ except ImportError:
 from typing import List, Dict, Optional, Protocol, Tuple, Any, Union
 from pathlib import Path
 import json
-import logging
+from loguru import logger
 from dataclasses import dataclass
 from abc import abstractmethod
 import time
@@ -28,7 +28,6 @@ import psutil
 from .citations import Citation, CitationType, SearchResultWithCitations
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 
-logger = logging.getLogger(__name__)
 
 # Import constants from rag_service
 MIN_SYSTEM_MEMORY_MB = 500  # Minimum system memory to avoid pressure

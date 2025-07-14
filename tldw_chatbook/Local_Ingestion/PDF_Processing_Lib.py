@@ -151,7 +151,8 @@ def docling_parse_pdf(pdf_path: str, enable_ocr: bool = False, ocr_language: str
         from docling.document_converter import DocumentConverter
         from docling.datamodel.pipeline_options import PdfPipelineOptions
         DOCLING_AVAILABLE = True
-    except:
+    except (ImportError, ModuleNotFoundError) as e:
+        logger.debug(f"Docling library not available: {e}")
         DOCLING_AVAILABLE = False
     if not DOCLING_AVAILABLE:
         raise ImportError("Docling library is not installed.")

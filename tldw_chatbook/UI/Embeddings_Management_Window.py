@@ -558,7 +558,8 @@ class EmbeddingsManagementWindow(Widget):
                         cache_dir = os.path.expanduser(cache_dir)
                     # TODO: Properly check if model is downloaded
                     download_widget.update("Check Manually")
-                except:
+                except (ImportError, AttributeError, OSError) as e:
+                    logger.warning(f"Failed to check model download status: {e}")
                     download_widget.update("Unknown")
             else:
                 download_widget.update("N/A (Not HuggingFace)")

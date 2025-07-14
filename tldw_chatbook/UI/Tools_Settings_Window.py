@@ -687,7 +687,8 @@ class ToolsSettingsWindow(Container):
                     # Get available models for this provider
                     try:
                         models = list(API_MODELS_BY_PROVIDER.get(display_name, []))
-                    except:
+                    except (KeyError, AttributeError, TypeError) as e:
+                        logger.warning(f"Failed to get models for provider {display_name}: {e}")
                         models = []
                     
                     current_model = provider_config.get(field, "")

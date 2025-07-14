@@ -1033,7 +1033,8 @@ class SubscriptionsDB(BaseDB):
                 ''   # fragment
             ))
             return canonical
-        except:
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Failed to parse URL '{url}' for canonicalization: {e}")
             return url.lower()
     
     def get_all_subscriptions(self, include_inactive: bool = False) -> List[Dict[str, Any]]:

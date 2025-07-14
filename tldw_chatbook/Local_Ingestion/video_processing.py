@@ -241,8 +241,8 @@ class LocalVideoProcessor:
             if 'cookiefile' in ydl_opts and ydl_opts['cookiefile'].startswith(tempfile.gettempdir()):
                 try:
                     os.unlink(ydl_opts['cookiefile'])
-                except:
-                    pass
+                except (OSError, FileNotFoundError) as e:
+                    logger.debug(f"Failed to clean up temporary cookie file: {e}")
     
     def extract_metadata(self, url: str, use_cookies: bool = False, 
                         cookies: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
@@ -377,6 +377,8 @@ class LocalVideoProcessor:
     ) -> Dict[str, Any]:
         """Process a single video file or URL."""
         start_time = time.time()
+        logger.info(f"Starting single video processing for: {input_item}")
+        logger.debug(f"Video processing kwargs: {kwargs}")
         
         result = {
             "status": "Pending",
@@ -396,6 +398,7 @@ class LocalVideoProcessor:
         try:
             # Determine if input is URL or local file
             is_url = urlparse(input_item).scheme in ('http', 'https')
+            logger.debug(f"Input type for {input_item}: {'URL' if is_url else 'Local file'}")
             
             log_counter("video_processing_single_attempt", labels={
                 "is_url": str(is_url),
@@ -412,8 +415,13 @@ class LocalVideoProcessor:
                 if metadata:
                     result["metadata"] = metadata
                 
+                # Get transcription progress callback if provided
+                transcription_callback = kwargs.get('transcription_progress_callback')
+                
                 # Download video/audio
-                logger.info(f"Downloading from URL: {input_item}")
+                logger.info(f"Starting download from URL: {input_item}")
+                logger.debug(f"Download settings: video={download_video_flag}, cookies={kwargs.get('use_cookies', False)}")
+                    
                 downloaded_path = self.download_video(
                     url=input_item,
                     output_dir=temp_dir,
@@ -424,6 +432,10 @@ class LocalVideoProcessor:
                 
                 if not downloaded_path:
                     raise VideoDownloadError("Download failed")
+                
+                # Notify about download completion if we have a callback
+                if transcription_callback:
+                    transcription_callback(0, "Download complete, preparing for transcription...", None)
                 
                 processing_path = downloaded_path
                 
@@ -448,14 +460,28 @@ class LocalVideoProcessor:
                 audio_path = self._extract_audio_from_video(processing_path, temp_dir)
             
             # Process audio using audio processor
+            logger.info(f"Starting audio processing for extracted audio: {audio_path}")
+            logger.debug(f"Audio processing parameters: provider={kwargs.get('transcription_provider')}, model={kwargs.get('transcription_model')}")
+            
+            # Get transcription progress callback if provided
+            transcription_callback = kwargs.pop('transcription_progress_callback', None)
+            
+            # Notify about audio extraction completion if we have a callback
+            if transcription_callback and file_ext not in audio_extensions:
+                transcription_callback(0, "Audio extracted, starting transcription...", None)
+            
             audio_result = self.audio_processor._process_single_audio(
                 input_item=audio_path,
                 processing_dir=temp_dir,
+                transcription_progress_callback=transcription_callback,
                 **kwargs
             )
             
+            logger.debug(f"Audio processing completed, result status: {audio_result.get('status') if audio_result else 'None'}")
+            
             # Check if audio processing failed
             if audio_result is None:
+                logger.error("Audio processing failed - no result returned")
                 raise Exception("Audio processing failed - no result returned")
             
             # Merge results
@@ -475,11 +501,16 @@ class LocalVideoProcessor:
             
             # Store in database if available
             if self.media_db and result["content"]:
+                logger.info(f"Storing video result in database for: {input_item}")
                 db_result = self._store_in_database(result)
                 result["db_id"] = db_result.get("id")
                 result["db_message"] = db_result.get("message", "Stored successfully")
+                logger.debug(f"Database storage result: id={db_result.get('id')}, message={db_result.get('message')}")
             
             result["status"] = "Success" if not result["warnings"] else "Warning"
+            
+            total_time = time.time() - start_time
+            logger.info(f"Successfully completed video processing for {input_item} in {total_time:.2f} seconds")
             
             # Log success metrics
             duration = time.time() - start_time
@@ -616,7 +647,7 @@ class LocalVideoProcessor:
                 media_data["metadata"] = json.dumps(result["metadata"])
             
             # Add media entry
-            media_id = self.media_db.add_media(**media_data)
+            media_id, _, _ = self.media_db.add_media_with_keywords(**media_data)
             
             # Store chunks if available
             if result.get("chunks"):
