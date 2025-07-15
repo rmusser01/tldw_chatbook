@@ -24,7 +24,8 @@ from pathlib import Path
 try:
     from docling.document_converter import DocumentConverter
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.datamodel.pipeline_options import PdfPipelineOptions, PaginatedPipelineOptions
+    from docling.datamodel.document import WordFormatOption
     from docling.backend.md_backend import MarkdownDocumentBackend
     DOCLING_AVAILABLE = True
 except ImportError:
@@ -266,20 +267,44 @@ def process_with_docling(
     logger.info(f"Processing document with Docling: {file_path}, OCR enabled: {enable_ocr}")
     
     try:
-        # Initialize Docling converter
-        converter = DocumentConverter()
+        # Determine file type
+        file_extension = Path(file_path).suffix.lower()
         
-        # Configure pipeline options
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = enable_ocr  # Enable/disable OCR based on parameter
-        pipeline_options.do_table_structure = True  # Extract tables
-        
-        # Set OCR language if enabled
-        if enable_ocr and hasattr(pipeline_options, 'ocr_lang'):
-            pipeline_options.ocr_lang = ocr_language
-        
-        # Convert document
-        result = converter.convert(file_path, pipeline_options=pipeline_options)
+        # Configure pipeline options based on file type
+        if file_extension == '.pdf':
+            # Use PDF-specific options
+            pipeline_options = PdfPipelineOptions()
+            pipeline_options.do_ocr = enable_ocr  # Enable/disable OCR based on parameter
+            pipeline_options.do_table_structure = True  # Extract tables
+            
+            # Set OCR language if enabled
+            if enable_ocr and hasattr(pipeline_options, 'ocr_lang'):
+                pipeline_options.ocr_lang = ocr_language
+                
+            # Initialize converter and convert
+            converter = DocumentConverter()
+            result = converter.convert(file_path, pipeline_options=pipeline_options)
+            
+        elif file_extension in ['.docx', '.doc', '.odt', '.rtf', '.pptx', '.xlsx']:
+            # Use paginated options for office documents
+            pipeline_options = PaginatedPipelineOptions()
+            pipeline_options.do_table_structure = True  # Extract tables
+            
+            # Set format-specific options
+            format_options = {}
+            if file_extension in ['.docx', '.doc']:
+                format_options = {
+                    InputFormat.DOCX: WordFormatOption(pipeline_options=pipeline_options)
+                }
+            
+            # Initialize converter with format options
+            converter = DocumentConverter(format_options=format_options)
+            result = converter.convert(file_path)
+            
+        else:
+            # Default fallback for other formats
+            converter = DocumentConverter()
+            result = converter.convert(file_path)
         
         # Export to markdown
         md_backend = MarkdownDocumentBackend()
