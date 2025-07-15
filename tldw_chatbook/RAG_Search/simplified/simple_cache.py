@@ -171,7 +171,7 @@ class SimpleRAGCache:
             # Check TTL - use search type specific TTL if available
             ttl = self.ttl_by_search_type.get(search_type, self.ttl_seconds)
             age = time.time() - entry.timestamp
-            if age > ttl:
+            if ttl is not None and age > ttl:
                 # Expired
                 del self._cache[key]
                 self._misses += 1
