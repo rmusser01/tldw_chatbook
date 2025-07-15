@@ -277,15 +277,19 @@ class LocalAudioProcessor:
         input_item: str,
         processing_dir: str,
         transcription_progress_callback=None,
+        media_type: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """Process a single audio file or URL."""
         
+        # Check if this is being called from video processing with an original URL
+        original_url = kwargs.pop('original_url', None)
+        
         result = {
             "status": "Pending",
-            "input_ref": input_item,
+            "input_ref": original_url or input_item,  # Use original URL if provided
             "processing_source": input_item,
-            "media_type": "audio",
+            "media_type": media_type or "audio",
             "metadata": {"title": kwargs.get("custom_title"), "author": kwargs.get("author")},
             "content": None,
             "segments": None,
@@ -310,7 +314,7 @@ class LocalAudioProcessor:
                         kwargs.get("use_cookies", False),
                         kwargs.get("cookies")
                     )
-                result["processing_source"] = audio_path
+                # Don't overwrite processing_source for URLs - keep the original URL
             else:
                 # Local file
                 if not os.path.exists(input_item):
@@ -527,15 +531,11 @@ class LocalAudioProcessor:
             media_data = {
                 "url": result.get("input_ref", ""),
                 "title": result["metadata"].get("title", "Untitled"),
-                "type": "audio",
+                "media_type": result.get("media_type", "audio"),
                 "content": result.get("analysis") or result.get("content", ""),
                 "author": result["metadata"].get("author", "Unknown"),
                 "ingestion_date": time.strftime("%Y-%m-%d %H:%M:%S")
             }
-            
-            # Store transcription separately if available
-            if result.get("content") and result.get("content") != media_data["content"]:
-                media_data["transcription"] = result["content"]
             
             # Add media entry
             media_id, _, _ = self.media_db.add_media_with_keywords(**media_data)

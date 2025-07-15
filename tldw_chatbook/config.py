@@ -593,6 +593,21 @@ def load_settings(force_reload: bool = False) -> Dict:
     google_api_key = get_api_key('google_api_key', 'GOOGLE_API_KEY')
     elevenlabs_api_key = get_api_key('elevenlabs_api_key', 'ELEVENLABS_API_KEY')
 
+    # Determine platform-specific default STT provider
+    default_stt_provider = 'faster_whisper'
+    if sys.platform == 'darwin':
+        # Check if macOS-specific providers are available
+        try:
+            import parakeet_mlx
+            default_stt_provider = 'parakeet-mlx'
+            logger.debug("Detected parakeet-mlx available on macOS, setting as default STT provider")
+        except ImportError:
+            try:
+                from lightning_whisper_mlx import LightningWhisperMLX
+                default_stt_provider = 'lightning-whisper-mlx'
+                logger.debug("Detected lightning-whisper-mlx available on macOS, setting as default STT provider")
+            except ImportError:
+                logger.debug("No macOS-specific STT providers found, using faster-whisper as default")
 
     config_dict = {
         # General App
@@ -960,7 +975,7 @@ def load_settings(force_reload: bool = False) -> Dict:
             'save_rag_chats': _get_typed_value(auto_save_section, 'save_rag_chats', False, bool),
         },
         "STT_settings": { # Corrected key from STT-Settings
-            'default_stt_provider': _get_typed_value(stt_settings_section, 'default_stt_provider', 'faster_whisper'),
+            'default_stt_provider': _get_typed_value(stt_settings_section, 'default_stt_provider', default_stt_provider),
         },
         "tts_settings": {
             'default_tts_provider': _get_typed_value(tts_settings_section, 'default_tts_provider', 'openai'),
@@ -2071,7 +2086,8 @@ temp_dir = ""  # Empty means use system temp
 
 [transcription]
 # Default transcription provider
-# Options: "faster-whisper", "qwen2audio", "parakeet", "canary"
+# Options: "faster-whisper", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx"
+# Note: On macOS, defaults to parakeet-mlx or lightning-whisper-mlx if available
 default_provider = "faster-whisper"
 
 # Default model for transcription

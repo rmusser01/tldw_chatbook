@@ -101,6 +101,18 @@ class IngestWindow(Container):
         self._retry_attempts = {}  # Track retry attempts per URL
         logger.debug("IngestWindow initialized.")
     
+    def get_default_model_for_provider(self, provider: str) -> str:
+        """Get default model for a transcription provider."""
+        provider_default_models = {
+            'parakeet-mlx': 'mlx-community/parakeet-tdt-0.6b-v2',
+            'lightning-whisper-mlx': 'base',
+            'faster-whisper': 'base',
+            'qwen2audio': 'Qwen2-Audio-7B-Instruct',
+            'parakeet': 'nvidia/parakeet-tdt-1.1b',
+            'canary': 'nvidia/canary-1b-flash'
+        }
+        return provider_default_models.get(provider, 'base')
+    
     def on_mount(self) -> None:
         """Handle initial mount to ensure views are properly hidden."""
         logger.debug("IngestWindow mounted, initializing view states")
@@ -2944,6 +2956,25 @@ class IngestWindow(Container):
             # Other options
             keep_original = self.query_one("#local-keep-original-audio", Checkbox).value
             
+            # Validate transcription model
+            if transcription_model == Select.BLANK or not transcription_model:
+                if transcription_provider and transcription_provider != Select.BLANK:
+                    transcription_model = self.get_default_model_for_provider(str(transcription_provider))
+                    logger.warning(f"Transcription model was blank, using default for {transcription_provider}: {transcription_model}")
+                else:
+                    # If no provider selected either, use a sensible default
+                    transcription_model = "base"
+                    logger.warning("Both transcription model and provider were blank, using default model: base")
+            
+            # Convert Select values to strings after validation
+            if transcription_provider != Select.BLANK:
+                transcription_provider = str(transcription_provider)
+            else:
+                transcription_provider = "faster-whisper"  # Default provider
+            
+            # Ensure transcription_model is a string
+            transcription_model = str(transcription_model)
+            
             # Check if media DB is available
             if not self.app_instance.media_db:
                 logger.error("Media database not initialized")
@@ -3083,7 +3114,7 @@ class IngestWindow(Container):
                 
                 # Transcription options
                 "transcription_provider": self.query_one("#local-transcription-provider-video", Select).value,
-                "transcription_model": str(self.query_one("#local-transcription-model-video", Select).value),
+                "transcription_model": self.query_one("#local-transcription-model-video", Select).value,
                 "transcription_language": self.query_one("#local-transcription-language-video", Input).value.strip(),
                 "translation_target": self.query_one("#local-translation-target-video", Input).value.strip(),
                 
@@ -3135,6 +3166,26 @@ class IngestWindow(Container):
                     if not options.get("api_key") and options.get("api_name"):
                         from ..config import get_api_key
                         options["api_key"] = get_api_key(options["api_name"])
+            
+            # Validate transcription model
+            if options["transcription_model"] == Select.BLANK or not options["transcription_model"]:
+                provider = options.get("transcription_provider")
+                if provider and provider != Select.BLANK:
+                    options["transcription_model"] = self.get_default_model_for_provider(str(provider))
+                    logger.warning(f"Transcription model was blank, using default for {provider}: {options['transcription_model']}")
+                else:
+                    # If no provider selected either, use a sensible default
+                    options["transcription_model"] = "base"
+                    logger.warning("Both transcription model and provider were blank, using default model: base")
+            
+            # Convert Select values to strings after validation
+            if options["transcription_provider"] != Select.BLANK:
+                options["transcription_provider"] = str(options["transcription_provider"])
+            else:
+                options["transcription_provider"] = "faster-whisper"  # Default provider
+            
+            # Ensure transcription_model is a string
+            options["transcription_model"] = str(options["transcription_model"])
             
         except Exception as e:
             logger.error(f"Error collecting UI values: {e}", exc_info=True)

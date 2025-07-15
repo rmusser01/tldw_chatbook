@@ -244,6 +244,9 @@ class TranscriptionService:
             'model': get_cli_setting('transcription.parakeet_model', 'mlx-community/parakeet-tdt-0.6b-v2') or 'mlx-community/parakeet-tdt-0.6b-v2',
             'precision': get_cli_setting('transcription.parakeet_precision', 'bf16') or 'bf16',
             'attention_type': get_cli_setting('transcription.parakeet_attention', 'local') or 'local',
+            'chunk_duration': get_cli_setting('transcription.parakeet_chunk_duration', 120.0) or 120.0,
+            'overlap_duration': get_cli_setting('transcription.parakeet_overlap_duration', 0.5) or 0.5,  # 0.5 seconds to avoid cutting words mid-sentence
+            'auto_chunk_threshold': get_cli_setting('transcription.parakeet_auto_chunk_threshold', 600.0) or 600.0,
         }
         if PARAKEET_MLX_AVAILABLE:
             logger.debug("Parakeet MLX model will be lazy-loaded on first use")
@@ -319,10 +322,47 @@ class TranscriptionService:
                         raise ValueError(f"parakeet-mlx is only available on macOS (Apple Silicon)")
                     else:
                         raise ValueError(f"parakeet-mlx is not installed. Install with: pip install parakeet-mlx")
-                result = self._transcribe_with_parakeet_mlx(
-                    wav_path, model, source_lang,
-                    progress_callback=progress_callback, **kwargs
-                )
+                
+                try:
+                    result = self._transcribe_with_parakeet_mlx(
+                        wav_path, model, source_lang,
+                        progress_callback=progress_callback, **kwargs
+                    )
+                except TranscriptionError as e:
+                    # Check if this is a memory error and fallback is enabled
+                    if ("memory allocation error" in str(e) and 
+                        kwargs.get('fallback_on_memory_error', True)):
+                        
+                        logger.warning(f"Parakeet MLX failed with memory error, attempting fallback")
+                        
+                        # Try fallback providers in order
+                        fallback_providers = ['faster-whisper', 'lightning-whisper-mlx']
+                        available_providers = self.get_available_providers()
+                        
+                        for fallback_provider in fallback_providers:
+                            if fallback_provider in available_providers:
+                                logger.info(f"Falling back to {fallback_provider} provider")
+                                
+                                # Recursive call with different provider
+                                return self.transcribe(
+                                    audio_path=audio_path,
+                                    provider=fallback_provider,
+                                    model=None,  # Use default model for fallback provider
+                                    language=language,
+                                    source_lang=source_lang,
+                                    target_lang=target_lang,
+                                    vad_filter=vad_filter,
+                                    diarize=diarize,
+                                    progress_callback=progress_callback,
+                                    **{k: v for k, v in kwargs.items() if k != 'fallback_on_memory_error'}
+                                )
+                        
+                        # No fallback available
+                        logger.error("No fallback transcription provider available")
+                        raise
+                    else:
+                        # Not a memory error or fallback disabled
+                        raise
             elif provider == 'lightning-whisper-mlx':
                 if not LIGHTNING_WHISPER_AVAILABLE:
                     if sys.platform != 'darwin':
@@ -1330,10 +1370,48 @@ class TranscriptionService:
             logger.info(f"  Audio file: {audio_path}")
             logger.info(f"  Model: {model}")
             logger.info(f"  Precision: {precision}")
+            
+            # Check audio duration if soundfile is available
+            audio_duration = None
+            chunk_duration = kwargs.get('chunk_duration', self._parakeet_mlx_config['chunk_duration'])
+            overlap_duration = kwargs.get('overlap_duration', self._parakeet_mlx_config['overlap_duration'])
+            auto_chunk_threshold = kwargs.get('auto_chunk_threshold', self._parakeet_mlx_config['auto_chunk_threshold'])
+            
+            if SOUNDFILE_AVAILABLE:
+                try:
+                    import soundfile as sf
+                    audio_info = sf.info(audio_path)
+                    audio_duration = audio_info.duration
+                    logger.info(f"  Audio duration: {audio_duration:.2f} seconds")
+                except Exception as e:
+                    logger.warning(f"Could not get audio duration: {e}")
+            
             transcribe_audio_start = time.time()
             
+            # Determine if we should use chunking
+            use_chunking = False
+            if audio_duration and audio_duration > auto_chunk_threshold:
+                use_chunking = True
+                logger.info(f"Audio duration ({audio_duration:.1f}s) exceeds threshold ({auto_chunk_threshold:.1f}s), will use chunking")
+            
             # Transcribe the audio
-            result = self._parakeet_mlx_model.transcribe(audio_path)
+            if use_chunking and hasattr(self._parakeet_mlx_model, 'transcribe'):
+                # Check if the model supports chunking parameters
+                try:
+                    # Try with chunking parameters first
+                    result = self._parakeet_mlx_model.transcribe(
+                        audio_path,
+                        chunk_duration=chunk_duration,
+                        overlap_duration=overlap_duration
+                    )
+                    logger.info(f"Using chunked transcription with chunk_duration={chunk_duration}s, overlap={overlap_duration}s")
+                except TypeError as e:
+                    # If chunking not supported, fall back to regular transcription
+                    logger.warning(f"Chunking parameters not supported by model, using regular transcription: {e}")
+                    result = self._parakeet_mlx_model.transcribe(audio_path)
+            else:
+                # Regular transcription
+                result = self._parakeet_mlx_model.transcribe(audio_path)
             
             transcribe_audio_time = time.time() - transcribe_audio_start
             logger.info(f"Parakeet MLX transcription completed in {transcribe_audio_time:.2f} seconds")
@@ -1418,10 +1496,23 @@ class TranscriptionService:
             return result_dict
             
         except Exception as e:
-            logger.error(f"Parakeet MLX transcription failed: {str(e)}", exc_info=True)
-            raise TranscriptionError(
-                f"Parakeet MLX transcription failed: {str(e)}"
-            ) from e
+            error_msg = str(e)
+            logger.error(f"Parakeet MLX transcription failed: {error_msg}", exc_info=True)
+            
+            # Check if this is a memory allocation error
+            if "metal::malloc" in error_msg.lower() or "buffer size" in error_msg.lower():
+                logger.warning("Memory allocation error detected, suggesting fallback to another provider")
+                
+                # Add information about the error type
+                raise TranscriptionError(
+                    f"Parakeet MLX transcription failed due to memory allocation error: {error_msg}\n"
+                    f"Consider using a different provider (e.g., 'faster-whisper' or 'lightning-whisper-mlx') "
+                    f"or processing smaller audio segments."
+                ) from e
+            else:
+                raise TranscriptionError(
+                    f"Parakeet MLX transcription failed: {error_msg}"
+                ) from e
     
     def get_available_providers(self) -> List[str]:
         """Get list of available transcription providers based on installed dependencies."""

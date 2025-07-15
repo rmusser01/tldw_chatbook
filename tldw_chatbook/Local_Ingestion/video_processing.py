@@ -497,6 +497,8 @@ class LocalVideoProcessor:
                 input_item=audio_path,
                 processing_dir=temp_dir,
                 transcription_progress_callback=transcription_callback,
+                media_type="video",
+                original_url=input_item if is_url else None,  # Pass original URL for proper storage
                 **kwargs
             )
             
@@ -509,10 +511,10 @@ class LocalVideoProcessor:
             
             # Merge results
             result.update({
-                "processing_source": processing_path,
+                # Don't overwrite processing_source for URLs - keep the original URL
                 "content": audio_result.get("content"),
                 "segments": audio_result.get("segments"),
-                "chunks": audio_result.get("chunks"),
+                "chunks": audio_result.get("chunks") or [],
                 "analysis": audio_result.get("analysis"),
                 "analysis_details": audio_result.get("analysis_details"),
                 "warnings": audio_result.get("warnings", []),
@@ -545,7 +547,7 @@ class LocalVideoProcessor:
             log_counter("video_processing_single_success", labels={
                 "is_url": str(is_url),
                 "download_video": str(download_video_flag),
-                "chunks_created": str(len(result.get("chunks", [])))
+                "chunks_created": str(len(result.get("chunks") or []))
             })
             
             # Handle keep_original option - move video/audio file to Downloads folder
@@ -659,15 +661,11 @@ class LocalVideoProcessor:
             media_data = {
                 "url": result.get("input_ref", ""),
                 "title": result["metadata"].get("title", "Untitled"),
-                "type": "video",
+                "media_type": "video",
                 "content": result.get("analysis") or result.get("content", ""),
                 "author": result["metadata"].get("uploader", "Unknown"),
                 "ingestion_date": None  # Will use current time
             }
-            
-            # Store additional metadata
-            if result.get("metadata"):
-                media_data["metadata"] = json.dumps(result["metadata"])
             
             # Add media entry
             media_id, _, _ = self.media_db.add_media_with_keywords(**media_data)
