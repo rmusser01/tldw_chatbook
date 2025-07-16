@@ -18,6 +18,10 @@ from loguru import logger
 
 from tldw_chatbook.Utils.Splash_Strings import splashscreen_message_selection
 
+# Constants for escaping Rich markup
+ESCAPED_OPEN_BRACKET = '\['
+ESCAPED_CLOSE_BRACKET = '\]'
+
 
 @dataclass
 class AnimationFrame:
@@ -172,7 +176,7 @@ class MatrixRainEffect(BaseEffect):
                 style = styles[row_idx][col_idx] or "rgb(0,50,0)"
                 
                 # Escape Rich markup special characters
-                escaped_char = char.replace('[', '\\[').replace(']', r'\]')
+                escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET).replace(']', ESCAPED_CLOSE_BRACKET)
                 
                 if style != current_style:
                     # Close previous style and add text
@@ -502,7 +506,7 @@ class DigitalRainEffect(BaseEffect):
             line_segments = []
             for c_idx in range(self.width):
                 char, style = self.columns[c_idx][r_idx]
-                escaped_char = char.replace('[', '\\[')
+                escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                 line_segments.append(f"[{style}]{escaped_char}[/{style}]")
             render_grid.append(line_segments)
 
@@ -615,7 +619,7 @@ class LoadingBarEffect(BaseEffect):
         output_lines = []
         if self.text_above:
             pad_above = (self.width - len(self.text_above)) // 2
-            escaped_text = self.text_above.replace('[', '\\[')
+            escaped_text = self.text_above.replace('[', ESCAPED_OPEN_BRACKET)
             output_lines.append(f"[{self.text_style}]{' ' * pad_above}{escaped_text}{' ' * pad_above}[/{self.text_style}]")
         else:
             output_lines.append("") # Keep spacing consistent
@@ -625,7 +629,7 @@ class LoadingBarEffect(BaseEffect):
 
         if text_below_formatted:
             pad_below = (self.width - len(text_below_formatted)) // 2
-            escaped_text_below = text_below_formatted.replace('[', '\\[')
+            escaped_text_below = text_below_formatted.replace('[', ESCAPED_OPEN_BRACKET)
             output_lines.append(f"[{self.text_style}]{' ' * pad_below}{escaped_text_below}{' ' * pad_below}[/{self.text_style}]")
         else:
             output_lines.append("")
@@ -738,7 +742,7 @@ class StarfieldEffect(BaseEffect):
             for c_idx in range(self.width):
                 if (c_idx, r_idx) in styled_chars_on_grid:
                     char, style = styled_chars_on_grid[(c_idx, r_idx)]
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(' ')
@@ -760,7 +764,7 @@ class StarfieldEffect(BaseEffect):
                     else:
                         if (c_idx, title_y) in styled_chars_on_grid: # Star is behind title char
                             char, style = styled_chars_on_grid[(c_idx, title_y)]
-                            escaped_char = char.replace('[', '\\[')
+                            escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                             title_segments.append(f"[{style}]{escaped_char}[/{style}]")
                         else: # Empty space behind title char
                             title_segments.append(' ')
@@ -869,7 +873,7 @@ class SpotlightEffect(BaseEffect):
                     if content_start_col <= c_disp < content_start_col + self.content_width:
                         c_content = c_disp - content_start_col # Index in line
                         char = line[c_content]
-                        escaped_char = char.replace('[', '\\[')
+                        escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
 
                         # Check distance from spotlight center
                         # Adjust for character aspect ratio if desired (y distances count more)
@@ -1185,7 +1189,7 @@ class MazeGeneratorEffect(BaseEffect):
                 cell = output_grid[r_idx][c_idx]
                 if isinstance(cell, tuple):
                     char, style = cell
-                    escaped_char = char.replace('[','\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else: # Space, apply default path style or background
                     line_segments.append(f"[{self.path_style}] [/{self.path_style}]")
@@ -1684,7 +1688,7 @@ class RaindropsEffect(BaseEffect):
             line_segments = []
             for c_idx in range(self.display_width):
                 char, style = char_grid[r_idx][c_idx]
-                escaped_char = char.replace('[','\\[')
+                escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                 line_segments.append(f"[{style}]{escaped_char}[/{style}]")
             styled_output_lines.append("".join(line_segments))
 
@@ -1704,7 +1708,7 @@ class RaindropsEffect(BaseEffect):
                         current_title_char_idx +=1
                     else: # Use the already determined char from char_grid (ripple or water)
                         char, style = char_grid[title_y][c_idx]
-                        escaped_char = char.replace('[','\\[')
+                        escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                         title_line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 styled_output_lines[title_y] = "".join(title_line_segments)
 
@@ -1919,8 +1923,8 @@ class TextExplosionEffect(BaseEffect):
             for c_idx in range(self.display_width):
                 if (c_idx, r_idx) in styled_grid:
                     char, style = styled_grid[(c_idx, r_idx)]
-                    escaped_char = char.replace('[','\\[')
-                line_segments.append(f"[{style}]{escaped_char}[/{style}]")
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
+                    line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(' ')
             output_lines.append("".join(line_segments))
@@ -2132,7 +2136,7 @@ class GameOfLifeEffect(BaseEffect):
                 cell_content = output_display[r_idx][c_idx]
                 if isinstance(cell_content, tuple):
                     char, style = cell_content
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else: # It's a space from initialization
                     line_segments.append(f"[{self.dead_style}] [/{self.dead_style}]") # Styled background space
@@ -2158,7 +2162,7 @@ class GameOfLifeEffect(BaseEffect):
                         cell_content = output_display[title_y][c_idx]
                         if isinstance(cell_content, tuple):
                             char, style = cell_content
-                            escaped_char = char.replace('[', '\\[')
+                            escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                             title_line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                         else:
                             title_line_segments.append(f"[{self.dead_style}] [/{self.dead_style}]")
@@ -2467,18 +2471,18 @@ class CodeScrollEffect(BaseEffect):
             if r_idx == title_row:
                 padding = (self.width - len(self.title)) // 2
                 current_line_content = f"{' ' * padding}{self.title}{' ' * (self.width - len(self.title) - padding)}"
-                escaped_content = current_line_content.replace('[', '\\[')
+                escaped_content = current_line_content.replace('[', ESCAPED_OPEN_BRACKET)
                 current_line_content = f"[{self.title_style}]{escaped_content}[/{self.title_style}]"
             elif r_idx == subtitle_row:
                 padding = (self.width - len(self.subtitle)) // 2
                 current_line_content = f"{' ' * padding}{self.subtitle}{' ' * (self.width - len(self.subtitle) - padding)}"
-                escaped_content = current_line_content.replace('[', '\\[')
+                escaped_content = current_line_content.replace('[', ESCAPED_OPEN_BRACKET)
                 current_line_content = f"[{self.subtitle_style}]{escaped_content}[/{self.subtitle_style}]"
             elif code_block_start_row <= r_idx < code_block_end_row:
                 code_line_index = r_idx - code_block_start_row
                 code_text = self.code_lines[code_line_index]
                 # Ensure code_text is padded to full width if needed, or handled by terminal
-                escaped_code = code_text.replace('[', '\\[')
+                escaped_code = code_text.replace('[', ESCAPED_OPEN_BRACKET)
                 current_line_content = f"[{self.code_line_style}]{escaped_code}{' ' * (self.width - len(code_text))}[/{self.code_line_style}]"
             else:
                 current_line_content = ' ' * self.width
@@ -2623,7 +2627,7 @@ class WaveRippleEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -2766,7 +2770,7 @@ class DNAHelixEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -2963,7 +2967,7 @@ class FireworksEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -3144,7 +3148,7 @@ class CircuitBoardEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -3235,7 +3239,7 @@ class PixelDissolveEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -3353,7 +3357,7 @@ class TetrisBlockEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -3486,7 +3490,7 @@ class SpiralGalaxyEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -3623,7 +3627,7 @@ class MorphingShapeEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -3808,7 +3812,7 @@ class ParticleSwarmEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -3939,7 +3943,7 @@ class ASCIIKaleidoscopeEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
@@ -4132,7 +4136,7 @@ class MiningEffect(BaseEffect):
                 style = style_grid[y][x]
                 
                 if style:
-                    escaped_char = char.replace('[', '\\[')
+                    escaped_char = char.replace('[', ESCAPED_OPEN_BRACKET)
                     line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(char)
