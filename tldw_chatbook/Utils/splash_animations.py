@@ -172,7 +172,7 @@ class MatrixRainEffect(BaseEffect):
                 style = styles[row_idx][col_idx] or "rgb(0,50,0)"
                 
                 # Escape Rich markup special characters
-                escaped_char = char.replace('[', r'\[').replace(']', r'\]')
+                escaped_char = char.replace('[', '\\[').replace(']', r'\]')
                 
                 if style != current_style:
                     # Close previous style and add text
@@ -502,7 +502,7 @@ class DigitalRainEffect(BaseEffect):
             line_segments = []
             for c_idx in range(self.width):
                 char, style = self.columns[c_idx][r_idx]
-                escaped_char = char.replace('[', r'\[')
+                escaped_char = char.replace('[', '\\[')
                 line_segments.append(f"[{style}]{escaped_char}[/{style}]")
             render_grid.append(line_segments)
 
@@ -625,7 +625,8 @@ class LoadingBarEffect(BaseEffect):
 
         if text_below_formatted:
             pad_below = (self.width - len(text_below_formatted)) // 2
-            output_lines.append(f"[{self.text_style}]{' ' * pad_below}{text_below_formatted.replace('[', r'\[')}{' ' * pad_below}[/{self.text_style}]")
+            escaped_text_below = text_below_formatted.replace('[', '\\[')
+            output_lines.append(f"[{self.text_style}]{' ' * pad_below}{escaped_text_below}{' ' * pad_below}[/{self.text_style}]")
         else:
             output_lines.append("")
 
@@ -737,7 +738,7 @@ class StarfieldEffect(BaseEffect):
             for c_idx in range(self.width):
                 if (c_idx, r_idx) in styled_chars_on_grid:
                     char, style = styled_chars_on_grid[(c_idx, r_idx)]
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(' ')
             output_lines.append("".join(line_segments))
@@ -758,7 +759,7 @@ class StarfieldEffect(BaseEffect):
                     else:
                         if (c_idx, title_y) in styled_chars_on_grid: # Star is behind title char
                             char, style = styled_chars_on_grid[(c_idx, title_y)]
-                            title_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                            title_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                         else: # Empty space behind title char
                             title_segments.append(' ')
                 output_lines[title_y] = "".join(title_segments)
@@ -866,7 +867,7 @@ class SpotlightEffect(BaseEffect):
                     if content_start_col <= c_disp < content_start_col + self.content_width:
                         c_content = c_disp - content_start_col # Index in line
                         char = line[c_content]
-                        escaped_char = char.replace('[', r'\[')
+                        escaped_char = char.replace('[', '\\[')
 
                         # Check distance from spotlight center
                         # Adjust for character aspect ratio if desired (y distances count more)
@@ -1182,7 +1183,7 @@ class MazeGeneratorEffect(BaseEffect):
                 cell = output_grid[r_idx][c_idx]
                 if isinstance(cell, tuple):
                     char, style = cell
-                    line_segments.append(f"[{style}]{char.replace('[',r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[','\\[')}[/{style}]")
                 else: # Space, apply default path style or background
                     line_segments.append(f"[{self.path_style}] [/{self.path_style}]")
             styled_output_lines[r_idx] = "".join(line_segments)
@@ -1680,7 +1681,7 @@ class RaindropsEffect(BaseEffect):
             line_segments = []
             for c_idx in range(self.display_width):
                 char, style = char_grid[r_idx][c_idx]
-                line_segments.append(f"[{style}]{char.replace('[',r'\[')}[/{style}]")
+                line_segments.append(f"[{style}]{char.replace('[','\\[')}[/{style}]")
             styled_output_lines.append("".join(line_segments))
 
         # Overlay title (centered)
@@ -1699,7 +1700,7 @@ class RaindropsEffect(BaseEffect):
                         current_title_char_idx +=1
                     else: # Use the already determined char from char_grid (ripple or water)
                         char, style = char_grid[title_y][c_idx]
-                        title_line_segments.append(f"[{style}]{char.replace('[',r'\[')}[/{style}]")
+                        title_line_segments.append(f"[{style}]{char.replace('[','\\[')}[/{style}]")
                 styled_output_lines[title_y] = "".join(title_line_segments)
 
         return "\n".join(styled_output_lines)
@@ -1913,7 +1914,7 @@ class TextExplosionEffect(BaseEffect):
             for c_idx in range(self.display_width):
                 if (c_idx, r_idx) in styled_grid:
                     char, style = styled_grid[(c_idx, r_idx)]
-                    line_segments.append(f"[{style}]{char.replace('[',r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[','\\[')}[/{style}]")
                 else:
                     line_segments.append(' ')
             output_lines.append("".join(line_segments))
@@ -2125,7 +2126,7 @@ class GameOfLifeEffect(BaseEffect):
                 cell_content = output_display[r_idx][c_idx]
                 if isinstance(cell_content, tuple):
                     char, style = cell_content
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else: # It's a space from initialization
                     line_segments.append(f"[{self.dead_style}] [/{self.dead_style}]") # Styled background space
             styled_output_lines[r_idx] = "".join(line_segments)
@@ -2150,7 +2151,7 @@ class GameOfLifeEffect(BaseEffect):
                         cell_content = output_display[title_y][c_idx]
                         if isinstance(cell_content, tuple):
                             char, style = cell_content
-                            title_line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                            title_line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                         else:
                              title_line_segments.append(f"[{self.dead_style}] [/{self.dead_style}]")
                 styled_output_lines[title_y] = "".join(title_line_segments)
@@ -2458,16 +2459,16 @@ class CodeScrollEffect(BaseEffect):
             if r_idx == title_row:
                 padding = (self.width - len(self.title)) // 2
                 current_line_content = f"{' ' * padding}{self.title}{' ' * (self.width - len(self.title) - padding)}"
-                current_line_content = f"[{self.title_style}]{current_line_content.replace('[', r'\[')}[/{self.title_style}]"
+                current_line_content = f"[{self.title_style}]{current_line_content.replace('[', '\\[')}[/{self.title_style}]"
             elif r_idx == subtitle_row:
                 padding = (self.width - len(self.subtitle)) // 2
                 current_line_content = f"{' ' * padding}{self.subtitle}{' ' * (self.width - len(self.subtitle) - padding)}"
-                current_line_content = f"[{self.subtitle_style}]{current_line_content.replace('[', r'\[')}[/{self.subtitle_style}]"
+                current_line_content = f"[{self.subtitle_style}]{current_line_content.replace('[', '\\[')}[/{self.subtitle_style}]"
             elif code_block_start_row <= r_idx < code_block_end_row:
                 code_line_index = r_idx - code_block_start_row
                 code_text = self.code_lines[code_line_index]
                 # Ensure code_text is padded to full width if needed, or handled by terminal
-                current_line_content = f"[{self.code_line_style}]{code_text.replace('[', r'\[')}{' ' * (self.width - len(code_text))}[/{self.code_line_style}]"
+                current_line_content = f"[{self.code_line_style}]{code_text.replace('[', '\\[')}{' ' * (self.width - len(code_text))}[/{self.code_line_style}]"
             else:
                 current_line_content = ' ' * self.width
 
@@ -2611,7 +2612,7 @@ class WaveRippleEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -2753,7 +2754,7 @@ class DNAHelixEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -2949,7 +2950,7 @@ class FireworksEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -3129,7 +3130,7 @@ class CircuitBoardEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -3219,7 +3220,7 @@ class PixelDissolveEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -3336,7 +3337,7 @@ class TetrisBlockEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -3468,7 +3469,7 @@ class SpiralGalaxyEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -3604,7 +3605,7 @@ class MorphingShapeEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -3788,7 +3789,7 @@ class ParticleSwarmEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -3918,7 +3919,7 @@ class ASCIIKaleidoscopeEffect(BaseEffect):
                 style = styles[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
@@ -4110,7 +4111,7 @@ class MiningEffect(BaseEffect):
                 style = style_grid[y][x]
                 
                 if style:
-                    line_segments.append(f"[{style}]{char.replace('[', r'\[')}[/{style}]")
+                    line_segments.append(f"[{style}]{char.replace('[', '\\[')}[/{style}]")
                 else:
                     line_segments.append(char)
             
