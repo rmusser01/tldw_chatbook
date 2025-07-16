@@ -761,7 +761,7 @@ class StarfieldEffect(BaseEffect):
                         if (c_idx, title_y) in styled_chars_on_grid: # Star is behind title char
                             char, style = styled_chars_on_grid[(c_idx, title_y)]
                             escaped_char = char.replace('[', '\\[')
-                    title_segments.append(f"[{style}]{escaped_char}[/{style}]")
+                            title_segments.append(f"[{style}]{escaped_char}[/{style}]")
                         else: # Empty space behind title char
                             title_segments.append(' ')
                 output_lines[title_y] = "".join(title_segments)
@@ -2155,9 +2155,9 @@ class GameOfLifeEffect(BaseEffect):
                         if isinstance(cell_content, tuple):
                             char, style = cell_content
                             escaped_char = char.replace('[', '\\[')
-                        title_line_segments.append(f"[{style}]{escaped_char}[/{style}]")
+                            title_line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                         else:
-                             title_line_segments.append(f"[{self.dead_style}] [/{self.dead_style}]")
+                            title_line_segments.append(f"[{self.dead_style}] [/{self.dead_style}]")
                 styled_output_lines[title_y] = "".join(title_line_segments)
 
         return "\n".join(styled_output_lines)
