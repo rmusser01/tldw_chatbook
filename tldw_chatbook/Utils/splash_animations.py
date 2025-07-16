@@ -615,7 +615,8 @@ class LoadingBarEffect(BaseEffect):
         output_lines = []
         if self.text_above:
             pad_above = (self.width - len(self.text_above)) // 2
-            output_lines.append(f"[{self.text_style}]{' ' * pad_above}{self.text_above.replace('[', r'\[')}{' ' * pad_above}[/{self.text_style}]")
+            escaped_text = self.text_above.replace('[', '\\[')
+            output_lines.append(f"[{self.text_style}]{' ' * pad_above}{escaped_text}{' ' * pad_above}[/{self.text_style}]")
         else:
             output_lines.append("") # Keep spacing consistent
 
