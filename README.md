@@ -46,12 +46,14 @@ pip install -e ".[websearch]"
 pip install -e ".[images]"
 
 # All optional features
-pip install -e ".[embeddings_rag,chunker,websearch,images,audio,video,pdf,ebook,nemo]"
+pip install -e ".[embeddings_rag,chunker,websearch,images,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,ocr_docext,debugging]"
 
 # Common feature combinations
 pip install -e ".[audio,video]"  # Media transcription
 pip install -e ".[pdf,ebook]"    # Document processing
 pip install -e ".[embeddings_rag,audio]"  # RAG + transcription
+pip install -e ".[local_tts,chatterbox]"  # Text-to-speech
+pip install -e ".[mcp]"  # Model Context Protocol integration
 
 # Development installation
 pip install -e ".[dev]"
@@ -65,7 +67,7 @@ pip install -e ".[dev]"
 | `chunker`                      | Advanced text chunking, language detection | nltk, langdetect, jieba, fugashi |
 | `websearch`                    | Web scraping, content extraction | beautifulsoup4, playwright, trafilatura |
 | `images`                       | Image display in TUI | textual-image, rich-pixels |
-| (WIP/Not working) `coding_map` | Code analysis features | grep_ast, pygments |
+| `coding_map`                   | Code analysis features | grep_ast, pygments |
 | `local_vllm`                   | vLLM inference support | vllm |
 | `local_mlx`                    | MLX inference (Apple Silicon) | mlx-lm |
 | `audio`                        | Audio transcription (Whisper) | faster-whisper, soundfile |
@@ -74,6 +76,11 @@ pip install -e ".[dev]"
 | `ebook`                        | E-book processing | ebooklib, beautifulsoup4, defusedxml |
 | `nemo`                         | NVIDIA Parakeet ASR models | nemo-toolkit[asr] |
 | `local_transformers`           | HuggingFace transformers | transformers |
+| `mcp`                          | Model Context Protocol integration | mcp |
+| `chatterbox`                   | Chatterbox TTS model support | chatterbox |
+| `local_tts`                    | Local TTS models (Kokoro ONNX) | kokoro-onnx, piper-phonemize |
+| `ocr_docext`                   | OCR and document extraction | docext, nanonetstts |
+| `debugging`                    | Metrics and telemetry | prometheus-client, opentelemetry-api |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
 
@@ -95,19 +102,21 @@ pip install -e ".[dev]"
 
 ### Main Application Tabs
 1. **Chat** - Advanced AI conversation interface with streaming support
-2. **Conversations** - Manage, search, and organize chat history
-3. **Character Chat** - Character-based interactions with imported personas
-4. **Notes** - Advanced note-taking with bidirectional file sync
-5. **Search/RAG** - Hybrid search across all content (FTS5 + optional vectors)
-6. **Media Ingestion** - Process documents, videos, audio, and web content
-7. **Prompts** - Template management with versioning
-8. **Coding** - AI-powered coding assistant
-9. **Embeddings** - Create and manage vector embeddings
-10. **Evaluations** - Comprehensive LLM benchmarking system
-11. **Logs** - Application logs and debugging
-12. **LLM Management** - Local model server control
-13. **Tools & Settings** - Configuration and utilities
-14. **Stats** - Usage statistics and metrics
+2. **Chat Tabs** - Multiple concurrent chat sessions (disabled by default)
+3. **Conversations** - Manage, search, and organize chat history
+4. **Character Chat** - Character-based interactions with imported personas
+5. **Notes** - Advanced note-taking with bidirectional file sync
+6. **Search/RAG** - Hybrid search across all content (FTS5 + optional vectors)
+7. **Media Ingestion** - Process documents, videos, audio, and web content
+8. **Prompts** - Template management with versioning
+9. **Coding** - AI-powered coding assistant
+10. **Embeddings** - Create and manage vector embeddings
+11. **Evaluations** - Comprehensive LLM benchmarking system
+12. **STTS** - Speech-to-Text and Text-to-Speech interface
+13. **Logs** - Application logs and debugging
+14. **LLM Management** - Local model server control
+15. **Tools & Settings** - Configuration and utilities
+16. **Stats** - Usage statistics and metrics
 
 ### LLM Support
 - **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, HuggingFace
@@ -116,6 +125,7 @@ pip install -e ".[dev]"
 - **Full conversation management**: Save, load, edit, fork conversations
 - **Model capability detection**: Vision support, tool calling, etc.
 - **Custom tokenizer support** for accurate token counting
+- **Chat Tabs**: Multiple concurrent chat sessions (enable with `enable_chat_tabs = true` in config)
 
 ### RAG (Basic - FTS5)
 Even without optional dependencies, you get:
@@ -125,12 +135,13 @@ Even without optional dependencies, you get:
 - **Basic text chunking** for long documents
 - **Dynamic chunking controls** in chat UI
 
-### Tool Calling System (untested)
+### Tool Calling System
 - **Built-in tools**: DateTimeTool, CalculatorTool
 - **Extensible framework**: Abstract Tool base class for custom implementations
 - **Safe execution**: Timeouts and concurrency control
 - **UI integration**: Dedicated widgets for tool calls and results
 - **Provider support**: Multiple LLM providers with tool calling capabilities
+- **Status**: Implementation complete, UI widgets functional, chat integration pending
 
 ## Enhanced Features (With Optional Dependencies)
 
@@ -176,14 +187,18 @@ See `tldw_chatbook/Config_Files/EMBEDDING_DEFAULTS_README.md` for detailed confi
 - **Smart text splitting**: Respects linguistic boundaries
 - **Chunking strategies**: Words, sentences, paragraphs, semantic units
 
-### Evaluation System (WIP)
+### Evaluation System
 A comprehensive LLM benchmarking framework supporting:
-- **27+ evaluation task types**: Including:
+- **30+ evaluation task types**: Including:
   - Text understanding and generation
   - Reasoning and logic tasks
   - Language-specific evaluations
   - Code understanding and generation
   - Mathematical reasoning
+  - Safety and bias evaluation
+  - Creative content evaluation
+  - Robustness testing
+- **Specialized runners**: Task-specific evaluation implementations
 - **Advanced metrics**: ROUGE, BLEU, F1, semantic similarity, perplexity
 - **Comparison tools**: Side-by-side model performance analysis
 - **Export capabilities**: Results in various formats
@@ -238,7 +253,7 @@ All chat features listed here work with the core installation:
 ### Notes System
 **Advanced Features**:
 - Create, edit, and delete notes with rich markdown support
-- **Bidirectional file synchronization**: (WIP)
+- **Bidirectional file synchronization**:
   - Automatic sync between database and file system
   - Conflict resolution with backup
   - File system monitoring for changes
@@ -337,6 +352,37 @@ All chat features listed here work with the core installation:
 - **Notification system**: Alert on new content
 - **Flexible scheduling**: Configure update frequencies
 
+### Text-to-Speech System
+Comprehensive TTS support with multiple backends:
+- **OpenAI TTS**: High-quality cloud-based synthesis
+- **ElevenLabs**: Premium voice synthesis with custom voices
+- **Kokoro ONNX** (with `local_tts`): Local neural TTS with no internet required
+- **Chatterbox** (with `chatterbox`): Advanced local TTS model
+- **Unified Interface**: Single API for all backends
+- **Voice Selection**: Choose from available voices per backend
+- **Audio Output**: Direct playback or save to file
+- **STTS Tab**: Dedicated UI for speech synthesis and recognition
+
+### Model Context Protocol (MCP) Integration
+With the `mcp` optional dependency:
+- **MCP Server**: Expose tldw_chatbook features as MCP tools
+- **MCP Client**: Integrate with other MCP-compatible applications
+- **Available Tools**: Search, RAG, media processing, conversation management
+- **Seamless Integration**: Works with Claude Desktop and other MCP clients
+- **Configuration**: Via `[mcp]` section in config.toml
+
+### OCR and Document Extraction (with `ocr_docext`)
+- **Advanced OCR**: Extract text from images and scanned documents
+- **Document Analysis**: Structure extraction from complex documents
+- **Multi-format Support**: PDFs, images, and mixed documents
+- **Integration**: Works with media ingestion pipeline
+
+### Debugging and Metrics (with `debugging`)
+- **Prometheus Metrics**: Performance and usage tracking
+- **OpenTelemetry**: Distributed tracing support
+- **Local Metrics**: No external services required
+- **Performance Analysis**: Identify bottlenecks and optimize
+
 ### Advanced Configuration
 - **Config Encryption**: AES-256 encryption with password protection
 - **Custom Tokenizers**: Support for model-specific tokenizer files
@@ -394,6 +440,26 @@ default_provider = "parakeet"  # Options: faster-whisper, qwen2audio, parakeet
 default_model = "nvidia/parakeet-tdt-1.1b"  # TDT model for streaming
 device = "cuda"  # Use GPU for faster processing
 use_vad_by_default = true  # Voice Activity Detection
+```
+
+Example TTS configuration:
+```toml
+[tts]
+default_backend = "openai"  # Options: openai, elevenlabs, kokoro, chatterbox
+default_voice = "alloy"  # Backend-specific voice ID
+auto_play = true  # Play audio automatically after generation
+
+[tts.kokoro]
+model_path = "models/kokoro-v0_19.onnx"  # Path to local model
+voice = "af_bella"  # Available voices vary by model
+```
+
+Example MCP configuration:
+```toml
+[mcp]
+enabled = true
+server_port = 3000
+allowed_tools = ["search", "rag", "media_ingest"]
 ```
 
 Example splash screen configuration:
@@ -481,6 +547,8 @@ pip install -e .  # or with optional features
         │   └── Libraries for managing local inference of LLMs
         ├── Local_Ingestion
         │   └── Programmatic file ingestion API
+        ├── MCP
+        │   └── Model Context Protocol server and client implementation
         ├── Metrics
         │   └── Library for instrumentation/tracking (local) metrics
         ├── Notes
