@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 import tempfile
 import shutil
-import logging
+from loguru import logger
 import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
@@ -312,6 +312,8 @@ async def app_with_cleanup():
         # Stop RichLogHandler if it exists
         if hasattr(app, '_rich_log_handler') and app._rich_log_handler:
             await app._rich_log_handler.stop_processor()
+            # Note: RichLogHandler still uses standard logging for Textual integration
+            import logging
             logging.getLogger().removeHandler(app._rich_log_handler)
             app._rich_log_handler.close()
             
@@ -324,7 +326,7 @@ async def app_with_cleanup():
             
     except Exception as e:
         # Log but don't fail the test
-        logging.debug(f"Error during app cleanup: {e}")
+        logger.debug(f"Error during app cleanup: {e}")
 
 
 # ========== Performance and Timing Fixtures ==========

@@ -4,11 +4,9 @@ from unittest.mock import patch, MagicMock, call
 from pathlib import Path
 import tempfile
 import re
-import logging
+from loguru import logger
 import sqlite3
 from typing import Any, Optional, Dict
-
-from loguru import logger
 
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDBError as Actual_CharactersRAGDBError,

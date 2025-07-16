@@ -9,7 +9,7 @@ import pytest
 import asyncio
 from typing import List, Dict, Any, Optional
 import time
-import logging
+from loguru import logger
 from unittest.mock import patch, MagicMock
 
 # Import RAG service components

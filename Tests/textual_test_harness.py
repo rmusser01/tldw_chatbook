@@ -9,7 +9,7 @@ including fixtures, helpers, and patterns for common testing scenarios.
 import asyncio
 import pytest
 import pytest_asyncio
-import logging
+from loguru import logger
 from typing import Type, TypeVar, Optional, Any, Callable, List, Dict
 from contextlib import asynccontextmanager
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -137,6 +137,8 @@ async def isolated_widget_pilot():
         if hasattr(app, '_rich_log_handler') and app._rich_log_handler:
             try:
                 await app._rich_log_handler.stop_processor()
+                # Note: RichLogHandler still uses standard logging for Textual integration
+                import logging
                 logging.getLogger().removeHandler(app._rich_log_handler)
                 app._rich_log_handler.close()
             except Exception:
@@ -178,6 +180,8 @@ async def enhanced_app_pilot():
         if hasattr(app, '_rich_log_handler') and app._rich_log_handler:
             try:
                 await app._rich_log_handler.stop_processor()
+                # Note: RichLogHandler still uses standard logging for Textual integration
+                import logging
                 logging.getLogger().removeHandler(app._rich_log_handler)
                 app._rich_log_handler.close()
             except Exception:

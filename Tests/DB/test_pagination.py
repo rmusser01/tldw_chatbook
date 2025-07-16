@@ -2,7 +2,7 @@
 Integration tests for pagination functionality in database functions.
 """
 
-import logging
+from loguru import logger
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -60,7 +60,7 @@ class TestMediaDatabasePagination:
             
         except Exception as e:
             # Log error and re-raise
-            logging.error(f"Error creating test data: {e}")
+            logger.error(f"Error creating test data: {e}")
             raise
         
         return db
