@@ -82,6 +82,146 @@ graph TD
     O --> P[Search Results]
 ```
 
+### Pipeline Architecture
+
+The RAG system implements three distinct search pipelines, each optimized for different use cases and performance requirements:
+
+#### 1. Plain RAG Pipeline (FTS5)
+**Function**: `perform_plain_rag_search()`
+
+Pure SQLite FTS5-based search without vector embeddings. Fastest option with good keyword matching.
+
+**Characteristics**:
+- Direct database queries using FTS5
+- No embedding generation required
+- Supports re-ranking with FlashRank
+- Keyword filtering capabilities
+- Low latency (~50-100ms)
+
+**Use Cases**:
+- Exact phrase matching
+- Known keyword searches
+- Low-latency requirements
+- Systems without GPU access
+
+#### 2. Full RAG Pipeline (Semantic)
+**Function**: `perform_full_rag_pipeline()`
+
+Vector embedding-based semantic search using the simplified RAG service.
+
+**Characteristics**:
+- Generates query embeddings
+- Uses vector similarity search
+- Supports ChromaDB or in-memory storage
+- Configurable chunking strategies
+- Medium latency (~200-500ms)
+
+**Use Cases**:
+- Conceptual searches
+- Natural language queries
+- Finding related content
+- Research and exploration
+
+#### 3. Hybrid RAG Pipeline
+**Function**: `perform_hybrid_rag_search()`
+
+Combines both FTS5 and vector search with configurable weighting.
+
+**Characteristics**:
+- Runs both pipelines in parallel
+- Weighted result merging (BM25 + vector)
+- Best of both approaches
+- Higher latency (~300-600ms)
+
+**Use Cases**:
+- General-purpose search
+- Mixed query types
+- Maximum recall requirements
+- Production systems
+
+#### Pipeline Selection Logic
+
+```python
+# Pipeline selection based on search mode
+if search_mode == "plain":
+    results = await perform_plain_rag_search(...)
+elif search_mode == "semantic":
+    results = await perform_full_rag_pipeline(...)
+elif search_mode == "hybrid":
+    results = await perform_hybrid_rag_search(...)
+```
+
+#### Pipeline Performance Comparison
+
+| Pipeline | Latency | Accuracy | Resource Usage | Best For |
+|----------|---------|----------|----------------|----------|
+| Plain | Low (50-100ms) | Good for keywords | Low | Exact matches |
+| Semantic | Medium (200-500ms) | High for concepts | Medium-High | Natural queries |
+| Hybrid | High (300-600ms) | Highest overall | High | General use |
+
+### Enhanced Services Architecture
+
+The RAG pipeline includes enhanced services that provide advanced functionality beyond the basic implementation:
+
+#### Service Initialization Chain
+
+```python
+# Basic RAG Service Initialization
+RAGService.__init__(config: Optional[RAGConfig] = None)
+├── load_settings() → config.py
+├── EmbeddingsServiceWrapper.__init__(
+│   model_name: str,
+│   cache_size: int = 2,
+│   device: Optional[str] = None,
+│   api_key: Optional[str] = None,
+│   base_url: Optional[str] = None,
+│   cache_dir: Optional[str] = None
+│   ) → embeddings_wrapper.py
+│   ├── _build_config() → Dict[str, Any]
+│   ├── EmbeddingFactory.__init__() → Embeddings_Lib.py
+│   └── CircuitBreaker.__init__() → circuit_breaker.py
+├── create_vector_store(
+│   vector_store_type: str,
+│   collection_name: str,
+│   persist_directory: Optional[str]
+│   ) → vector_store.py
+├── ChunkingService.__init__() → chunking_service.py
+├── SimpleRAGCache.__init__(
+│   max_size: int = 100,
+│   ttl_seconds: float = 3600,
+│   enabled: bool = True
+│   ) → simple_cache.py
+├── get_connection_pool() → db_connection_pool.py
+└── ThreadPoolExecutor.__init__(max_workers=min(cpu_count * 2, 8))
+
+# Enhanced RAG Service Initialization
+EnhancedRAGService.__init__(config: Optional[RAGConfig] = None, enable_parent_retrieval: bool = True)
+├── super().__init__(config) → RAGService.__init__()
+├── EnhancedChunkingService.__init__() → enhanced_chunking_service.py
+├── ParentDocumentRetriever.__init__() → parent_retriever.py
+└── initialize_enhanced_features()
+```
+
+#### Enhanced Components
+
+1. **EnhancedRAGService** (`enhanced_rag_service.py`)
+   - Extends the base RAGService with advanced features
+   - Supports parent document retrieval for better context
+   - Implements hierarchical chunking strategies
+   - Provides enhanced search capabilities with re-ranking
+
+2. **EnhancedChunkingService** (`enhanced_chunking_service.py`)
+   - Creates hierarchical chunks with structure preservation
+   - Parses document structure (headers, lists, tables)
+   - Cleans text artifacts from PDFs and other sources
+   - Maintains parent-child relationships between chunks
+
+3. **ParentDocumentRetriever** (`parent_retriever.py`)
+   - Maps retrieval chunks to their parent documents
+   - Fetches expanded context for better LLM responses
+   - Manages parent-child chunk relationships
+   - Optimizes context window usage
+
 ## Core Components
 
 ### 1. RAGService (`rag_service.py`)
@@ -219,6 +359,75 @@ Fault tolerance for external service calls.
 - Configurable thresholds
 - Automatic recovery testing
 
+### 10. Enhanced Services
+
+#### EnhancedRAGService (`enhanced_rag_service.py`)
+
+Advanced RAG implementation with hierarchical retrieval.
+
+**Key Features:**
+- Parent document retrieval for expanded context
+- Enhanced chunking with structure preservation
+- Advanced re-ranking capabilities
+- Backward compatible with base RAGService
+
+**Methods:**
+```python
+async def index_document_enhanced(
+    doc_id: str,
+    content: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> IndexingResult
+
+async def search_enhanced(
+    query: str,
+    top_k: int = 10,
+    search_type: str = "semantic",
+    enable_parent_retrieval: bool = True
+) -> List[SearchResultWithCitations]
+```
+
+#### EnhancedChunkingService (`enhanced_chunking_service.py`)
+
+Intelligent chunking with document structure understanding.
+
+**Features:**
+- Hierarchical chunk creation
+- Structure parsing (headers, lists, tables)
+- PDF artifact cleaning
+- Maintains semantic boundaries
+
+**Key Methods:**
+```python
+def create_hierarchical_chunks(
+    text: str,
+    options: ChunkingOptions
+) -> List[Chunk]
+
+def parse_document_structure(text: str) -> DocumentStructure
+```
+
+#### ParentDocumentRetriever (`parent_retriever.py`)
+
+Manages parent-child relationships for context expansion.
+
+**Features:**
+- Retrieval chunk to parent mapping
+- Context window optimization
+- Efficient parent document fetching
+- Metadata preservation
+
+### 11. Supporting Utilities
+
+#### Indexing Helpers (`indexing_helpers.py`)
+
+Batch processing utilities for efficient indexing.
+
+**Functions:**
+- `chunk_documents_batch()`: Parallel document chunking
+- `generate_embeddings_batch()`: Batch embedding creation
+- `store_documents_batch()`: Bulk vector storage
+
 ## Data Flow
 
 ### Document Indexing Pipeline
@@ -262,6 +471,181 @@ Fault tolerance for external service calls.
 4. **Caching**
    - Store results with TTL
    - Track cache metrics
+
+### Enhanced Document Indexing Flow
+
+1. **Document Analysis**
+   - Structure parsing (headers, lists, tables)
+   - Content type detection
+   - Metadata extraction
+
+2. **Hierarchical Chunking**
+   - Create parent documents (larger context)
+   - Create retrieval chunks (smaller, focused)
+   - Maintain parent-child relationships
+   - Clean text artifacts
+
+3. **Dual Storage**
+   - Store parent documents for context
+   - Store retrieval chunks with embeddings
+   - Link chunks to parents
+   - Update relationship mappings
+
+### Enhanced Search Flow
+
+1. **Initial Retrieval**
+   - Standard search execution
+   - Get top matching chunks
+
+2. **Parent Expansion**
+   - Map chunks to parent documents
+   - Fetch parent contexts
+   - Merge overlapping content
+
+3. **Re-ranking**
+   - Apply cross-encoder models (if enabled)
+   - Score based on expanded context
+   - Filter by relevance thresholds
+
+4. **Context Assembly**
+   - Combine retrieval and parent chunks
+   - Optimize for LLM context window
+   - Preserve citation tracking
+
+## Detailed Function Call Chains
+
+### Document Indexing Function Chain
+
+```python
+async index_document(
+    doc_id: str,
+    content: str,
+    title: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    chunk_size: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
+    chunking_method: Optional[str] = None
+) → IndexingResult
+├── Input validation
+├── _chunk_document() → List[Dict[str, Any]]
+│   └── ChunkingService.chunk_text() [via ThreadPoolExecutor]
+│       └── chunk_text_by_words() or chunk_text_by_sentences()
+├── _create_embeddings_batch() → np.ndarray
+│   └── EmbeddingsServiceWrapper.create_embeddings()
+│       ├── _circuit_breaker.call_sync()
+│       └── EmbeddingFactory.embed()
+├── _add_to_vector_store()
+│   └── VectorStore.add()
+│       ├── ChromaVectorStore.add() [if ChromaDB]
+│       └── InMemoryVectorStore.add() [if memory]
+└── return IndexingResult
+```
+
+### Enhanced Document Indexing
+
+```python
+async index_document_enhanced(
+    doc_id: str,
+    content: str,
+    metadata: Optional[Dict[str, Any]] = None
+) → IndexingResult
+├── EnhancedChunkingService.create_hierarchical_chunks()
+│   ├── parse_document_structure()
+│   ├── clean_text_artifacts()
+│   └── create_chunks_with_hierarchy()
+├── ParentDocumentRetriever.create_parent_child_mappings()
+├── Generate embeddings for retrieval chunks
+├── Store both parent and retrieval chunks
+└── return enhanced IndexingResult
+```
+
+### Search Function Chain
+
+```python
+async search(
+    query: str,
+    top_k: Optional[int] = None,
+    search_type: Literal["semantic", "hybrid", "keyword"] = "semantic",
+    filter_metadata: Optional[Dict[str, Any]] = None,
+    include_citations: Optional[bool] = None,
+    score_threshold: Optional[float] = None
+) → Union[List[SearchResult], List[SearchResultWithCitations]]
+├── Check cache → SimpleRAGCache.get()
+├── Process query based on search_type:
+│   ├── _search_semantic() [if "semantic"]
+│   │   ├── Create query embedding
+│   │   └── VectorStore.search()
+│   ├── _search_keyword() [if "keyword"]
+│   │   └── Search FTS5 database
+│   └── _search_hybrid() [if "hybrid"]
+│       ├── _search_semantic()
+│       ├── _search_keyword()
+│       └── Merge and re-rank results
+├── _add_citations() [if include_citations]
+├── Cache results → SimpleRAGCache.put()
+└── return results
+```
+
+### Semantic Search Detail
+
+```python
+async _search_semantic(
+    query: str,
+    top_k: int,
+    filter_metadata: Optional[Dict[str, Any]] = None
+) → List[SearchResult]
+├── Create query embedding
+│   └── EmbeddingsServiceWrapper.create_embedding()
+├── VectorStore.search()
+│   ├── ChromaVectorStore.search() [if ChromaDB]
+│   │   └── collection.query()
+│   └── InMemoryVectorStore.search() [if memory]
+│       ├── _compute_similarity() for each embedding
+│       └── Sort by score and return top_k
+└── Convert to SearchResult objects
+```
+
+### Enhanced Search with Parent Retrieval
+
+```python
+async search_enhanced(
+    query: str,
+    top_k: int = 10,
+    search_type: str = "semantic",
+    enable_parent_retrieval: bool = True
+) → List[SearchResultWithCitations]
+├── Perform base search → super().search()
+├── If enable_parent_retrieval:
+│   └── ParentDocumentRetriever.retrieve_parent_contexts()
+│       ├── Map chunk IDs to parent IDs
+│       ├── Fetch parent documents
+│       └── Merge context
+├── Apply re-ranking if enabled
+└── return enhanced results
+```
+
+### UI Integration Flow
+
+```python
+SearchRAGWindow.on_search_button_pressed()
+└── _perform_search()
+    ├── perform_plain_rag_search() → chat_rag_events.py
+    │   ├── Get or create RAG service
+    │   ├── Search each source database (FTS5)
+    │   ├── Apply re-ranking if enabled
+    │   └── Format results
+    ├── perform_full_rag_pipeline() → chat_rag_events.py
+    │   ├── Get or create RAG service
+    │   ├── Perform semantic search → RAGService.search()
+    │   ├── Apply query expansion if enabled
+    │   ├── Re-rank results
+    │   └── Format with citations
+    └── perform_hybrid_rag_search() → chat_rag_events.py
+        ├── Get or create RAG service
+        ├── Perform hybrid search → RAGService.search(search_type="hybrid")
+        ├── Apply advanced filtering
+        └── Format results
+```
 
 ## Architecture Decision Records (ADRs)
 
@@ -374,6 +758,35 @@ Fault tolerance for external service calls.
 - ⚠️ Increased complexity
 - ⚠️ Potential performance impact
 
+### ADR-007: Configuration Profiles and A/B Testing
+
+**Status**: Accepted  
+**Date**: 2024-01-15
+
+**Context**: Different use cases require different RAG configurations, and we need a way to test and optimize these configurations systematically.
+
+**Decision**: Implement a profile-based configuration system with:
+- Pre-defined profiles for common use cases
+- Custom profile creation capability
+- Built-in A/B testing framework
+- Deterministic user assignment for consistent testing
+- Comprehensive metrics tracking
+
+**Technical Approach**:
+1. **Profile System**: Encapsulate all RAG configurations in ProfileConfig objects
+2. **Traffic Splitting**: Use MD5 hash of user ID for deterministic assignment
+3. **Metrics Collection**: Track latency, accuracy, and user satisfaction per profile
+4. **Experiment Management**: Full lifecycle from setup to analysis
+
+**Consequences**:
+- ✅ Easy configuration for different use cases
+- ✅ Data-driven optimization possible
+- ✅ Consistent user experience during tests
+- ✅ Reduced configuration complexity
+- ⚠️ Additional storage for experiment data
+- ⚠️ Overhead of profile management
+- ⚠️ Need for careful experiment design
+
 ## API Reference
 
 ### RAGService API
@@ -413,6 +826,161 @@ async def search(
     include_citations: Optional[bool] = None,
     score_threshold: Optional[float] = None
 ) -> Union[List[SearchResult], List[SearchResultWithCitations]]
+```
+
+### Enhanced API
+
+#### Enhanced Document Indexing
+
+```python
+async def index_document_enhanced(
+    doc_id: str,
+    content: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> IndexingResult
+```
+
+Creates hierarchical chunks with parent-child relationships for better context retrieval.
+
+#### Enhanced Search
+
+```python
+async def search_enhanced(
+    query: str,
+    top_k: int = 10,
+    search_type: str = "semantic",
+    enable_parent_retrieval: bool = True
+) -> List[SearchResultWithCitations]
+```
+
+Performs search with optional parent document retrieval for expanded context.
+
+### Supporting Services API
+
+#### EmbeddingsServiceWrapper
+
+```python
+async def create_embeddings_async(texts: List[str]) -> np.ndarray
+def create_embeddings(texts: List[str]) -> np.ndarray
+def create_embedding(text: str) -> np.ndarray
+def get_embedding_dimension() -> Optional[int]
+def get_memory_usage() -> Dict[str, float]
+```
+
+#### ChunkingService
+
+```python
+def chunk_text(
+    text: str,
+    chunk_size: int = 400,
+    chunk_overlap: int = 100,
+    method: str = "words",
+    min_chunk_size: Optional[int] = None,
+    max_chunk_size: Optional[int] = None
+) -> List[Dict[str, Any]]
+```
+
+#### EnhancedChunkingService
+
+```python
+def create_hierarchical_chunks(
+    text: str,
+    options: ChunkingOptions
+) -> List[Chunk]
+
+def parse_document_structure(text: str) -> DocumentStructure
+def clean_text_artifacts(text: str) -> str
+def serialize_table_to_text(table_data: Dict) -> str
+```
+
+### Pipeline API
+
+#### Plain RAG Pipeline
+
+```python
+async def perform_plain_rag_search(
+    app: "TldwCli",
+    query: str,
+    sources: Dict[str, bool],
+    top_k: int = 5,
+    max_context_length: int = 10000,
+    enable_rerank: bool = True,
+    reranker_model: str = "flashrank",
+    keyword_filter_list: Optional[List[str]] = None
+) -> Tuple[List[Dict[str, Any]], str]
+```
+
+#### Full RAG Pipeline
+
+```python
+async def perform_full_rag_pipeline(
+    app: "TldwCli",
+    query: str,
+    sources: Dict[str, bool],
+    top_k: int = 5,
+    max_context_length: int = 10000,
+    chunk_size: int = 400,
+    chunk_overlap: int = 100,
+    chunk_type: str = "words",
+    include_metadata: bool = True,
+    enable_rerank: bool = True,
+    reranker_model: str = "flashrank",
+    keyword_filter_list: Optional[List[str]] = None
+) -> Tuple[List[Dict[str, Any]], str]
+```
+
+#### Hybrid RAG Pipeline
+
+```python
+async def perform_hybrid_rag_search(
+    app: "TldwCli",
+    query: str,
+    sources: Dict[str, bool],
+    top_k: int = 5,
+    max_context_length: int = 10000,
+    enable_rerank: bool = True,
+    reranker_model: str = "flashrank",
+    chunk_size: int = 400,
+    chunk_overlap: int = 100,
+    chunk_type: str = "words",
+    bm25_weight: float = 0.5,
+    vector_weight: float = 0.5,
+    keyword_filter_list: Optional[List[str]] = None
+) -> Tuple[List[Dict[str, Any]], str]
+```
+
+### Profile Management API
+
+#### ConfigProfileManager
+
+```python
+class ConfigProfileManager:
+    def get_profile(self, name: str) -> Optional[ProfileConfig]
+    def list_profiles(self) -> List[str]
+    def create_custom_profile(
+        self,
+        name: str,
+        base_profile: str = "balanced",
+        **overrides
+    ) -> ProfileConfig
+    def validate_profile(self, profile: ProfileConfig) -> List[str]
+```
+
+#### Experiment Management
+
+```python
+def start_experiment(self, config: ExperimentConfig) -> None
+def select_profile_for_experiment(
+    self, 
+    user_id: Optional[str] = None
+) -> Tuple[str, ProfileConfig]
+def record_experiment_result(
+    self,
+    profile_name: str,
+    query: str,
+    metrics: Dict[str, Any]
+) -> None
+def end_experiment(self) -> Dict[str, Any]
 ```
 
 ### Configuration API
@@ -553,6 +1121,888 @@ fts5_connection_pool_size = 3
    - Batch size optimization
    - Memory monitoring
 
+## Configuration Profiles and A/B Testing
+
+### Profile System Architecture
+
+The RAG system includes a comprehensive configuration profile system that enables:
+- Pre-configured settings for different use cases
+- Custom profile creation
+- A/B testing capabilities
+- Performance tracking and optimization
+
+#### Built-in Profiles
+
+1. **fast_search**
+   - Model: `all-MiniLM-L6-v2` (smaller, faster)
+   - Chunk size: 256 words
+   - Optimized for <100ms latency
+
+2. **high_accuracy**
+   - Model: `BAAI/bge-large-en-v1.5` (larger, more accurate)
+   - Chunk size: 512 words
+   - Includes re-ranking with GPT-3.5
+   - Optimized for >95% accuracy
+
+3. **balanced**
+   - Model: `sentence-transformers/all-mpnet-base-v2`
+   - Chunk size: 384 words
+   - Balance between speed and accuracy
+
+4. **long_context**
+   - Chunk size: 1024 words
+   - Parent document retrieval enabled
+   - For documents requiring extended context
+
+5. **technical_docs**
+   - Structural chunking method
+   - Preserves tables and code blocks
+   - PDF artifact cleaning
+
+6. **research_papers**
+   - Model: `allenai-specter` (scientific text)
+   - Hierarchical chunking
+   - Citation preservation
+
+7. **code_search**
+   - Model: `microsoft/codebert-base`
+   - Smaller chunks (256 words)
+   - Code structure preservation
+
+#### Profile Configuration Structure
+
+```python
+@dataclass
+class ProfileConfig:
+    name: str
+    description: str
+    profile_type: ProfileType
+    rag_config: RAGConfig
+    reranking_config: Optional[RerankingConfig]
+    processing_config: Optional[ProcessingConfig]
+    expected_latency_ms: Optional[float]
+    expected_accuracy: Optional[float]
+    tags: List[str]
+```
+
+### A/B Testing Framework
+
+#### Experiment Configuration
+
+```python
+@dataclass
+class ExperimentConfig:
+    experiment_id: str
+    name: str
+    description: str
+    enable_ab_testing: bool
+    control_profile: str
+    test_profiles: List[str]
+    traffic_split: Dict[str, float]  # Profile -> percentage
+    track_metrics: bool
+    metrics_to_track: List[str]
+    save_results: bool
+    results_dir: Optional[Path]
+```
+
+#### Traffic Splitting
+
+The system uses deterministic user assignment based on user ID hashing:
+
+```python
+def select_profile_for_experiment(user_id: Optional[str]) -> Tuple[str, ProfileConfig]:
+    if user_id:
+        hash_val = int(hashlib.md5(user_id.encode()).hexdigest(), 16)
+        rand_val = (hash_val % 100) / 100.0
+    else:
+        rand_val = random.random()
+    
+    # Select profile based on traffic split percentages
+    cumulative = 0.0
+    for profile_name, percentage in traffic_split.items():
+        cumulative += percentage
+        if rand_val < cumulative:
+            return profile_name, get_profile(profile_name)
+```
+
+#### Metrics Collection
+
+Tracked metrics include:
+- **search_latency**: End-to-end search time
+- **retrieval_accuracy**: Relevance of results
+- **reranking_improvement**: Score improvement from re-ranking
+- **user_satisfaction**: User feedback signals
+- **context_quality**: Quality of retrieved context
+
+#### Experiment Lifecycle
+
+1. **Start Experiment**
+   ```python
+   manager.start_experiment(ExperimentConfig(
+       name="Accuracy vs Speed Test",
+       control_profile="balanced",
+       test_profiles=["fast_search", "high_accuracy"],
+       traffic_split={"balanced": 0.5, "fast_search": 0.25, "high_accuracy": 0.25}
+   ))
+   ```
+
+2. **Run Searches**
+   - Automatic profile selection based on user/session
+   - Metrics recorded for each query
+   - Real-time performance tracking
+
+3. **Analyze Results**
+   ```python
+   summary = manager.end_experiment()
+   # Returns statistics per profile:
+   # - Mean/min/max for each metric
+   # - Query counts
+   # - Performance comparisons
+   ```
+
+### Profile Validation
+
+The system validates profiles for:
+- Model availability
+- Configuration consistency
+- Resource requirements
+- Performance expectations
+
+```python
+warnings = manager.validate_profile(profile)
+# Returns list of warnings/errors
+```
+
+## Creating and Modifying RAG Pipelines
+
+### Pipeline Architecture Overview
+
+RAG pipelines are implemented as async functions that orchestrate the search process. Each pipeline follows a common pattern:
+
+1. **Input validation and sanitization**
+2. **Query processing**
+3. **Search execution**
+4. **Result post-processing**
+5. **Caching and metrics**
+
+### Creating a Custom Pipeline
+
+#### 1. Basic Pipeline Template
+
+```python
+from typing import List, Dict, Any, Tuple, Optional
+from tldw_chatbook.RAG_Search.simplified import get_or_create_rag_service
+from loguru import logger
+
+async def perform_custom_rag_pipeline(
+    app: "TldwCli",
+    query: str,
+    sources: Dict[str, bool],
+    top_k: int = 5,
+    max_context_length: int = 10000,
+    # Add your custom parameters
+    custom_param: str = "default",
+    **kwargs
+) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Custom RAG pipeline implementation.
+    
+    Returns:
+        Tuple of (results, formatted_context)
+    """
+    try:
+        # 1. Input validation
+        if not query or not query.strip():
+            return [], ""
+        
+        # 2. Initialize services
+        rag_service = await get_or_create_rag_service(app)
+        
+        # 3. Custom query processing
+        processed_query = await preprocess_query(query, custom_param)
+        
+        # 4. Execute search
+        results = await rag_service.search(
+            query=processed_query,
+            top_k=top_k,
+            search_type="semantic",  # or your custom logic
+            include_citations=True
+        )
+        
+        # 5. Custom post-processing
+        filtered_results = await postprocess_results(results, custom_param)
+        
+        # 6. Format context
+        context = format_results_for_llm(filtered_results, max_context_length)
+        
+        return filtered_results, context
+        
+    except Exception as e:
+        logger.error(f"Custom pipeline failed: {e}")
+        # Fallback to basic search
+        return await perform_plain_rag_search(app, query, sources, top_k)
+```
+
+#### 2. Advanced Pipeline with Multiple Strategies
+
+```python
+async def perform_adaptive_rag_pipeline(
+    app: "TldwCli",
+    query: str,
+    sources: Dict[str, bool],
+    top_k: int = 5,
+    **kwargs
+) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Adaptive pipeline that selects strategy based on query analysis.
+    """
+    # Analyze query characteristics
+    query_features = analyze_query(query)
+    
+    if query_features["is_technical"]:
+        # Use technical documentation profile
+        profile = get_profile_manager().get_profile("technical_docs")
+        strategy = "structural"
+    elif query_features["is_question"]:
+        # Use semantic search with query expansion
+        profile = get_profile_manager().get_profile("high_accuracy")
+        strategy = "semantic_expanded"
+    else:
+        # Default strategy
+        profile = get_profile_manager().get_profile("balanced")
+        strategy = "hybrid"
+    
+    # Apply profile configuration
+    rag_service = await get_or_create_rag_service(app, config=profile.rag_config)
+    
+    # Execute strategy-specific search
+    if strategy == "semantic_expanded":
+        # Expand query using LLM
+        expanded_queries = await expand_query_with_llm(query)
+        all_results = []
+        
+        for eq in expanded_queries:
+            results = await rag_service.search(eq, top_k=top_k//len(expanded_queries))
+            all_results.extend(results)
+        
+        # Deduplicate and re-rank
+        final_results = deduplicate_and_rerank(all_results, query)
+    else:
+        final_results = await rag_service.search(query, top_k=top_k, search_type=strategy)
+    
+    return final_results, format_results_for_llm(final_results)
+```
+
+### Modifying Existing Pipelines
+
+#### 1. Pipeline Decorator Pattern
+
+Create decorators to modify pipeline behavior without changing core logic:
+
+```python
+from functools import wraps
+import time
+
+def with_performance_tracking(pipeline_func):
+    """Decorator to add performance tracking to any pipeline."""
+    @wraps(pipeline_func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.time()
+        
+        try:
+            results, context = await pipeline_func(*args, **kwargs)
+            
+            # Track metrics
+            latency = (time.time() - start_time) * 1000
+            log_histogram("pipeline_latency", latency, 
+                         labels={"pipeline": pipeline_func.__name__})
+            
+            # Add performance data to results
+            for result in results:
+                result["_pipeline_latency_ms"] = latency
+            
+            return results, context
+            
+        except Exception as e:
+            log_counter("pipeline_error", 
+                       labels={"pipeline": pipeline_func.__name__, "error": str(e)})
+            raise
+    
+    return wrapper
+
+# Apply to existing pipeline
+@with_performance_tracking
+async def perform_enhanced_semantic_search(*args, **kwargs):
+    return await perform_full_rag_pipeline(*args, **kwargs)
+```
+
+#### 2. Pipeline Middleware
+
+Implement middleware to intercept and modify pipeline behavior:
+
+```python
+class PipelineMiddleware:
+    """Base class for pipeline middleware."""
+    
+    async def before_search(self, query: str, config: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        """Called before search execution."""
+        return query, config
+    
+    async def after_search(self, results: List[SearchResult]) -> List[SearchResult]:
+        """Called after search execution."""
+        return results
+    
+    async def on_error(self, error: Exception) -> Optional[List[SearchResult]]:
+        """Called on pipeline error. Can return fallback results."""
+        return None
+
+class QueryExpansionMiddleware(PipelineMiddleware):
+    """Expands queries with synonyms and related terms."""
+    
+    async def before_search(self, query: str, config: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        # Add synonyms to query
+        expanded = await expand_with_synonyms(query)
+        return expanded, config
+
+class ResultFilterMiddleware(PipelineMiddleware):
+    """Filters results based on custom criteria."""
+    
+    def __init__(self, min_score: float = 0.5):
+        self.min_score = min_score
+    
+    async def after_search(self, results: List[SearchResult]) -> List[SearchResult]:
+        return [r for r in results if r.score >= self.min_score]
+
+# Pipeline with middleware
+async def perform_pipeline_with_middleware(
+    app: "TldwCli",
+    query: str,
+    middleware: List[PipelineMiddleware] = None,
+    **kwargs
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Execute pipeline with middleware chain."""
+    
+    middleware = middleware or []
+    config = kwargs.copy()
+    
+    # Apply before_search middleware
+    for mw in middleware:
+        query, config = await mw.before_search(query, config)
+    
+    try:
+        # Execute base pipeline
+        results, context = await perform_full_rag_pipeline(app, query, **config)
+        
+        # Apply after_search middleware
+        for mw in middleware:
+            results = await mw.after_search(results)
+        
+        return results, context
+        
+    except Exception as e:
+        # Try middleware error handlers
+        for mw in middleware:
+            fallback = await mw.on_error(e)
+            if fallback:
+                return fallback, format_results_for_llm(fallback)
+        raise
+```
+
+#### 3. Pipeline Composition
+
+Combine multiple pipelines for sophisticated search strategies:
+
+```python
+async def perform_ensemble_pipeline(
+    app: "TldwCli",
+    query: str,
+    sources: Dict[str, bool],
+    ensemble_config: Dict[str, float] = None,
+    **kwargs
+) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Ensemble pipeline that combines multiple search strategies.
+    
+    Args:
+        ensemble_config: Dict mapping pipeline names to weights
+    """
+    ensemble_config = ensemble_config or {
+        "plain": 0.2,
+        "semantic": 0.5,
+        "hybrid": 0.3
+    }
+    
+    all_results = []
+    
+    # Run pipelines in parallel
+    tasks = []
+    
+    if "plain" in ensemble_config:
+        tasks.append(("plain", perform_plain_rag_search(app, query, sources, **kwargs)))
+    
+    if "semantic" in ensemble_config:
+        tasks.append(("semantic", perform_full_rag_pipeline(app, query, sources, **kwargs)))
+    
+    if "hybrid" in ensemble_config:
+        tasks.append(("hybrid", perform_hybrid_rag_search(app, query, sources, **kwargs)))
+    
+    # Gather results
+    pipeline_results = await asyncio.gather(*[task[1] for task in tasks], return_exceptions=True)
+    
+    # Combine results with weighting
+    weighted_results = []
+    
+    for (pipeline_name, _), (results, _) in zip(tasks, pipeline_results):
+        if isinstance(results, Exception):
+            logger.error(f"Pipeline {pipeline_name} failed: {results}")
+            continue
+        
+        weight = ensemble_config[pipeline_name]
+        for result in results:
+            result["_original_score"] = result.get("score", 0)
+            result["_pipeline"] = pipeline_name
+            result["score"] = result["_original_score"] * weight
+            weighted_results.append(result)
+    
+    # Sort by weighted score and deduplicate
+    final_results = deduplicate_and_sort(weighted_results)
+    
+    return final_results[:kwargs.get("top_k", 10)], format_results_for_llm(final_results)
+```
+
+### Pipeline Registration and Discovery
+
+#### 1. Pipeline Registry
+
+```python
+class PipelineRegistry:
+    """Registry for custom RAG pipelines."""
+    
+    _pipelines: Dict[str, Callable] = {}
+    _metadata: Dict[str, Dict[str, Any]] = {}
+    
+    @classmethod
+    def register(cls, 
+                 name: str, 
+                 description: str = "",
+                 tags: List[str] = None,
+                 config_schema: Dict[str, Any] = None):
+        """Decorator to register a pipeline."""
+        def decorator(func):
+            cls._pipelines[name] = func
+            cls._metadata[name] = {
+                "description": description,
+                "tags": tags or [],
+                "config_schema": config_schema or {},
+                "function": func.__name__
+            }
+            return func
+        return decorator
+    
+    @classmethod
+    def get_pipeline(cls, name: str) -> Optional[Callable]:
+        """Get pipeline by name."""
+        return cls._pipelines.get(name)
+    
+    @classmethod
+    def list_pipelines(cls) -> List[Dict[str, Any]]:
+        """List all registered pipelines."""
+        return [
+            {"name": name, **metadata}
+            for name, metadata in cls._metadata.items()
+        ]
+
+# Register custom pipeline
+@PipelineRegistry.register(
+    name="medical_search",
+    description="Specialized pipeline for medical document search",
+    tags=["medical", "specialized"],
+    config_schema={
+        "require_citations": {"type": "boolean", "default": True},
+        "medical_terms_boost": {"type": "number", "default": 2.0}
+    }
+)
+async def perform_medical_search_pipeline(app, query, sources, **kwargs):
+    # Custom medical search implementation
+    pass
+```
+
+#### 2. Dynamic Pipeline Selection
+
+```python
+async def perform_auto_pipeline(
+    app: "TldwCli",
+    query: str,
+    sources: Dict[str, bool],
+    **kwargs
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Automatically select and execute the best pipeline for the query."""
+    
+    # Get all registered pipelines
+    available_pipelines = PipelineRegistry.list_pipelines()
+    
+    # Score pipelines based on query characteristics
+    pipeline_scores = {}
+    
+    for pipeline in available_pipelines:
+        score = 0
+        
+        # Check tag matches
+        query_tags = extract_query_tags(query)
+        for tag in pipeline["tags"]:
+            if tag in query_tags:
+                score += 1
+        
+        # Check configuration compatibility
+        if can_satisfy_config(kwargs, pipeline["config_schema"]):
+            score += 0.5
+        
+        pipeline_scores[pipeline["name"]] = score
+    
+    # Select best pipeline
+    best_pipeline = max(pipeline_scores, key=pipeline_scores.get)
+    pipeline_func = PipelineRegistry.get_pipeline(best_pipeline)
+    
+    logger.info(f"Auto-selected pipeline: {best_pipeline}")
+    
+    return await pipeline_func(app, query, sources, **kwargs)
+```
+
+### Testing Custom Pipelines
+
+```python
+import pytest
+from unittest.mock import Mock, AsyncMock
+
+@pytest.mark.asyncio
+async def test_custom_pipeline():
+    """Test custom pipeline implementation."""
+    
+    # Mock app and services
+    mock_app = Mock()
+    mock_rag_service = AsyncMock()
+    mock_rag_service.search.return_value = [
+        {"content": "Test result", "score": 0.9}
+    ]
+    
+    with patch("tldw_chatbook.RAG_Search.get_or_create_rag_service", return_value=mock_rag_service):
+        results, context = await perform_custom_rag_pipeline(
+            mock_app,
+            "test query",
+            {"conversations": True},
+            custom_param="test_value"
+        )
+    
+    assert len(results) > 0
+    assert results[0]["score"] == 0.9
+    mock_rag_service.search.assert_called_once()
+```
+
+## TOML-Based Pipeline Configuration
+
+### Overview
+
+The RAG system supports declarative pipeline configuration through TOML files, allowing users to define, modify, and share pipeline configurations without writing code.
+
+### Configuration Structure
+
+#### Pipeline Definition Schema
+
+```toml
+[pipelines.<pipeline_id>]
+name = "Human-readable pipeline name"
+description = "What this pipeline does"
+type = "built-in|custom|composite|wrapper"
+enabled = true|false
+tags = ["tag1", "tag2"]
+
+# For built-in pipelines
+function = "function_name_to_call"
+
+# For custom pipelines
+base_pipeline = "parent_pipeline_id"
+profile = "configuration_profile_name"
+
+# Parameters passed to the pipeline
+[pipelines.<pipeline_id>.parameters]
+top_k = 10
+chunk_size = 400
+enable_rerank = true
+# ... any other parameters
+
+# Middleware configuration
+[pipelines.<pipeline_id>.middleware]
+before = ["middleware1", "middleware2"]  # Applied before search
+after = ["middleware3", "middleware4"]   # Applied after search
+error = ["error_handler1"]              # Error recovery
+
+# For composite pipelines
+[pipelines.<pipeline_id>.strategy]
+type = "query_analysis|weighted_ensemble"
+rules = [...]  # Strategy-specific rules
+
+[pipelines.<pipeline_id>.components]
+component1 = { weight = 0.5, enabled = true }
+component2 = { weight = 0.5, enabled = true }
+```
+
+#### Middleware Definition Schema
+
+```toml
+[middleware.<middleware_id>]
+name = "Middleware Name"
+type = "before_search|after_search|error_handler"
+enabled = true
+description = "What this middleware does"
+
+[middleware.<middleware_id>.config]
+# Middleware-specific configuration
+parameter1 = "value1"
+parameter2 = 123
+```
+
+### Configuration Files
+
+1. **Default Configuration**: `tldw_chatbook/Config_Files/rag_pipelines.toml`
+   - Contains all built-in pipelines
+   - Default middleware definitions
+   - Global pipeline settings
+
+2. **Custom Configurations**: User-defined TOML files
+   - Can be loaded from any location
+   - Override or extend default pipelines
+   - Share via simple file distribution
+
+### Pipeline Types
+
+#### 1. Built-in Pipelines
+Pre-defined pipelines with hardcoded implementations:
+
+```toml
+[pipelines.plain]
+type = "built-in"
+function = "perform_plain_rag_search"
+```
+
+#### 2. Custom Pipelines
+Extend existing pipelines with custom parameters:
+
+```toml
+[pipelines.medical_search]
+type = "custom"
+base_pipeline = "semantic"
+profile = "high_accuracy"
+```
+
+#### 3. Composite Pipelines
+Combine multiple pipelines with strategies:
+
+```toml
+[pipelines.adaptive]
+type = "composite"
+[pipelines.adaptive.strategy]
+type = "query_analysis"
+rules = [
+    { condition = "is_question", pipeline = "semantic" },
+    { condition = "has_technical_terms", pipeline = "hybrid" }
+]
+```
+
+#### 4. Ensemble Pipelines
+Run multiple pipelines and merge results:
+
+```toml
+[pipelines.ensemble]
+type = "composite"
+[pipelines.ensemble.components]
+plain = { weight = 0.2, enabled = true }
+semantic = { weight = 0.5, enabled = true }
+hybrid = { weight = 0.3, enabled = true }
+```
+
+### Loading and Using TOML Pipelines
+
+#### Python API
+
+```python
+from tldw_chatbook.RAG_Search.pipeline_loader import get_pipeline_loader
+
+# Load pipelines from default location
+loader = get_pipeline_loader()
+
+# Load additional pipeline file
+loader.load_pipeline_config(Path("my_pipelines.toml"))
+
+# Get pipeline function
+pipeline_func = loader.get_pipeline_function("medical_search")
+
+# Execute pipeline
+results, context = await pipeline_func(app, query, sources, **kwargs)
+```
+
+#### Configuration Integration
+
+In your main config.toml:
+
+```toml
+[AppRAGSearchConfig.rag.pipeline]
+default_pipeline = "hybrid"
+pipeline_config_file = "~/.config/tldw_cli/custom_pipelines.toml"
+enable_pipeline_metrics = true
+pipeline_timeout_seconds = 30.0
+
+# Override parameters for specific pipelines
+[AppRAGSearchConfig.rag.pipeline.pipeline_overrides.semantic]
+chunk_size = 600
+top_k = 20
+```
+
+### Creating Custom Pipeline Configurations
+
+#### Step 1: Create TOML File
+
+```toml
+# my_custom_pipelines.toml
+[pipelines.research_assistant]
+name = "Research Assistant Pipeline"
+description = "Optimized for academic research queries"
+type = "custom"
+base_pipeline = "semantic"
+enabled = true
+tags = ["research", "academic"]
+
+[pipelines.research_assistant.parameters]
+chunk_size = 512
+chunk_overlap = 128
+top_k = 15
+include_citations = true
+score_threshold = 0.7
+
+[pipelines.research_assistant.middleware]
+before = ["query_expansion", "academic_term_enhancer"]
+after = ["citation_formatter", "result_clustering"]
+```
+
+#### Step 2: Define Custom Middleware
+
+```toml
+[middleware.academic_term_enhancer]
+name = "Academic Term Enhancer"
+type = "before_search"
+enabled = true
+description = "Adds academic synonyms and related terms"
+
+[middleware.academic_term_enhancer.config]
+thesaurus = "academic_thesaurus.db"
+boost_factor = 1.5
+include_abbreviations = true
+```
+
+#### Step 3: Load and Use
+
+```python
+# In your application
+loader = get_pipeline_loader()
+loader.load_pipeline_config(Path("my_custom_pipelines.toml"))
+
+# Use the pipeline
+results = await perform_search_with_pipeline(
+    app, query, sources, 
+    pipeline="research_assistant"
+)
+```
+
+### Sharing Pipeline Configurations
+
+#### Export Pipeline
+
+```python
+loader = get_pipeline_loader()
+loader.export_pipeline_config(
+    "research_assistant",
+    Path("research_pipeline_export.toml")
+)
+```
+
+#### Import Shared Pipeline
+
+Simply copy the TOML file to your config directory or load it:
+
+```python
+loader.load_pipeline_config(Path("downloaded_pipeline.toml"))
+```
+
+### Best Practices
+
+1. **Naming Conventions**
+   - Use lowercase with underscores for pipeline IDs
+   - Use descriptive names that indicate purpose
+   - Tag pipelines appropriately for discovery
+
+2. **Parameter Management**
+   - Document all custom parameters
+   - Provide sensible defaults
+   - Validate parameter ranges
+
+3. **Middleware Organization**
+   - Keep middleware focused on single responsibilities
+   - Document configuration options
+   - Handle errors gracefully
+
+4. **Performance Considerations**
+   - Test pipeline configurations for latency
+   - Monitor resource usage
+   - Use caching appropriately
+
+### Migration from Code-Based Pipelines
+
+To migrate existing code-based pipelines to TOML:
+
+1. **Extract Configuration**
+   ```python
+   # Old code-based approach
+   async def my_pipeline(app, query, sources, **kwargs):
+       kwargs["chunk_size"] = 600
+       kwargs["top_k"] = 20
+       return await perform_semantic_search(app, query, sources, **kwargs)
+   ```
+
+2. **Convert to TOML**
+   ```toml
+   [pipelines.my_pipeline]
+   name = "My Custom Pipeline"
+   type = "custom"
+   base_pipeline = "semantic"
+   
+   [pipelines.my_pipeline.parameters]
+   chunk_size = 600
+   top_k = 20
+   ```
+
+3. **Update Usage**
+   ```python
+   # New TOML-based approach
+   pipeline_func = get_pipeline_function("my_pipeline")
+   results = await pipeline_func(app, query, sources)
+   ```
+
+### Troubleshooting
+
+1. **Pipeline Not Found**
+   - Check pipeline ID matches exactly
+   - Verify TOML file is loaded
+   - Check enabled flag
+
+2. **Invalid Configuration**
+   - Validate TOML syntax
+   - Check required fields
+   - Review type-specific requirements
+
+3. **Performance Issues**
+   - Monitor pipeline metrics
+   - Check middleware chain length
+   - Verify parameter values
+
 ## Future Enhancements
 
 ### Planned Features
@@ -570,7 +2020,7 @@ fts5_connection_pool_size = 3
 3. **Analytics**
    - Search quality metrics
    - User behavior tracking
-   - A/B testing framework
+   - Enhanced A/B testing visualization
 
 4. **Integration**
    - External knowledge bases

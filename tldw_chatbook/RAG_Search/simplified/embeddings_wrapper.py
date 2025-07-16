@@ -119,13 +119,50 @@ class EmbeddingsServiceWrapper:
         self._cache_misses = 0
         self._embedding_dimension = None  # Cache the dimension after first use
         
-        # Circuit breaker for resilience
+        # Memory usage cache
+        self._memory_cache = {
+            'value': None,
+            'timestamp': 0,
+            'ttl': 5.0  # Cache for 5 seconds
+        }
+        
+        # Circuit breaker for resilience - configurable via env vars or config
         breaker_config = CircuitBreakerConfig(
-            failure_threshold=3,
-            recovery_timeout=30.0,
-            success_threshold=2
+            failure_threshold=int(os.environ.get('EMBEDDINGS_CIRCUIT_FAILURE_THRESHOLD', '3')),
+            recovery_timeout=float(os.environ.get('EMBEDDINGS_CIRCUIT_RECOVERY_TIMEOUT', '30.0')),
+            success_threshold=int(os.environ.get('EMBEDDINGS_CIRCUIT_SUCCESS_THRESHOLD', '2')),
+            enable_exponential_backoff=os.environ.get('EMBEDDINGS_CIRCUIT_BACKOFF_ENABLED', 'true').lower() == 'true',
+            backoff_multiplier=float(os.environ.get('EMBEDDINGS_CIRCUIT_BACKOFF_MULTIPLIER', '2.0')),
+            max_recovery_timeout=float(os.environ.get('EMBEDDINGS_CIRCUIT_MAX_RECOVERY', '300.0')),
+            min_recovery_timeout=float(os.environ.get('EMBEDDINGS_CIRCUIT_MIN_RECOVERY', '30.0'))
         )
         self._circuit_breaker = get_circuit_breaker(f"embeddings_{model_name}", breaker_config)
+        logger.info(f"Circuit breaker configured: failure_threshold={breaker_config.failure_threshold}, "
+                   f"recovery_timeout={breaker_config.recovery_timeout}s")
+    
+    def _get_cached_memory_info(self):
+        """
+        Get memory info with caching to reduce psutil overhead.
+        
+        Returns:
+            Memory usage in MB
+        """
+        current_time = time.time()
+        
+        # Check if cache is valid
+        if (self._memory_cache['value'] is not None and 
+            current_time - self._memory_cache['timestamp'] < self._memory_cache['ttl']):
+            return self._memory_cache['value']
+        
+        # Get fresh memory info
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / (1024 * 1024)
+        
+        # Update cache
+        self._memory_cache['value'] = memory_mb
+        self._memory_cache['timestamp'] = current_time
+        
+        return memory_mb
     
     def _build_config(self, model_name: str, device: Optional[str], 
                      api_key: Optional[str], base_url: Optional[str], 
@@ -224,17 +261,28 @@ class EmbeddingsServiceWrapper:
         logger.info(f"Creating embeddings for batch of {len(texts)} texts")
         
         # Get memory usage before
-        process = psutil.Process()
-        memory_before = process.memory_info().rss / (1024 * 1024)  # MB
+        memory_before = self._get_cached_memory_info()
         
         try:
             # Check if embeddings are cached (simplified check)
             # In reality, the factory handles caching internally
             # This is a simplified representation for metrics
-            # Use deterministic hash for cache key based on all texts
-            # Include text count and total length to avoid collisions
-            cache_content = f"{len(texts)}:{sum(len(t) for t in texts)}:{hashlib.sha256('|'.join(texts).encode('utf-8')).hexdigest()}"
-            cache_key = hashlib.sha256(cache_content.encode('utf-8')).hexdigest()[:32]
+            # Create efficient cache key without joining all texts
+            # Use hash of individual text hashes to avoid memory explosion
+            text_hashes = []
+            for text in texts:
+                # Take first 100 chars of each text for hash to avoid huge strings
+                text_preview = text[:100] if len(text) > 100 else text
+                text_hash = hashlib.md5(text_preview.encode('utf-8')).hexdigest()[:8]
+                text_hashes.append(text_hash)
+            
+            # Combine metadata for cache key
+            cache_components = [
+                str(len(texts)),  # Number of texts
+                str(sum(len(t) for t in texts)),  # Total character count
+                hashlib.sha256(''.join(text_hashes).encode('utf-8')).hexdigest()[:16]  # Combined hash
+            ]
+            cache_key = hashlib.sha256(':'.join(cache_components).encode('utf-8')).hexdigest()[:32]
             is_cached = hasattr(self.factory, '_cache') and cache_key in getattr(self.factory, '_cache', {})
             
             if is_cached:
@@ -275,7 +323,7 @@ class EmbeddingsServiceWrapper:
                 logger.info(f"Cached embedding dimension from first use: {self._embedding_dimension}")
             
             # Get memory usage after
-            memory_after = process.memory_info().rss / (1024 * 1024)  # MB
+            memory_after = self._get_cached_memory_info()
             memory_delta = memory_after - memory_before
             
             # Update metrics
@@ -411,8 +459,7 @@ class EmbeddingsServiceWrapper:
             model_ids = ["default"]
         
         # Get memory before loading
-        process = psutil.Process()
-        memory_before = process.memory_info().rss / (1024 * 1024)  # MB
+        memory_before = self._get_cached_memory_info()
         
         try:
             start_time = time.time()
@@ -420,7 +467,7 @@ class EmbeddingsServiceWrapper:
             load_time = time.time() - start_time
             
             # Get memory after loading
-            memory_after = process.memory_info().rss / (1024 * 1024)  # MB
+            memory_after = self._get_cached_memory_info()
             memory_used = memory_after - memory_before
             
             # Log metrics
@@ -482,11 +529,12 @@ class EmbeddingsServiceWrapper:
         Returns:
             Dict with memory usage in MB for different components
         """
+        # Get current memory usage
+        rss_mb = self._get_cached_memory_info()  # Resident Set Size in MB
+        
+        # For VMS, we need to get it separately as it's not cached
         process = psutil.Process()
         memory_info = process.memory_info()
-        
-        # Get current memory usage
-        rss_mb = memory_info.rss / (1024 * 1024)  # Resident Set Size in MB
         vms_mb = memory_info.vms / (1024 * 1024)  # Virtual Memory Size in MB
         
         # Try to get GPU memory if using CUDA
@@ -550,7 +598,26 @@ class EmbeddingsServiceWrapper:
         Should be called when the service is no longer needed.
         """
         try:
-            self.factory.close()
+            # Close the factory first
+            if hasattr(self, 'factory') and self.factory is not None:
+                self.factory.close()
+                logger.info("Closed embeddings factory")
+            
+            # Clear any model references
+            if hasattr(self, 'factory'):
+                self.factory = None
+            
+            # Explicitly free GPU memory if using CUDA
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    logger.info("Cleared CUDA cache")
+            except ImportError:
+                pass  # torch not available
+            except Exception as e:
+                logger.warning(f"Failed to clear CUDA cache: {e}")
+            
             logger.info("Closed embeddings service")
         except Exception as e:
             logger.error(f"Error closing embeddings service: {e}")
@@ -569,9 +636,15 @@ class EmbeddingsServiceWrapper:
             # Only attempt cleanup if factory exists and hasn't been cleaned up
             if hasattr(self, 'factory') and self.factory is not None:
                 self.close()
+        except (KeyboardInterrupt, SystemExit):
+            # Re-raise critical exceptions
+            raise
         except Exception as e:
             # Log the error but don't raise - destructors shouldn't throw
             logger.error(f"Error during embeddings wrapper cleanup: {e}")
+            # Log traceback for debugging
+            import traceback
+            logger.debug(f"Cleanup error traceback: {traceback.format_exc()}")
 
 
 # Convenience function for creating service with common configurations

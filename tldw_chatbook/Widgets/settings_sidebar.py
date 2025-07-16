@@ -13,6 +13,13 @@ from textual.widgets import Static, Select, TextArea, Input, Collapsible, Button
 # Local Imports
 from ..config import get_cli_providers_and_models
 
+# Try to import pipeline integration
+try:
+    from ..RAG_Search.pipeline_integration import get_pipeline_manager
+    PIPELINE_INTEGRATION_AVAILABLE = True
+except ImportError:
+    PIPELINE_INTEGRATION_AVAILABLE = False
+
 #
 #######################################################################################################################
 #
@@ -172,6 +179,54 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 id=f"{id_prefix}-rag-preset",
                 prompt="Select preset...",
                 classes="rag-preset-select sidebar-select"
+            )
+            
+            # Pipeline selection (for custom pipelines from TOML)
+            yield Static("Search Pipeline", classes="sidebar-label")
+            
+            # Build pipeline options
+            pipeline_options = [
+                ("📊 Plain (Fast)", "plain"),
+                ("🧠 Semantic", "semantic"), 
+                ("🔀 Hybrid", "hybrid")
+            ]
+            
+            # Add custom pipelines if available
+            if PIPELINE_INTEGRATION_AVAILABLE:
+                try:
+                    pipeline_manager = get_pipeline_manager()
+                    custom_pipelines = pipeline_manager.list_available_pipelines()
+                    
+                    # Add separator if we have custom pipelines
+                    has_custom = False
+                    for pipeline in custom_pipelines:
+                        if pipeline["enabled"] and pipeline["id"] not in ["plain", "semantic", "full", "hybrid"]:
+                            if not has_custom:
+                                pipeline_options.append(("─" * 15, "separator"))
+                                has_custom = True
+                            
+                            # Use emoji based on type/tags
+                            emoji = "🔧"  # Default
+                            if "technical" in pipeline.get("tags", []):
+                                emoji = "🛠️"
+                            elif "support" in pipeline.get("tags", []):
+                                emoji = "💬"
+                            elif "medical" in pipeline.get("tags", []):
+                                emoji = "🏥"
+                            elif "legal" in pipeline.get("tags", []):
+                                emoji = "⚖️"
+                            
+                            label = f"{emoji} {pipeline['name']}"
+                            pipeline_options.append((label, pipeline["id"]))
+                except Exception as e:
+                    logging.warning(f"Failed to load custom pipelines: {e}")
+            
+            yield Select(
+                options=pipeline_options,
+                value="plain",
+                id=f"{id_prefix}-rag-search-mode",
+                prompt="Select pipeline...",
+                classes="rag-pipeline-select sidebar-select"
             )
             
             # Search scope

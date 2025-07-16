@@ -40,9 +40,19 @@ try:
     )
     from tldw_chatbook.RAG_Search.query_expansion import QueryExpander
     RAG_SERVICES_AVAILABLE = True
+    
+    # Try to import pipeline integration
+    try:
+        from tldw_chatbook.RAG_Search.pipeline_integration import get_pipeline_manager
+        PIPELINE_INTEGRATION_AVAILABLE = True
+    except ImportError:
+        logger.info("Pipeline integration not available")
+        PIPELINE_INTEGRATION_AVAILABLE = False
+        
 except ImportError as e:
     logger.warning(f"Simplified RAG services not available: {e}")
     RAG_SERVICES_AVAILABLE = False
+    PIPELINE_INTEGRATION_AVAILABLE = False
     
     # Create placeholder classes
     class RAGService:
@@ -1312,6 +1322,52 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
     
     # Perform RAG search based on selected mode
     try:
+        # Check if pipeline integration is available and try to use it
+        if PIPELINE_INTEGRATION_AVAILABLE:
+            pipeline_manager = get_pipeline_manager()
+            
+            # Check if the search_mode is a pipeline ID
+            if pipeline_manager.validate_pipeline_id(search_mode):
+                logger.info(f"Using pipeline '{search_mode}' from TOML configuration")
+                
+                # Prepare kwargs for pipeline execution
+                pipeline_kwargs = {
+                    "top_k": top_k,
+                    "max_context_length": max_context_length,
+                    "chunk_size": chunk_size,
+                    "chunk_overlap": chunk_overlap,
+                    "chunk_type": chunk_type,
+                    "include_metadata": include_metadata,
+                    "enable_rerank": enable_rerank,
+                    "reranker_model": reranker_model,
+                    "keyword_filter_list": keyword_filter_list,
+                    "bm25_weight": 0.5,
+                    "vector_weight": 0.5
+                }
+                
+                # Get pipeline default parameters and merge
+                default_params = pipeline_manager.get_pipeline_parameters(search_mode)
+                pipeline_kwargs.update(default_params)
+                
+                # Execute pipeline
+                if expanded_queries and query_expansion_enabled:
+                    all_results = []
+                    all_queries = [user_message] + expanded_queries
+                    
+                    for query in all_queries:
+                        results, _ = await pipeline_manager.execute_pipeline(
+                            search_mode, app, query, sources, **pipeline_kwargs
+                        )
+                        all_results.extend(results)
+                else:
+                    all_results, formatted_context = await pipeline_manager.execute_pipeline(
+                        search_mode, app, user_message, sources, **pipeline_kwargs
+                    )
+                    return formatted_context
+            else:
+                logger.info(f"Pipeline '{search_mode}' not found in TOML, falling back to legacy mode")
+        
+        # Fallback to legacy implementation
         # If we have expanded queries and combine_results is true, search with all queries
         if expanded_queries and query_expansion_enabled:
             all_results = []
@@ -1451,35 +1507,72 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
             
         else:
             # Original single query search
-            if search_mode == "plain":
-                logger.info("Performing plain RAG search (BM25)")
-                results, context = await perform_plain_rag_search(
-                    app, user_message, sources, top_k, max_context_length,
-                    enable_rerank, reranker_model, keyword_filter_list
-                )
-            elif search_mode == "semantic":
-                logger.info("Performing semantic RAG search (embeddings)")
-                results, context = await perform_full_rag_pipeline(
-                    app, user_message, sources, top_k, max_context_length,
-                    chunk_size, chunk_overlap, chunk_type, include_metadata,
-                    enable_rerank, reranker_model, keyword_filter_list
-                )
-            elif search_mode == "hybrid":
-                logger.info("Performing hybrid RAG search (BM25 + embeddings)")
-                results, context = await perform_hybrid_rag_search(
-                    app, user_message, sources, top_k, max_context_length,
-                    enable_rerank, reranker_model, chunk_size, chunk_overlap,
-                    chunk_type, 0.5, 0.5,  # Default weights for BM25 and vector search
-                    keyword_filter_list
-                )
-            else:
-                # Default to semantic if mode is unrecognized
-                logger.warning(f"Unknown search mode '{search_mode}', defaulting to semantic")
-                results, context = await perform_full_rag_pipeline(
-                    app, user_message, sources, top_k, max_context_length,
-                    chunk_size, chunk_overlap, chunk_type, include_metadata,
-                    enable_rerank, reranker_model, keyword_filter_list
-                )
+            # Check if pipeline integration is available and try to use it
+            if PIPELINE_INTEGRATION_AVAILABLE:
+                pipeline_manager = get_pipeline_manager()
+                
+                # Check if the search_mode is a pipeline ID
+                if pipeline_manager.validate_pipeline_id(search_mode):
+                    logger.info(f"Using pipeline '{search_mode}' from TOML configuration")
+                    
+                    # Prepare kwargs for pipeline execution
+                    pipeline_kwargs = {
+                        "top_k": top_k,
+                        "max_context_length": max_context_length,
+                        "chunk_size": chunk_size,
+                        "chunk_overlap": chunk_overlap,
+                        "chunk_type": chunk_type,
+                        "include_metadata": include_metadata,
+                        "enable_rerank": enable_rerank,
+                        "reranker_model": reranker_model,
+                        "keyword_filter_list": keyword_filter_list,
+                        "bm25_weight": 0.5,
+                        "vector_weight": 0.5
+                    }
+                    
+                    # Get pipeline default parameters and merge
+                    default_params = pipeline_manager.get_pipeline_parameters(search_mode)
+                    pipeline_kwargs.update(default_params)
+                    
+                    # Execute pipeline
+                    results, context = await pipeline_manager.execute_pipeline(
+                        search_mode, app, user_message, sources, **pipeline_kwargs
+                    )
+                else:
+                    logger.info(f"Pipeline '{search_mode}' not found in TOML, falling back to legacy mode")
+                    # Fall through to legacy implementation below
+                    
+            # Legacy implementation
+            if not (PIPELINE_INTEGRATION_AVAILABLE and 'results' in locals()):
+                if search_mode == "plain":
+                    logger.info("Performing plain RAG search (BM25)")
+                    results, context = await perform_plain_rag_search(
+                        app, user_message, sources, top_k, max_context_length,
+                        enable_rerank, reranker_model, keyword_filter_list
+                    )
+                elif search_mode == "semantic":
+                    logger.info("Performing semantic RAG search (embeddings)")
+                    results, context = await perform_full_rag_pipeline(
+                        app, user_message, sources, top_k, max_context_length,
+                        chunk_size, chunk_overlap, chunk_type, include_metadata,
+                        enable_rerank, reranker_model, keyword_filter_list
+                    )
+                elif search_mode == "hybrid":
+                    logger.info("Performing hybrid RAG search (BM25 + embeddings)")
+                    results, context = await perform_hybrid_rag_search(
+                        app, user_message, sources, top_k, max_context_length,
+                        enable_rerank, reranker_model, chunk_size, chunk_overlap,
+                        chunk_type, 0.5, 0.5,  # Default weights for BM25 and vector search
+                        keyword_filter_list
+                    )
+                else:
+                    # Default to semantic if mode is unrecognized
+                    logger.warning(f"Unknown search mode '{search_mode}', defaulting to semantic")
+                    results, context = await perform_full_rag_pipeline(
+                        app, user_message, sources, top_k, max_context_length,
+                        chunk_size, chunk_overlap, chunk_type, include_metadata,
+                        enable_rerank, reranker_model, keyword_filter_list
+                    )
         
         if context:
             # Format context for inclusion in chat

@@ -1,0 +1,270 @@
+# RAG Pipeline Configuration
+# This file defines all available RAG pipelines and their configurations
+
+# Built-in Pipelines
+[pipelines.plain]
+name = "Plain RAG Search"
+description = "Fast keyword-based search using SQLite FTS5"
+type = "built-in"
+function = "perform_plain_rag_search"
+enabled = true
+tags = ["fast", "keyword", "fts5"]
+
+[pipelines.plain.parameters]
+top_k = 5
+max_context_length = 10000
+enable_rerank = true
+reranker_model = "flashrank"
+
+[pipelines.semantic]
+name = "Semantic RAG Search"
+description = "AI-powered semantic search using vector embeddings"
+type = "built-in"
+function = "perform_full_rag_pipeline"
+enabled = true
+tags = ["semantic", "embeddings", "ai"]
+
+[pipelines.semantic.parameters]
+top_k = 5
+max_context_length = 10000
+chunk_size = 400
+chunk_overlap = 100
+chunk_type = "words"
+include_metadata = true
+enable_rerank = true
+reranker_model = "flashrank"
+
+[pipelines.hybrid]
+name = "Hybrid RAG Search"
+description = "Combines keyword and semantic search for best results"
+type = "built-in"
+function = "perform_hybrid_rag_search"
+enabled = true
+tags = ["hybrid", "balanced", "comprehensive"]
+
+[pipelines.hybrid.parameters]
+top_k = 5
+max_context_length = 10000
+enable_rerank = true
+reranker_model = "flashrank"
+chunk_size = 400
+chunk_overlap = 100
+chunk_type = "words"
+bm25_weight = 0.5
+vector_weight = 0.5
+
+# Profile-based Pipeline Configurations
+[pipelines.fast_search]
+name = "Fast Search Pipeline"
+description = "Optimized for speed with acceptable accuracy"
+type = "custom"
+base_pipeline = "plain"
+profile = "fast_search"
+enabled = true
+tags = ["speed", "performance", "low-latency"]
+
+[pipelines.fast_search.parameters]
+top_k = 3
+max_context_length = 5000
+enable_rerank = false
+
+[pipelines.high_accuracy]
+name = "High Accuracy Pipeline"
+description = "Maximum retrieval accuracy with re-ranking"
+type = "custom"
+base_pipeline = "semantic"
+profile = "high_accuracy"
+enabled = true
+tags = ["accuracy", "quality", "research"]
+
+[pipelines.high_accuracy.parameters]
+top_k = 20
+max_context_length = 15000
+chunk_size = 512
+chunk_overlap = 128
+enable_rerank = true
+reranker_model = "cohere"
+
+[pipelines.high_accuracy.middleware]
+before = ["query_expansion"]
+after = ["result_reranking", "citation_enhancement"]
+
+# Composite Pipelines
+[pipelines.adaptive]
+name = "Adaptive Search Pipeline"
+description = "Automatically selects best strategy based on query"
+type = "composite"
+enabled = true
+tags = ["adaptive", "smart", "auto"]
+
+[pipelines.adaptive.strategy]
+type = "query_analysis"
+rules = [
+    { condition = "is_question", pipeline = "semantic" },
+    { condition = "has_technical_terms", pipeline = "hybrid" },
+    { condition = "is_short_query", pipeline = "plain" },
+    { default = true, pipeline = "hybrid" }
+]
+
+[pipelines.ensemble]
+name = "Ensemble Search Pipeline"
+description = "Combines multiple pipelines with weighted scoring"
+type = "composite"
+enabled = true
+tags = ["ensemble", "multi-strategy"]
+
+[pipelines.ensemble.components]
+plain = { weight = 0.2, enabled = true }
+semantic = { weight = 0.5, enabled = true }
+hybrid = { weight = 0.3, enabled = true }
+
+[pipelines.ensemble.parameters]
+merge_strategy = "weighted_average"
+deduplication = true
+top_k = 10
+
+# Domain-Specific Pipelines
+[pipelines.technical_docs]
+name = "Technical Documentation Search"
+description = "Optimized for technical content with code and tables"
+type = "custom"
+base_pipeline = "hybrid"
+profile = "technical_docs"
+enabled = true
+tags = ["technical", "documentation", "code"]
+
+[pipelines.technical_docs.parameters]
+chunk_size = 512
+chunk_type = "structural"
+preserve_tables = true
+clean_artifacts = true
+bm25_weight = 0.6
+vector_weight = 0.4
+
+[pipelines.technical_docs.middleware]
+before = ["code_syntax_enhancer", "technical_term_detector"]
+after = ["code_formatter", "table_renderer"]
+
+[pipelines.research_papers]
+name = "Research Paper Search"
+description = "Optimized for academic papers with citations"
+type = "custom"
+base_pipeline = "semantic"
+profile = "research_papers"
+enabled = true
+tags = ["academic", "research", "citations"]
+
+[pipelines.research_papers.parameters]
+chunk_size = 512
+chunk_type = "hierarchical"
+include_citations = true
+clean_artifacts = true
+
+[pipelines.research_papers.middleware]
+before = ["citation_parser", "abstract_extractor"]
+after = ["citation_formatter", "result_clustering"]
+
+# Middleware Definitions
+[middleware.query_expansion]
+name = "Query Expansion"
+type = "before_search"
+enabled = true
+description = "Expands queries with synonyms and related terms"
+
+[middleware.query_expansion.config]
+method = "llm"  # or "wordnet", "custom"
+model = "gpt-3.5-turbo"
+max_expansions = 3
+include_synonyms = true
+
+[middleware.result_reranking]
+name = "Advanced Result Re-ranking"
+type = "after_search"
+enabled = true
+description = "Re-ranks results using cross-encoder models"
+
+[middleware.result_reranking.config]
+model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+batch_size = 32
+score_threshold = 0.5
+
+[middleware.citation_enhancement]
+name = "Citation Enhancement"
+type = "after_search"
+enabled = true
+description = "Adds detailed citations to search results"
+
+[middleware.citation_enhancement.config]
+format = "inline"  # or "footnote", "bibliography"
+include_page_numbers = true
+include_timestamps = true
+
+[middleware.code_syntax_enhancer]
+name = "Code Syntax Enhancement"
+type = "before_search"
+enabled = true
+description = "Enhances queries with programming language context"
+
+[middleware.code_syntax_enhancer.config]
+detect_language = true
+add_language_keywords = true
+expand_abbreviations = true
+
+[middleware.technical_term_detector]
+name = "Technical Term Detection"
+type = "before_search"
+enabled = true
+description = "Identifies and boosts technical terminology"
+
+[middleware.technical_term_detector.config]
+term_database = "technical_terms.db"
+boost_factor = 1.5
+case_sensitive = false
+
+# A/B Testing Configurations
+[ab_tests.speed_vs_accuracy]
+name = "Speed vs Accuracy Test"
+description = "Compare fast search against high accuracy"
+enabled = false
+control_pipeline = "hybrid"
+test_pipelines = ["fast_search", "high_accuracy"]
+
+[ab_tests.speed_vs_accuracy.traffic_split]
+hybrid = 0.5
+fast_search = 0.25
+high_accuracy = 0.25
+
+[ab_tests.speed_vs_accuracy.metrics]
+track = ["search_latency", "result_relevance", "user_satisfaction"]
+duration_days = 14
+
+# Pipeline Templates (for creating new pipelines)
+[templates.domain_specific]
+name = "Domain-Specific Template"
+description = "Template for creating domain-specific search pipelines"
+base_pipeline = "hybrid"
+
+[templates.domain_specific.parameters]
+chunk_size = 400
+chunk_overlap = 100
+include_metadata = true
+enable_rerank = true
+
+[templates.domain_specific.customizable]
+fields = ["domain_terms", "boost_recent", "special_filters"]
+
+# Global Pipeline Settings
+[global]
+default_pipeline = "hybrid"
+enable_pipeline_metrics = true
+pipeline_timeout_seconds = 30
+max_concurrent_pipelines = 3
+cache_pipeline_results = true
+cache_ttl_seconds = 3600
+
+# Pipeline Validation Rules
+[validation]
+required_fields = ["name", "description", "type"]
+valid_types = ["built-in", "custom", "composite", "wrapper"]
+max_middleware_chain = 10
+require_enabled_flag = true

@@ -97,6 +97,20 @@ class QueryExpansionConfig:
 
 
 @dataclass
+class PipelineConfig:
+    """Configuration for pipeline selection and behavior."""
+    default_pipeline: str = "hybrid"
+    enable_pipeline_metrics: bool = True
+    pipeline_timeout_seconds: float = 30.0
+    max_concurrent_pipelines: int = 3
+    cache_pipeline_results: bool = True
+    pipeline_config_file: Optional[Path] = None
+    
+    # Pipeline-specific overrides
+    pipeline_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+
+@dataclass
 class RAGConfig:
     """Complete RAG configuration."""
     # Component configurations
@@ -105,6 +119,7 @@ class RAGConfig:
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     query_expansion: QueryExpansionConfig = field(default_factory=QueryExpansionConfig)
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     
     # Convenience shortcuts for common settings
     @property
@@ -172,17 +187,23 @@ class RAGConfig:
         chunking_data = data.get('chunking', {})
         search_data = data.get('search', {})
         query_expansion_data = data.get('query_expansion', {})
+        pipeline_data = data.get('pipeline', {})
         
         # Handle path conversion for persist_directory
         if 'persist_directory' in vector_store_data and vector_store_data['persist_directory']:
             vector_store_data['persist_directory'] = Path(vector_store_data['persist_directory'])
+        
+        # Handle path conversion for pipeline_config_file
+        if 'pipeline_config_file' in pipeline_data and pipeline_data['pipeline_config_file']:
+            pipeline_data['pipeline_config_file'] = Path(pipeline_data['pipeline_config_file'])
         
         return cls(
             embedding=EmbeddingConfig(**embedding_data),
             vector_store=VectorStoreConfig(**vector_store_data),
             chunking=ChunkingConfig(**chunking_data),
             search=SearchConfig(**search_data),
-            query_expansion=QueryExpansionConfig(**query_expansion_data)
+            query_expansion=QueryExpansionConfig(**query_expansion_data),
+            pipeline=PipelineConfig(**pipeline_data)
         )
     
     @classmethod
@@ -426,9 +447,37 @@ class RAGConfig:
         # === Query Expansion Configuration ===
         query_expansion_section = rag_config.get('query_expansion', {})
         
-        config.query_expansion.enabled = (
-            query_expansion_section.get('enabled', config.query_expansion.enabled)
+        config.query_expansion.enabled = query_expansion_section.get('enabled', config.query_expansion.enabled)
+        config.query_expansion.method = query_expansion_section.get('method', config.query_expansion.method)
+        
+        # === Pipeline Configuration ===
+        pipeline_section = rag_config.get('pipeline', {})
+        
+        config.pipeline.default_pipeline = (
+            os.getenv("RAG_DEFAULT_PIPELINE") or
+            pipeline_section.get('default_pipeline', config.pipeline.default_pipeline)
         )
+        
+        config.pipeline.enable_pipeline_metrics = pipeline_section.get(
+            'enable_pipeline_metrics', config.pipeline.enable_pipeline_metrics
+        )
+        
+        config.pipeline.pipeline_timeout_seconds = float(
+            pipeline_section.get('pipeline_timeout_seconds', config.pipeline.pipeline_timeout_seconds)
+        )
+        
+        config.pipeline.cache_pipeline_results = pipeline_section.get(
+            'cache_pipeline_results', config.pipeline.cache_pipeline_results
+        )
+        
+        # Pipeline config file location
+        if 'pipeline_config_file' in pipeline_section:
+            config.pipeline.pipeline_config_file = Path(pipeline_section['pipeline_config_file'])
+        
+        # Pipeline-specific overrides
+        if 'pipeline_overrides' in pipeline_section:
+            config.pipeline.pipeline_overrides = pipeline_section['pipeline_overrides']
+        
         
         config.query_expansion.method = (
             query_expansion_section.get('method', config.query_expansion.method)

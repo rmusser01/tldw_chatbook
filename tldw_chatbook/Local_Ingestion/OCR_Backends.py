@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 import numpy as np
 from loguru import logger
+from tldw_chatbook.Utils.path_validation import validate_path
 
 # Import optional dependencies
 try:
@@ -199,6 +200,10 @@ class DoclingOCRBackend(OCRBackend):
                      language: str = "en",
                      **kwargs) -> OCRResult:
         """Process image with Docling (converts to PDF internally if needed)."""
+        # Validate path to prevent directory traversal
+        base_dir = kwargs.get('base_directory', os.getcwd())
+        validated_path = validate_path(image_path, base_dir)
+        
         # Docling primarily works with PDFs, so for images we might need to convert
         # For now, we'll raise NotImplementedError
         raise NotImplementedError("Docling backend currently only supports PDF processing")
@@ -212,6 +217,9 @@ class DoclingOCRBackend(OCRBackend):
             self.initialize()
         
         try:
+            # Validate path to prevent directory traversal
+            base_dir = kwargs.get('base_directory', os.getcwd())
+            validated_path = validate_path(pdf_path, base_dir)
             # Configure pipeline options
             pipeline_options = PdfPipelineOptions()
             pipeline_options.do_ocr = True
@@ -221,7 +229,7 @@ class DoclingOCRBackend(OCRBackend):
                 pipeline_options.ocr_lang = language
             
             # Convert document
-            result = self.converter.convert(str(pdf_path), pipeline_options=pipeline_options)
+            result = self.converter.convert(str(validated_path), pipeline_options=pipeline_options)
             
             # Extract text and create OCR results
             ocr_results = []
@@ -299,6 +307,10 @@ class TesseractOCRBackend(OCRBackend):
             self.initialize()
         
         try:
+            # Validate path to prevent directory traversal
+            # Use current working directory as base if not specified
+            base_dir = kwargs.get('base_directory', os.getcwd())
+            validated_path = validate_path(image_path, base_dir)
             # Map common language codes to Tesseract codes
             lang_map = {
                 "en": "eng",
@@ -321,7 +333,7 @@ class TesseractOCRBackend(OCRBackend):
             
             # Get text with confidence scores
             data = pytesseract.image_to_data(
-                str(image_path),
+                str(validated_path),
                 lang=tesseract_lang,
                 output_type=pytesseract.Output.DICT,
                 config=kwargs.get('config', '')
@@ -382,6 +394,10 @@ class TesseractOCRBackend(OCRBackend):
                    language: str = "en",
                    **kwargs) -> List[OCRResult]:
         """Process PDF by converting pages to images first."""
+        # Validate path to prevent directory traversal
+        base_dir = kwargs.get('base_directory', os.getcwd())
+        validated_path = validate_path(pdf_path, base_dir)
+        
         # This would require pdf2image or similar
         raise NotImplementedError("PDF processing not implemented for Tesseract backend. Convert to images first.")
     
@@ -442,12 +458,15 @@ class EasyOCRBackend(OCRBackend):
             self._initialized = True
         
         try:
+            # Validate path to prevent directory traversal
+            base_dir = kwargs.get('base_directory', os.getcwd())
+            validated_path = validate_path(image_path, base_dir)
             import time
             start_time = time.time()
             
             # Perform OCR
             results = self.reader.readtext(
-                str(image_path),
+                str(validated_path),
                 detail=1,  # Get bounding boxes and confidence
                 paragraph=kwargs.get('paragraph', True)
             )
@@ -500,6 +519,10 @@ class EasyOCRBackend(OCRBackend):
                    language: str = "en",
                    **kwargs) -> List[OCRResult]:
         """Process PDF by converting pages to images first."""
+        # Validate path to prevent directory traversal
+        base_dir = kwargs.get('base_directory', os.getcwd())
+        validated_path = validate_path(pdf_path, base_dir)
+        
         raise NotImplementedError("PDF processing not implemented for EasyOCR backend. Convert to images first.")
     
     def get_supported_languages(self) -> List[str]:
@@ -545,11 +568,15 @@ class PaddleOCRBackend(OCRBackend):
             self._initialized = True
         
         try:
+            # Validate path to prevent directory traversal
+            base_dir = kwargs.get('base_directory', os.getcwd())
+            validated_path = validate_path(image_path, base_dir)
+            
             import time
             start_time = time.time()
             
             # Perform OCR
-            result = self.ocr.ocr(str(image_path), cls=True)
+            result = self.ocr.ocr(str(validated_path), cls=True)
             
             # Extract text and metadata
             text_parts = []
@@ -601,6 +628,10 @@ class PaddleOCRBackend(OCRBackend):
                    language: str = "en",
                    **kwargs) -> List[OCRResult]:
         """Process PDF by converting pages to images first."""
+        # Validate path to prevent directory traversal
+        base_dir = kwargs.get('base_directory', os.getcwd())
+        validated_path = validate_path(pdf_path, base_dir)
+        
         raise NotImplementedError("PDF processing not implemented for PaddleOCR backend. Convert to images first.")
     
     def get_supported_languages(self) -> List[str]:
@@ -705,6 +736,9 @@ Prefer using ☐ and ☑ for check boxes."""
             self.initialize()
         
         try:
+            # Validate path to prevent directory traversal
+            base_dir = kwargs.get('base_directory', os.getcwd())
+            validated_path = validate_path(image_path, base_dir)
             import time
             start_time = time.time()
             
@@ -725,11 +759,11 @@ Prefer using ☐ and ☑ for check boxes."""
                 # Use transformers directly
                 prompt = kwargs.get('prompt', self._get_docext_prompt())
                 
-                image = Image.open(image_path)
+                image = Image.open(validated_path)
                 messages = [
                     {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": [
-                        {"type": "image", "image": f"file://{image_path}"},
+                        {"type": "image", "image": f"file://{validated_path}"},
                         {"type": "text", "text": prompt},
                     ]},
                 ]
@@ -850,12 +884,16 @@ Prefer using ☐ and ☑ for check boxes."""
                    language: str = "en",
                    **kwargs) -> List[OCRResult]:
         """Process PDF with docext by converting pages to images."""
+        # Validate path to prevent directory traversal
+        base_dir = kwargs.get('base_directory', os.getcwd())
+        validated_path = validate_path(pdf_path, base_dir)
+        
         # For PDFs, we need to extract pages as images first
         try:
             import pymupdf
             
             results = []
-            doc = pymupdf.open(str(pdf_path))
+            doc = pymupdf.open(str(validated_path))
             
             for page_num, page in enumerate(doc):
                 # Convert page to image

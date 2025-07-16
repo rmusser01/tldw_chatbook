@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import time
 import numpy as np
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 import psutil
 
 from .embeddings_wrapper import EmbeddingsServiceWrapper
@@ -160,6 +161,15 @@ class RAGService:
         
         # Initialize health checker
         init_health_checker(self)
+        
+        # Create dedicated thread pool for CPU-intensive work
+        # Size based on CPU count but capped to avoid excessive threads
+        cpu_count = psutil.cpu_count(logical=False) or 2
+        self._executor = ThreadPoolExecutor(
+            max_workers=min(cpu_count * 2, 8),
+            thread_name_prefix="rag_worker"
+        )
+        logger.info(f"Initialized thread pool with {self._executor._max_workers} workers")
     
     # === Indexing Methods ===
     
@@ -639,22 +649,47 @@ class RAGService:
                         continue
             
             if not db_path:
-                logger.warning("Could not find media database for keyword search")
-                return []
+                logger.error(f"Could not find media database for keyword search. Searched in: {[str(p) for p in possible_paths]}")
+                # Try to create or ensure FTS5 tables exist
+                try:
+                    # Use the first valid path that we can create
+                    default_path = base_dir / "chacha_notes.db"
+                    if not default_path.exists():
+                        logger.info(f"Creating new media database at: {default_path}")
+                        from tldw_chatbook.DB.Client_Media_DB_v2 import Database as MediaDatabase
+                        MediaDatabase(str(default_path), "rag_service")
+                    db_path = str(default_path)
+                except Exception as e:
+                    logger.error(f"Failed to create media database: {e}")
+                    return []
             
             # Get connection pool for this database
             pool_size = getattr(self.config.search, 'fts5_connection_pool_size', FTS5_CONNECTION_POOL_SIZE)
             pool = get_connection_pool(db_path, pool_size=pool_size)
             
-            # Perform FTS5 search directly using connection pool
+            # Perform FTS5 search directly using connection pool with retry
             loop = asyncio.get_event_loop()
-            search_results = await loop.run_in_executor(
-                None,
-                self._perform_fts5_search,
-                pool,
-                query,
-                top_k * SEARCH_RESULT_MULTIPLIER  # Get extra for filtering
-            )
+            retry_count = 0
+            max_retries = 2
+            
+            while retry_count <= max_retries:
+                try:
+                    search_results = await loop.run_in_executor(
+                        None,
+                        self._perform_fts5_search,
+                        pool,
+                        query,
+                        top_k * SEARCH_RESULT_MULTIPLIER  # Get extra for filtering
+                    )
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count > max_retries:
+                        logger.error(f"FTS5 search failed after {max_retries} retries: {e}")
+                        raise
+                    else:
+                        logger.warning(f"FTS5 search attempt {retry_count} failed, retrying: {e}")
+                        await asyncio.sleep(0.1 * retry_count)  # Exponential backoff
             
             # Process results in batches for better performance
             if include_citations:
@@ -670,7 +705,9 @@ class RAGService:
             return results
             
         except Exception as e:
-            logger.error(f"Keyword search failed: {e}", exc_info=True)
+            logger.error(f"Keyword search failed for query '{query}': {e}", exc_info=True)
+            # Log additional context for debugging
+            logger.debug(f"Search parameters: top_k={top_k}, include_citations={include_citations}")
             # Return empty list on error to maintain compatibility
             return []
     
@@ -795,7 +832,7 @@ class RAGService:
         
         loop = asyncio.get_event_loop()
         chunks = await loop.run_in_executor(
-            None,
+            self._executor,  # Use dedicated thread pool
             self.chunking.chunk_text,
             content,
             chunk_size,
@@ -1049,10 +1086,10 @@ class RAGService:
             m.author,
             m.ingestion_date,
             m.tags,
-            rank
+            -rank as rank
         FROM Media m
-        JOIN MediaSearchIndex msi ON m.id = msi.media_id
-        WHERE MediaSearchIndex MATCH ?
+        JOIN media_fts ON m.id = media_fts.rowid
+        WHERE media_fts MATCH ?
         AND m.is_trash = 0
         ORDER BY rank
         LIMIT ?
@@ -1179,6 +1216,11 @@ class RAGService:
     def close(self):
         """Clean up all resources including connection pools."""
         try:
+            # Shutdown thread pool executor
+            if hasattr(self, '_executor'):
+                self._executor.shutdown(wait=True, cancel_futures=True)
+                logger.info("Shut down thread pool executor")
+            
             # Close embeddings service
             self.embeddings.close()
             

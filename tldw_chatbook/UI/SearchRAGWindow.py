@@ -35,9 +35,19 @@ try:
         perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
     )
     RAG_EVENTS_AVAILABLE = True
+    
+    # Try to import pipeline integration
+    try:
+        from ..RAG_Search.pipeline_integration import get_pipeline_manager
+        PIPELINE_INTEGRATION_AVAILABLE = True
+    except ImportError:
+        logger.info("Pipeline integration not available")
+        PIPELINE_INTEGRATION_AVAILABLE = False
+        
 except ImportError as e:
     logger.warning(f"RAG event handlers not available: {e}")
     RAG_EVENTS_AVAILABLE = False
+    PIPELINE_INTEGRATION_AVAILABLE = False
     # Create placeholder functions
     async def perform_plain_rag_search(*args, **kwargs):
         raise ImportError("RAG search not available - missing dependencies")
@@ -368,12 +378,45 @@ class SearchRAGWindow(Container):
                             # Search Mode Selection
                             with Vertical(classes="setting-group"):
                                 yield Label("Search Mode:", classes="setting-label")
+                                
+                                # Build pipeline options dynamically
+                                pipeline_options = [
+                                    ("📊 Plain RAG (Fast)", "plain"),
+                                    ("🧠 Semantic" if self.embeddings_available else "🧠 Semantic (Unavailable)", "full"),
+                                    ("🔀 Hybrid" if self.embeddings_available else "🔀 Hybrid (Unavailable)", "hybrid")
+                                ]
+                                
+                                # Add custom pipelines if available
+                                if PIPELINE_INTEGRATION_AVAILABLE:
+                                    try:
+                                        pipeline_manager = get_pipeline_manager()
+                                        custom_pipelines = pipeline_manager.list_available_pipelines()
+                                        
+                                        # Add separator if we have custom pipelines
+                                        if custom_pipelines:
+                                            pipeline_options.append(("─" * 20, "separator"))
+                                            
+                                        # Add custom pipelines
+                                        for pipeline in custom_pipelines:
+                                            if pipeline["enabled"] and pipeline["id"] not in ["plain", "semantic", "full", "hybrid"]:
+                                                # Use emoji based on type
+                                                emoji = "🔧"  # Default
+                                                if "technical" in pipeline.get("tags", []):
+                                                    emoji = "🛠️"
+                                                elif "support" in pipeline.get("tags", []):
+                                                    emoji = "💬"
+                                                elif "medical" in pipeline.get("tags", []):
+                                                    emoji = "🏥"
+                                                elif "legal" in pipeline.get("tags", []):
+                                                    emoji = "⚖️"
+                                                
+                                                label = f"{emoji} {pipeline['name']}"
+                                                pipeline_options.append((label, pipeline["id"]))
+                                    except Exception as e:
+                                        logger.warning(f"Failed to load custom pipelines: {e}")
+                                
                                 yield Select(
-                                    options=[
-                                        ("📊 Plain RAG (Fast)", "plain"),
-                                        ("🧠 Semantic" if self.embeddings_available else "🧠 Semantic (Unavailable)", "full"),
-                                        ("🔀 Hybrid" if self.embeddings_available else "🔀 Hybrid (Unavailable)", "hybrid")
-                                    ],
+                                    options=pipeline_options,
                                     value="plain",
                                     id="search-mode-select",
                                     classes="mode-select"
@@ -677,19 +720,50 @@ class SearchRAGWindow(Container):
             await progress_bar.update(progress=20)
             
             # Perform search based on mode
-            if search_mode == "plain":
-                results, context = await perform_plain_rag_search(
-                    self.app_instance,
-                    query,
-                    sources,
-                    self.current_search_config["top_k"],
-                    self.current_search_config["max_context"],
-                    self.current_search_config["enable_rerank"],
-                    "flashrank"
-                )
-            elif search_mode == "full":
-                if not self.embeddings_available:
-                    self.app_instance.notify("Embeddings not available, using plain search", severity="info")
+            chunk_size = int(self.query_one("#chunk-size-input", Input).value or "400")
+            chunk_overlap = int(self.query_one("#chunk-overlap-input", Input).value or "100")
+            
+            # Check if pipeline integration is available and try to use it
+            if PIPELINE_INTEGRATION_AVAILABLE:
+                pipeline_manager = get_pipeline_manager()
+                
+                # Check if the search_mode is a pipeline ID
+                if pipeline_manager.validate_pipeline_id(search_mode):
+                    logger.info(f"Using pipeline '{search_mode}' from TOML configuration")
+                    
+                    # Prepare kwargs for pipeline execution
+                    pipeline_kwargs = {
+                        "top_k": self.current_search_config["top_k"],
+                        "max_context_length": self.current_search_config["max_context"],
+                        "chunk_size": chunk_size,
+                        "chunk_overlap": chunk_overlap,
+                        "include_metadata": True,
+                        "enable_rerank": self.current_search_config["enable_rerank"],
+                        "reranker_model": "flashrank",
+                        "bm25_weight": 0.5,
+                        "vector_weight": 0.5
+                    }
+                    
+                    # Get pipeline default parameters and merge
+                    default_params = pipeline_manager.get_pipeline_parameters(search_mode)
+                    pipeline_kwargs.update(default_params)
+                    
+                    # Execute pipeline
+                    results, context = await pipeline_manager.execute_pipeline(
+                        search_mode, self.app_instance, query, sources, **pipeline_kwargs
+                    )
+                else:
+                    logger.info(f"Pipeline '{search_mode}' not found in TOML, falling back to legacy mode")
+                    # Fall through to legacy implementation below
+                    results = None
+                    context = None
+            else:
+                results = None
+                context = None
+                
+            # Legacy implementation
+            if results is None:
+                if search_mode == "plain":
                     results, context = await perform_plain_rag_search(
                         self.app_instance,
                         query,
@@ -699,49 +773,57 @@ class SearchRAGWindow(Container):
                         self.current_search_config["enable_rerank"],
                         "flashrank"
                     )
-                else:
-                    chunk_size = int(self.query_one("#chunk-size-input", Input).value or "400")
-                    chunk_overlap = int(self.query_one("#chunk-overlap-input", Input).value or "100")
-                    results, context = await perform_full_rag_pipeline(
-                        self.app_instance,
-                        query,
-                        sources,
-                        self.current_search_config["top_k"],
-                        self.current_search_config["max_context"],
-                        chunk_size,
-                        chunk_overlap,
-                        True,  # include_metadata
-                        self.current_search_config["enable_rerank"],
-                        "flashrank"
-                    )
-            else:  # hybrid
-                if not self.embeddings_available:
-                    self.app_instance.notify("Embeddings not available for hybrid search, using plain search", severity="info")
-                    results, context = await perform_plain_rag_search(
-                        self.app_instance,
-                        query,
-                        sources,
-                        self.current_search_config["top_k"],
-                        self.current_search_config["max_context"],
-                        self.current_search_config["enable_rerank"],
-                        "flashrank"
-                    )
-                else:
-                    chunk_size = int(self.query_one("#chunk-size-input", Input).value or "400")
-                    chunk_overlap = int(self.query_one("#chunk-overlap-input", Input).value or "100")
-                    results, context = await perform_hybrid_rag_search(
-                        self.app_instance,
-                        query,
-                        sources,
-                        self.current_search_config["top_k"],
-                        self.current_search_config["max_context"],
-                        self.current_search_config["enable_rerank"],
-                        "flashrank",
-                        chunk_size,
-                        chunk_overlap,
-                        0.5,  # BM25 weight
-                        0.5   # Vector weight
-                    )
+                elif search_mode == "full":
+                    if not self.embeddings_available:
+                        self.app_instance.notify("Embeddings not available, using plain search", severity="info")
+                        results, context = await perform_plain_rag_search(
+                            self.app_instance,
+                            query,
+                            sources,
+                            self.current_search_config["top_k"],
+                            self.current_search_config["max_context"],
+                            self.current_search_config["enable_rerank"],
+                            "flashrank"
+                        )
+                    else:
+                        results, context = await perform_full_rag_pipeline(
+                            self.app_instance,
+                            query,
+                            sources,
+                            self.current_search_config["top_k"],
+                            self.current_search_config["max_context"],
+                            chunk_size,
+                            chunk_overlap,
+                            True,  # include_metadata
+                            self.current_search_config["enable_rerank"],
+                            "flashrank"
+                        )
+                else:  # hybrid
+                    if not self.embeddings_available:
+                        self.app_instance.notify("Embeddings not available for hybrid search, using plain search", severity="info")
+                        results, context = await perform_plain_rag_search(
+                            self.app_instance,
+                            query,
+                            sources,
+                            self.current_search_config["top_k"],
+                            self.current_search_config["max_context"],
+                            self.current_search_config["enable_rerank"],
+                            "flashrank"
+                        )
+                    else:
+                        results, context = await perform_hybrid_rag_search(
+                            self.app_instance,
+                            query,
+                            sources,
+                            self.current_search_config["top_k"],
+                            self.current_search_config["max_context"],
+                            self.current_search_config["enable_rerank"],
+                            "flashrank",
+                            chunk_size,
+                            chunk_overlap,
+                            0.5,  # BM25 weight
+                            0.5   # Vector weight
+                        )
             
             await progress_bar.update(progress=80)
             

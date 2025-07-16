@@ -8,6 +8,7 @@ replacing the complex cache service from the old implementation.
 import hashlib
 import json
 import time
+import threading
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from collections import OrderedDict
@@ -71,9 +72,11 @@ class SimpleRAGCache:
         # Use OrderedDict for LRU behavior
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         
-        # Use asyncio.Lock for async-safe operations
-        # Note: Sync methods use asyncio.run() which creates a new event loop,
-        # so they don't interfere with the async lock
+        # Use threading.RLock for thread-safe operations
+        # RLock allows the same thread to acquire the lock multiple times
+        self._lock = threading.RLock()
+        
+        # Keep asyncio.Lock for async methods compatibility
         self._async_lock = asyncio.Lock()
         
         # Metrics
@@ -228,8 +231,59 @@ class SimpleRAGCache:
     
     def _sync_get_impl(self, query: str, search_type: str, top_k: int, 
                        filters: Optional[Dict[str, Any]]) -> Optional[Tuple[List[Any], str]]:
-        """Internal synchronous implementation using asyncio.run."""
-        return asyncio.run(self.get_async(query, search_type, top_k, filters))
+        """Internal synchronous implementation using threading lock."""
+        with self._lock:
+            self._total_requests += 1
+            
+            # Check if we need to prune expired entries
+            current_time = time.time()
+            if current_time - self._last_prune_time > self._prune_interval:
+                self._prune_expired_sync()
+                self._last_prune_time = current_time
+            
+            key = self._make_key(query, search_type, top_k, filters)
+            log_counter("cache_request", labels={"type": search_type})
+            
+            if key not in self._cache:
+                self._misses += 1
+                log_counter("cache_miss", labels={"type": search_type})
+                logger.debug(f"Cache miss for query: '{query[:50]}...'")
+                return None
+            
+            entry = self._cache[key]
+            
+            # Get TTL for this search type
+            ttl = self.ttl_by_search_type.get(search_type, self.ttl_seconds)
+            
+            # Check if entry has expired
+            if time.time() - entry.timestamp > ttl:
+                self._misses += 1
+                log_counter("cache_expired", labels={"type": search_type})
+                logger.debug(f"Cache expired for query: '{query[:50]}...'")
+                del self._cache[key]
+                self._update_memory_sync()
+                return None
+            
+            # Update access stats
+            entry.access()
+            
+            # Move to end for LRU
+            self._cache.move_to_end(key)
+            
+            self._hits += 1
+            log_counter("cache_hit", labels={"type": search_type})
+            logger.debug(f"Cache hit for query: '{query[:50]}...'")
+            
+            # Check for corrupted entry (None value)
+            if entry.value is None:
+                logger.warning(f"Corrupted cache entry detected for key: {key}")
+                # Remove corrupted entry
+                del self._cache[key]
+                self._hits -= 1  # Correct the hit count
+                self._misses += 1  # Count as miss
+                return None
+            
+            return entry.value
     
     async def put_async(self,
                        query: str,
@@ -344,8 +398,40 @@ class SimpleRAGCache:
     
     def _sync_put_impl(self, query: str, search_type: str, top_k: int,
                        results: List[Any], context: str, filters: Optional[Dict[str, Any]]) -> None:
-        """Internal synchronous implementation using asyncio.run."""
-        asyncio.run(self.put_async(query, search_type, top_k, results, context, filters))
+        """Internal synchronous implementation using threading lock."""
+        with self._lock:
+            key = self._make_key(query, search_type, top_k, filters)
+            
+            # Create cache entry
+            entry = CacheEntry(
+                key=key,
+                value=(results, context),
+                timestamp=time.time()
+            )
+            
+            # Check memory pressure before adding
+            try:
+                entry_memory = self._estimate_entry_size(entry)
+            except Exception as e:
+                logger.warning(f"Error estimating entry size, using fallback: {e}")
+                # Fallback to a reasonable default size (1KB)
+                entry_memory = 1024
+            
+            # Evict if necessary to make room
+            while (self._current_memory_bytes + entry_memory > self.max_memory_bytes or 
+                   len(self._cache) >= self.max_size) and self._cache:
+                self._evict_lru_sync()
+            
+            # Add new entry
+            self._cache[key] = entry
+            self._current_memory_bytes += entry_memory
+            
+            # Update metrics
+            log_counter("cache_put", labels={"type": search_type})
+            log_gauge("cache_size", len(self._cache))
+            log_gauge("cache_memory_mb", self._current_memory_bytes / 1024 / 1024)
+            
+            logger.debug(f"Cached results for query: '{query[:50]}...' ({len(results)} results, {entry_memory / 1024 / 1024:.1f}MB)")
     
     async def clear_async(self) -> None:
         """Async-safe clear all cache entries."""
@@ -375,16 +461,29 @@ class SimpleRAGCache:
             self._sync_clear_impl()
     
     def _sync_clear_impl(self) -> None:
-        """Internal synchronous implementation using asyncio.run."""
-        asyncio.run(self.clear_async())
+        """Internal synchronous implementation using threading lock."""
+        with self._lock:
+            size_before = len(self._cache)
+            memory_before = self._current_memory_bytes / 1024 / 1024
+            self._cache.clear()
+            self._current_memory_bytes = 0
+            self._hits = 0
+            self._misses = 0
+            self._evictions = 0
+            log_counter("cache_cleared")
+            log_gauge("cache_size", 0)
+            log_gauge("cache_memory_mb", 0)
+            logger.info(f"Cache cleared ({size_before} entries, {memory_before:.1f}MB removed)")
     
-    def _deep_getsizeof(self, obj, seen=None):
+    def _deep_getsizeof(self, obj, seen=None, max_depth=3, current_depth=0):
         """
         Calculate the deep size of an object, including all referenced objects.
         
         Args:
             obj: The object to measure
             seen: Set of already-seen object ids to avoid infinite recursion
+            max_depth: Maximum recursion depth to prevent O(n²) complexity
+            current_depth: Current recursion depth
             
         Returns:
             Size in bytes
@@ -400,18 +499,58 @@ class SimpleRAGCache:
         # Mark this object as seen first
         seen.add(obj_id)
         
+        # Stop recursion at max depth to prevent O(n²) complexity
+        if current_depth >= max_depth:
+            # Return a rough estimate based on string representation
+            return size + len(str(obj)) if hasattr(obj, '__str__') else size
+        
         if isinstance(obj, dict):
-            size += sum(self._deep_getsizeof(k, seen) + self._deep_getsizeof(v, seen) 
+            size += sum(self._deep_getsizeof(k, seen, max_depth, current_depth + 1) + 
+                       self._deep_getsizeof(v, seen, max_depth, current_depth + 1) 
                        for k, v in obj.items())
         elif hasattr(obj, '__dict__'):
-            size += self._deep_getsizeof(obj.__dict__, seen)
+            size += self._deep_getsizeof(obj.__dict__, seen, max_depth, current_depth + 1)
         elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
             try:
-                size += sum(self._deep_getsizeof(i, seen) for i in obj)
+                size += sum(self._deep_getsizeof(i, seen, max_depth, current_depth + 1) for i in obj)
             except TypeError:
                 # Some iterables don't support iteration in all contexts
                 pass
                 
+        return size
+    
+    def _estimate_entry_size(self, entry: CacheEntry) -> int:
+        """
+        Estimate the memory size of a cache entry.
+        Uses a fast estimation approach instead of deep recursion.
+        """
+        # Base size of the CacheEntry object
+        size = sys.getsizeof(entry)
+        
+        # Add key size
+        size += sys.getsizeof(entry.key)
+        
+        # Estimate value size (tuple of results and context)
+        if isinstance(entry.value, tuple) and len(entry.value) == 2:
+            results, context = entry.value
+            
+            # Estimate results size (list of SearchResult objects)
+            if isinstance(results, list):
+                # Base list size
+                size += sys.getsizeof(results)
+                # Estimate 1KB per result (reasonable for SearchResult objects)
+                size += len(results) * 1024
+            
+            # Add context string size
+            if isinstance(context, str):
+                size += sys.getsizeof(context)
+        else:
+            # Fallback: use string representation length as rough estimate
+            size += len(str(entry.value)) * 2  # 2 bytes per character estimate
+        
+        # Add overhead for metadata (timestamp, access_count, etc)
+        size += 100  # Fixed overhead estimate
+        
         return size
     
     def get_metrics(self) -> Dict[str, Any]:
@@ -530,6 +669,61 @@ class SimpleRAGCache:
             logger.info(f"Pruned {len(expired_keys)} expired cache entries (avg age: {avg_age:.1f}s)")
         
         return len(expired_keys)
+    
+    def _prune_expired_sync(self) -> int:
+        """
+        Internal synchronous method to prune expired entries.
+        Assumes lock is already held.
+        """
+        current_time = time.time()
+        expired_keys = []
+        
+        for key, entry in self._cache.items():
+            # Get TTL for the search type (stored in entry if available)
+            ttl = self.ttl_seconds
+            age = current_time - entry.timestamp
+            if age > ttl:
+                expired_keys.append(key)
+        
+        for key in expired_keys:
+            del self._cache[key]
+        
+        if expired_keys:
+            self._update_memory_sync()
+            log_counter("cache_entries_expired", value=len(expired_keys))
+        
+        return len(expired_keys)
+    
+    def _evict_lru_sync(self) -> None:
+        """
+        Evict least recently used entry.
+        Assumes lock is already held.
+        """
+        if not self._cache:
+            return
+        
+        # Get the first item (least recently used)
+        key, entry = next(iter(self._cache.items()))
+        del self._cache[key]
+        
+        # Update memory tracking
+        entry_size = self._estimate_entry_size(entry)
+        self._current_memory_bytes = max(0, self._current_memory_bytes - entry_size)
+        self._evictions += 1
+        
+        log_counter("cache_eviction")
+        logger.debug(f"Evicted LRU entry: {key[:16]}...")
+    
+    def _update_memory_sync(self) -> None:
+        """
+        Update memory usage tracking.
+        Assumes lock is already held.
+        """
+        total_memory = 0
+        for entry in self._cache.values():
+            total_memory += self._estimate_entry_size(entry)
+        self._current_memory_bytes = total_memory
+        log_gauge("cache_memory_mb", self._current_memory_bytes / 1024 / 1024)
     
     def __len__(self) -> int:
         """Get the number of cached entries."""

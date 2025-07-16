@@ -130,6 +130,37 @@ class ChromaVectorStore:
         self._search_count = 0
         self._last_operation_time = None
         self._embedding_dim = None
+        
+        # Memory usage cache
+        self._memory_cache = {
+            'value': None,
+            'timestamp': 0,
+            'ttl': 5.0  # Cache for 5 seconds
+        }
+    
+    def _get_cached_memory_info(self):
+        """
+        Get memory info with caching to reduce psutil overhead.
+        
+        Returns:
+            Memory usage in MB
+        """
+        current_time = time.time()
+        
+        # Check if cache is valid
+        if (self._memory_cache['value'] is not None and 
+            current_time - self._memory_cache['timestamp'] < self._memory_cache['ttl']):
+            return self._memory_cache['value']
+        
+        # Get fresh memory info
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / (1024 * 1024)
+        
+        # Update cache
+        self._memory_cache['value'] = memory_mb
+        self._memory_cache['timestamp'] = current_time
+        
+        return memory_mb
     
     @property
     def client(self):
@@ -213,6 +244,10 @@ class ChromaVectorStore:
                 self._embedding_dim = embeddings.shape[1]
                 log_gauge("vector_store_embedding_dim", self._embedding_dim)
                 logger.info(f"Detected embedding dimension: {self._embedding_dim}")
+            elif self._embedding_dim is not None and embeddings.shape[1] != self._embedding_dim:
+                # Validate dimension matches for subsequent adds
+                raise ValueError(f"Embedding dimension mismatch: expected {self._embedding_dim}, got {embeddings.shape[1]}. "
+                               f"All embeddings must have the same dimension.")
             
             embeddings = embeddings.tolist()
         elif isinstance(embeddings, list):
@@ -224,6 +259,12 @@ class ChromaVectorStore:
                 self._embedding_dim = len(embeddings[0])
                 log_gauge("vector_store_embedding_dim", self._embedding_dim)
                 logger.info(f"Detected embedding dimension: {self._embedding_dim}")
+            elif self._embedding_dim is not None and embeddings:
+                # Validate all embeddings have correct dimension
+                for i, emb in enumerate(embeddings):
+                    if len(emb) != self._embedding_dim:
+                        raise ValueError(f"Embedding dimension mismatch at index {i}: expected {self._embedding_dim}, got {len(emb)}. "
+                                       f"All embeddings must have the same dimension.")
         
         # Log document statistics
         doc_lengths = [len(doc) for doc in documents]
@@ -584,6 +625,9 @@ class InMemoryVectorStore:
         self._last_memory_check = time.time()
         self._memory_check_interval = 10.0  # Check every 10 seconds
         
+        # Track embedding dimension
+        self._embedding_dim: Optional[int] = None
+        
         logger.info(f"InMemoryVectorStore initialized with max_documents={max_documents}, "
                    f"max_collections={max_collections}, memory_threshold_mb={memory_threshold_mb}")
     
@@ -603,9 +647,7 @@ class InMemoryVectorStore:
         
         try:
             # Get current process memory usage
-            process = psutil.Process()
-            memory_info = process.memory_info()
-            memory_mb = memory_info.rss / (1024 * 1024)
+            memory_mb = self._get_cached_memory_info()
             
             # Also check system-wide memory if available
             vm = psutil.virtual_memory()
@@ -658,10 +700,31 @@ class InMemoryVectorStore:
         if NUMPY_AVAILABLE:
             if not isinstance(embeddings, np.ndarray):
                 embeddings = np.array(embeddings)
+                
+            # Validate and store embedding dimension
+            if self._embedding_dim is None and embeddings.shape[1] > 0:
+                self._embedding_dim = embeddings.shape[1]
+                logger.info(f"Detected embedding dimension: {self._embedding_dim}")
+            elif self._embedding_dim is not None and embeddings.shape[1] != self._embedding_dim:
+                raise ValueError(f"Embedding dimension mismatch: expected {self._embedding_dim}, got {embeddings.shape[1]}. "
+                               f"All embeddings must have the same dimension.")
         else:
             # Without numpy, ensure embeddings is a list
             if not isinstance(embeddings, list):
                 raise TypeError("Without numpy, embeddings must be provided as a list of lists")
+                
+            # Validate embedding dimensions for lists
+            if embeddings:
+                # Check first embedding to establish dimension
+                if self._embedding_dim is None and len(embeddings[0]) > 0:
+                    self._embedding_dim = len(embeddings[0])
+                    logger.info(f"Detected embedding dimension: {self._embedding_dim}")
+                
+                # Validate all embeddings have the same dimension
+                for i, emb in enumerate(embeddings):
+                    if len(emb) != self._embedding_dim:
+                        raise ValueError(f"Embedding dimension mismatch at index {i}: expected {self._embedding_dim}, got {len(emb)}. "
+                                       f"All embeddings must have the same dimension.")
         
         # Add documents, updating existing ones
         for i, id_val in enumerate(ids):
@@ -925,9 +988,7 @@ class InMemoryVectorStore:
         
         # Add current memory status
         try:
-            process = psutil.Process()
-            memory_info = process.memory_info()
-            stats["process_memory_mb"] = memory_info.rss / (1024 * 1024)
+            stats["process_memory_mb"] = self._get_cached_memory_info()
             
             vm = psutil.virtual_memory()
             stats["system_available_mb"] = vm.available / (1024 * 1024)
