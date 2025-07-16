@@ -582,6 +582,9 @@ def chat_with_kobold(
     if not current_model:
         logging.info("Kobold API model namenot passed and or could not be determined from arguments or configuration.")
     
+    # Define current_streaming before using it
+    current_streaming = streaming if streaming is not None else cfg.get('streaming', False)
+    
     # Log request metrics
     log_counter("kobold_api_request", labels={
         "model": current_model or "default",
@@ -600,7 +603,6 @@ def chat_with_kobold(
     # Original code forced it to False. Maintaining that unless KoboldCPP has improved this significantly
     # for the native endpoint and it's easy to parse.
     # If KoboldCPP offers an OpenAI compatible streaming endpoint, that's usually preferred.
-    current_streaming = streaming if streaming is not None else cfg.get('streaming', False)
     if current_streaming:
         logging.warning("KoboldAI (Native): Streaming with /api/v1/generate is often non-standard. "
                         "Consider using KoboldCpp's OpenAI compatible endpoint (/v1) for reliable streaming. Forcing non-streaming for native.")

@@ -14,9 +14,7 @@ from requests.auth import HTTPBasicAuth
 from loguru import logger
 #
 # Local imports
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from tldw_chatbook.Web_Scraping.cookie_scraping.cookie_cloner import get_cookies
+from ..cookie_scraping.cookie_cloner import get_cookies
 #
 #######################################################################################################################
 #

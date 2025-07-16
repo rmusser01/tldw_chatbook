@@ -2827,6 +2827,7 @@ UPDATE db_schema_version
                            or if a concurrent modification prevents the update.
             CharactersRAGDBError: For other database-related errors.
         """
+        start_time = time.time()
         now = self._get_current_utc_timestamp_iso()
         next_version_val = expected_version + 1
 

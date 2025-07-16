@@ -316,7 +316,7 @@ class TestCharacterManagement:
 
 @pytest.mark.unit
 class TestChatDictionary:
-    @patch('tldw_chatbook.Chat.Chat_Functions.validate_path')
+    @patch('tldw_chatbook.Character_Chat.Chat_Dictionary_Lib.validate_path')
     def test_parse_user_dict_markdown_file(self, mock_validate_path, tmp_path):
         # Mock validate_path to return the validated path
         dict_file = tmp_path / "test_dict.md"

@@ -22,12 +22,9 @@ except ImportError:
     BeautifulSoup = None
 #
 # Local imports
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from Article_Scraper.scraper import Scraper
-from Article_Scraper.config import ScraperConfig
-from Article_Scraper.utils import ContentMetadataHandler
+from ..Article_Scraper.scraper import Scraper
+from ..Article_Scraper.config import ScraperConfig
+from ..Article_Scraper.utils import ContentMetadataHandler
 from .confluence_auth import ConfluenceAuth
 from .confluence_utils import convert_confluence_to_markdown, extract_confluence_metadata
 #

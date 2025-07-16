@@ -7,6 +7,7 @@ e-books, etc.) without going through the UI, leveraging existing processing capa
 """
 
 import os
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
@@ -21,6 +22,9 @@ from .video_processing import LocalVideoProcessor
 
 # Import database
 from ..DB.Client_Media_DB_v2 import MediaDatabase
+
+# Import metrics
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 class FileIngestionError(Exception):

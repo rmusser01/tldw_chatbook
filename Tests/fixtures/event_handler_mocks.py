@@ -58,6 +58,8 @@ def create_comprehensive_app_mock():
     app.current_chat_is_streaming = False
     app.current_chat_worker = None  # No worker running initially
     app.current_tab = "Chat"
+    app.current_world_info_active = False  # Default to no world info
+    app.current_world_info_count = 0
     
     # Mock app methods
     app.query_one = MagicMock()

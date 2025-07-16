@@ -61,6 +61,9 @@ python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab')"
 
 ```bash
 # Run all tests
+python run_all_tests_with_report.py
+
+# or
 pytest
 
 # Run tests with verbose output

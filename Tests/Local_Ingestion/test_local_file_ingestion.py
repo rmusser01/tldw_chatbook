@@ -12,8 +12,8 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     batch_ingest_files,
     ingest_directory,
     get_supported_extensions,
-    get_supported_media_types,
-    SUPPORTED_EXTENSIONS
+    detect_file_type,
+    FileIngestionError
 )
 
 
@@ -51,16 +51,17 @@ class TestLocalFileIngestion:
     def test_get_supported_extensions(self):
         """Test getting supported extensions."""
         extensions = get_supported_extensions()
-        assert isinstance(extensions, list)
+        assert isinstance(extensions, dict)
         assert len(extensions) > 0
-        assert '.pdf' in extensions
-        assert '.docx' in extensions
-        assert '.epub' in extensions
-        assert '.txt' in extensions
+        assert '.pdf' in extensions['pdf']
+        assert '.docx' in extensions['document']
+        assert '.epub' in extensions['ebook']
+        assert '.txt' in extensions['plaintext']
     
     def test_get_supported_media_types(self):
-        """Test getting supported media types."""
-        media_types = get_supported_media_types()
+        """Test getting supported media types from extensions."""
+        extensions = get_supported_extensions()
+        media_types = list(extensions.keys())
         assert isinstance(media_types, list)
         assert 'pdf' in media_types
         assert 'document' in media_types
@@ -69,14 +70,11 @@ class TestLocalFileIngestion:
     
     def test_ingest_nonexistent_file(self, mock_media_db):
         """Test ingesting a file that doesn't exist."""
-        result = ingest_local_file(
-            file_path="/nonexistent/file.pdf",
-            media_db=mock_media_db
-        )
-        
-        assert result['success'] is False
-        assert 'not found' in result['message']
-        assert result['media_id'] is None
+        with pytest.raises(FileNotFoundError):
+            ingest_local_file(
+                file_path="/nonexistent/file.pdf",
+                media_db=mock_media_db
+            )
     
     def test_ingest_unsupported_file(self, mock_media_db):
         """Test ingesting an unsupported file type."""
@@ -84,13 +82,11 @@ class TestLocalFileIngestion:
             temp_path = Path(f.name)
         
         try:
-            result = ingest_local_file(
-                file_path=temp_path,
-                media_db=mock_media_db
-            )
-            
-            assert result['success'] is False
-            assert 'Unsupported file type' in result['message']
+            with pytest.raises(FileIngestionError, match="Unsupported file type"):
+                ingest_local_file(
+                    file_path=temp_path,
+                    media_db=mock_media_db
+                )
         finally:
             temp_path.unlink()
     
@@ -99,9 +95,10 @@ class TestLocalFileIngestion:
         """Test successful PDF ingestion."""
         # Mock the PDF processor
         mock_process_pdf.return_value = {
-            'status': 'Success',
             'content': 'Extracted PDF content',
-            'metadata': {'title': 'Test PDF', 'author': 'Test Author'},
+            'title': 'Test PDF',
+            'author': 'Test Author',
+            'keywords': [],
             'chunks': [{'text': 'chunk 1'}, {'text': 'chunk 2'}],
             'analysis': 'Summary of PDF'
         }
@@ -112,11 +109,11 @@ class TestLocalFileIngestion:
             keywords=['test', 'pdf']
         )
         
-        assert result['success'] is True
         assert result['media_id'] == 123
-        assert result['media_uuid'] == "test-uuid"
-        assert result['media_type'] == 'pdf'
-        assert 'Successfully ingested' in result['message']
+        assert result['title'] == 'Test PDF'
+        assert result['author'] == 'Test Author'
+        assert result['file_type'] == 'pdf'
+        assert set(result['keywords']) == {'test', 'pdf'}
         
         # Verify processor was called
         mock_process_pdf.assert_called_once()
@@ -126,116 +123,114 @@ class TestLocalFileIngestion:
         call_args = mock_media_db.add_media_with_keywords.call_args[1]
         assert call_args['content'] == 'Extracted PDF content'
         assert call_args['title'] == 'Test PDF'
-        assert call_args['keywords'] == ['test', 'pdf']
+        assert set(call_args['keywords']) == {'test', 'pdf'}
     
-    @patch('tldw_chatbook.Local_Ingestion.local_file_ingestion.process_plain_text_file')
-    def test_ingest_text_file_success(self, mock_process_text, mock_media_db, temp_text_file):
+    def test_ingest_text_file_success(self, mock_media_db, temp_text_file):
         """Test successful text file ingestion."""
-        mock_process_text.return_value = {
-            'status': 'Success',
-            'content': 'This is test content for ingestion.',
-            'metadata': {}
-        }
-        
         result = ingest_local_file(
             file_path=temp_text_file,
             media_db=mock_media_db,
             title="My Text File"
         )
         
-        assert result['success'] is True
-        assert result['media_type'] == 'plaintext'
+        assert result['media_id'] == 123
+        assert result['file_type'] == 'plaintext'
         assert result['title'] == 'My Text File'
     
     @patch('tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf')
     def test_ingest_with_processing_error(self, mock_process_pdf, mock_media_db, temp_pdf_file):
         """Test handling of processing errors."""
         mock_process_pdf.return_value = {
-            'status': 'Error',
             'error': 'Failed to parse PDF'
         }
         
-        result = ingest_local_file(
-            file_path=temp_pdf_file,
-            media_db=mock_media_db
-        )
+        with pytest.raises(FileIngestionError, match="Failed to process pdf file"):
+            ingest_local_file(
+                file_path=temp_pdf_file,
+                media_db=mock_media_db
+            )
         
-        assert result['success'] is False
-        assert 'Processing failed' in result['message']
         mock_media_db.add_media_with_keywords.assert_not_called()
     
     @patch('tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf')
     def test_ingest_with_database_error(self, mock_process_pdf, mock_media_db, temp_pdf_file):
         """Test handling of database errors."""
         mock_process_pdf.return_value = {
-            'status': 'Success',
-            'content': 'PDF content'
+            'content': 'PDF content',
+            'title': 'Test PDF',
+            'author': 'Test Author',
+            'keywords': [],
+            'chunks': [],
+            'analysis': ''
         }
         
         # Mock database failure
-        mock_media_db.add_media_with_keywords.return_value = (None, None, "Database error")
+        mock_media_db.add_media_with_keywords.side_effect = Exception("Database error")
         
-        result = ingest_local_file(
-            file_path=temp_pdf_file,
-            media_db=mock_media_db
-        )
-        
-        assert result['success'] is False
-        assert 'Database storage failed' in result['message']
+        with pytest.raises(FileIngestionError, match="Failed to ingest pdf file"):
+            ingest_local_file(
+                file_path=temp_pdf_file,
+                media_db=mock_media_db
+            )
     
-    @patch('tldw_chatbook.Local_Ingestion.local_file_ingestion.ingest_local_file')
-    def test_batch_ingest_files(self, mock_ingest, mock_media_db):
+    def test_batch_ingest_files(self, mock_media_db):
         """Test batch file ingestion."""
-        # Mock individual file results
-        mock_ingest.side_effect = [
-            {'success': True, 'media_id': 1, 'message': 'Success'},
-            {'success': False, 'media_id': None, 'message': 'Failed'},
-            {'success': True, 'media_id': 2, 'message': 'Success'}
-        ]
-        
-        file_paths = ['/path/1.pdf', '/path/2.pdf', '/path/3.pdf']
-        results = batch_ingest_files(
-            file_paths=file_paths,
-            media_db=mock_media_db,
-            common_keywords=['batch']
-        )
-        
-        assert len(results) == 3
-        assert results[0]['success'] is True
-        assert results[1]['success'] is False
-        assert results[2]['success'] is True
-        
-        # Verify common keywords were passed
-        for call in mock_ingest.call_args_list:
-            assert 'batch' in call[1]['keywords']
+        # Create temp files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            file1 = temp_path / 'file1.txt'
+            file1.write_text('content 1')
+            file2 = temp_path / 'file2.xyz'  # unsupported
+            file2.write_text('content 2')
+            file3 = temp_path / 'file3.txt'
+            file3.write_text('content 3')
+            
+            file_paths = [file1, file2, file3]
+            results = batch_ingest_files(
+                file_paths=file_paths,
+                media_db=mock_media_db,
+                common_keywords=['batch'],
+                stop_on_error=False
+            )
+            
+            assert len(results) == 3
+            # First and third should succeed (txt files)
+            assert 'media_id' in results[0]
+            assert results[0]['media_id'] == 123
+            # Second should fail (unsupported .xyz)
+            assert results[1]['success'] is False
+            assert 'error' in results[1]
+            # Third should succeed
+            assert 'media_id' in results[2]
+            assert results[2]['media_id'] == 123
     
-    @patch('tldw_chatbook.Local_Ingestion.local_file_ingestion.ingest_local_file')
-    def test_batch_ingest_stop_on_error(self, mock_ingest, mock_media_db):
+    def test_batch_ingest_stop_on_error(self, mock_media_db):
         """Test batch ingestion with stop_on_error=True."""
-        mock_ingest.side_effect = [
-            {'success': True, 'media_id': 1, 'message': 'Success'},
-            {'success': False, 'media_id': None, 'message': 'Failed'}
-        ]
-        
-        file_paths = ['/path/1.pdf', '/path/2.pdf', '/path/3.pdf']
-        results = batch_ingest_files(
-            file_paths=file_paths,
-            media_db=mock_media_db,
-            stop_on_error=True
-        )
-        
-        # Should stop after first error
-        assert len(results) == 2
-        assert mock_ingest.call_count == 2
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            file1 = temp_path / 'file1.txt'
+            file1.write_text('content 1')
+            file2 = temp_path / 'file2.xyz'  # unsupported - will cause error
+            file2.write_text('content 2')
+            file3 = temp_path / 'file3.txt'
+            file3.write_text('content 3')
+            
+            file_paths = [file1, file2, file3]
+            
+            with pytest.raises(FileIngestionError, match="Batch ingestion stopped"):
+                batch_ingest_files(
+                    file_paths=file_paths,
+                    media_db=mock_media_db,
+                    stop_on_error=True
+                )
     
     def test_ingest_directory_nonexistent(self, mock_media_db):
         """Test ingesting from nonexistent directory."""
-        results = ingest_directory(
-            directory_path="/nonexistent/directory",
-            media_db=mock_media_db
-        )
-        
-        assert results == []
+        with pytest.raises(FileIngestionError, match="Not a directory"):
+            ingest_directory(
+                directory_path="/nonexistent/directory",
+                media_db=mock_media_db
+            )
     
     @patch('tldw_chatbook.Local_Ingestion.local_file_ingestion.batch_ingest_files')
     def test_ingest_directory_recursive(self, mock_batch_ingest, mock_media_db):
@@ -258,7 +253,7 @@ class TestLocalFileIngestion:
                 directory_path=temp_path,
                 media_db=mock_media_db,
                 recursive=True,
-                file_extensions=['.pdf', '.txt']
+                file_types=['pdf', 'plaintext']
             )
             
             # Should find 3 files (2 PDFs + 1 TXT)

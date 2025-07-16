@@ -401,7 +401,30 @@ class ChunkingPipeline:
         if not chunks:
             method = template.base_method
             options = template.metadata.get('default_options', {})
-            chunks = chunker_instance.chunk_text(processed_text, method=method, **options)
+            
+            # Save current chunker options
+            original_options = chunker_instance.options.copy()
+            
+            try:
+                # Create a new options dict with original options updated by default options
+                temp_options = original_options.copy()
+                temp_options.update(options)
+                
+                # Ensure overlap is valid for the given max_size
+                if 'max_size' in temp_options and 'overlap' in temp_options:
+                    max_size = temp_options['max_size']
+                    overlap = temp_options['overlap']
+                    if overlap >= max_size:
+                        # Adjust overlap to be less than max_size
+                        temp_options['overlap'] = max(0, max_size - 1)
+                        logger.debug(f"Adjusted overlap from {overlap} to {temp_options['overlap']} to be less than max_size {max_size}")
+                
+                # Update chunker options temporarily
+                chunker_instance.options = temp_options
+                chunks = chunker_instance.chunk_text(processed_text, method=method, use_template=False)
+            finally:
+                # Restore original options
+                chunker_instance.options = original_options
         
         # Convert to expected format
         return self._format_chunks(chunks, template)
@@ -434,13 +457,34 @@ class ChunkingPipeline:
         options = stage.options.copy()
         
         # Map template options to chunker options
-        if 'max_size' in options:
-            options['max_size'] = options.pop('max_size')
         if 'overlap' not in options and 'overlap_size' in options:
             options['overlap'] = options.pop('overlap_size')
         
-        # Set use_template=False to avoid infinite recursion
-        chunks = chunker_instance.chunk_text(text, method=method, use_template=False, **options)
+        # Save current chunker options
+        original_options = chunker_instance.options.copy()
+        
+        try:
+            # Create a new options dict with original options updated by stage options
+            temp_options = original_options.copy()
+            temp_options.update(options)
+            
+            # Ensure overlap is valid for the given max_size
+            if 'max_size' in temp_options and 'overlap' in temp_options:
+                max_size = temp_options['max_size']
+                overlap = temp_options['overlap']
+                if overlap >= max_size:
+                    # Adjust overlap to be less than max_size
+                    temp_options['overlap'] = max(0, max_size - 1)
+                    logger.debug(f"Adjusted overlap from {overlap} to {temp_options['overlap']} to be less than max_size {max_size}")
+            
+            # Update chunker options temporarily
+            chunker_instance.options = temp_options
+            
+            # Set use_template=False to avoid infinite recursion
+            chunks = chunker_instance.chunk_text(text, method=method, use_template=False)
+        finally:
+            # Restore original options
+            chunker_instance.options = original_options
         
         # Convert to list of strings if needed (for dict-based chunks)
         if chunks and isinstance(chunks[0], dict):
