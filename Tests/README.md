@@ -66,6 +66,7 @@ python run_all_tests_with_report.py
 # or
 pytest
 
+
 # Run tests with verbose output
 pytest -v
 
