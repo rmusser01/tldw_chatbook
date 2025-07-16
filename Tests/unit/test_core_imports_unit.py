@@ -46,13 +46,15 @@ def test_ui_components_with_disabled_features():
     mock_app.notes_user_id = "test_user"
     
     # Test SearchWindow can be instantiated with disabled features
-    from tldw_chatbook.UI.SearchWindow import SearchWindow, EMBEDDINGS_GENERATION_AVAILABLE, VECTORDB_AVAILABLE
+    from tldw_chatbook.UI.SearchWindow import SearchWindow
+    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
     
     search_window = SearchWindow(mock_app)
     assert search_window is not None
     
     # When features are disabled, certain buttons should be disabled
-    if not EMBEDDINGS_GENERATION_AVAILABLE or not VECTORDB_AVAILABLE:
+    embeddings_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False)
+    if not embeddings_available:
         # The UI should handle this gracefully - we can't test the full UI here
         # but we can verify the window can be created
         assert True

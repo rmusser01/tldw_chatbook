@@ -84,15 +84,13 @@ class TestRAGServiceBasics:
         """Test indexing an empty document."""
         service = RAGService(config=test_rag_config)
         
-        result = await service.index_document(
-            doc_id="empty_doc",
-            content="",
-            title="Empty Document"
-        )
-        
-        assert result.success
-        assert result.chunks_created == 0
-        assert result.error is None
+        # The service validates that content is non-empty, so we expect an error
+        with pytest.raises(ValueError, match="content must be a non-empty string"):
+            await service.index_document(
+                doc_id="empty_doc",
+                content="",
+                title="Empty Document"
+            )
     
     @pytest.mark.asyncio
     async def test_index_large_document(self, test_rag_config):

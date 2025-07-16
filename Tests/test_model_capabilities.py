@@ -296,11 +296,13 @@ class TestModuleFunctions:
         caps2 = get_model_capabilities()
         assert caps1 is caps2
     
-    @patch('tldw_chatbook.model_capabilities.get_cli_setting')
-    def test_is_vision_capable_function(self, mock_get_setting):
+    @patch('tldw_chatbook.config.load_cli_config_and_ensure_existence')
+    def test_is_vision_capable_function(self, mock_load_config):
         """Test module-level is_vision_capable function."""
-        mock_get_setting.return_value = {
-            "models": {"test-model": {"vision": True}}
+        mock_load_config.return_value = {
+            "model_capabilities": {
+                "models": {"test-model": {"vision": True}}
+            }
         }
         
         # Clear any existing instance

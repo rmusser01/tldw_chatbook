@@ -10,6 +10,7 @@ import tempfile
 import shutil
 import numpy as np
 from unittest.mock import Mock, MagicMock, patch
+import os
 
 from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsServiceWrapper,
