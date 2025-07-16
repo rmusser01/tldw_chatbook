@@ -193,3 +193,4 @@ cython_debug/
 *.zip
 *.gzip
 *.tar
+/mlx_models/
