@@ -7,7 +7,8 @@ import asyncio
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 #
 # 3rd-Party Imports
-from textual.widgets import Button, TextArea, Static, VerticalScroll
+from textual.widgets import Button, TextArea, Static
+from textual.containers import VerticalScroll
 from textual.app import App
 #
 # Local Imports

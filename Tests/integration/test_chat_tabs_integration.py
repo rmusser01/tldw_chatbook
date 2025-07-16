@@ -8,7 +8,8 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 #
 # 3rd-Party Imports
 from textual.app import App
-from textual.widgets import Button, TextArea, VerticalScroll
+from textual.widgets import Button, TextArea
+from textual.containers import VerticalScroll
 #
 # Local Imports
 from tldw_chatbook.Widgets.chat_tab_container import ChatTabContainer

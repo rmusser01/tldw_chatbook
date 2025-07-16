@@ -45,6 +45,7 @@ TEST_MODULES = {
     "Evals": ["Evals/"],
     "LLM_Management": ["LLM_Management/"],
     "Local_Ingestion": ["Local_Ingestion/"],
+    "Transcription": ["Transcription/"],
     "Web_Scraping": ["Web_Scraping/"],
     "Utils": ["Utils/"],
     "Chunking": ["Chunking/"],
@@ -471,6 +472,9 @@ Examples:
   
   # Run specific modules
   python run_all_tests_with_report.py --modules Chat DB UI
+  
+  # Run TTS and Transcription tests
+  python run_all_tests_with_report.py --modules TTS Transcription
   
   # Run with parallel execution
   python run_all_tests_with_report.py -n 4
