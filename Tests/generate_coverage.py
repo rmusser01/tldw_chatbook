@@ -128,7 +128,7 @@ class CoverageReporter:
         """Clean previous coverage data."""
         coverage_files = [".coverage", ".coverage.*"]
         for pattern in coverage_files:
-            for file in Path(".").glob(pattern):
+            for file in Path("..").glob(pattern):
                 file.unlink()
     
     def _build_coverage_command(self, source_paths: List[str], test_paths: List[str]) -> List[str]:

@@ -4,7 +4,7 @@ Local audio processing module for tldw_chatbook.
 Handles audio file processing, transcription, chunking, and analysis.
 Adapted from server implementation for local use.
 """
-
+#
 import json
 import os
 import shutil
@@ -15,28 +15,28 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from loguru import logger
-
+#
 # External imports
 import requests
 import numpy as np
-
+#
 # Local imports
 from ..config import get_media_ingestion_defaults, get_cli_setting
 from ..Chat.Chat_Functions import chat_api_call
 from ..RAG_Search.chunking_service import ChunkingService
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Utils.text import sanitize_filename
-
+#
 # Optional imports
 try:
     import yt_dlp
     YT_DLP_AVAILABLE = True
 except ImportError:
     YT_DLP_AVAILABLE = False
-    logging.warning("yt-dlp not available. YouTube/URL downloading will be disabled.")
-
+    logger.warning("yt-dlp not available. YouTube/URL downloading will be disabled.")
+#
 # Using loguru logger imported above
-
+################################################################################################################################
 class AudioProcessingError(Exception):
     """Base exception for audio processing errors."""
     pass
@@ -580,3 +580,7 @@ def process_audio_files(**kwargs) -> Dict[str, Any]:
     """Process audio files using LocalAudioProcessor."""
     processor = LocalAudioProcessor()
     return processor.process_audio_files(**kwargs)
+
+#
+# End of audio_processing.py
+#########################################################################################################################

@@ -4,7 +4,17 @@
 
 This document provides a comprehensive review of the tool calling implementation in the tldw_chatbook chat pipeline, identifying current capabilities, gaps, and recommendations for improvement.
 
-**Last Updated**: 2025-01-07
+**Last Updated**: 2025-07-16
+
+## Quick Status Summary
+
+**Current State**: Tool calling infrastructure is **90% complete** but **not functional** due to missing integration.
+
+- ✅ **What Works**: Tool detection, parsing, UI widgets, database schema, executor framework
+- ❌ **What's Missing**: The actual connection between detection and execution (1 TODO to implement)
+- 📍 **Key Blocker**: Line 158 in `chat_streaming_events.py` - tool execution needs to be wired up
+
+**To make tools work**, implement the TODO following the code example in Phase 1 below.
 
 ## Implementation Status
 
@@ -49,13 +59,15 @@ This document provides a comprehensive review of the tool calling implementation
 ### 🚧 Partially Implemented
 
 1. **Tool Detection in UI**
-   - Detection works but only shows notification
+   - Detection works but only shows notification (TODO comment at line 158 in chat_streaming_events.py)
    - No actual tool execution or result display yet
    - Tool calls not saved with proper role in database
+   - Infrastructure exists but not connected
 
 2. **Non-Streaming Response Handling**
    - Parser exists but not integrated with regular chat flow
    - Need to update `chat_events.py` for non-streaming responses
+   - Same TODO implementation needed as streaming
 
 ### ❌ Not Yet Implemented
 
@@ -318,6 +330,19 @@ async def test_tool_execution_flow():
    - Tools execute automatically when called
    - Results appear inline in chat
 
+## Current Implementation Gaps
+
+As of the last update (2025-07-16), the main implementation gap is in `chat_streaming_events.py` at line 158 where tool execution needs to be wired up. The infrastructure is complete but not connected:
+
+1. **Tool Detection**: ✅ Working (shows notification)
+2. **Tool Parsing**: ✅ Complete for all providers
+3. **Tool Executor**: ✅ Implemented with safety features
+4. **Tool UI Widgets**: ✅ Ready for display
+5. **Database Support**: ✅ Schema v7 supports tool messages
+6. **Tool Execution**: ❌ NOT connected (TODO at line 158)
+7. **Result Storage**: ❌ Tool messages not saved to DB
+8. **Conversation Flow**: ❌ No automatic continuation with results
+
 ## Conclusion
 
 The tool calling implementation in tldw_chatbook has made significant progress with a solid foundation in place:
@@ -328,7 +353,7 @@ The tool calling implementation in tldw_chatbook has made significant progress w
 - ✅ Safe execution framework implemented
 - ✅ Built-in tools demonstrate the pattern
 
-The remaining work focuses on integration - connecting these components to create a seamless tool calling experience. The modular design ensures that completing the implementation will be straightforward without disrupting existing functionality.
+The remaining work focuses on integration - connecting these components to create a seamless tool calling experience. The primary task is implementing the TODO at line 158 in `chat_streaming_events.py` following the code example provided in Phase 1 of this document. Once this connection is made, the entire tool calling system will be functional.
 
 With the completion of Phase 1 (Core Integration), users will have access to a powerful tool calling system that enhances the LLM chat experience with real-world capabilities while maintaining safety and reliability.
 

@@ -5,7 +5,7 @@
 **Project**: tldw_chatbook  
 **Feature**: LLM Evaluation Framework  
 
-> **Note**: This document has been updated and consolidated. For the most current and comprehensive documentation, please refer to [EVALUATION-SYSTEM.md](../../EVALUATION-SYSTEM.md) in the project root.
+> **Note**: This document has been updated and consolidated. For the most current and comprehensive documentation, please refer to [EVALUATION-SYSTEM.md](../../Docs/Development/EVALUATION-SYSTEM.md) in the project root.
 
 ## Overview
 
@@ -20,9 +20,9 @@ The LLM evaluation system in tldw_chatbook provides a comprehensive framework fo
 
 ## Quick Links
 
-- **Comprehensive Documentation**: [EVALUATION-SYSTEM.md](../../EVALUATION-SYSTEM.md)
-- **Implementation Status**: [EVALUATIONS-STATUS.md](../../EVALUATIONS-STATUS.md)
-- **User Guide**: [EVALUATIONS-QUICKSTART.md](../../EVALUATIONS-QUICKSTART.md)
+- **Comprehensive Documentation**: [EVALUATION-SYSTEM.md](../../Docs/Development/EVALUATION-SYSTEM.md)
+- **Implementation Status**: [EVALUATIONS-STATUS.md](../../Docs/Development/EVALUATIONS-STATUS.md)
+- **User Guide**: [EVALUATIONS-QUICKSTART.md](../../Docs/Development/EVALUATIONS-QUICKSTART.md)
 - **Sample Tasks**: [/sample_evaluation_tasks/](../../sample_evaluation_tasks/)
 
 ## Module Structure
@@ -193,7 +193,7 @@ See [Evals_DB.py](../DB/Evals_DB.py) for complete schema.
    - Custom metric plugins
    - A/B testing framework
 
-For detailed roadmap, see [EVALUATION-SYSTEM.md](../../EVALUATION-SYSTEM.md#roadmap).
+For detailed roadmap, see [EVALUATION-SYSTEM.md](../../Docs/Development/EVALUATION-SYSTEM.md#roadmap).
 
 ## Support
 

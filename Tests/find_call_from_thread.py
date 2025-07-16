@@ -2,7 +2,7 @@
 import re
 
 # Read the file
-with open('tldw_chatbook/UI/Tools_Settings_Window.py', 'r') as f:
+with open('../tldw_chatbook/UI/Tools_Settings_Window.py', 'r') as f:
     lines = f.readlines()
 
 # Find all occurrences of call_from_thread

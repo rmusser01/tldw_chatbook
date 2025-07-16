@@ -27,7 +27,7 @@ This guide helps you navigate the evaluation system documentation for tldw_chatb
 
 ### 📂 Module Documentation
 
-4. **[tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md](tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md)**
+4. **[tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md](../../tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md)**
    - Module-specific reference
    - Links to main documentation
    - Quick API examples
@@ -39,7 +39,7 @@ This guide helps you navigate the evaluation system documentation for tldw_chatb
 - **New to the system?** → Start with [EVALUATIONS-QUICKSTART.md](EVALUATIONS-QUICKSTART.md)
 - **Need technical details?** → Read [EVALUATION-SYSTEM.md](EVALUATION-SYSTEM.md)
 - **Checking progress?** → See [EVALUATIONS-STATUS.md](EVALUATIONS-STATUS.md)
-- **Working on code?** → Reference [EVALS_SYSTEM_REFERENCE.md](tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md)
+- **Working on code?** → Reference [EVALS_SYSTEM_REFERENCE.md](../../tldw_chatbook/Evals/EVALS_SYSTEM_REFERENCE.md)
 
 ## Key Takeaways
 

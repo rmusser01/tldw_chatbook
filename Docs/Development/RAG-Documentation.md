@@ -1994,4 +1994,4 @@ pipeline_overrides = {
 
 ---
 
-For more technical details and implementation information, see the [RAG Design Document](Docs/Development/RAG-DESIGN.md).
+For more technical details and implementation information, see the [RAG Design Document](RAG-DESIGN.md).
