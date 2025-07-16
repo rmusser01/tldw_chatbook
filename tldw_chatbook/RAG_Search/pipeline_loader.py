@@ -122,7 +122,7 @@ class PipelineLoader:
     def _validate_pipeline_config(self, pipeline_id: str, config: Dict[str, Any]) -> bool:
         """Validate a pipeline configuration."""
         required_fields = ["name", "description", "type"]
-        valid_types = ["built-in", "custom", "composite", "wrapper"]
+        valid_types = ["built-in", "custom", "composite", "wrapper", "functional"]
         
         # Check required fields
         for field in required_fields:
@@ -171,6 +171,8 @@ class PipelineLoader:
             func = self._create_composite_function(pipeline)
         elif pipeline.type == "wrapper":
             func = self._create_wrapper_function(pipeline)
+        elif pipeline.type == "functional":
+            func = self._create_functional_pipeline(pipeline)
         else:
             logger.error(f"Unknown pipeline type: {pipeline.type}")
             return None
@@ -272,6 +274,45 @@ class PipelineLoader:
         """Create a wrapper pipeline function."""
         # Similar to custom, but specifically for wrapping other pipelines
         return self._create_custom_function(pipeline)
+    
+    def _create_functional_pipeline(self, pipeline: PipelineConfig) -> Optional[Callable]:
+        """Create a functional pipeline using the simplified pipeline system."""
+        from .pipeline_builder_simple import execute_pipeline
+        
+        # For now, functional pipelines use the same structure as custom pipelines
+        # In the future, we could parse the TOML steps into our format
+        logger.info(f"Creating functional pipeline '{pipeline.id}'")
+        
+        # Create a wrapper that executes the pipeline
+        async def functional_pipeline_wrapper(app, query, sources, **kwargs):
+            # Build config from pipeline
+            config = {
+                'name': pipeline.name,
+                'parameters': {**pipeline.parameters, **kwargs},
+                'steps': []  # Would need to parse from TOML
+            }
+            
+            # For now, map to built-in pipelines based on ID
+            if pipeline.id.endswith('_v2'):
+                base_id = pipeline.id[:-3]
+                if base_id in ['plain', 'semantic', 'hybrid']:
+                    from .pipeline_builder_simple import BUILTIN_PIPELINES
+                    if base_id in BUILTIN_PIPELINES:
+                        config = BUILTIN_PIPELINES[base_id].copy()
+                        config['parameters'].update(pipeline.parameters)
+                        config['parameters'].update(kwargs)
+                        return await execute_pipeline(config, app, query, sources)
+            
+            # Fallback to base pipeline if specified
+            if pipeline.base_pipeline:
+                base_func = self.get_pipeline_function(pipeline.base_pipeline)
+                if base_func:
+                    return await base_func(app, query, sources, **config['parameters'])
+            
+            logger.error(f"Cannot execute functional pipeline '{pipeline.id}'")
+            return [], "Pipeline execution failed"
+        
+        return functional_pipeline_wrapper
     
     def _apply_middleware(self, func: Callable, pipeline: PipelineConfig) -> Callable:
         """Apply middleware to a pipeline function."""

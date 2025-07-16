@@ -268,3 +268,229 @@ required_fields = ["name", "description", "type"]
 valid_types = ["built-in", "custom", "composite", "wrapper"]
 max_middleware_chain = 10
 require_enabled_flag = true
+
+# ==============================================================================
+# Functional Pipeline Definitions (New Format)
+# ==============================================================================
+# These pipelines use the new functional pipeline system with explicit steps
+# and pure functions. They can be used alongside legacy pipelines.
+
+[pipelines.plain_v2]
+name = "Plain RAG Search v2"
+description = "FTS5 search using functional pipeline"
+type = "functional"
+version = "2.0"
+enabled = true
+tags = ["fast", "keyword", "fts5", "v2"]
+
+[[pipelines.plain_v2.steps]]
+type = "retrieve"
+function = "retrieve_fts5"
+config = { top_k = 10, keyword_filter = [] }
+
+[[pipelines.plain_v2.steps]]
+type = "process"
+function = "deduplicate_results"
+config = { strategy = "content_hash" }
+
+[[pipelines.plain_v2.steps]]
+type = "format"
+function = "format_as_context"
+config = { max_length = 10000, include_citations = true }
+
+[pipelines.semantic_v2]
+name = "Semantic RAG Search v2"
+description = "Vector search using functional pipeline"
+type = "functional"
+version = "2.0"
+enabled = true
+tags = ["semantic", "embeddings", "ai", "v2"]
+cache_results = true
+cache_ttl_seconds = 3600
+
+[[pipelines.semantic_v2.steps]]
+type = "retrieve"
+function = "retrieve_semantic"
+config = { top_k = 10, score_threshold = 0.0, include_citations = true }
+
+[[pipelines.semantic_v2.steps]]
+type = "process"
+function = "rerank_results"
+config = { model = "flashrank", top_k = 5 }
+
+[[pipelines.semantic_v2.steps]]
+type = "format"
+function = "format_as_context"
+config = { max_length = 10000, include_citations = true }
+
+[pipelines.hybrid_v2]
+name = "Hybrid RAG Search v2"
+description = "Combined FTS5 and semantic search"
+type = "functional"
+version = "2.0"
+enabled = true
+tags = ["hybrid", "balanced", "comprehensive", "v2"]
+
+[[pipelines.hybrid_v2.steps]]
+type = "parallel"
+
+[[pipelines.hybrid_v2.steps.functions]]
+function = "retrieve_fts5"
+config = { top_k = 20 }
+
+[[pipelines.hybrid_v2.steps.functions]]
+function = "retrieve_semantic"
+config = { top_k = 20, score_threshold = 0.0 }
+
+[[pipelines.hybrid_v2.steps]]
+type = "merge"
+function = "weighted_merge"
+config = { weights = [0.5, 0.5] }
+
+[[pipelines.hybrid_v2.steps]]
+type = "process"
+function = "deduplicate_results"
+config = { strategy = "content_hash" }
+
+[[pipelines.hybrid_v2.steps]]
+type = "process"
+function = "rerank_results"
+config = { model = "flashrank", top_k = 10 }
+
+[[pipelines.hybrid_v2.steps]]
+type = "format"
+function = "format_as_context"
+config = { max_length = 10000, include_citations = true }
+
+[pipelines.research_focused_v2]
+name = "Research-Focused Pipeline v2"
+description = "Optimized for research with citation tracking"
+type = "functional"
+version = "2.0"
+enabled = true
+tags = ["research", "citations", "academic", "v2"]
+on_error = "continue"  # Continue even if some steps fail
+
+[[pipelines.research_focused_v2.steps]]
+type = "retrieve"
+function = "retrieve_semantic"
+config = { top_k = 30, include_citations = true }
+
+[[pipelines.research_focused_v2.steps]]
+type = "process"
+function = "filter_by_score"
+config = { min_score = 0.5 }
+
+[[pipelines.research_focused_v2.steps]]
+type = "process"
+function = "rerank_results"
+config = { model = "cohere", top_k = 15 }
+
+[[pipelines.research_focused_v2.steps]]
+type = "format"
+function = "format_as_context"
+config = { max_length = 15000, include_citations = true, separator = "\n\n---\n\n" }
+
+[pipelines.speed_optimized_v2]
+name = "Speed-Optimized Pipeline v2"
+description = "Minimal processing for fastest results"
+type = "functional"
+version = "2.0"
+enabled = true
+tags = ["speed", "performance", "minimal", "v2"]
+cache_results = false  # Skip caching for maximum speed
+timeout_seconds = 5.0
+
+[[pipelines.speed_optimized_v2.steps]]
+type = "retrieve"
+function = "retrieve_fts5"
+config = { top_k = 5 }
+timeout_seconds = 2.0
+
+[[pipelines.speed_optimized_v2.steps]]
+type = "format"
+function = "format_as_context"
+config = { max_length = 5000, include_citations = false }
+
+[pipelines.adaptive_v2]
+name = "Adaptive Pipeline v2"
+description = "Conditionally executes different strategies"
+type = "functional"
+version = "2.0"
+enabled = true
+tags = ["adaptive", "conditional", "smart", "v2"]
+
+[[pipelines.adaptive_v2.steps]]
+type = "retrieve"
+function = "retrieve_fts5"
+config = { top_k = 5 }
+name = "initial_search"
+
+[[pipelines.adaptive_v2.steps]]
+type = "conditional"
+condition = "min_results:3"
+
+[[pipelines.adaptive_v2.steps.if_false]]
+type = "retrieve"
+function = "retrieve_semantic"
+config = { top_k = 10 }
+name = "fallback_semantic"
+
+[[pipelines.adaptive_v2.steps]]
+type = "process"
+function = "deduplicate_results"
+config = { strategy = "content_hash" }
+
+[[pipelines.adaptive_v2.steps]]
+type = "format"
+function = "format_as_context"
+config = { max_length = 10000, include_citations = true }
+
+# Example custom pipeline that can be imported
+[pipelines.custom_example_v2]
+name = "Custom Example Pipeline"
+description = "Example of a custom pipeline configuration"
+type = "functional"
+version = "1.0"
+enabled = false  # Disabled by default
+tags = ["example", "custom", "template"]
+author = "user@example.com"
+created_date = "2025-01-16"
+
+[[pipelines.custom_example_v2.steps]]
+type = "parallel"
+name = "parallel_retrieval"
+description = "Retrieve from multiple sources in parallel"
+
+[[pipelines.custom_example_v2.steps.functions]]
+function = "retrieve_fts5"
+config = { top_k = 15, keyword_filter = ["important", "critical"] }
+
+[[pipelines.custom_example_v2.steps.functions]]
+function = "retrieve_semantic"
+config = { top_k = 15, score_threshold = 0.3 }
+
+[[pipelines.custom_example_v2.steps]]
+type = "merge"
+function = "weighted_merge"
+config = { weights = [0.3, 0.7] }  # Favor semantic results
+
+[[pipelines.custom_example_v2.steps]]
+type = "process"
+function = "deduplicate_results"
+config = { strategy = "content_hash" }
+
+[[pipelines.custom_example_v2.steps]]
+type = "process"
+function = "filter_by_score"
+config = { min_score = 0.4 }
+
+[[pipelines.custom_example_v2.steps]]
+type = "process"
+function = "rerank_results"
+config = { model = "flashrank", top_k = 10 }
+
+[[pipelines.custom_example_v2.steps]]
+type = "format"
+function = "format_as_context"
+config = { max_length = 12000, include_citations = true, separator = "\n\n===\n\n" }

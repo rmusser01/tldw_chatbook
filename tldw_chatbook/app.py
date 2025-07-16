@@ -3688,6 +3688,47 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error(f"Unexpected error saving note {self.current_chat_note_id}: {e}", exc_info=True)
             self.notify(f"Error saving note: {type(e).__name__}", severity="error")
 
+    @on(Button.Pressed, "#chat-notes-copy-button")
+    async def handle_chat_notes_copy(self, event: Button.Pressed) -> None:
+        """Handles the 'Copy Note' button press in the chat sidebar's notes section."""
+        self.loguru_logger.info("Copy Note button pressed.")
+        
+        try:
+            # Get title and content from the input fields
+            title_input = self.query_one("#chat-notes-title-input", Input)
+            content_textarea = self.query_one("#chat-notes-content-textarea", TextArea)
+            
+            title = title_input.value.strip()
+            content = content_textarea.text.strip()
+            
+            # Check if there's anything to copy
+            if not title and not content:
+                self.notify("No note content to copy.", severity="warning")
+                return
+            
+            # Format the note for clipboard
+            if title and content:
+                # Both title and content present
+                formatted_note = f"# {title}\n\n{content}"
+            elif title:
+                # Only title
+                formatted_note = f"# {title}"
+            else:
+                # Only content
+                formatted_note = content
+            
+            # Copy to clipboard
+            self.copy_to_clipboard(formatted_note)
+            self.notify("Note copied to clipboard!", severity="information")
+            self.loguru_logger.info(f"Note copied to clipboard. Title: '{title[:50]}...'" if title else "Note content copied to clipboard.")
+            
+        except QueryError as e:
+            self.loguru_logger.error(f"UI element not found during note copy: {e}")
+            self.notify("UI error during note copy.", severity="error")
+        except Exception as e:
+            self.loguru_logger.error(f"Unexpected error copying note: {e}", exc_info=True)
+            self.notify(f"Error copying note: {type(e).__name__}", severity="error")
+
     @on(Collapsible.Toggled, "#chat-notes-collapsible")
     async def on_chat_notes_collapsible_toggle(self, event: Collapsible.Toggled) -> None:
         """Handles the expansion/collapse of the Notes collapsible section in the chat sidebar."""

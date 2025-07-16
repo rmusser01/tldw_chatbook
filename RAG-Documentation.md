@@ -1593,6 +1593,247 @@ parameters = { top_k = 3, max_context_length = 1000 }
 - Check parameter values are reasonable
 - Monitor pipeline metrics in logs
 
+## Functional Pipeline System (v2)
+
+### Overview
+
+The new functional pipeline system provides a more flexible and composable approach to building RAG pipelines. Instead of monolithic functions, pipelines are composed of small, pure functions that can be combined in various ways.
+
+### Enabling Functional Pipelines
+
+To use the new functional pipeline system:
+
+```bash
+export USE_V2_PIPELINES=true
+```
+
+Or in your config:
+```toml
+[AppRAGSearchConfig.rag.pipeline]
+use_v2_pipelines = true
+default_pipeline = "hybrid_v2"  # Use v2 pipeline
+```
+
+### Functional Pipeline Structure
+
+Functional pipelines use a step-based approach:
+
+```toml
+[pipelines.example_v2]
+name = "Example Functional Pipeline"
+type = "functional"
+version = "2.0"
+enabled = true
+
+# Step 1: Retrieve data
+[[pipelines.example_v2.steps]]
+type = "retrieve"
+function = "retrieve_fts5"
+config = { top_k = 10 }
+
+# Step 2: Process results
+[[pipelines.example_v2.steps]]
+type = "process"
+function = "rerank_results"
+config = { model = "flashrank", top_k = 5 }
+
+# Step 3: Format output
+[[pipelines.example_v2.steps]]
+type = "format"
+function = "format_as_context"
+config = { max_length = 10000 }
+```
+
+### Available Step Types
+
+1. **retrieve** - Fetch data from sources
+   - `retrieve_fts5` - SQLite FTS5 search
+   - `retrieve_semantic` - Vector similarity search
+
+2. **process** - Transform or filter results
+   - `rerank_results` - Re-rank using ML models
+   - `deduplicate_results` - Remove duplicates
+   - `filter_by_score` - Filter by minimum score
+
+3. **format** - Format results for output
+   - `format_as_context` - LLM-ready context
+   - `format_as_json` - JSON output
+
+4. **parallel** - Run multiple functions in parallel
+5. **merge** - Combine parallel results
+6. **conditional** - Execute based on conditions
+
+### Pre-built V2 Pipelines
+
+#### Plain Search v2
+Fast keyword-based search:
+```toml
+pipeline = "plain_v2"
+```
+
+#### Semantic Search v2
+AI-powered semantic search:
+```toml
+pipeline = "semantic_v2"
+```
+
+#### Hybrid Search v2
+Combined keyword and semantic:
+```toml
+pipeline = "hybrid_v2"
+```
+
+#### Research-Focused v2
+Optimized for academic research:
+```toml
+pipeline = "research_focused_v2"
+```
+
+#### Speed-Optimized v2
+Minimal processing for fastest results:
+```toml
+pipeline = "speed_optimized_v2"
+```
+
+### Creating Custom Functional Pipelines
+
+#### Example 1: Parallel Retrieval Pipeline
+
+```toml
+[pipelines.parallel_search_v2]
+name = "Parallel Search"
+type = "functional"
+version = "2.0"
+
+# Run multiple retrievals in parallel
+[[pipelines.parallel_search_v2.steps]]
+type = "parallel"
+
+[[pipelines.parallel_search_v2.steps.functions]]
+function = "retrieve_fts5"
+config = { top_k = 20 }
+
+[[pipelines.parallel_search_v2.steps.functions]]
+function = "retrieve_semantic"
+config = { top_k = 20, score_threshold = 0.5 }
+
+# Merge results with weights
+[[pipelines.parallel_search_v2.steps]]
+type = "merge"
+function = "weighted_merge"
+config = { weights = [0.3, 0.7] }  # Favor semantic
+
+# Clean up and rank
+[[pipelines.parallel_search_v2.steps]]
+type = "process"
+function = "deduplicate_results"
+
+[[pipelines.parallel_search_v2.steps]]
+type = "process"
+function = "rerank_results"
+config = { model = "cohere", top_k = 10 }
+
+[[pipelines.parallel_search_v2.steps]]
+type = "format"
+function = "format_as_context"
+```
+
+#### Example 2: Conditional Pipeline
+
+```toml
+[pipelines.adaptive_search_v2]
+name = "Adaptive Search"
+type = "functional"
+version = "2.0"
+
+# Try fast search first
+[[pipelines.adaptive_search_v2.steps]]
+type = "retrieve"
+function = "retrieve_fts5"
+config = { top_k = 5 }
+name = "initial_search"
+
+# If not enough results, use semantic
+[[pipelines.adaptive_search_v2.steps]]
+type = "conditional"
+condition = "min_results:3"
+
+[[pipelines.adaptive_search_v2.steps.if_false]]
+type = "retrieve"
+function = "retrieve_semantic"
+config = { top_k = 10 }
+name = "fallback_search"
+
+# Process and format
+[[pipelines.adaptive_search_v2.steps]]
+type = "process"
+function = "deduplicate_results"
+
+[[pipelines.adaptive_search_v2.steps]]
+type = "format"
+function = "format_as_context"
+```
+
+### Advanced Features
+
+#### Error Handling
+```toml
+[pipelines.resilient_v2]
+on_error = "continue"  # Continue on step failure
+# Options: "fail" (default), "continue", "fallback"
+```
+
+#### Step Timeouts
+```toml
+[[pipelines.fast_v2.steps]]
+type = "retrieve"
+function = "retrieve_semantic"
+timeout_seconds = 2.0  # Timeout for this step
+```
+
+#### Custom Functions
+Register your own functions:
+```python
+from tldw_chatbook.RAG_Search.pipeline_functions import register_function
+
+def custom_filter(results, context, config):
+    # Your custom logic
+    return Success(filtered_results)
+
+register_function('custom_filter', custom_filter)
+```
+
+### Migration from v1 to v2
+
+The system supports gradual migration:
+
+1. **Backward Compatible**: v1 pipelines continue to work
+2. **Fallback**: v2 pipelines fall back to v1 if needed
+3. **Side-by-side**: Run both versions for comparison
+
+### Performance Comparison
+
+V2 pipelines offer several advantages:
+- **Composability**: Mix and match functions
+- **Parallelism**: Native parallel execution
+- **Caching**: Per-step result caching
+- **Monitoring**: Detailed step metrics
+- **Error Recovery**: Graceful error handling
+
+### Troubleshooting V2 Pipelines
+
+**Pipeline not working?**
+- Ensure `USE_V2_PIPELINES=true` is set
+- Check function names are correct
+- Verify step types match functions
+- Review logs for step failures
+
+**Performance issues?**
+- Check parallel step configuration
+- Review timeout settings
+- Monitor step execution times
+- Consider caching configuration
+
 ## Using Custom Pipelines in tldw_chatbook
 
 ### In the Chat Interface

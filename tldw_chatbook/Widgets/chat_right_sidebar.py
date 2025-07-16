@@ -295,6 +295,13 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                     variant="success",
                     classes="sidebar-button"
                 )
+                
+                yield Button(
+                    "Copy Note",
+                    id=f"{id_prefix}-notes-copy-button",
+                    variant="default",
+                    classes="sidebar-button"
+                )
 
         # Placeholder for actual character details (if a specific character is active beyond default)
         # This part would be more relevant if the chat tab directly supported switching active characters

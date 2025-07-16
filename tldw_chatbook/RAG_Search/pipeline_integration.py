@@ -26,7 +26,14 @@ class PipelineManager:
             "plain": "plain",
             "semantic": "semantic",
             "full": "semantic",  # Alias for semantic
-            "hybrid": "hybrid"
+            "hybrid": "hybrid",
+            # V2 functional pipelines
+            "plain_v2": "plain_v2",
+            "semantic_v2": "semantic_v2",
+            "hybrid_v2": "hybrid_v2",
+            "research_focused_v2": "research_focused_v2",
+            "speed_optimized_v2": "speed_optimized_v2",
+            "adaptive_v2": "adaptive_v2"
         }
     
     def get_pipeline_by_mode(self, search_mode: str) -> Optional[Callable]:
@@ -111,6 +118,13 @@ class PipelineManager:
             elif pipeline_id == "hybrid":
                 return await chat_rag_events.perform_hybrid_rag_search(
                     app, query, sources, **kwargs
+                )
+            # Check if it's a v2 pipeline
+            elif pipeline_id.endswith('_v2'):
+                # Use the simplified pipeline system
+                from ..Event_Handlers.Chat_Events.chat_rag_events_simplified import perform_search_with_pipeline
+                return await perform_search_with_pipeline(
+                    app, query, sources, pipeline_id, **kwargs
                 )
             else:
                 raise ValueError(f"Unknown pipeline: {pipeline_id}")
