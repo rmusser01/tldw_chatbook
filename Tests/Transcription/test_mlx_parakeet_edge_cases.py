@@ -249,10 +249,10 @@ class TestMLXParakeetEdgeCases:
         for precision, should_fail in test_cases:
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
                 if should_fail:
-                    mock_pretrained.side_effect = ValueError(f"Invalid dtype: {precision}")
+                    mock_pretrained.side_effect = ValueError(f"Invalid dtype: {str(precision)}")
                 else:
                     mock_model = MagicMock()
-                    mock_model.transcribe_audio.return_value = f'Precision: {precision}'
+                    mock_model.transcribe_audio.return_value = f'Precision: {str(precision)}'
                     mock_pretrained.return_value = mock_model
                 
                 with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:

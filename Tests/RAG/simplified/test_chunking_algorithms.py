@@ -196,9 +196,10 @@ Third paragraph here."""
         """Test edge cases for chunk overlap"""
         text = "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z"
         
-        # Overlap larger than chunk size
-        chunks = chunking_service.chunk_text(text, chunk_size=10, chunk_overlap=15)
-        assert len(chunks) > 0  # Should handle gracefully
+        # Overlap larger than chunk size - should raise an error
+        from tldw_chatbook.RAG_Search.chunking_service import ChunkingError
+        with pytest.raises(ChunkingError, match="Overlap.*must be less than"):
+            chunks = chunking_service.chunk_text(text, chunk_size=10, chunk_overlap=15)
         
         # Zero overlap
         chunks = chunking_service.chunk_text(text, chunk_size=10, chunk_overlap=0)
@@ -236,14 +237,10 @@ class TestChunkingEdgeCases:
         """Test handling of invalid chunk size"""
         text = "Test text"
         
-        # Should handle gracefully (return single chunk or raise ValueError)
-        try:
+        # Should raise an error for negative chunk size
+        from tldw_chatbook.RAG_Search.chunking_service import ChunkingError
+        with pytest.raises(ChunkingError, match="max_words must be positive"):
             chunks = chunking_service.chunk_text(text, chunk_size=-10, chunk_overlap=5)
-            # If it doesn't raise, should return sensible result
-            assert len(chunks) <= 1
-        except (ValueError, AssertionError):
-            # Expected behavior - invalid input rejected
-            pass
     
     def test_text_with_only_whitespace(self, chunking_service):
         """Test text containing only whitespace"""

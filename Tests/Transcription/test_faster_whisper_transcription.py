@@ -556,7 +556,7 @@ class TestFasterWhisperIntegration:
         """Test actual transcription with faster-whisper."""
         # This test will actually load the model and perform transcription
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='faster-whisper',
             model='tiny',  # Use tiny model for faster testing
             language='en',
@@ -577,7 +577,7 @@ class TestFasterWhisperIntegration:
     def test_real_transcription_auto_language(self, real_transcription_service, test_audio_file):
         """Test automatic language detection."""
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='faster-whisper',
             model='tiny',
             language='auto',
@@ -596,7 +596,7 @@ class TestFasterWhisperIntegration:
     def test_real_transcription_different_models(self, real_transcription_service, test_audio_file, model):
         """Test transcription with different model sizes."""
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='faster-whisper',
             model=model,
             language='en',
@@ -615,7 +615,7 @@ class TestFasterWhisperIntegration:
         # Some compute types may not be available on all hardware
         try:
             result = real_transcription_service.transcribe(
-                audio_file_path=test_audio_file,
+                audio_path=test_audio_file,
                 provider='faster-whisper',
                 model='tiny',
                 language='en',
@@ -636,7 +636,7 @@ class TestFasterWhisperIntegration:
         """Test transcription with invalid audio file."""
         with pytest.raises(TranscriptionError):
             real_transcription_service.transcribe(
-                audio_file_path="non_existent_file.wav",
+                audio_path="non_existent_file.wav",
                 provider='faster-whisper'
             )
     
@@ -653,7 +653,7 @@ class TestFasterWhisperIntegration:
             
             try:
                 result = real_transcription_service.transcribe(
-                    audio_file_path=tmp_file.name,
+                    audio_path=tmp_file.name,
                     provider='faster-whisper',
                     model='tiny'
                 )
@@ -671,7 +671,7 @@ class TestFasterWhisperIntegration:
         """Test transcription with and without VAD filter."""
         # With VAD
         result_vad = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='faster-whisper',
             model='tiny',
             language='en',
@@ -680,7 +680,7 @@ class TestFasterWhisperIntegration:
         
         # Without VAD
         result_no_vad = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='faster-whisper',
             model='tiny',
             language='en',
@@ -707,7 +707,7 @@ class TestFasterWhisperIntegration:
             })
         
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='faster-whisper',
             model='tiny',
             language='en',
@@ -745,7 +745,7 @@ class TestFasterWhisperIntegration:
             try:
                 # Try translation from French to English
                 result = real_transcription_service.transcribe(
-                    audio_file_path=tmp_file.name,
+                    audio_path=tmp_file.name,
                     provider='faster-whisper',
                     model='tiny',
                     source_lang='fr',
@@ -784,7 +784,7 @@ class TestFasterWhisperPerformance:
                 start_time = time.time()
                 
                 result = real_transcription_service.transcribe(
-                    audio_file_path=test_audio_file,
+                    audio_path=test_audio_file,
                     provider='faster-whisper',
                     vad_filter=True,
                     **config
@@ -841,7 +841,7 @@ class TestFasterWhisperPerformance:
                 
                 try:
                     result = real_transcription_service.transcribe(
-                        audio_file_path=tmp.name,
+                        audio_path=tmp.name,
                         provider='faster-whisper',
                         model=model
                     )

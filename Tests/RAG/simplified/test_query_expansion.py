@@ -273,6 +273,18 @@ class TestQueryExpander:
 class TestQueryExpansionIntegration:
     """Integration tests for query expansion with RAG search."""
     
+    @pytest.fixture
+    def mock_app(self):
+        """Create a mock app instance."""
+        app = Mock()
+        app.config_dict = {
+            'API': {
+                'openai_api_key': 'test-key',
+                'anthropic_api_key': 'test-key'
+            }
+        }
+        return app
+    
     @pytest.mark.asyncio
     async def test_full_expansion_flow(self, mock_app):
         """Test the full query expansion flow."""

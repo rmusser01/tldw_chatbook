@@ -369,7 +369,8 @@ class TestMLXParakeetUnit:
                 transcription_service._transcribe_with_parakeet_mlx(
                     audio_path="dummy.wav"
                 )
-            assert "soundfile is not installed" in str(exc_info.value)
+            # When soundfile is not available, Parakeet falls back to ffmpeg which fails on non-existent file
+            assert "Failed to load audio" in str(exc_info.value)
     
     def test_error_handling_model_load(self, transcription_service, sample_audio_file):
         """Test error handling during model loading."""
@@ -507,7 +508,7 @@ class TestMLXParakeetIntegration:
         """Test actual transcription with Parakeet MLX."""
         # This test will actually load the model and perform transcription
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='parakeet-mlx',
             model='mlx-community/parakeet-tdt-0.6b-v2',
             precision='float16'
@@ -529,7 +530,7 @@ class TestMLXParakeetIntegration:
         
         for precision in precisions:
             result = real_transcription_service.transcribe(
-                audio_file_path=test_audio_file,
+                audio_path=test_audio_file,
                 provider='parakeet-mlx',
                 model='mlx-community/parakeet-tdt-0.6b-v2',
                 precision=precision
@@ -568,7 +569,7 @@ class TestMLXParakeetIntegration:
             
             try:
                 result = real_transcription_service.transcribe(
-                    audio_file_path=tmp_file.name,
+                    audio_path=tmp_file.name,
                     provider='parakeet-mlx',
                     model='mlx-community/parakeet-tdt-0.6b-v2',
                     chunk_size=10,  # 10 second chunks
@@ -590,7 +591,7 @@ class TestMLXParakeetIntegration:
         """Test transcription with invalid audio file."""
         with pytest.raises(TranscriptionError):
             real_transcription_service.transcribe(
-                audio_file_path="non_existent_file.wav",
+                audio_path="non_existent_file.wav",
                 provider='parakeet-mlx'
             )
     
@@ -607,7 +608,7 @@ class TestMLXParakeetIntegration:
             
             try:
                 result = real_transcription_service.transcribe(
-                    audio_file_path=tmp_file.name,
+                    audio_path=tmp_file.name,
                     provider='parakeet-mlx',
                     model='mlx-community/parakeet-tdt-0.6b-v2'
                 )
@@ -624,7 +625,7 @@ class TestMLXParakeetIntegration:
     def test_real_transcription_attention_types(self, real_transcription_service, test_audio_file, attention_type):
         """Test transcription with different attention types."""
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='parakeet-mlx',
             model='mlx-community/parakeet-tdt-0.6b-v2',
             attention_type=attention_type
@@ -646,7 +647,7 @@ class TestMLXParakeetIntegration:
             })
         
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='parakeet-mlx',
             model='mlx-community/parakeet-tdt-0.6b-v2',
             progress_callback=progress_callback
@@ -686,7 +687,7 @@ class TestMLXParakeetIntegration:
             
             try:
                 result = real_transcription_service.transcribe(
-                    audio_file_path=tmp_file.name,
+                    audio_path=tmp_file.name,
                     provider='parakeet-mlx',
                     model='mlx-community/parakeet-tdt-0.6b-v2'
                 )
@@ -722,7 +723,7 @@ class TestMLXParakeetPerformance:
             start_time = time.time()
             
             result = real_transcription_service.transcribe(
-                audio_file_path=test_audio_file,
+                audio_path=test_audio_file,
                 provider='parakeet-mlx',
                 **config
             )
@@ -770,7 +771,7 @@ class TestMLXParakeetPerformance:
                 start_time = time.time()
                 
                 result = real_transcription_service.transcribe(
-                    audio_file_path=tmp_file.name,
+                    audio_path=tmp_file.name,
                     provider='parakeet-mlx',
                     model='mlx-community/parakeet-tdt-0.6b-v2',
                     precision='float16'

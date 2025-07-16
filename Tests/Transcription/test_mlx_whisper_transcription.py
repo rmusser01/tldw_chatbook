@@ -472,7 +472,7 @@ class TestMLXWhisperIntegration:
         """Test actual transcription with Lightning Whisper MLX."""
         # This test will actually load the model and perform transcription
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='lightning-whisper-mlx',
             model='tiny',  # Use tiny model for faster testing
             batch_size=4   # Smaller batch size for testing
@@ -491,7 +491,7 @@ class TestMLXWhisperIntegration:
     def test_real_transcription_with_quantization(self, real_transcription_service, test_audio_file):
         """Test transcription with quantization."""
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='lightning-whisper-mlx',
             model='tiny',
             quant='4bit'
@@ -509,7 +509,7 @@ class TestMLXWhisperIntegration:
         
         for model in models_to_test:
             result = real_transcription_service.transcribe(
-                audio_file_path=test_audio_file,
+                audio_path=test_audio_file,
                 provider='lightning-whisper-mlx',
                 model=model
             )
@@ -523,7 +523,7 @@ class TestMLXWhisperIntegration:
         """Test transcription with invalid audio file."""
         with pytest.raises(TranscriptionError):
             real_transcription_service.transcribe(
-                audio_file_path="non_existent_file.wav",
+                audio_path="non_existent_file.wav",
                 provider='lightning-whisper-mlx'
             )
     
@@ -540,7 +540,7 @@ class TestMLXWhisperIntegration:
             
             try:
                 result = real_transcription_service.transcribe(
-                    audio_file_path=tmp_file.name,
+                    audio_path=tmp_file.name,
                     provider='lightning-whisper-mlx',
                     model='tiny'
                 )
@@ -557,7 +557,7 @@ class TestMLXWhisperIntegration:
     def test_real_transcription_batch_sizes(self, real_transcription_service, test_audio_file, batch_size):
         """Test transcription with different batch sizes."""
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='lightning-whisper-mlx',
             model='tiny',
             batch_size=batch_size
@@ -579,7 +579,7 @@ class TestMLXWhisperIntegration:
             })
         
         result = real_transcription_service.transcribe(
-            audio_file_path=test_audio_file,
+            audio_path=test_audio_file,
             provider='lightning-whisper-mlx',
             model='tiny',
             progress_callback=progress_callback
@@ -618,7 +618,7 @@ class TestMLXWhisperPerformance:
             start_time = time.time()
             
             result = real_transcription_service.transcribe(
-                audio_file_path=test_audio_file,
+                audio_path=test_audio_file,
                 provider='lightning-whisper-mlx',
                 **config
             )
