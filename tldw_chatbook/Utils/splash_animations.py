@@ -1185,7 +1185,8 @@ class MazeGeneratorEffect(BaseEffect):
                 cell = output_grid[r_idx][c_idx]
                 if isinstance(cell, tuple):
                     char, style = cell
-                    line_segments.append(f"[{style}]{char.replace('[','\\[')}[/{style}]")
+                    escaped_char = char.replace('[','\\[')
+                    line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else: # Space, apply default path style or background
                     line_segments.append(f"[{self.path_style}] [/{self.path_style}]")
             styled_output_lines[r_idx] = "".join(line_segments)
@@ -1683,7 +1684,8 @@ class RaindropsEffect(BaseEffect):
             line_segments = []
             for c_idx in range(self.display_width):
                 char, style = char_grid[r_idx][c_idx]
-                line_segments.append(f"[{style}]{char.replace('[','\\[')}[/{style}]")
+                escaped_char = char.replace('[','\\[')
+                line_segments.append(f"[{style}]{escaped_char}[/{style}]")
             styled_output_lines.append("".join(line_segments))
 
         # Overlay title (centered)
@@ -1702,7 +1704,8 @@ class RaindropsEffect(BaseEffect):
                         current_title_char_idx +=1
                     else: # Use the already determined char from char_grid (ripple or water)
                         char, style = char_grid[title_y][c_idx]
-                        title_line_segments.append(f"[{style}]{char.replace('[','\\[')}[/{style}]")
+                        escaped_char = char.replace('[','\\[')
+                        title_line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 styled_output_lines[title_y] = "".join(title_line_segments)
 
         return "\n".join(styled_output_lines)
@@ -1916,7 +1919,8 @@ class TextExplosionEffect(BaseEffect):
             for c_idx in range(self.display_width):
                 if (c_idx, r_idx) in styled_grid:
                     char, style = styled_grid[(c_idx, r_idx)]
-                    line_segments.append(f"[{style}]{char.replace('[','\\[')}[/{style}]")
+                    escaped_char = char.replace('[','\\[')
+                line_segments.append(f"[{style}]{escaped_char}[/{style}]")
                 else:
                     line_segments.append(' ')
             output_lines.append("".join(line_segments))
