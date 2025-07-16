@@ -415,8 +415,9 @@ class TestConfigLoading:
         assert len(configs) == 2
         assert "media" in configs
         assert "notes" in configs
-        assert configs["media"].persist_directory == "/custom/path"
-        assert configs["notes"].persist_directory == "/custom/path"
+        # Use Path for platform-independent path comparison
+        assert Path(configs["media"].persist_directory) == Path("/custom/path")
+        assert Path(configs["notes"].persist_directory) == Path("/custom/path")
     
     def test_load_config_from_settings_with_overrides(self):
         """Test loading config with collection-specific overrides."""
@@ -547,7 +548,8 @@ class TestConfigEnvironmentVariables:
         persist_dir = os.environ.get("RAG_PERSIST_DIR", "/default/path")
         config = create_config_for_collection("test", persist_dir=Path(persist_dir))
         
-        assert config.persist_directory == "/env/path"
+        # Use Path for platform-independent path comparison
+        assert Path(config.persist_directory) == Path("/env/path")
     
     @patch.dict(os.environ, {
         "RAG_EMBEDDING_PROVIDER": "openai",
