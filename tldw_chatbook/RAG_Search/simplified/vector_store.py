@@ -171,12 +171,14 @@ class ChromaVectorStore:
                 from chromadb.config import Settings
                 
                 settings = Settings(
-                    persist_directory=str(self.persist_directory),
                     anonymized_telemetry=False,
                     allow_reset=True
                 )
-                self._client = chromadb.Client(settings)
-                logger.info(f"Initialized ChromaDB client at {self.persist_directory}")
+                self._client = chromadb.PersistentClient(
+                    path=str(self.persist_directory),
+                    settings=settings
+                )
+                logger.info(f"Initialized ChromaDB PersistentClient at {self.persist_directory}")
                 
             except ImportError:
                 raise ImportError(
@@ -577,6 +579,17 @@ class ChromaVectorStore:
         except Exception as e:
             logger.error(f"Failed to list collections: {e}")
             return []
+    
+    def close(self) -> None:
+        """Close the ChromaDB client and clean up resources."""
+        if self._client is not None:
+            try:
+                # ChromaDB doesn't have an explicit close method, but we can reset our references
+                self._collection = None
+                self._client = None
+                logger.info("ChromaVectorStore closed")
+            except Exception as e:
+                logger.error(f"Error closing ChromaVectorStore: {e}")
 
 
 class InMemoryVectorStore:
@@ -939,8 +952,16 @@ class InMemoryVectorStore:
         return results_with_citations
     
     def delete_collection(self, name: str) -> None:
-        """Clear all data (collection name ignored for in-memory)."""
-        self.clear()
+        """Delete a specific collection."""
+        if name in self._collections:
+            del self._collections[name]
+            if name in self._collection_access_time:
+                del self._collection_access_time[name]
+            logger.info(f"Deleted collection: {name}")
+        
+        # If it's the current collection, also clear main storage
+        if name == self._current_collection or name == "default":
+            self.clear()
     
     def clear(self) -> None:
         """Clear all data."""
@@ -1079,6 +1100,14 @@ class InMemoryVectorStore:
         if self.ids:
             collections.add("default")
         return list(collections)
+    
+    def close(self) -> None:
+        """Close the store and clean up resources."""
+        # For in-memory store, just clear everything
+        self.clear()
+        self._collections.clear()
+        self._collection_access_time.clear()
+        logger.info("InMemoryVectorStore closed")
 
 
 # Factory function for creating vector stores

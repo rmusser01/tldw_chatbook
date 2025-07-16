@@ -56,7 +56,16 @@ class TestEndToEndWorkflow:
         with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
             # Mock the embedding factory
             mock_instance = MagicMock()
-            mock_instance.embed.return_value = np.array([[0.1 + i * 0.01] * 384 for i in range(len(sample_texts))])
+            # Mock the sync embed method
+            def embed_func(texts, as_list=True):
+                return np.array([[0.1 + i * 0.01] * 384 for i in range(len(texts))])
+            mock_instance.embed.side_effect = embed_func
+            
+            # Mock the async embed method
+            async def async_embed_func(texts, as_list=False):
+                return np.array([[0.1 + i * 0.01] * 384 for i in range(len(texts))])
+            mock_instance.async_embed = AsyncMock(side_effect=async_embed_func)
+            
             mock_factory.return_value = mock_instance
             
             embeddings_service = EmbeddingsServiceWrapper(
@@ -203,6 +212,7 @@ class TestVectorStoreIntegration:
     def test_chromadb_vector_store(self, temp_dir):
         """Test ChromaVectorStore operations"""
         # This test requires actual ChromaDB to be installed
+        store = None
         try:
             persist_dir = temp_dir / "chromadb_test"
             persist_dir.mkdir(exist_ok=True)
@@ -211,32 +221,37 @@ class TestVectorStoreIntegration:
             pytest.skip("ChromaDB not installed")
             return
         
-        # Add documents
-        collection_name = "chroma_test"
-        documents = ["ChromaDB document 1", "ChromaDB document 2"]
-        embeddings = [[0.1, 0.2], [0.3, 0.4]]
-        metadatas = [{"source": "test"} for _ in documents]
-        ids = ["chroma_1", "chroma_2"]
-        
-        success = store.add_documents(
-            collection_name,
-            documents,
-            embeddings,
-            metadatas,
-            ids
-        )
-        assert success
-        
-        # Search
-        query_embedding = np.array([0.15, 0.25])
-        results = store.search(
-            query_embedding,
-            top_k=1
-        )
-        
-        assert results is not None
-        assert len(results) == 1
-        assert results[0].id in ids
+        try:
+            # Add documents
+            collection_name = "chroma_test"
+            documents = ["ChromaDB document 1", "ChromaDB document 2"]
+            embeddings = [[0.1, 0.2], [0.3, 0.4]]
+            metadatas = [{"source": "test"} for _ in documents]
+            ids = ["chroma_1", "chroma_2"]
+            
+            success = store.add_documents(
+                collection_name,
+                documents,
+                embeddings,
+                metadatas,
+                ids
+            )
+            assert success
+            
+            # Search
+            query_embedding = np.array([0.15, 0.25])
+            results = store.search(
+                query_embedding,
+                top_k=1
+            )
+            
+            assert results is not None
+            assert len(results) == 1
+            assert results[0].id in ids
+        finally:
+            # Clean up
+            if store is not None:
+                store.close()
 
 
 @pytest.mark.integration 

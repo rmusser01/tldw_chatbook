@@ -313,12 +313,15 @@ class _HuggingFaceEmbedder:
                 else:
                     # This shouldn't happen due to the check in _build, but just in case
                     raise ImportError("torch is required for HuggingFace embeddings")
+                
+                # Load model with low_cpu_mem_usage to avoid meta tensors
                 self._model = AutoModel.from_pretrained(
                     cfg.model_name_or_path,
                     torch_dtype=dtype,
                     trust_remote_code=cfg.trust_remote_code,
                     cache_dir=cache_dir,
-                    revision=cfg.revision  # Pin to specific revision if provided
+                    revision=cfg.revision,  # Pin to specific revision if provided
+                    low_cpu_mem_usage=False  # Avoid meta tensors
                 )
         # --- [FIX] Added robust error handling for model loading ---
         except (OSError, requests.exceptions.RequestException) as e:
@@ -346,6 +349,13 @@ class _HuggingFaceEmbedder:
             # Use explicitly specified device
             self._device = torch.device(cfg.device)
         self._model.to(self._device).eval()
+        
+        # Ensure model is not on meta device
+        if hasattr(self._model, 'device') and self._model.device.type == 'meta':
+            logger.warning("Model was on meta device, forcing to specified device")
+            # Force load the model weights
+            self._model = self._model.to(self._device)
+        
         self._max_len = cfg.max_length
         self._batch_size = cfg.batch_size
         self._pool = cfg.pooling or _masked_mean

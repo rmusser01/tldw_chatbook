@@ -11,7 +11,7 @@ from io import BytesIO
 
 # 3rd-party Libraries
 from PIL import Image as PILImage
-from textual.widgets import Button, Label, Static, TextArea
+from textual.widgets import Button, Label, Static, TextArea, Markdown
 from textual.containers import Container, Horizontal, Vertical
 from textual.events import Click
 
@@ -139,9 +139,10 @@ class TestChatMessageEnhancedComposition:
             assert "2024-01-20 10:00:00" in header.renderable
             
             # Check message text
-            message_text = widget.query_one(".message-text", Static)
+            message_text = widget.query_one(".message-text", Markdown)
             assert message_text is not None
-            assert "User message" in message_text.renderable
+            # For Markdown widget, we need to check the internal _markdown property
+            assert "User message" in message_text._markdown
             
             # Check image container
             image_container = widget.query_one(".message-image-container", Container)
@@ -636,9 +637,9 @@ class TestChatMessageEnhancedEdgeCases:
             await pilot.pause()
             
             # Should still render properly
-            message_text = widget.query_one(".message-text", Static)
+            message_text = widget.query_one(".message-text", Markdown)
             assert message_text is not None
-            assert message_text.renderable == ""
+            assert message_text._markdown == ""
     
     async def test_missing_optional_dependencies(self, widget_pilot, sample_image_data):
         """Test behavior when optional dependencies are missing."""
