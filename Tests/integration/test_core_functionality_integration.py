@@ -18,13 +18,20 @@ pytestmark = pytest.mark.integration
 def test_notes_functionality_without_optional_deps():
     """Test that notes functionality works without optional dependencies."""
     import tempfile
+    from pathlib import Path
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     
     # This should be able to initialize without embeddings
     with tempfile.TemporaryDirectory() as tmpdir:
+        # Create a global database instance for testing
+        db_path = Path(tmpdir) / "test_notes.db"
+        global_db = CharactersRAGDB(str(db_path), "test_client")
+        
         notes_service = NotesInteropService(
             base_db_directory=tmpdir,
-            api_client_id="test_client"
+            api_client_id="test_client",
+            global_db_to_use=global_db
         )
         assert notes_service is not None
 

@@ -10,8 +10,9 @@ from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime, timedelta
 
 from tldw_chatbook.RAG_Search.query_expansion import (
-    QueryExpander, QueryExpansionCache, QueryExpansionConfig
+    QueryExpander, QueryExpansionCache
 )
+from tldw_chatbook.RAG_Search.simplified.config import QueryExpansionConfig
 
 
 class TestQueryExpansionCache:

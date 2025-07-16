@@ -23,6 +23,17 @@ from tldw_chatbook.RAG_Search.simplified import (
     create_config_for_testing
 )
 # Note: Provider classes are handled internally in simplified API
+from tldw_chatbook.RAG_Search.simplified import circuit_breaker
+
+
+@pytest.fixture(autouse=True)
+def reset_circuit_breakers():
+    """Reset all circuit breakers before each test."""
+    # Clear the global circuit breaker registry before each test
+    circuit_breaker._circuit_breakers.clear()
+    yield
+    # Clear again after test
+    circuit_breaker._circuit_breakers.clear()
 from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
@@ -185,7 +196,7 @@ class TestVectorStoreIntegration:
         assert all(hasattr(r, 'id') for r in results)
         
         # Delete collection
-        assert store.delete_collection(collection_name)
+        store.delete_collection(collection_name)
         assert collection_name not in store.list_collections()
     
     @requires_chromadb
@@ -252,19 +263,18 @@ class TestRAGServiceIntegration:
             
             # Index documents
             documents = [
-                "Python is a high-level programming language.",
-                "Machine learning uses statistical techniques.",
-                "Neural networks are inspired by biological neurons."
+                {"id": "doc1", "content": "Python is a high-level programming language.", "metadata": {"topic": "programming"}},
+                {"id": "doc2", "content": "Machine learning uses statistical techniques.", "metadata": {"topic": "ml"}},
+                {"id": "doc3", "content": "Neural networks are inspired by biological neurons.", "metadata": {"topic": "ai"}}
             ]
             
-            result = rag_service.index_documents(
-                documents=documents,
-                collection_name="test_rag",
-                metadata_list=[{"topic": "programming"}, {"topic": "ml"}, {"topic": "ai"}]
-            )
+            # Use async context to call index_batch
+            import asyncio
+            results = asyncio.run(rag_service.index_batch(documents))
             
-            assert result.success
-            assert result.indexed_count == 3
+            # Check all documents were indexed successfully
+            assert len(results) == 3
+            assert all(r.success for r in results)
             
             # Search
             search_results = rag_service.search(
@@ -361,8 +371,12 @@ class TestMemoryTracking:
                 assert initial_memory['rss_mb'] == 500.0  # MB
                 assert initial_memory['total_mb'] == 500.0  # No GPU memory
                 
-                # Simulate memory growth
-                mock_memory.memory_info.return_value.rss = 600 * 1024 * 1024  # 600MB
+                # Update the mock to simulate memory growth
+                # This is important - we need to update the mock to return new value
+                mock_memory.memory_info.return_value = MagicMock(rss=600 * 1024 * 1024)  # 600MB
+                
+                # Clear cache to force new memory read
+                service._memory_cache['ttl'] = 0  # Expire the cache
                 
                 # Check memory again
                 current_memory = service.get_memory_usage()

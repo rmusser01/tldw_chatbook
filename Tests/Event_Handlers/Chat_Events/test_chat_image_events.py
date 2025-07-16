@@ -320,22 +320,24 @@ class TestChatImageHandlerEdgeCases:
     async def test_mime_type_detection(self):
         """Test MIME type detection for various scenarios."""
         # Test with extension that doesn't match content
-        with tempfile.NamedTemporaryFile(suffix='.txt', delete=True) as f:
+        with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as f:
             # Save PNG data with .txt extension
             img = PILImage.new('RGB', (50, 50), color='green')
             img.save(f, format='PNG')
-            f.flush()
-            
-            # Rename to bypass extension check
-            png_as_txt = Path(f.name).with_suffix('.png')
-            Path(f.name).rename(png_as_txt)
-            
-            try:
-                image_data, mime_type = await ChatImageHandler.process_image_file(str(png_as_txt))
-                assert mime_type == 'image/png'
-            finally:
-                if png_as_txt.exists():
-                    png_as_txt.unlink()
+            temp_txt_path = Path(f.name)
+        
+        # Now we can rename since the file is closed
+        png_as_txt = temp_txt_path.with_suffix('.png')
+        temp_txt_path.rename(png_as_txt)
+        
+        try:
+            image_data, mime_type = await ChatImageHandler.process_image_file(str(png_as_txt))
+            assert mime_type == 'image/png'
+        finally:
+            if png_as_txt.exists():
+                png_as_txt.unlink()
+            if temp_txt_path.exists():
+                temp_txt_path.unlink()
 
 
 @pytest.mark.unit
