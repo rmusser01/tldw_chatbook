@@ -348,13 +348,25 @@ class _HuggingFaceEmbedder:
         else:
             # Use explicitly specified device
             self._device = torch.device(cfg.device)
-        self._model.to(self._device).eval()
-        
-        # Ensure model is not on meta device
-        if hasattr(self._model, 'device') and self._model.device.type == 'meta':
-            logger.warning("Model was on meta device, forcing to specified device")
-            # Force load the model weights
+        # Check if model is on meta device first
+        if hasattr(self._model, 'device') and str(self._model.device) == 'meta':
+            logger.warning("Model is on meta device, using to_empty() to properly move it")
+            # Use to_empty() to move from meta device, then load state dict
+            self._model = self._model.to_empty(device=self._device)
+            # Now reload the model properly
+            from transformers import AutoModel
+            state_dict = AutoModel.from_pretrained(
+                cfg.model_name_or_path,
+                trust_remote_code=cfg.trust_remote_code,
+                cache_dir=cache_dir,
+                revision=cfg.revision
+            ).state_dict()
+            self._model.load_state_dict(state_dict)
+        else:
+            # Normal device transfer
             self._model = self._model.to(self._device)
+        
+        self._model.eval()
         
         self._max_len = cfg.max_length
         self._batch_size = cfg.batch_size

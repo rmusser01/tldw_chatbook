@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import List, Dict, Any
 import os
-from unittest.mock import patch, Mock, MagicMock
+from unittest.mock import patch, Mock, MagicMock, AsyncMock
 
 from tldw_chatbook.RAG_Search.simplified import (
     EmbeddingsServiceWrapper,
@@ -289,6 +289,11 @@ class TestRAGServiceIntegration:
             
             # Check all documents were indexed successfully
             assert len(results) == 3
+            # Debug: print any failures
+            failed_results = [r for r in results if not r.success]
+            if failed_results:
+                for r in failed_results:
+                    print(f"Failed to index {r.doc_id}: {r.error}")
             assert all(r.success for r in results)
             
             # Search
