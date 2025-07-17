@@ -248,6 +248,26 @@ MediaDetailsWidget {
     background: $boost-darken-1;
 }
 
+/* --- Formatting Options --- */
+.formatting-options {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    margin-bottom: 1;
+    layout: horizontal;
+    align: center middle;
+}
+
+.format-reading-checkbox {
+    width: auto;
+    height: 3;
+    padding: 0 1;
+}
+
+.format-reading-checkbox:hover {
+    background: $boost;
+}
+
 .edit-actions {
     layout: horizontal;
     height: auto;

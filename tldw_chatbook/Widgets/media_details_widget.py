@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional, List
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Static, Button, Label, Input, TextArea
+from textual.widgets import Static, Button, Label, Input, TextArea, Checkbox
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from loguru import logger
@@ -26,6 +26,7 @@ class MediaDetailsWidget(Container):
     # Reactive states
     edit_mode = reactive(False)
     media_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
+    format_for_reading = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', type_slug: str, **kwargs):
         """
@@ -76,6 +77,15 @@ class MediaDetailsWidget(Container):
                     yield Button("Save", id=f"save-button-{self.type_slug}", variant="primary")
                     yield Button("Cancel", id=f"cancel-button-{self.type_slug}", variant="default")
         
+        # Formatting options
+        with Container(classes="formatting-options"):
+            yield Checkbox(
+                "Format for easier reading",
+                id=f"format-reading-checkbox-{self.type_slug}",
+                classes="format-reading-checkbox",
+                value=False
+            )
+        
         # Content section (read-only)
         yield TextArea(
             "Select an item from the list to see its details.",
@@ -109,6 +119,22 @@ class MediaDetailsWidget(Container):
             self._update_delete_button()
         else:
             self._clear_displays()
+    
+    def watch_format_for_reading(self, old_value: bool, new_value: bool) -> None:
+        """React to format checkbox changes by re-rendering content."""
+        if self.media_data:
+            # Store current scroll position
+            try:
+                content_area = self.query_one(f"#content-display-{self.type_slug}", TextArea)
+                scroll_y = content_area.scroll_y
+                # Update the display with new formatting
+                self._update_content_display()
+                # Try to restore scroll position
+                content_area.scroll_to(0, scroll_y, animate=False)
+            except Exception as e:
+                logger.error(f"Error updating format: {e}")
+                # Fall back to just updating display
+                self._update_content_display()
     
     def _update_metadata_display(self) -> None:
         """Update the metadata display with current media data."""
@@ -148,6 +174,53 @@ class MediaDetailsWidget(Container):
         except Exception as e:
             logger.error(f"Error updating metadata display: {e}")
     
+    def _format_text_for_reading(self, text: str) -> str:
+        """Format text for easier reading by adding newlines after periods."""
+        if not text:
+            return text
+            
+        # Preserve existing double newlines (paragraph breaks)
+        paragraphs = text.split('\n\n')
+        formatted_paragraphs = []
+        
+        for paragraph in paragraphs:
+            # Skip formatting for certain patterns
+            # Check if it looks like a URL (contains :// or starts with www.)
+            if '://' in paragraph or paragraph.strip().startswith('www.'):
+                formatted_paragraphs.append(paragraph)
+                continue
+                
+            # Check if it looks like code (starts with spaces/tabs or contains common code patterns)
+            if paragraph.strip().startswith(('    ', '\t', '```', '~~~')):
+                formatted_paragraphs.append(paragraph)
+                continue
+                
+            # Format regular text: add newline after ". " (period followed by space)
+            # But not for common abbreviations
+            formatted = paragraph
+            
+            # Common abbreviations to skip
+            abbreviations = ['Dr.', 'Mr.', 'Mrs.', 'Ms.', 'Prof.', 'Sr.', 'Jr.', 'Ph.D.', 'M.D.', 
+                           'B.A.', 'M.A.', 'B.S.', 'M.S.', 'LL.B.', 'LL.M.', 'U.S.', 'U.K.', 
+                           'E.g.', 'e.g.', 'I.e.', 'i.e.', 'etc.', 'vs.', 'Inc.', 'Ltd.', 'Co.']
+            
+            # Create a pattern that matches ". " but not when preceded by abbreviations
+            import re
+            
+            # First, protect abbreviations by temporarily replacing them
+            for abbr in abbreviations:
+                formatted = formatted.replace(abbr, abbr.replace('.', '<!DOT!>'))
+            
+            # Now add newlines after periods followed by space
+            formatted = re.sub(r'\. (?=[A-Z])', '.\n', formatted)
+            
+            # Restore the abbreviations
+            formatted = formatted.replace('<!DOT!>', '.')
+            
+            formatted_paragraphs.append(formatted)
+        
+        return '\n\n'.join(formatted_paragraphs)
+    
     def _update_content_display(self) -> None:
         """Update the content display with media content."""
         if not self.media_data:
@@ -159,6 +232,10 @@ class MediaDetailsWidget(Container):
             title = self.media_data.get('title', 'Untitled')
             content = self.media_data.get('content', 'No content available')
             
+            # Apply formatting if checkbox is checked
+            if self.format_for_reading:
+                content = self._format_text_for_reading(content)
+            
             # Format content with title
             formatted_content = f"# {title}\n\n{content}"
             
@@ -166,6 +243,9 @@ class MediaDetailsWidget(Container):
             if self.type_slug == "analysis-review":
                 analysis = self.media_data.get('analysis_content', '')
                 if analysis:
+                    # Apply formatting to analysis too if enabled
+                    if self.format_for_reading:
+                        analysis = self._format_text_for_reading(analysis)
                     formatted_content += f"\n\n## Analysis\n\n{analysis}"
             
             content_area.text = formatted_content
@@ -322,6 +402,12 @@ class MediaDetailsWidget(Container):
             else:
                 # Show confirmation dialog for deletion
                 self._show_delete_confirmation()
+    
+    @on(Checkbox.Changed)
+    def handle_format_checkbox(self, event: Checkbox.Changed) -> None:
+        """Handle format reading checkbox changes."""
+        if event.checkbox.id == f"format-reading-checkbox-{self.type_slug}":
+            self.format_for_reading = event.value
     
     def _show_delete_confirmation(self) -> None:
         """Show confirmation dialog before deletion."""
