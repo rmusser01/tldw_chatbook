@@ -78,10 +78,15 @@ class TestFasterWhisperUnit:
             )
             
             # Mock transcribe method to return generator and info
+            # Create a list to track calls manually
+            transcribe_calls = []
+            
             def mock_transcribe(*args, **kwargs):
+                transcribe_calls.append((args, kwargs))
                 return iter(segments), info
             
             mock_instance.transcribe.side_effect = mock_transcribe
+            mock_instance._transcribe_calls = transcribe_calls  # Store for test access
             mock.return_value = mock_instance
             yield mock, mock_instance
     
@@ -230,8 +235,8 @@ class TestFasterWhisperUnit:
         cached_model = transcription_service._model_cache[cache_key]
         # Both calls should use the same model instance
         assert cached_model == mock_instance
-        # Check that transcribe was called twice (can't use call_count with side_effect)
-        assert mock_instance.transcribe.call_count >= 2 or len(mock_instance.transcribe.call_args_list) >= 2
+        # Check that transcribe was called twice using our custom tracking
+        assert len(cached_model._transcribe_calls) == 2
     
     def test_different_model_configurations(self, transcription_service, mock_whisper_model):
         """Test that different configurations create different cache entries."""

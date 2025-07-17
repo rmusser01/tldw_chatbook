@@ -1402,7 +1402,8 @@ UPDATE db_schema_version
    AND version = 9;
 """
 
-    def __init__(self, db_path: Union[str, Path], client_id: str):
+    def __init__(self, db_path: Union[str, Path], client_id: str, 
+                 check_integrity_on_startup: bool = False):
         """
         Initializes the CharactersRAGDB instance.
 
@@ -1414,6 +1415,7 @@ UPDATE db_schema_version
                      or ":memory:" for an in-memory database.
             client_id: A unique identifier for this client instance. Used for
                        tracking changes in the sync log and records. Must not be empty.
+            check_integrity_on_startup: Whether to run integrity check on startup.
 
         Raises:
             ValueError: If `client_id` is empty or None.
@@ -1444,6 +1446,16 @@ UPDATE db_schema_version
         self._local = threading.local()
         try:
             self._initialize_schema()
+            
+            # Run integrity check if requested and not in-memory
+            if check_integrity_on_startup and not self.is_memory_db:
+                logger.info(f"Running startup integrity check for CharactersRAGDB")
+                if not self.check_integrity():
+                    logger.warning(f"Database integrity check failed for {self.db_path_str}. "
+                                  "Consider running repairs or restoring from backup.")
+                    # Note: We don't raise an exception here to allow the app to continue
+                    # with potentially degraded functionality.
+            
             logger.debug(f"CharactersRAGDB initialization completed successfully for {self.db_path_str}")
         except (CharactersRAGDBError, sqlite3.Error) as e:
             logger.critical(f"FATAL: DB Initialization failed for {self.db_path_str}: {e}", exc_info=True)
@@ -1621,6 +1633,30 @@ UPDATE db_schema_version
                     logger.warning(f"Error closing backup database connection: {e}")
             # Source connection (src_conn) is managed by the thread-local mechanism
             # and should not be closed here to allow continued use of the DB instance.
+    
+    def check_integrity(self) -> bool:
+        """
+        Check the integrity of the database.
+        
+        Returns:
+            bool: True if integrity check passes, False otherwise
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()
+            
+            is_ok = result and result[0] == "ok"
+            if is_ok:
+                logger.info(f"Database integrity check passed: {self.db_path_str}")
+            else:
+                logger.error(f"Database integrity check failed: {self.db_path_str}")
+            
+            return is_ok
+        except Exception as e:
+            logger.error(f"Failed to check database integrity: {e}")
+            return False
 
     # --- Query Execution ---
     def execute_query(self, query: str, params: Optional[Union[tuple, Dict[str, Any]]] = None, *, commit: bool = False,

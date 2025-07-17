@@ -1524,12 +1524,18 @@ class TranscriptionService:
             logger.info(f"  - Precision: {precision}")
             logger.info(f"  - Total characters: {len(text) if text else 0}")
             logger.info(f"  - Total segments: {len(segments)}")
-            logger.info(f"  - Total time: {total_time:.2f}s")
+            try:
+                logger.info(f"  - Total time: {total_time:.2f}s")
+            except (TypeError, ValueError):
+                logger.info(f"  - Total time: {total_time}s")
             
             # Calculate speed if we have duration info
             if hasattr(result, 'duration'):
-                speed = result.duration / total_time
-                logger.info(f"  - Speed: {speed:.2f}x realtime")
+                try:
+                    speed = result.duration / total_time
+                    logger.info(f"  - Speed: {speed:.2f}x realtime")
+                except (TypeError, ValueError, ZeroDivisionError):
+                    logger.info(f"  - Speed: Unable to calculate")
             
             if text:
                 logger.debug(f"First 200 chars: {text[:200]}...")

@@ -209,7 +209,8 @@ class PromptsDatabase:
     );
     """
 
-    def __init__(self, db_path: Union[str, Path], client_id: str):
+    def __init__(self, db_path: Union[str, Path], client_id: str,
+                 check_integrity_on_startup: bool = False):
         """
         Initializes the PromptsDatabase instance, sets up the connection pool (via threading.local),
         and ensures the database schema is correctly initialized or migrated.
@@ -217,6 +218,7 @@ class PromptsDatabase:
         Args:
             db_path (Union[str, Path]): The path to the SQLite database file or ':memory:'.
             client_id (str): A unique identifier for the client using this database instance.
+            check_integrity_on_startup: Whether to run integrity check on startup.
 
         Raises:
             ValueError: If client_id is empty or None.
@@ -262,6 +264,16 @@ class PromptsDatabase:
             # This establishes the first connection for the current thread
             # and applies/verifies the schema.
             self._initialize_schema()
+            
+            # Run integrity check if requested and not in-memory
+            if check_integrity_on_startup and not self.is_memory_db:
+                logging.info(f"Running startup integrity check for PromptsDatabase")
+                if not self.check_integrity():
+                    logging.warning(f"Database integrity check failed for {self.db_path_str}. "
+                                  "Consider running repairs or restoring from backup.")
+                    # Note: We don't raise an exception here to allow the app to continue
+                    # with potentially degraded functionality.
+            
             initialization_successful = True  # Mark as successful if no exception occurred
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             # Catch specific DB/Schema errors and general SQLite errors during init
@@ -388,6 +400,30 @@ class PromptsDatabase:
                 except sqlite3.Error as e:
                     logger.warning(f"Error closing backup database connection: {e}")
             # Source connection (src_conn) is managed by the thread-local mechanism.
+    
+    def check_integrity(self) -> bool:
+        """
+        Check the integrity of the database.
+        
+        Returns:
+            bool: True if integrity check passes, False otherwise
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()
+            
+            is_ok = result and result[0] == "ok"
+            if is_ok:
+                logging.info(f"Database integrity check passed: {self.db_path_str}")
+            else:
+                logging.error(f"Database integrity check failed: {self.db_path_str}")
+            
+            return is_ok
+        except Exception as e:
+            logging.error(f"Failed to check database integrity: {e}")
+            return False
 
     # --- Query Execution ---
     def execute_query(self, query: str, params: tuple = None, *, commit: bool = False) -> sqlite3.Cursor:

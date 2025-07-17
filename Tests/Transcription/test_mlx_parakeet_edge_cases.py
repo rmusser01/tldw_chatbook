@@ -49,7 +49,8 @@ class TestMLXParakeetEdgeCases:
         """Create a mocked transcription service."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.PARAKEET_MLX_AVAILABLE', True), \
              patch('tldw_chatbook.Local_Ingestion.transcription_service.SOUNDFILE_AVAILABLE', True), \
-             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()
@@ -557,7 +558,8 @@ class TestMLXParakeetRobustness:
     def mock_service(self):
         """Create a mocked transcription service."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.PARAKEET_MLX_AVAILABLE', True), \
-             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()

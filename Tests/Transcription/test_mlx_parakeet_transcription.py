@@ -75,7 +75,8 @@ class TestMLXParakeetUnit:
     @pytest.fixture
     def transcription_service(self, mock_parakeet_available):
         """Create a TranscriptionService instance with mocked config."""
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_get_setting:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_get_setting, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             # Mock configuration values
             def get_setting_side_effect(key, default=None):
                 settings = {
@@ -150,7 +151,8 @@ class TestMLXParakeetUnit:
         mock_pretrained, mock_model = mock_parakeet_model
         
         # Mock audio loading
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(16000), 16000)  # 1 second of silence
             mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
@@ -177,8 +179,10 @@ class TestMLXParakeetUnit:
         """Test that the model is cached between transcriptions."""
         mock_pretrained, mock_model = mock_parakeet_model
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(16000), 16000)
+            mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
             # First transcription
             transcription_service._transcribe_with_parakeet_mlx(
@@ -202,8 +206,10 @@ class TestMLXParakeetUnit:
         """Test that model is reloaded when configuration changes."""
         mock_pretrained, mock_model = mock_parakeet_model
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(16000), 16000)
+            mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
             # First transcription with one model
             transcription_service._transcribe_with_parakeet_mlx(
@@ -230,8 +236,10 @@ class TestMLXParakeetUnit:
         """Test different precision options."""
         mock_pretrained, mock_model = mock_parakeet_model
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(16000), 16000)
+            mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
             # Test with float32 precision
             transcription_service._transcribe_with_parakeet_mlx(
@@ -262,8 +270,10 @@ class TestMLXParakeetUnit:
         """Test different attention type configurations."""
         mock_pretrained, mock_model = mock_parakeet_model
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(16000), 16000)
+            mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
             # Test with different attention types
             for attention_type in ['flash', 'sdpa', 'native']:
@@ -284,8 +294,10 @@ class TestMLXParakeetUnit:
         duration = 300  # 5 minutes
         audio_data = np.zeros(int(sample_rate * duration), dtype=np.float32)
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (audio_data, sample_rate)
+            mock_sf.info.return_value = MockAudioInfo(duration=duration)
             
             # Mock multiple transcriptions for chunks
             mock_model.transcribe_audio.side_effect = [
@@ -307,8 +319,10 @@ class TestMLXParakeetUnit:
         mock_pretrained, mock_model = mock_parakeet_model
         mock_callback = Mock()
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(16000), 16000)
+            mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
             result = transcription_service._transcribe_with_parakeet_mlx(
                 audio_path=sample_audio_file,
@@ -333,8 +347,10 @@ class TestMLXParakeetUnit:
         """Test that segments are properly formatted."""
         mock_pretrained, mock_model = mock_parakeet_model
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(32000), 16000)  # 2 seconds
+            mock_sf.info.return_value = MockAudioInfo(duration=2.0)
             
             # Mock multiple chunk transcriptions
             mock_model.transcribe_audio.side_effect = ['First part.', 'Second part.']
@@ -387,11 +403,13 @@ class TestMLXParakeetUnit:
     
     def test_error_handling_model_load(self, transcription_service, sample_audio_file):
         """Test error handling during model loading."""
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_pretrained.side_effect = Exception("Model loading failed")
             
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                 mock_sf.read.return_value = (np.zeros(16000), 16000)
+                mock_sf.info.return_value = MockAudioInfo(duration=1.0)
                 
                 with pytest.raises(TranscriptionError) as exc_info:
                     transcription_service._transcribe_with_parakeet_mlx(
@@ -406,8 +424,10 @@ class TestMLXParakeetUnit:
         mock_pretrained, mock_model = mock_parakeet_model
         mock_model.transcribe_audio.side_effect = Exception("Transcription failed")
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(16000), 16000)
+            mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
             with pytest.raises(TranscriptionError) as exc_info:
                 transcription_service._transcribe_with_parakeet_mlx(
@@ -426,8 +446,10 @@ class TestMLXParakeetUnit:
         duration = 1
         audio_data = np.zeros(int(sample_rate * duration), dtype=np.float32)
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (audio_data, sample_rate)
+            mock_sf.info.return_value = MockAudioInfo(duration=duration, samplerate=sample_rate)
             
             # Should handle resampling internally
             with tempfile.NamedTemporaryFile(suffix='.wav') as tmp:
@@ -443,8 +465,10 @@ class TestMLXParakeetUnit:
         """Test that result includes all expected metadata."""
         mock_pretrained, mock_model = mock_parakeet_model
         
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):
             mock_sf.read.return_value = (np.zeros(16000), 16000)
+            mock_sf.info.return_value = MockAudioInfo(duration=1.0)
             
             result = transcription_service._transcribe_with_parakeet_mlx(
                 audio_path=sample_audio_file,

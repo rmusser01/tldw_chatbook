@@ -2862,7 +2862,15 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
         chachanotes_path = get_chachanotes_db_path()
         logger.info(f"Lazy-initializing ChaChaNotes_DB at: {chachanotes_path}")
         try:
-            chachanotes_db = CharactersRAGDB(db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID)
+            # Get integrity check configuration
+            config = load_settings()
+            check_integrity = config.get('database', {}).get('check_integrity_on_startup', False)
+            
+            chachanotes_db = CharactersRAGDB(
+                db_path=chachanotes_path, 
+                client_id=CLI_APP_CLIENT_ID,
+                check_integrity_on_startup=check_integrity
+            )
             logger.success(f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}")
         except Exception as e:
             logger.error(f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}", exc_info=True)
@@ -2877,7 +2885,15 @@ def get_prompts_db_lazy() -> Optional[PromptsDatabase]:
         prompts_path = get_prompts_db_path()
         logger.info(f"Lazy-initializing Prompts_DB at: {prompts_path}")
         try:
-            prompts_db = PromptsDatabase(db_path=prompts_path, client_id=CLI_APP_CLIENT_ID)
+            # Get integrity check configuration
+            config = load_settings()
+            check_integrity = config.get('database', {}).get('check_integrity_on_startup', False)
+            
+            prompts_db = PromptsDatabase(
+                db_path=prompts_path, 
+                client_id=CLI_APP_CLIENT_ID,
+                check_integrity_on_startup=check_integrity
+            )
             logger.success(f"Prompts_DB lazy-initialized successfully at {prompts_path}")
         except Exception as e:
             logger.error(f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}", exc_info=True)
