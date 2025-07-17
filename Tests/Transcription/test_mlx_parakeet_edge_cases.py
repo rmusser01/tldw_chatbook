@@ -27,6 +27,14 @@ from tldw_chatbook.Local_Ingestion.transcription_service import (
 )
 
 
+class MockAudioInfo:
+    """Mock audio info object for soundfile."""
+    def __init__(self, duration=1.0, samplerate=16000, channels=1):
+        self.duration = duration
+        self.samplerate = samplerate
+        self.channels = channels
+
+
 pytestmark = pytest.mark.skipif(
     sys.platform != 'darwin',
     reason="MLX Parakeet tests only run on macOS"
@@ -89,18 +97,22 @@ class TestMLXParakeetEdgeCases:
     
     def test_concurrent_model_loading(self, mock_service):
         """Test concurrent model loading attempts."""
-        with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.SOUNDFILE_AVAILABLE', True), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
             # Simulate slow model loading
             def slow_model_load(*args, **kwargs):
                 time.sleep(0.5)
                 model = MagicMock()
-                model.transcribe_audio.return_value = 'Concurrent test'
+                result_obj = MagicMock()
+                result_obj.text = 'Concurrent test'
+                model.transcribe.return_value = result_obj
                 return model
             
             mock_pretrained.side_effect = slow_model_load
             
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                 mock_sf.read.return_value = (np.zeros(16000), 16000)
+                mock_sf.info.return_value = MockAudioInfo(duration=1.0)
                 
                 # Try to load model concurrently
                 results = []
@@ -123,6 +135,8 @@ class TestMLXParakeetEdgeCases:
                     t.join()
                 
                 # All should succeed
+                if errors:
+                    print(f"Errors encountered: {[str(e) for e in errors]}")
                 assert len(results) == 3
                 assert len(errors) == 0
                 # Model should be loaded multiple times due to race condition
@@ -133,7 +147,9 @@ class TestMLXParakeetEdgeCases:
         """Test edge cases in audio resampling."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
             mock_model = MagicMock()
-            mock_model.transcribe_audio.return_value = 'Resampled audio'
+            result_obj = MagicMock()
+            result_obj.text = 'Resampled audio'
+            mock_model.transcribe.return_value = result_obj
             mock_pretrained.return_value = mock_model
             
             # Test various sample rates
@@ -151,6 +167,7 @@ class TestMLXParakeetEdgeCases:
                 with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                     audio_data = np.zeros(sample_rate, dtype=np.float32)  # 1 second
                     mock_sf.read.return_value = (audio_data, sample_rate)
+                    mock_sf.info.return_value = MockAudioInfo(duration=1.0)
                     
                     result = mock_service._transcribe_with_parakeet_mlx(
                         audio_path=f"audio_{sample_rate}.wav",
@@ -173,8 +190,11 @@ class TestMLXParakeetEdgeCases:
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                 short_audio = np.zeros(160, dtype=np.float32)  # 10ms at 16kHz
                 mock_sf.read.return_value = (short_audio, 16000)
+                mock_sf.info.return_value = MockAudioInfo(duration=0.01)
                 
-                mock_model.transcribe_audio.return_value = ''
+                result_obj = MagicMock()
+                result_obj.text = ''
+                mock_model.transcribe.return_value = result_obj
                 
                 result = mock_service._transcribe_with_parakeet_mlx(
                     audio_path="short.wav",
@@ -190,6 +210,7 @@ class TestMLXParakeetEdgeCases:
                 long_audio_samples = 16000 * 3600  # 1 hour
                 mock_sf.read.return_value = (np.zeros(100), 16000)  # Return small array
                 mock_sf.read.return_value[0].__len__ = lambda: long_audio_samples  # Mock length
+                mock_sf.info.return_value = MockAudioInfo(duration=3600.0)
                 
                 # Mock multiple chunk transcriptions
                 chunk_count = (3600 + 29) // 30  # 30-second chunks
@@ -223,6 +244,7 @@ class TestMLXParakeetEdgeCases:
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                 # Large audio that requires chunking
                 mock_sf.read.return_value = (np.zeros(16000 * 60), 16000)  # 60 seconds
+                mock_sf.info.return_value = MockAudioInfo(duration=60.0)
                 
                 with pytest.raises(TranscriptionError) as exc_info:
                     mock_service._transcribe_with_parakeet_mlx(
@@ -252,11 +274,14 @@ class TestMLXParakeetEdgeCases:
                     mock_pretrained.side_effect = ValueError(f"Invalid dtype: {str(precision)}")
                 else:
                     mock_model = MagicMock()
-                    mock_model.transcribe_audio.return_value = f'Precision: {str(precision)}'
+                    result_obj = MagicMock()
+                    result_obj.text = f'Precision: {str(precision)}'
+                    mock_model.transcribe.return_value = result_obj
                     mock_pretrained.return_value = mock_model
                 
                 with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                     mock_sf.read.return_value = (np.zeros(16000), 16000)
+                    mock_sf.info.return_value = MockAudioInfo(duration=1.0)
                     
                     if should_fail:
                         with pytest.raises(TranscriptionError):
@@ -277,12 +302,12 @@ class TestMLXParakeetEdgeCases:
         """Test attention type compatibility with different models."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
             # Some attention types might not be supported by all models
-            def create_model_with_attention_check(attention_type):
-                if attention_type == 'flash' and 'old-model' in mock_service._parakeet_mlx_config.get('model', ''):
-                    raise ValueError(f"Attention type '{attention_type}' not supported")
-                
+            def create_model_with_attention_check(*args, **kwargs):
+                # parakeet_from_pretrained is called with model name and dtype
                 model = MagicMock()
-                model.transcribe_audio.return_value = f'Attention: {attention_type}'
+                result_obj = MagicMock()
+                result_obj.text = 'Attention test'
+                model.transcribe.return_value = result_obj
                 return model
             
             mock_pretrained.side_effect = create_model_with_attention_check
@@ -302,7 +327,9 @@ class TestMLXParakeetEdgeCases:
         """Test handling of various audio channel configurations."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
             mock_model = MagicMock()
-            mock_model.transcribe_audio.return_value = 'Multi-channel test'
+            result_obj = MagicMock()
+            result_obj.text = 'Multi-channel test'
+            mock_model.transcribe.return_value = result_obj
             mock_pretrained.return_value = mock_model
             
             channel_configs = [
@@ -320,6 +347,7 @@ class TestMLXParakeetEdgeCases:
                     # Create multi-channel audio
                     audio_data = np.zeros((16000, channels), dtype=np.float32)
                     mock_sf.read.return_value = (audio_data, 16000)
+                    mock_sf.info.return_value = MockAudioInfo(duration=1.0, channels=channels)
                     
                     result = mock_service._transcribe_with_parakeet_mlx(
                         audio_path=f"{description}.wav",
@@ -350,6 +378,7 @@ class TestMLXParakeetEdgeCases:
                 with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                     audio_samples = 16000 * duration
                     mock_sf.read.return_value = (np.zeros(audio_samples, dtype=np.float32), 16000)
+                    mock_sf.info.return_value = MockAudioInfo(duration=duration)
                     
                     # Calculate expected chunks
                     effective_overlap = min(overlap, chunk_size - 1)
@@ -378,7 +407,9 @@ class TestMLXParakeetEdgeCases:
         """Test handling of NaN and Inf values in audio data."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
             mock_model = MagicMock()
-            mock_model.transcribe_audio.return_value = 'Cleaned audio'
+            result_obj = MagicMock()
+            result_obj.text = 'Cleaned audio'
+            mock_model.transcribe.return_value = result_obj
             mock_pretrained.return_value = mock_model
             
             test_cases = [
@@ -391,6 +422,7 @@ class TestMLXParakeetEdgeCases:
             for audio_data, description in test_cases:
                 with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                     mock_sf.read.return_value = (audio_data, 16000)
+                    mock_sf.info.return_value = MockAudioInfo(duration=1.0)
                     
                     # Should handle invalid values gracefully
                     result = mock_service._transcribe_with_parakeet_mlx(
@@ -443,7 +475,9 @@ class TestMLXParakeetEdgeCases:
             def create_model(*args, **kwargs):
                 model = MagicMock()
                 model._model_name = args[0]
-                model.transcribe_audio.return_value = f'Model: {args[0]}'
+                result_obj = MagicMock()
+                result_obj.text = f'Model: {args[0]}'
+                model.transcribe.return_value = result_obj
                 models.append(model)
                 return model
             
@@ -493,14 +527,17 @@ class TestMLXParakeetEdgeCases:
                 if call_count == 2:
                     # Force garbage collection
                     gc.collect()
-                return f'Chunk {call_count}'
+                result_obj = MagicMock()
+                result_obj.text = f'Chunk {call_count}'
+                return result_obj
             
-            mock_model.transcribe_audio.side_effect = transcribe_with_gc
+            mock_model.transcribe.side_effect = transcribe_with_gc
             mock_pretrained.return_value = mock_model
             
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                 # Multi-chunk audio
                 mock_sf.read.return_value = (np.zeros(16000 * 90), 16000)  # 90 seconds
+                mock_sf.info.return_value = MockAudioInfo(duration=90.0)
                 
                 result = mock_service._transcribe_with_parakeet_mlx(
                     audio_path="test.wav",
@@ -515,6 +552,16 @@ class TestMLXParakeetEdgeCases:
 
 class TestMLXParakeetRobustness:
     """Robustness tests for MLX Parakeet transcription."""
+    
+    @pytest.fixture
+    def mock_service(self):
+        """Create a mocked transcription service."""
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.PARAKEET_MLX_AVAILABLE', True), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+            
+            mock_settings.return_value = None  # Use defaults
+            service = TranscriptionService()
+            return service
     
     def test_model_download_interruption(self, mock_service):
         """Test handling of interrupted model downloads."""
@@ -541,7 +588,9 @@ class TestMLXParakeetRobustness:
                 mock_service._parakeet_mlx_model = None
                 
                 # Third attempt should succeed
-                mock_pretrained.return_value.transcribe_audio.return_value = 'Success'
+                result_obj = MagicMock()
+                result_obj.text = 'Success'
+                mock_pretrained.return_value.transcribe.return_value = result_obj
                 result = mock_service._transcribe_with_parakeet_mlx(
                     audio_path="test.wav",
                     model='mlx-community/parakeet-tdt-0.6b-v2'
@@ -553,7 +602,9 @@ class TestMLXParakeetRobustness:
         """Test handling of various audio format edge cases."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.parakeet_from_pretrained') as mock_pretrained:
             mock_model = MagicMock()
-            mock_model.transcribe_audio.return_value = 'Format test'
+            result_obj = MagicMock()
+            result_obj.text = 'Format test'
+            mock_model.transcribe.return_value = result_obj
             mock_pretrained.return_value = mock_model
             
             # Test different audio data types
@@ -598,7 +649,10 @@ class TestMLXParakeetRobustness:
             for test_text in test_texts:
                 with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                     mock_sf.read.return_value = (np.zeros(16000), 16000)
-                    mock_model.transcribe_audio.return_value = test_text
+                    mock_sf.info.return_value = MockAudioInfo(duration=1.0)
+                    result_obj = MagicMock()
+                    result_obj.text = test_text
+                    mock_model.transcribe.return_value = result_obj
                     
                     result = mock_service._transcribe_with_parakeet_mlx(
                         audio_path="unicode.wav",

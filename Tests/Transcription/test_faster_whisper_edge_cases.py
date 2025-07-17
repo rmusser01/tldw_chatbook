@@ -615,6 +615,16 @@ class TestFasterWhisperEdgeCases:
 class TestFasterWhisperConcurrency:
     """Test concurrent access and thread safety."""
     
+    @pytest.fixture
+    def mock_service(self):
+        """Create a mocked transcription service."""
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.FASTER_WHISPER_AVAILABLE', True), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+            
+            mock_settings.return_value = None  # Use defaults
+            service = TranscriptionService()
+            return service
+    
     def test_concurrent_transcriptions_same_model(self, mock_service):
         """Test multiple concurrent transcriptions using the same model."""
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.WhisperModel') as mock_model_class:
@@ -764,6 +774,16 @@ class TestFasterWhisperConcurrency:
 
 class TestFasterWhisperMemoryManagement:
     """Test memory management and resource cleanup."""
+    
+    @pytest.fixture
+    def mock_service(self):
+        """Create a mocked transcription service."""
+        with patch('tldw_chatbook.Local_Ingestion.transcription_service.FASTER_WHISPER_AVAILABLE', True), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+            
+            mock_settings.return_value = None  # Use defaults
+            service = TranscriptionService()
+            return service
     
     def test_model_memory_cleanup(self, mock_service):
         """Test that models are properly cleaned up when removed from cache."""
