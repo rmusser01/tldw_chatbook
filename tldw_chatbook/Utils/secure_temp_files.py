@@ -5,9 +5,11 @@ import os
 import tempfile
 import stat
 import logging
+import time
 from pathlib import Path
 from typing import Optional, Union
 from contextlib import contextmanager
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,12 @@ def secure_temp_file(suffix: str = '', prefix: str = 'tmp', dir: Optional[str] =
     Yields:
         Temporary file object
     """
+    start_time = time.time()
+    log_counter("secure_temp_files_create_file_attempt", labels={
+        "has_suffix": str(bool(suffix)),
+        "text_mode": str(text)
+    })
+    
     temp_file = None
     try:
         # Create temporary file with secure permissions
@@ -42,6 +50,11 @@ def secure_temp_file(suffix: str = '', prefix: str = 'tmp', dir: Optional[str] =
         # Set secure permissions (read/write for owner only)
         os.chmod(temp_file.name, stat.S_IRUSR | stat.S_IWUSR)
         
+        # Log successful creation
+        duration = time.time() - start_time
+        log_histogram("secure_temp_files_create_file_duration", duration, labels={"status": "success"})
+        log_counter("secure_temp_files_create_file_success")
+        
         yield temp_file
         
     finally:
@@ -52,8 +65,13 @@ def secure_temp_file(suffix: str = '', prefix: str = 'tmp', dir: Optional[str] =
                 if os.path.exists(temp_file.name):
                     os.unlink(temp_file.name)
                     logger.debug(f"Securely deleted temporary file: {temp_file.name}")
+                    log_counter("secure_temp_files_cleanup_success", labels={"type": "file"})
             except Exception as e:
                 logger.error(f"Error cleaning up temporary file {temp_file.name}: {e}")
+                log_counter("secure_temp_files_cleanup_error", labels={
+                    "type": "file",
+                    "error_type": type(e).__name__
+                })
 
 
 @contextmanager
@@ -69,6 +87,9 @@ def secure_temp_dir(suffix: str = '', prefix: str = 'tmp', dir: Optional[str] = 
     Yields:
         Path to temporary directory
     """
+    start_time = time.time()
+    log_counter("secure_temp_files_create_dir_attempt")
+    
     temp_dir = None
     try:
         # Create temporary directory with secure permissions
@@ -76,6 +97,11 @@ def secure_temp_dir(suffix: str = '', prefix: str = 'tmp', dir: Optional[str] = 
         
         # Set secure permissions (read/write/execute for owner only)
         os.chmod(temp_dir, stat.S_IRWXU)
+        
+        # Log successful creation
+        duration = time.time() - start_time
+        log_histogram("secure_temp_files_create_dir_duration", duration, labels={"status": "success"})
+        log_counter("secure_temp_files_create_dir_success")
         
         yield temp_dir
         
@@ -86,8 +112,13 @@ def secure_temp_dir(suffix: str = '', prefix: str = 'tmp', dir: Optional[str] = 
                 import shutil
                 shutil.rmtree(temp_dir)
                 logger.debug(f"Securely deleted temporary directory: {temp_dir}")
+                log_counter("secure_temp_files_cleanup_success", labels={"type": "directory"})
             except Exception as e:
                 logger.error(f"Error cleaning up temporary directory {temp_dir}: {e}")
+                log_counter("secure_temp_files_cleanup_error", labels={
+                    "type": "directory",
+                    "error_type": type(e).__name__
+                })
 
 
 def create_secure_temp_file(content: Union[str, bytes], suffix: str = '', 
@@ -107,7 +138,13 @@ def create_secure_temp_file(content: Union[str, bytes], suffix: str = '',
     Note:
         Caller is responsible for deleting the file when done.
     """
+    start_time = time.time()
     mode = 'w' if isinstance(content, str) else 'wb'
+    content_size = len(content) if isinstance(content, str) else len(content)
+    log_counter("secure_temp_files_create_with_content_attempt", labels={
+        "content_type": "text" if isinstance(content, str) else "binary",
+        "has_suffix": str(bool(suffix))
+    })
     
     temp_file = tempfile.NamedTemporaryFile(
         mode=mode,
@@ -125,6 +162,12 @@ def create_secure_temp_file(content: Union[str, bytes], suffix: str = '',
         temp_file.write(content)
         temp_file.flush()
         
+        # Log success
+        duration = time.time() - start_time
+        log_histogram("secure_temp_files_create_with_content_duration", duration)
+        log_histogram("secure_temp_files_content_size", content_size)
+        log_counter("secure_temp_files_create_with_content_success")
+        
         return temp_file.name
         
     finally:
@@ -141,6 +184,9 @@ def secure_delete_file(file_path: Union[str, Path]) -> bool:
     Returns:
         True if deletion was successful, False otherwise
     """
+    start_time = time.time()
+    log_counter("secure_temp_files_secure_delete_attempt")
+    
     try:
         file_path = Path(file_path)
         if file_path.exists():
@@ -155,9 +201,17 @@ def secure_delete_file(file_path: Union[str, Path]) -> bool:
             # Delete the file
             file_path.unlink()
             logger.debug(f"Securely deleted file: {file_path}")
+            
+            # Log success
+            duration = time.time() - start_time
+            log_histogram("secure_temp_files_secure_delete_duration", duration)
+            log_histogram("secure_temp_files_secure_delete_file_size", file_size)
+            log_counter("secure_temp_files_secure_delete_success")
+            
             return True
     except Exception as e:
         logger.error(f"Error securely deleting file {file_path}: {e}")
+        log_counter("secure_temp_files_secure_delete_error", labels={"error_type": type(e).__name__})
         return False
 
 
@@ -175,6 +229,7 @@ class SecureTempFileManager:
         """Create a temporary file and track it for cleanup."""
         temp_path = create_secure_temp_file(content, suffix, prefix, dir)
         self._temp_files.add(temp_path)
+        log_counter("secure_temp_files_manager_track_file", labels={"files_tracked": str(len(self._temp_files))})
         return temp_path
     
     def create_temp_dir(self, suffix: str = '', prefix: str = 'tmp', 
@@ -183,14 +238,27 @@ class SecureTempFileManager:
         temp_dir = tempfile.mkdtemp(suffix=suffix, prefix=prefix, dir=dir)
         os.chmod(temp_dir, stat.S_IRWXU)
         self._temp_dirs.add(temp_dir)
+        log_counter("secure_temp_files_manager_track_dir", labels={"dirs_tracked": str(len(self._temp_dirs))})
         return temp_dir
     
     def cleanup_all(self):
         """Clean up all tracked temporary files and directories."""
+        start_time = time.time()
+        files_to_clean = len(self._temp_files)
+        dirs_to_clean = len(self._temp_dirs)
+        files_cleaned = 0
+        dirs_cleaned = 0
+        
+        log_counter("secure_temp_files_manager_cleanup_attempt", labels={
+            "files_count": str(files_to_clean),
+            "dirs_count": str(dirs_to_clean)
+        })
+        
         # Clean up files first
         for temp_file in list(self._temp_files):
             if secure_delete_file(temp_file):
                 self._temp_files.discard(temp_file)
+                files_cleaned += 1
         
         # Clean up directories
         for temp_dir in list(self._temp_dirs):
@@ -200,8 +268,19 @@ class SecureTempFileManager:
                     shutil.rmtree(temp_dir)
                     logger.debug(f"Cleaned up temporary directory: {temp_dir}")
                 self._temp_dirs.discard(temp_dir)
+                dirs_cleaned += 1
             except Exception as e:
                 logger.error(f"Error cleaning up temporary directory {temp_dir}: {e}")
+        
+        # Log cleanup metrics
+        duration = time.time() - start_time
+        log_histogram("secure_temp_files_manager_cleanup_duration", duration)
+        log_counter("secure_temp_files_manager_cleanup_complete", labels={
+            "files_cleaned": str(files_cleaned),
+            "dirs_cleaned": str(dirs_cleaned),
+            "files_remaining": str(len(self._temp_files)),
+            "dirs_remaining": str(len(self._temp_dirs))
+        })
     
     def __del__(self):
         """Cleanup on destruction."""

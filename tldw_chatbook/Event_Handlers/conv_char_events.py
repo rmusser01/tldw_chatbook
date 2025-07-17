@@ -4,27 +4,31 @@
 # Imports
 import json  # For export
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Any, List, Dict, cast
+from typing import TYPE_CHECKING, Optional, Any, List, Dict, cast, Tuple
 import yaml
 #
 # 3rd-Party Imports
 from loguru import logger as loguru_logger
 from textual.widgets import (
-    Input, ListView, TextArea, Label, Collapsible, Select, Static, ListItem, Button
+    Input, ListView, TextArea, Label, Collapsible, Select, Static, ListItem, Button, Checkbox
 )
-from textual.containers import VerticalScroll
+from textual.containers import VerticalScroll, Container
 from textual.css.query import QueryError
 from rich.text import Text # For displaying messages if needed
 #
 # Local Imports
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters # For File Picker
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from ..Third_Party.textual_fspicker import Filters  # For file filtering
 from ..Widgets.chat_message import ChatMessage # If CCP tab displays ChatMessage widgets
 from ..Character_Chat import Character_Chat_Lib as ccl
+from ..Character_Chat import Chat_Dictionary_Lib as cdl
 from ..Prompt_Management import Prompts_Interop as prompts_interop
-from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError # For specific error handling
+from ..DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError # For specific error handling
+from .Chat_Events.chat_events import load_branched_conversation_history_ui
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -45,6 +49,7 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
     """Populates the character selection dropdown in the CCP tab."""
     logger = getattr(app, 'loguru_logger', logging)
     logger.info("Attempting to populate #conv-char-character-select dropdown.")
+    
     if not app.notes_service:
         logger.error("Notes service not available, cannot populate character select for CCP tab.")
         try:
@@ -100,6 +105,8 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
 async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[str] = None) -> None:
     """Populates the prompts list view in the CCP tab."""
     logger = getattr(app, 'loguru_logger', logging)
+    
+    
     if not app.prompts_service_initialized:
         try:
             list_view_prompt_err = app.query_one("#ccp-prompts-listview", ListView)
@@ -159,7 +166,7 @@ def clear_ccp_prompt_fields(app: 'TldwCli') -> None:
 
 ########################################################################################################################
 #
-# Event Handlers for Character Card Import
+# Event Handlers for Character Card Import/Export
 #
 ########################################################################################################################
 async def _character_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
@@ -208,7 +215,7 @@ async def handle_ccp_import_character_button_pressed(app: 'TldwCli', event: Butt
         ("YAML files (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
         ("All files (*.*)", lambda p: True)
     )
-    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Character Card", filters=defined_filters),
+    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Character Card", filters=defined_filters, context="character_import"),
                           # Use a lambda to capture `app` for the callback
                           callback=lambda path: _character_import_callback(app, path))
 
@@ -275,6 +282,53 @@ async def handle_ccp_left_load_character_button_pressed(app: 'TldwCli', event: B
     except Exception as e_unexp:
         logger.error(f"Unexpected error during load character (left pane): {e_unexp}", exc_info=True)
         app.notify("An unexpected error occurred while trying to load character view.", severity="error")
+
+
+async def handle_ccp_create_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles creating a new character from scratch in the CCP tab."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Create Character button pressed.")
+    
+    # Clear the character editor fields
+    await _helper_ccp_clear_center_pane_character_editor_fields(app)
+    
+    # Clear the current editing state
+    app.current_editing_character_id = None
+    app.current_editing_character_data = None
+    
+    # Switch to the character editor view
+    app.ccp_active_view = "character_editor_view"
+    
+    # Make the Cancel Edit button visible
+    try:
+        cancel_button = app.query_one("#ccp-editor-char-cancel-button", Button)
+        cancel_button.remove_class("hidden")
+    except QueryError:
+        logger.error("Failed to find #ccp-editor-char-cancel-button to remove 'hidden' class.")
+    
+    # Focus the character name input field
+    try:
+        name_input = app.query_one("#ccp-editor-char-name-input", Input)
+        name_input.focus()
+    except QueryError:
+        logger.error("Failed to find #ccp-editor-char-name-input to focus.")
+    
+    app.notify("Create a new character by filling in the details.", severity="information")
+    logger.info("Character editor cleared and ready for new character creation.")
+
+
+async def handle_ccp_refresh_character_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Refresh List button press to reload the character select dropdown."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Refresh Character List button pressed.")
+    
+    try:
+        await populate_ccp_character_select(app)
+        app.notify("Character list refreshed.", severity="information")
+        logger.info("Character list refreshed successfully.")
+    except Exception as e:
+        logger.error(f"Error refreshing character list: {e}", exc_info=True)
+        app.notify("Failed to refresh character list.", severity="error")
 
 
 async def handle_ccp_card_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -448,13 +502,12 @@ async def handle_ccp_card_clone_button_pressed(app: 'TldwCli', event: Button.Pre
 
         db = app.chachanotes_db  # Already checked it's not None
 
-        new_character_details = db.add_character_card(cloned_character_data)
+        new_character_id = db.add_character_card(cloned_character_data)
 
-        if new_character_details and new_character_details.get("id"):
-            new_char_id = new_character_details.get("id")
-            app.notify(f"Character cloned as '{cloned_name}' successfully (ID: {new_char_id}).", severity="information")
+        if new_character_id:
+            app.notify(f"Character cloned as '{cloned_name}' successfully (ID: {new_character_id}).", severity="information")
             logger.info(
-                f"Character cloned from ID {current_details_value.get('id')} to new ID {new_char_id} with name '{cloned_name}'.")
+                f"Character cloned from ID {current_details_value.get('id')} to new ID {new_character_id} with name '{cloned_name}'.")
 
             await populate_ccp_character_select(app)  # Ensure this is imported/defined
         else:
@@ -551,18 +604,52 @@ async def handle_ccp_right_delete_character_button_pressed(app: 'TldwCli', event
 
 
 async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
-    """Performs conversation search for the CCP tab."""
+    """Performs conversation search for the CCP tab with enhanced capabilities."""
     logger = getattr(app, 'loguru_logger', logging)
     logger.debug("Performing CCP conversation search...")
     try:
+        # Get all search inputs
         search_input = app.query_one("#conv-char-search-input", Input)
         search_term = search_input.value.strip()
+        
+        # Get keyword/content search term
+        keyword_search_term = ""
+        try:
+            keyword_input = app.query_one("#conv-char-keyword-search-input", Input)
+            keyword_search_term = keyword_input.value.strip()
+        except QueryError:
+            pass
+            
+        # Get tag search term
+        tag_search_term = ""
+        try:
+            tags_input = app.query_one("#conv-char-tags-search-input", Input)
+            tag_search_term = tags_input.value.strip()
+        except QueryError:
+            pass
+        
+        # Get checkbox states
+        include_char_chats = True
+        try:
+            include_checkbox = app.query_one("#conv-char-search-include-character-checkbox", Checkbox)
+            include_char_chats = include_checkbox.value
+        except QueryError:
+            pass
+            
+        all_characters = True
+        try:
+            all_chars_checkbox = app.query_one("#conv-char-search-all-characters-checkbox", Checkbox)
+            all_characters = all_chars_checkbox.value
+        except QueryError:
+            pass
 
+        # Get character selection from dropdown
         char_select_widget = app.query_one("#conv-char-character-select", Select)
         selected_character_id = char_select_widget.value
-        if selected_character_id == Select.BLANK:  # Treat BLANK as None for filtering
+        if selected_character_id == Select.BLANK:
             selected_character_id = None
 
+        # Clear results
         results_list_view = app.query_one("#conv-char-search-results-list", ListView)
         await results_list_view.clear()
 
@@ -573,24 +660,88 @@ async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
 
         db = app.notes_service._get_db(app.notes_user_id)
         conversations: List[Dict[str, Any]] = []
+        
+        # Determine effective character filter
+        # If "All Characters" is checked, ignore specific character selection
+        effective_character_id = None if all_characters else selected_character_id
 
-        if selected_character_id:
-            logger.debug(f"CCP Search: Filtering for character ID: {selected_character_id}")
-            if search_term:
-                logger.debug(f"CCP Search: Term '{search_term}', CharID {selected_character_id}")
-                conversations = db.search_conversations_by_title(
-                    title_query=search_term, character_id=selected_character_id, limit=200
+        # Base search - by title or get all
+        if not search_term:
+            # No search term - get conversations based on filters
+            if effective_character_id is not None:
+                # Specific character selected
+                logger.debug(f"CCP Search: All conversations for CharID {effective_character_id}")
+                conversations = db.get_conversations_for_character(
+                    character_id=effective_character_id,
+                    limit=200
                 )
             else:
-                logger.debug(f"CCP Search: All conversations for CharID {selected_character_id}")
-                conversations = db.get_conversations_for_character(
-                    character_id=selected_character_id, limit=200
-                )
+                # All conversations
+                logger.debug("CCP Search: Getting all active conversations")
+                conversations = db.list_all_active_conversations(limit=200)
         else:
-            logger.debug(f"CCP Search: No character selected. Global search with term: '{search_term}'")
+            # Search by title
+            logger.debug(f"CCP Search: Term '{search_term}', CharID {effective_character_id}")
             conversations = db.search_conversations_by_title(
-                title_query=search_term, character_id=None, limit=200
+                title_query=search_term,
+                character_id=effective_character_id,
+                limit=200
             )
+        
+        # Apply keyword/content search filter if provided
+        if keyword_search_term and conversations:
+            logger.debug(f"Applying keyword filter: '{keyword_search_term}'")
+            # Get conversation IDs that match the keyword search
+            keyword_matches = db.search_conversations_by_content(keyword_search_term, limit=200)
+            keyword_conv_ids = {match['id'] for match in keyword_matches}
+            
+            # Filter conversations to only those that match keyword search
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations if conv['id'] in keyword_conv_ids]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                logger.debug(f"Keyword filter removed {filtered_count} conversations, keeping {len(conversations)}")
+        
+        # Apply tag search filter if provided
+        if tag_search_term and conversations:
+            logger.debug(f"Applying tag filter: '{tag_search_term}'")
+            # Parse comma-separated tags
+            search_tags = [tag.strip() for tag in tag_search_term.split(',') if tag.strip()]
+            
+            if search_tags:
+                # Get conversation IDs that have matching tags
+                matching_conv_ids = set()
+                
+                for tag in search_tags:
+                    # Search for keywords matching the tag
+                    keyword_results = db.search_keywords(tag, limit=10)
+                    
+                    # For each matching keyword, get conversations
+                    for keyword in keyword_results:
+                        keyword_id = keyword['id']
+                        tag_conversations = db.get_conversations_for_keyword(keyword_id, limit=200)
+                        
+                        # Add conversation IDs to our set
+                        for conv in tag_conversations:
+                            matching_conv_ids.add(conv['id'])
+                
+                # Filter conversations to only those that have matching tags
+                original_count = len(conversations)
+                conversations = [conv for conv in conversations if conv['id'] in matching_conv_ids]
+                filtered_count = original_count - len(conversations)
+                if filtered_count > 0:
+                    logger.debug(f"Tag filter removed {filtered_count} conversations, keeping {len(conversations)}")
+        
+        # Apply character chat filter if needed
+        if not include_char_chats and conversations:
+            # Filter out character chats - keep only regular chats (no character_id or DEFAULT_CHARACTER_ID)
+            original_count = len(conversations)
+            # Use the already imported ccl (Character_Chat_Lib) for DEFAULT_CHARACTER_ID
+            conversations = [conv for conv in conversations 
+                           if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                logger.debug(f"Character chat filter removed {filtered_count} conversations")
 
         if not conversations:
             msg = "Enter search term or select a character." if not search_term and not selected_character_id else "No items found matching your criteria."
@@ -619,7 +770,9 @@ async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
                 await results_list_view.append(item)
 
         logger.info(
-            f"CCP conversation search (Term: '{search_term}', CharID: {selected_character_id}) yielded {len(conversations)} results.")
+            f"CCP conversation search (Title: '{search_term}', Keywords: '{keyword_search_term}', Tags: '{tag_search_term}', "
+            f"CharID: {effective_character_id}, Include Chars: {include_char_chats}, All Chars: {all_characters}) "
+            f"yielded {len(conversations)} results.")
 
     except QueryError as e_query:
         logger.error(f"UI component not found during CCP conversation search: {e_query}", exc_info=True)
@@ -688,17 +841,54 @@ async def handle_ccp_load_conversation_button_pressed(app: 'TldwCli', event: But
         app.query_one("#ccp-conversation-details-collapsible", Collapsible).collapsed = False
         app.query_one("#ccp-prompt-details-collapsible", Collapsible).collapsed = True
 
-        center_pane = app.query_one("#conv-char-center-pane", VerticalScroll)
-        await center_pane.remove_children()
+        # First, ensure the conversation messages view is visible
+        # Hide other views in the center pane
+        try:
+            app.query_one("#ccp-character-card-view").add_class("hidden")
+        except QueryError:
+            pass
+        try:
+            app.query_one("#ccp-character-editor-view").add_class("hidden")
+        except QueryError:
+            pass
+        try:
+            app.query_one("#ccp-prompt-editor-view").add_class("hidden")
+        except QueryError:
+            pass
+        try:
+            app.query_one("#ccp-dictionary-view").add_class("hidden")
+        except QueryError:
+            pass
+        try:
+            app.query_one("#ccp-dictionary-editor-view").add_class("hidden")
+        except QueryError:
+            pass
+        
+        # Show the conversation messages view
+        messages_container = app.query_one("#ccp-conversation-messages-view", Container)
+        messages_container.remove_class("hidden")
+        
+        # Clear existing messages from the container (but keep the title)
+        # Keep the first child (title) and remove the rest
+        children = list(messages_container.children)
+        for child in children[1:]:  # Skip the first child (title)
+            await child.remove()
 
         if not app.notes_service:
             logger.error("Notes service not available for loading CCP messages.")
-            await center_pane.mount(Static("Error: Notes service unavailable for messages."))
+            await messages_container.mount(Static("Error: Notes service unavailable for messages."))
             return
 
-        # FIXME/TODO - Conversation Branching
-        await app._load_branched_conversation_history(loaded_conversation_id, center_pane)
+        # Create a VerticalScroll to hold messages
+        messages_scroll = VerticalScroll(id="ccp-conversation-messages-scroll")
+        await messages_container.mount(messages_scroll)
 
+        # FIXME/TODO - Conversation Branching
+        # Pass the VerticalScroll widget for messages
+        await load_branched_conversation_history_ui(app, loaded_conversation_id, messages_scroll)
+
+        # Get the center pane to scroll to bottom
+        center_pane = app.query_one("#conv-char-center-pane", VerticalScroll)
         center_pane.scroll_end(animate=False)
         logger.info(f"Loaded messages into #conv-char-center-pane for conversation {loaded_conversation_id}.")
         app.notify(f"Conversation '{title_input_ccp.value}' loaded.", severity="information")
@@ -1038,6 +1228,39 @@ async def handle_ccp_conversation_search_input_changed(app: 'TldwCli', event: In
     app._conv_char_search_timer = app.set_timer(0.5, lambda: perform_ccp_conversation_search(app))
 
 
+async def handle_ccp_conversation_keyword_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:
+    """Handles input changes in the CCP keyword search bar with debouncing."""
+    if app._conv_char_search_timer:
+        app._conv_char_search_timer.stop()
+    app._conv_char_search_timer = app.set_timer(0.5, lambda: perform_ccp_conversation_search(app))
+
+
+async def handle_ccp_conversation_tags_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:
+    """Handles input changes in the CCP tags search bar with debouncing."""
+    if app._conv_char_search_timer:
+        app._conv_char_search_timer.stop()
+    app._conv_char_search_timer = app.set_timer(0.5, lambda: perform_ccp_conversation_search(app))
+
+
+async def handle_ccp_search_checkbox_changed(app: 'TldwCli', checkbox_id: str, value: bool) -> None:
+    """Handles checkbox state changes in CCP conversation search."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.debug(f"CCP search checkbox '{checkbox_id}' changed to {value}")
+    
+    if checkbox_id == "conv-char-search-all-characters-checkbox":
+        try:
+            # When "All Characters" is checked, disable character select dropdown
+            char_select_widget = app.query_one("#conv-char-character-select", Select)
+            char_select_widget.disabled = value
+            if value:
+                char_select_widget.value = Select.BLANK  # Clear selection when "All" is checked
+        except QueryError as e:
+            logger.error(f"Error accessing character select widget: {e}", exc_info=True)
+    
+    # Trigger a new search when checkbox state changes
+    await perform_ccp_conversation_search(app)
+
+
 async def handle_ccp_prompt_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:
     """Handles input changes in the CCP prompt search bar with debouncing."""
     search_term = event.value
@@ -1110,7 +1333,7 @@ async def handle_ccp_import_conversation_button_pressed(app: 'TldwCli', event: B
         ("All files (*.*)", lambda p: True)
     )
     await app.push_screen(
-        FileOpen(location=str(Path.home()), title="Select Conversation File", filters=defined_filters),
+        FileOpen(location=str(Path.home()), title="Select Conversation File", filters=defined_filters, context="character_import"),
         callback=lambda path: _conversation_import_callback(app, path))
 
 ########################################################################################################################
@@ -1292,7 +1515,7 @@ async def handle_ccp_import_prompt_button_pressed(app: 'TldwCli', event: Button.
         ("Markdown files (*.md)", lambda p: p.suffix.lower() == ".md"),
         ("All files (*.*)", lambda p: True)
     )
-    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Prompt File", filters=defined_filters),
+    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Prompt File", filters=defined_filters, context="character_import"),
                           callback=lambda path: _prompt_import_callback(app, path))
 
 ########################################################################################################################
@@ -1469,6 +1692,17 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
         first_message = app.query_one("#ccp-editor-char-first-message-textarea", TextArea).text.strip()
         keywords_text = app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text.strip()
         keywords_list = [kw.strip() for kw in keywords_text.split(',') if kw.strip()]
+        
+        # V2 Character Card fields
+        creator_notes = app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text.strip()
+        system_prompt = app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text.strip()
+        post_history_instructions = app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text.strip()
+        alternate_greetings_text = app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text.strip()
+        alternate_greetings = [greeting.strip() for greeting in alternate_greetings_text.split('\n') if greeting.strip()]
+        tags_text = app.query_one("#ccp-editor-char-tags-input", Input).value.strip()
+        tags = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+        creator = app.query_one("#ccp-editor-char-creator-input", Input).value.strip()
+        character_version = app.query_one("#ccp-editor-char-version-input", Input).value.strip()
 
         if not char_name:
             app.notify("Character Name cannot be empty.", severity="error", timeout=4)
@@ -1482,11 +1716,63 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
             "scenario": scenario,
             "first_message": first_message,
             "keywords": keywords_list,
-            "image_path": avatar_path,  # Storing avatar path as image_path
-            # Ensure other relevant fields from your DB schema are included if needed
-            # e.g., "creator_notes", "system_prompt", "post_history_instructions",
-            # "alternate_greetings", "tags", "creator", "character_version", "extensions"
+            # V2 Character Card fields
+            "creator_notes": creator_notes,
+            "system_prompt": system_prompt,
+            "post_history_instructions": post_history_instructions,
+            "alternate_greetings": alternate_greetings,
+            "tags": tags,
+            "creator": creator,
+            "character_version": character_version,
+            "extensions": {}  # Empty dict for now, can be extended later
         }
+        
+        # Handle image data - prioritize uploaded image over URL
+        if hasattr(app, 'temp_character_image_bytes') and app.temp_character_image_bytes:
+            # Use the uploaded image bytes
+            character_data_for_db_op["image"] = app.temp_character_image_bytes
+            logger.info("Using uploaded image bytes for character")
+        elif avatar_path:
+            # Try to load image from URL or path
+            try:
+                import httpx
+                from PIL import Image
+                import io
+                
+                if avatar_path.startswith(('http://', 'https://')):
+                    # Download from URL
+                    logger.info(f"Downloading image from URL: {avatar_path}")
+                    response = httpx.get(avatar_path, timeout=10.0)
+                    response.raise_for_status()
+                    image_bytes = response.content
+                    
+                    # Validate it's a PNG
+                    img = Image.open(io.BytesIO(image_bytes))
+                    if img.format != 'PNG':
+                        app.notify("URL image must be PNG format.", severity="error")
+                        logger.error(f"Image from URL is not PNG: {img.format}")
+                        return
+                    
+                    character_data_for_db_op["image"] = image_bytes
+                else:
+                    # Load from local file path
+                    logger.info(f"Loading image from local path: {avatar_path}")
+                    with open(avatar_path, 'rb') as f:
+                        image_bytes = f.read()
+                    
+                    # Validate it's a PNG
+                    img = Image.open(io.BytesIO(image_bytes))
+                    if img.format != 'PNG':
+                        app.notify("Image file must be PNG format.", severity="error")
+                        logger.error(f"Image file is not PNG: {img.format}")
+                        return
+                    
+                    character_data_for_db_op["image"] = image_bytes
+                    
+            except Exception as e:
+                logger.error(f"Failed to load image from {avatar_path}: {e}")
+                app.notify(f"Failed to load image: {str(e)}", severity="warning")
+                # Continue without image rather than failing entirely
 
         saved_character_details: Optional[Dict[str, Any]] = None
         current_editing_id = app.current_editing_character_id
@@ -1494,12 +1780,19 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
 
         if current_editing_id is None:  # New character
             logger.info(f"Attempting to add new character: {char_name}")
-            saved_character_details = db.add_character_card(character_data=character_data_for_db_op)
-            if saved_character_details and saved_character_details.get("id"):
-                logger.info(f"New character '{char_name}' added. ID: {saved_character_details['id']}")
+            new_character_id = db.add_character_card(card_data=character_data_for_db_op)
+            if new_character_id:
+                logger.info(f"New character '{char_name}' added. ID: {new_character_id}")
                 app.notify(f"Character '{char_name}' saved successfully.", severity="information")
+                # Update the app state with the new character ID
+                app.current_editing_character_id = str(new_character_id)
+                app.current_editing_character_data = character_data_for_db_op
+                app.current_editing_character_data["id"] = str(new_character_id)
+                # Clear temporary image bytes after successful save
+                if hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
             else:
-                logger.error(f"Failed to save new character '{char_name}'. DB response: {saved_character_details}")
+                logger.error(f"Failed to save new character '{char_name}'. DB response: {new_character_id}")
                 app.notify(f"Failed to save new character '{char_name}'.", severity="error")
                 return
         else:  # Existing character
@@ -1523,6 +1816,9 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
             if saved_character_details:
                 logger.info(f"Character '{char_name}' (ID: {current_editing_id}) updated successfully.")
                 app.notify(f"Character '{char_name}' updated successfully.", severity="information")
+                # Clear temporary image bytes after successful save
+                if hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
             else:
                 logger.error(f"Failed to update character '{char_name}'. DB response: {saved_character_details}")
                 app.notify(f"Failed to update character '{char_name}'.", severity="error")
@@ -1575,8 +1871,25 @@ async def _helper_ccp_clear_center_pane_character_editor_fields(app: 'TldwCli') 
         app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text = ""
         app.query_one("#ccp-editor-char-first-message-textarea", TextArea).text = ""
         app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text = ""
-        # Add other fields if they exist in the center pane editor
-        # e.g., app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = ""
+        # V2 Character Card fields
+        app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-char-tags-input", Input).value = ""
+        app.query_one("#ccp-editor-char-creator-input", Input).value = ""
+        app.query_one("#ccp-editor-char-version-input", Input).value = ""
+        
+        # Clear image status display
+        try:
+            status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+            status_widget.update("No image selected")
+        except QueryError:
+            pass
+        
+        # Clear any temporary image bytes
+        if hasattr(app, 'temp_character_image_bytes'):
+            app.temp_character_image_bytes = None
 
         loguru_logger.debug("Cleared character editor fields in CCP center pane.")
     except QueryError as e:
@@ -1619,6 +1932,31 @@ async def _helper_ccp_load_character_into_center_pane_editor(app: 'TldwCli', cha
             keywords_list = char_data.get("keywords", [])
             app.query_one("#ccp-editor-char-keywords-textarea", TextArea).text = ", ".join(keywords_list) if keywords_list else ""
 
+            # Populate V2 Character Card fields
+            app.query_one("#ccp-editor-char-creator-notes-textarea", TextArea).text = char_data.get("creator_notes", "")
+            app.query_one("#ccp-editor-char-system-prompt-textarea", TextArea).text = char_data.get("system_prompt", "")
+            app.query_one("#ccp-editor-char-post-history-instructions-textarea", TextArea).text = char_data.get("post_history_instructions", "")
+            alternate_greetings = char_data.get("alternate_greetings", [])
+            app.query_one("#ccp-editor-char-alternate-greetings-textarea", TextArea).text = "\n".join(alternate_greetings) if alternate_greetings else ""
+            tags_list = char_data.get("tags", [])
+            app.query_one("#ccp-editor-char-tags-input", Input).value = ", ".join(tags_list) if tags_list else ""
+            app.query_one("#ccp-editor-char-creator-input", Input).value = char_data.get("creator", "")
+            app.query_one("#ccp-editor-char-version-input", Input).value = char_data.get("character_version", "")
+            
+            # Update image status display
+            try:
+                status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+                if char_data.get("image"):
+                    # Character has an image in the database
+                    status_widget.update("Image stored in database")
+                else:
+                    status_widget.update("No image selected")
+            except QueryError:
+                loguru_logger.warning("Could not find image status widget")
+            
+            # Clear any temporary image bytes when loading a character
+            if hasattr(app, 'temp_character_image_bytes'):
+                app.temp_character_image_bytes = None
 
             app.query_one("#ccp-editor-char-name-input", Input).focus()
             app.notify(f"Character '{char_data.get('name', 'Unknown')}' loaded into center editor.", severity="information")
@@ -1697,19 +2035,18 @@ async def handle_ccp_editor_char_clone_button_pressed(app: 'TldwCli', event: But
         logger.info(f"Attempting to clone character '{original_name}' as '{cloned_name}' from editor state.")
         db = app.chachanotes_db # Already checked
 
-        saved_clone_details = db.add_character_card(
-            character_data=cloned_character_data_for_db
+        new_cloned_char_id = db.add_character_card(
+            card_data=cloned_character_data_for_db
         )
 
-        if saved_clone_details and saved_clone_details.get("id"):
-            new_cloned_char_id = saved_clone_details["id"]
+        if new_cloned_char_id:
             logger.info(f"Character cloned successfully. New ID: {new_cloned_char_id}")
             app.notify(f"Character cloned as '{cloned_name}'.", severity="information")
 
-            await _helper_ccp_load_character_into_center_pane_editor(app, new_cloned_char_id)
+            await _helper_ccp_load_character_into_center_pane_editor(app, str(new_cloned_char_id))
             await populate_ccp_character_select(app)
         else:
-            logger.error(f"Failed to save cloned character '{cloned_name}'. DB returned: {saved_clone_details}")
+            logger.error(f"Failed to save cloned character '{cloned_name}'. DB returned: {new_cloned_char_id}")
             app.notify(f"Failed to clone character '{original_name}'.", severity="error")
 
     except CharactersRAGDBError as e_db:
@@ -1857,6 +2194,97 @@ async def handle_ccp_editor_char_delete_button_pressed(app: 'TldwCli', event: Bu
         app.notify(f"Unexpected error deleting: {type(e_unexp).__name__}", severity="error")
 
 
+async def handle_ccp_editor_char_image_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Choose Image button for character editor."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Editor: Choose Image button pressed.")
+    
+    from pathlib import Path
+    
+    # Define filters for PNG files only
+    defined_filters = Filters(
+        ("PNG files (*.png)", lambda p: p.suffix.lower() == ".png"),
+        ("All files (*.*)", lambda p: True)
+    )
+    
+    async def _image_upload_callback(app: 'TldwCli', selected_path: Optional[str]) -> None:
+        if selected_path:
+            logger.info(f"Image file selected: {selected_path}")
+            try:
+                # Read and validate the image
+                with open(selected_path, 'rb') as f:
+                    image_bytes = f.read()
+                
+                # Validate it's a valid PNG using PIL
+                from PIL import Image
+                import io
+                
+                img = Image.open(io.BytesIO(image_bytes))
+                if img.format != 'PNG':
+                    app.notify("Only PNG images are supported.", severity="error")
+                    return
+                
+                # Check image size (limit to 5MB)
+                if len(image_bytes) > 5 * 1024 * 1024:
+                    app.notify("Image size must be less than 5MB.", severity="error")
+                    return
+                
+                # Check dimensions (limit to 1024x1024)
+                if img.width > 1024 or img.height > 1024:
+                    app.notify("Image dimensions must not exceed 1024x1024 pixels.", severity="error")
+                    return
+                
+                # Store the image bytes in app state
+                if not hasattr(app, 'temp_character_image_bytes'):
+                    app.temp_character_image_bytes = None
+                app.temp_character_image_bytes = image_bytes
+                
+                # Update the status display
+                try:
+                    status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+                    filename = Path(selected_path).name
+                    status_widget.update(f"Selected: {filename} ({len(image_bytes) // 1024}KB)")
+                except QueryError:
+                    logger.error("Could not find image status widget")
+                
+                app.notify(f"Image selected: {Path(selected_path).name}", severity="information")
+                
+            except Exception as e:
+                logger.error(f"Error loading image file: {e}", exc_info=True)
+                app.notify(f"Error loading image: {str(e)}", severity="error")
+        else:
+            logger.info("Image selection cancelled.")
+    
+    await app.push_screen(
+        FileOpen(
+            location=str(Path.home() / "Pictures"),
+            title="Select Character Image (PNG only)",
+            filters=defined_filters,
+            context="character_import"
+        ),
+        callback=lambda path: _image_upload_callback(app, path)
+    )
+
+
+async def handle_ccp_editor_char_clear_image_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles the Clear Image button for character editor."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Editor: Clear Image button pressed.")
+    
+    # Clear the temporary image bytes
+    if hasattr(app, 'temp_character_image_bytes'):
+        app.temp_character_image_bytes = None
+    
+    # Update the status display
+    try:
+        status_widget = app.query_one("#ccp-editor-char-image-status", Static)
+        status_widget.update("No image selected")
+    except QueryError:
+        logger.error("Could not find image status widget")
+    
+    app.notify("Image cleared.", severity="information")
+
+
 async def _finish_new_prompt_setup(app: 'TldwCli') -> None:
     """
     This second-stage helper is called after the UI has had a chance to update.
@@ -1908,10 +2336,1481 @@ async def handle_ccp_card_edit_button_pressed(app: 'TldwCli', event: Button.Pres
         logger.error("Failed to find #ccp-editor-char-cancel-button to remove 'hidden' class.")
 
 
+# ##############################################################
+# --- AI Generation Handlers ---
+# ##############################################################
+
+def _get_llm_settings_for_generation(app: 'TldwCli') -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Helper to get LLM provider, model, and API key settings for AI generation."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    
+    try:
+        # Try to get from chat tab first if it's available
+        provider = app.query_one("#chat-api-provider", Select).value
+        model = app.query_one("#chat-api-model", Select).value
+        if provider == Select.BLANK:
+            provider = None
+    except QueryError:
+        # Fall back to config defaults
+        chat_defaults = app.app_config.get("chat_defaults", {})
+        provider = chat_defaults.get("provider", None)
+        model = chat_defaults.get("model", None)
+        logger.info(f"Using config defaults - provider: {provider}, model: {model}")
+    
+    # Get API key
+    api_key = None
+    if provider:
+        provider_settings_key = provider.lower().replace(" ", "_")
+        provider_config_settings = app.app_config.get("api_settings", {}).get(provider_settings_key, {})
+        
+        # Try direct API key first
+        if "api_key" in provider_config_settings:
+            config_api_key = provider_config_settings.get("api_key", "").strip()
+            if config_api_key and config_api_key != "<API_KEY_HERE>":
+                api_key = config_api_key
+                logger.debug(f"Using API key for '{provider}' from config file.")
+        
+        # Try environment variable
+        if not api_key:
+            env_var_name = provider_config_settings.get("api_key_env_var", "").strip()
+            if env_var_name:
+                env_api_key = os.environ.get(env_var_name, "").strip()
+                if env_api_key:
+                    api_key = env_api_key
+                    logger.debug(f"Using API key for '{provider}' from ENV var '{env_var_name}'.")
+    
+    return provider, model, api_key
+
+
+async def handle_ccp_generate_description_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character description using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Description button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-description-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate description button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        # Get any existing description to build upon
+        existing_desc = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        
+        # Build prompt
+        if existing_desc:
+            prompt = f"Improve and expand this character description for '{char_name}': {existing_desc}\n\nMake it more vivid and detailed, keeping the core concept but enhancing it. 2-3 paragraphs."
+        else:
+            prompt = f"Generate a compelling character description for a character named '{char_name}'. Include their appearance, background, and key traits. Make it vivid and engaging. 2-3 paragraphs."
+        
+        # Get LLM settings
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        # Show thinking status
+        app.notify("Generating description... This may take a moment.", severity="information")
+        
+        # Make API call using app's chat wrapper
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,  # More creative
+            system_message="You are a creative writing assistant helping to create compelling character descriptions. Be vivid and engaging.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_description",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating description with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except QueryError as e:
+        logger.error(f"UI component not found: {e}")
+        app.notify("UI error generating description", severity="error")
+    except Exception as e:
+        logger.error(f"Error generating description: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_personality_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character personality using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Personality button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-personality-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate personality button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        # Build context-aware prompt
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        
+        prompt = f"{context}\n\nGenerate a detailed personality profile for this character. Include their traits, quirks, likes/dislikes, fears, motivations, and behavioral patterns. Make it nuanced and interesting. 2-3 paragraphs."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating personality... This may take a moment.", severity="information")
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative writing assistant specializing in character development. Create nuanced, believable personalities.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_personality",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating personality with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating personality: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_scenario_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character scenario using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate Scenario button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-scenario-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate scenario button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        
+        prompt = f"{context}\n\nGenerate an engaging scenario/setting where the user would encounter and interact with this character. Set the scene and context. 1-2 paragraphs."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating scenario... This may take a moment.", severity="information")
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative writing assistant. Create engaging scenarios that set up interesting interactions.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_scenario",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating scenario with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating scenario: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_first_message_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character first message using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate First Message button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-first-message-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate first message button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        scenario = app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        if scenario:
+            context += f"\nScenario: {scenario}"
+        
+        prompt = f"{context}\n\nWrite the character's first message/greeting to the user. It should be in-character, engaging, and set the tone for the interaction. Include actions in *asterisks* or narrative description if appropriate."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating first message... This may take a moment.", severity="information")
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message=f"You are roleplaying as {char_name}. Write in first person as the character. Be true to their personality and scenario.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_first_message",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating first message with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating first message: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_system_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating character system prompt using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate System Prompt button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-system-prompt-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate system prompt button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-char-description-textarea", TextArea).text.strip()
+        personality = app.query_one("#ccp-editor-char-personality-textarea", TextArea).text.strip()
+        scenario = app.query_one("#ccp-editor-char-scenario-textarea", TextArea).text.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        context = f"Character: {char_name}"
+        if description:
+            context += f"\nDescription: {description}"
+        if personality:
+            context += f"\nPersonality: {personality}"
+        if scenario:
+            context += f"\nScenario: {scenario}"
+        
+        prompt = f"{context}\n\nGenerate a system prompt for an AI to roleplay as this character. Include instructions about personality, speech patterns, knowledge, and behavior. Make it clear and specific."
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify("Generating system prompt... This may take a moment.", severity="information")
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.7,  # Slightly less creative for instructions
+            system_message="You are an expert at writing clear, effective system prompts for AI roleplay. Create prompts that result in consistent, engaging character portrayals.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_system_prompt",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating system prompt with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating system prompt: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+        # Re-enable the button on error
+        if generate_button:
+            generate_button.disabled = False
+
+
+async def handle_ccp_generate_all_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles generating all character fields using AI."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("CCP Generate All button pressed.")
+    
+    # Get the button to disable it during generation
+    generate_button = None
+    try:
+        generate_button = app.query_one("#ccp-generate-all-button", Button)
+        generate_button.disabled = True
+    except QueryError:
+        logger.warning("Could not find generate all button to disable")
+    
+    try:
+        char_name = app.query_one("#ccp-editor-char-name-input", Input).value.strip()
+        
+        if not char_name:
+            app.notify("Please enter a character name first", severity="warning")
+            return
+        
+        provider, model, api_key = _get_llm_settings_for_generation(app)
+        
+        if not provider:
+            app.notify("No API provider configured. Please configure in chat settings or config file.", severity="warning")
+            return
+            
+        app.notify(f"Generating complete character profile... This may take up to a minute.", severity="information")
+        
+        # Generate all fields in one comprehensive prompt
+        prompt = f"""Create a complete character profile for a character named '{char_name}'.
+
+Please provide:
+1. Description (2-3 paragraphs about appearance, background, and key traits)
+2. Personality (2-3 paragraphs about traits, quirks, motivations, fears)
+3. Scenario (1-2 paragraphs setting up where/how the user meets this character)
+4. First Message (the character's greeting/introduction to the user, in-character)
+5. System Prompt (instructions for an AI to roleplay as this character)
+
+Format your response with clear headers for each section."""
+        
+        worker_target = lambda: app.chat_wrapper(
+            message=prompt,
+            history=[],
+            api_endpoint=provider,
+            model=model,
+            api_key=api_key,
+            temperature=0.8,
+            system_message="You are a creative character designer. Create compelling, coherent characters with rich personalities and engaging scenarios.",
+            streaming=False,
+            strip_thinking_tags=True,
+            media_content={},  # No media content for AI generation
+            selected_parts=[],  # No parts selected
+            custom_prompt=None  # No custom prompt override
+        )
+        app.run_worker(
+            worker_target,
+            name="ai_generate_all",
+            group="ai_generation",
+            thread=True,
+            description=f"Generating complete character profile with {provider}"
+        )
+        # Worker will be handled in on_worker_state_changed
+            
+    except Exception as e:
+        logger.error(f"Error generating character profile: {e}", exc_info=True)
+        app.notify(f"Error: {str(e)}", severity="error")
+    finally:
+        # Re-enable the button
+        if generate_button:
+            generate_button.disabled = False
+
+
 # --- Button Handler Map ---
+########################################################################################################################
+#
+# Event Handlers for Conversation Export
+#
+########################################################################################################################
+
+async def handle_conv_char_export_text_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current conversation as a text file."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export conversation as text button pressed.")
+    
+    if not app.current_ccp_conversation_id:
+        app.notify("No conversation loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Get user name for export
+        user_name = app.notes_user_id or "User"
+        
+        # Export conversation to text
+        text_content = ccl.export_conversation_to_text(
+            db, 
+            app.current_ccp_conversation_id,
+            user_name
+        )
+        
+        if not text_content:
+            app.notify("Failed to export conversation.", severity="error")
+            return
+            
+        # Generate filename
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        if conv_details:
+            title = conv_details.get('title', 'conversation').replace('/', '_').replace('\\', '_')
+            filename = f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        else:
+            filename = f"conversation_{app.current_ccp_conversation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            
+        # Save to default export directory
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_path = export_dir / filename
+        
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write(text_content)
+            
+        app.notify(f"Conversation exported to: {export_path}", severity="information", timeout=10)
+        logger.info(f"Exported conversation to text: {export_path}")
+        
+    except Exception as e:
+        logger.error(f"Error exporting conversation as text: {e}", exc_info=True)
+        app.notify(f"Error exporting conversation: {type(e).__name__}", severity="error")
+
+
+async def handle_conv_char_export_json_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current conversation as a JSON file."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export conversation as JSON button pressed.")
+    
+    if not app.current_ccp_conversation_id:
+        app.notify("No conversation loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Export conversation to JSON (including character card)
+        json_content = ccl.export_conversation_to_json(
+            db, 
+            app.current_ccp_conversation_id,
+            include_character_card=True
+        )
+        
+        if not json_content:
+            app.notify("Failed to export conversation.", severity="error")
+            return
+            
+        # Generate filename
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        if conv_details:
+            title = conv_details.get('title', 'conversation').replace('/', '_').replace('\\', '_')
+            filename = f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        else:
+            filename = f"conversation_{app.current_ccp_conversation_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            
+        # Save to default export directory
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_path = export_dir / filename
+        
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write(json_content)
+            
+        app.notify(f"Conversation exported to: {export_path}", severity="information", timeout=10)
+        logger.info(f"Exported conversation to JSON: {export_path}")
+        
+    except Exception as e:
+        logger.error(f"Error exporting conversation as JSON: {e}", exc_info=True)
+        app.notify(f"Error exporting conversation: {type(e).__name__}", severity="error")
+
+
+async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handles exporting the current character card."""
+    logger = getattr(app, 'loguru_logger', loguru_logger)
+    logger.info("Export character card button pressed.")
+    
+    # Get the current character details from the reactive attribute
+    current_details = cast(Optional[Dict[str, Any]], app.current_ccp_character_details)
+    
+    if not current_details or not current_details.get('id'):
+        app.notify("No character loaded to export.", severity="warning")
+        return
+        
+    character_id = current_details['id']
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # The character data is already loaded in current_details
+        char_data = current_details
+            
+        char_name = char_data.get('name', 'character').replace('/', '_').replace('\\', '_')
+        
+        export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Always export as JSON
+        json_content = ccl.export_character_card_to_json(db, character_id, include_image=True)
+        if json_content:
+            json_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            json_path = export_dir / json_filename
+            with open(json_path, 'w', encoding='utf-8') as f:
+                f.write(json_content)
+            logger.info(f"Exported character to JSON: {json_path}")
+            
+            # Check if character has an image for PNG export
+            if char_data.get('image'):
+                # Export as PNG with embedded metadata only if image exists
+                png_filename = f"{char_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                png_path = export_dir / png_filename
+                success = ccl.export_character_card_to_png(db, character_id, str(png_path))
+                
+                if success:
+                    app.notify(f"Character exported to:\n{json_path}\n{png_path}", severity="information", timeout=10)
+                    logger.info(f"Exported character to PNG: {png_path}")
+                else:
+                    app.notify(f"Character JSON exported to: {json_path}\nPNG export failed.", severity="warning", timeout=10)
+            else:
+                # No image available - JSON export only
+                app.notify(f"Character exported to:\n{json_path}\n(No image available - exported as JSON only)", severity="information", timeout=10)
+                logger.info(f"Character exported as JSON only (no image): {json_path}")
+        else:
+            app.notify("Failed to export character.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error exporting character card: {e}", exc_info=True)
+        app.notify(f"Error exporting character: {type(e).__name__}", severity="error")
+
+
+########################################################################################################################
+#
+# Chat Dictionary Event Handlers
+#
+########################################################################################################################
+
+async def populate_ccp_dictionary_select(app: 'TldwCli') -> None:
+    """Populates the dictionary selection dropdown in the CCP tab."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Attempting to populate #ccp-dictionary-select dropdown.")
+    
+    if not app.notes_service:
+        logger.error("Notes service not available, cannot populate dictionary select for CCP tab.")
+        try:
+            dict_select_widget = app.query_one("#ccp-dictionary-select", Select)
+            dict_select_widget.set_options([("Service Unavailable", Select.BLANK)])
+            dict_select_widget.value = Select.BLANK
+            dict_select_widget.prompt = "Service Unavailable"
+        except QueryError:
+            logger.error("Failed to find #ccp-dictionary-select to show service error.")
+        return
+
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        dictionaries = cdl.list_chat_dictionaries(db, limit=1000)
+
+        options = []
+        if dictionaries:
+            options = [(d['name'], d['id']) for d in dictionaries if d.get('name') and d.get('id') is not None]
+
+        dict_select_widget = app.query_one("#ccp-dictionary-select", Select)
+
+        if options:
+            dict_select_widget.set_options(options)
+            dict_select_widget.prompt = "Select Dictionary..."
+            logger.info(f"Populated #ccp-dictionary-select with {len(options)} dictionaries.")
+        else:
+            dict_select_widget.set_options([("No dictionaries found", Select.BLANK)])
+            dict_select_widget.value = Select.BLANK
+            dict_select_widget.prompt = "No dictionaries available"
+            logger.info("No dictionaries found to populate #ccp-dictionary-select.")
+
+    except QueryError as e_query:
+        logger.error(f"Failed to find #ccp-dictionary-select widget: {e_query}", exc_info=True)
+    except CharactersRAGDBError as e_db:
+        logger.error(f"Database error populating #ccp-dictionary-select: {e_db}", exc_info=True)
+        try:
+            dict_select_widget_err = app.query_one("#ccp-dictionary-select", Select)
+            dict_select_widget_err.set_options([("Error Loading Dictionaries", Select.BLANK)])
+            dict_select_widget_err.prompt = "Error Loading"
+        except QueryError:
+            pass
+    except Exception as e_unexp:
+        logger.error(f"Unexpected error populating #ccp-dictionary-select: {e_unexp}", exc_info=True)
+        try:
+            dict_select_widget_unexp = app.query_one("#ccp-dictionary-select", Select)
+            dict_select_widget_unexp.set_options([("Error Loading (Unexpected)", Select.BLANK)])
+            dict_select_widget_unexp.prompt = "Error Loading"
+        except QueryError:
+            pass
+
+
+async def _dictionary_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    if selected_path:
+        logger.info(f"Dictionary import selected: {selected_path}")
+        if not app.notes_service:
+            app.notify("Database service not available.", severity="error")
+            logger.error("Notes service not available for dictionary import.")
+            return
+
+        db = app.notes_service._get_db(app.notes_user_id)
+        try:
+            dict_id = cdl.import_dictionary_from_file(db, str(selected_path))
+            if dict_id is not None:
+                app.notify(f"Dictionary imported successfully (ID: {dict_id}).", severity="information")
+                await populate_ccp_dictionary_select(app)  # Refresh dictionary dropdown
+            else:
+                app.notify("Failed to import dictionary. Check logs.", severity="error")
+        except ConflictError as ce:
+            app.notify(f"Import conflict: {ce}", severity="warning", timeout=6)
+            logger.warning(f"Conflict importing dictionary '{selected_path}': {ce}")
+            await populate_ccp_dictionary_select(app)  # Refresh in case it was a duplicate name
+        except Exception as e:
+            app.notify(f"Error importing dictionary: {type(e).__name__}", severity="error", timeout=6)
+            logger.error(f"Error importing dictionary '{selected_path}': {e}", exc_info=True)
+    else:
+        logger.info("Dictionary import cancelled.")
+
+
+async def handle_ccp_import_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Import Dictionary button pressed.")
+
+    defined_filters = Filters(
+        ("Dictionary files (MD, YAML)", lambda p: p.suffix.lower() in (".md", ".yaml", ".yml")),
+        ("Markdown files (*.md)", lambda p: p.suffix.lower() == ".md"),
+        ("YAML files (*.yaml, *.yml)", lambda p: p.suffix.lower() in (".yaml", ".yml")),
+        ("All files (*.*)", lambda p: True)
+    )
+    await app.push_screen(FileOpen(location=str(Path.home()), title="Select Dictionary File", filters=defined_filters, context="character_import"),
+                          callback=lambda path: _dictionary_import_callback(app, path))
+
+
+async def handle_ccp_create_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Create Dictionary button pressed.")
+    
+    # Switch to dictionary editor view
+    app.switch_ccp_center_view("dictionary_editor")
+    
+    # Debug: Check if buttons exist
+    try:
+        save_btn = app.query_one("#ccp-editor-dict-save-button", Button)
+        cancel_btn = app.query_one("#ccp-editor-dict-cancel-button", Button)
+        logger.info(f"Save button found: {save_btn}, visible: {save_btn.display}")
+        logger.info(f"Cancel button found: {cancel_btn}, visible: {cancel_btn.display}")
+        
+        # Check parent container
+        dict_editor = app.query_one("#ccp-dictionary-editor-view")
+        logger.info(f"Dictionary editor view display: {dict_editor.display}")
+    except QueryError as e:
+        logger.error(f"Could not find buttons: {e}")
+    
+    # Clear all fields for new dictionary
+    try:
+        app.query_one("#ccp-editor-dict-name-input", Input).value = ""
+        app.query_one("#ccp-editor-dict-description-textarea", TextArea).text = ""
+        app.query_one("#ccp-editor-dict-strategy-select", Select).value = "sorted_evenly"
+        app.query_one("#ccp-editor-dict-max-tokens-input", Input).value = "1000"
+        
+        # Clear entries list
+        entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+        await entries_list.clear()
+        
+        # Clear entry fields
+        app.query_one("#ccp-dict-entry-key-input", Input).value = ""
+        app.query_one("#ccp-dict-entry-value-textarea", TextArea).text = ""
+        app.query_one("#ccp-dict-entry-group-input", Input).value = ""
+        app.query_one("#ccp-dict-entry-probability-input", Input).value = "100"
+        
+        app.notify("Ready to create new dictionary", severity="information")
+        
+        # Scroll the center pane to bottom to ensure buttons are visible
+        try:
+            center_pane = app.query_one("#conv-char-center-pane", VerticalScroll)
+            center_pane.scroll_end(animate=True)
+        except QueryError:
+            pass
+            
+    except QueryError as e:
+        logger.error(f"Failed to clear dictionary editor fields: {e}")
+        app.notify("Error preparing dictionary editor", severity="error")
+
+
+async def handle_ccp_load_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Load Dictionary button pressed.")
+    
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        dict_select = app.query_one("#ccp-dictionary-select", Select)
+        selected_dict_id = dict_select.value
+        
+        if selected_dict_id == Select.BLANK or selected_dict_id is None:
+            app.notify("Please select a dictionary to load.", severity="warning")
+            return
+            
+        db = app.notes_service._get_db(app.notes_user_id)
+        dict_data = cdl.load_chat_dictionary(db, int(selected_dict_id))
+        
+        if dict_data:
+            # Switch to dictionary view
+            app.switch_ccp_center_view("dictionary")
+            
+            # Display dictionary details
+            app.query_one("#ccp-dict-name-display", Static).update(dict_data['name'])
+            app.query_one("#ccp-dict-description-display", TextArea).text = dict_data.get('description', '')
+            app.query_one("#ccp-dict-strategy-display", Static).update(dict_data.get('strategy', 'sorted_evenly'))
+            app.query_one("#ccp-dict-max-tokens-display", Static).update(str(dict_data.get('max_tokens', 1000)))
+            
+            # Display entries
+            entries_list = app.query_one("#ccp-dict-entries-list", ListView)
+            await entries_list.clear()
+            
+            for entry in dict_data.get('entries', []):
+                entry_text = f"{entry.raw_key} → {entry.content[:50]}..." if len(entry.content) > 50 else f"{entry.raw_key} → {entry.content}"
+                item = ListItem(Label(entry_text))
+                item.entry_data = entry  # Store the entry data
+                await entries_list.append(item)
+                
+            app.notify(f"Loaded dictionary: {dict_data['name']}", severity="information")
+            
+            # Store loaded dictionary ID for later use
+            app.loaded_dictionary_id = selected_dict_id
+        else:
+            app.notify("Failed to load dictionary.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error loading dictionary: {e}", exc_info=True)
+        app.notify("Error loading dictionary", severity="error")
+
+
+async def handle_ccp_refresh_dictionary_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Refresh Dictionary List button pressed.")
+    await populate_ccp_dictionary_select(app)
+    app.notify("Dictionary list refreshed", severity="information")
+
+
+async def handle_ccp_dict_edit_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Edit button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to edit.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        dict_data = cdl.load_chat_dictionary(db, int(app.loaded_dictionary_id))
+        
+        if dict_data:
+            # Switch to editor view
+            app.switch_ccp_center_view("dictionary_editor")
+            
+            # Populate editor fields
+            app.query_one("#ccp-editor-dict-name-input", Input).value = dict_data['name']
+            app.query_one("#ccp-editor-dict-description-textarea", TextArea).text = dict_data.get('description', '')
+            app.query_one("#ccp-editor-dict-strategy-select", Select).value = dict_data.get('strategy', 'sorted_evenly')
+            app.query_one("#ccp-editor-dict-max-tokens-input", Input).value = str(dict_data.get('max_tokens', 1000))
+            
+            # Populate entries list
+            entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+            await entries_list.clear()
+            
+            for entry in dict_data.get('entries', []):
+                entry_text = f"{entry.raw_key} → {entry.content[:50]}..." if len(entry.content) > 50 else f"{entry.raw_key} → {entry.content}"
+                item = ListItem(Label(entry_text))
+                item.entry_data = entry  # Store the entry data
+                await entries_list.append(item)
+                
+            app.editing_dictionary_id = app.loaded_dictionary_id
+            app.notify(f"Editing dictionary: {dict_data['name']}", severity="information")
+        else:
+            app.notify("Failed to load dictionary for editing.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error loading dictionary for edit: {e}", exc_info=True)
+        app.notify("Error loading dictionary for edit", severity="error")
+
+
+async def handle_ccp_editor_dict_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Save button pressed.")
+    
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        # Get form values
+        name = app.query_one("#ccp-editor-dict-name-input", Input).value.strip()
+        description = app.query_one("#ccp-editor-dict-description-textarea", TextArea).text.strip()
+        strategy = app.query_one("#ccp-editor-dict-strategy-select", Select).value
+        max_tokens = int(app.query_one("#ccp-editor-dict-max-tokens-input", Input).value or "1000")
+        
+        if not name:
+            app.notify("Dictionary name is required.", severity="error")
+            return
+            
+        # Collect entries from the list
+        entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+        entries = []
+        for item in entries_list.children:
+            if hasattr(item, 'entry_data'):
+                entries.append(item.entry_data)
+                
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        if hasattr(app, 'editing_dictionary_id') and app.editing_dictionary_id:
+            # Update existing dictionary
+            success = cdl.update_chat_dictionary(
+                db, int(app.editing_dictionary_id),
+                name=name, description=description,
+                entries=entries, strategy=strategy,
+                max_tokens=max_tokens
+            )
+            if success:
+                app.notify(f"Dictionary '{name}' updated successfully.", severity="information")
+                app.loaded_dictionary_id = app.editing_dictionary_id
+                app.editing_dictionary_id = None
+                # Switch back to view mode
+                app.switch_ccp_center_view("dictionary")
+                await handle_ccp_load_dictionary_button_pressed(app, event)  # Reload the dictionary
+            else:
+                app.notify("Failed to update dictionary.", severity="error")
+        else:
+            # Create new dictionary
+            dict_id = cdl.save_chat_dictionary(
+                db, name=name, description=description,
+                entries=entries, strategy=strategy,
+                max_tokens=max_tokens
+            )
+            if dict_id:
+                app.notify(f"Dictionary '{name}' created successfully.", severity="information")
+                await populate_ccp_dictionary_select(app)  # Refresh dropdown
+                # Clear editor
+                app.switch_ccp_center_view("conversations")
+            else:
+                app.notify("Failed to create dictionary.", severity="error")
+                
+    except ValueError as ve:
+        app.notify(f"Invalid input: {ve}", severity="error")
+    except Exception as e:
+        logger.error(f"Error saving dictionary: {e}", exc_info=True)
+        app.notify("Error saving dictionary", severity="error")
+
+
+async def handle_ccp_dict_export_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Export button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to export.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        export_path = cdl.export_dictionary_to_file(db, int(app.loaded_dictionary_id))
+        
+        if export_path:
+            app.notify(f"Dictionary exported to: {export_path}", severity="information", timeout=8)
+        else:
+            app.notify("Failed to export dictionary.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error exporting dictionary: {e}", exc_info=True)
+        app.notify("Error exporting dictionary", severity="error")
+
+
+async def handle_ccp_dict_delete_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Delete button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to delete.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        success = cdl.delete_chat_dictionary(db, int(app.loaded_dictionary_id))
+        
+        if success:
+            app.notify("Dictionary deleted successfully.", severity="information")
+            app.loaded_dictionary_id = None
+            await populate_ccp_dictionary_select(app)  # Refresh dropdown
+            app.switch_ccp_center_view("conversations")  # Switch to default view
+        else:
+            app.notify("Failed to delete dictionary.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error deleting dictionary: {e}", exc_info=True)
+        app.notify("Error deleting dictionary", severity="error")
+
+
+async def handle_ccp_dict_add_entry_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Add Dictionary Entry button pressed.")
+    
+    try:
+        # Get entry values
+        key = app.query_one("#ccp-dict-entry-key-input", Input).value.strip()
+        value = app.query_one("#ccp-dict-entry-value-textarea", TextArea).text.strip()
+        group = app.query_one("#ccp-dict-entry-group-input", Input).value.strip() or None
+        probability = int(app.query_one("#ccp-dict-entry-probability-input", Input).value or "100")
+        
+        if not key:
+            app.notify("Entry key is required.", severity="error")
+            return
+        if not value:
+            app.notify("Entry value is required.", severity="error")
+            return
+            
+        # Create ChatDictionary entry
+        entry = cdl.ChatDictionary(
+            key=key,
+            content=value,
+            probability=probability,
+            group=group
+        )
+        
+        # Add to entries list
+        entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+        entry_text = f"{entry.raw_key} → {entry.content[:50]}..." if len(entry.content) > 50 else f"{entry.raw_key} → {entry.content}"
+        item = ListItem(Label(entry_text))
+        item.entry_data = entry  # Store the entry data
+        await entries_list.append(item)
+        
+        # Clear entry fields
+        app.query_one("#ccp-dict-entry-key-input", Input).value = ""
+        app.query_one("#ccp-dict-entry-value-textarea", TextArea).text = ""
+        app.query_one("#ccp-dict-entry-group-input", Input).value = ""
+        app.query_one("#ccp-dict-entry-probability-input", Input).value = "100"
+        
+        app.notify("Entry added", severity="information")
+        
+    except ValueError as ve:
+        app.notify(f"Invalid input: {ve}", severity="error")
+    except Exception as e:
+        logger.error(f"Error adding entry: {e}", exc_info=True)
+        app.notify("Error adding entry", severity="error")
+
+
+async def handle_ccp_dict_remove_entry_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Remove Dictionary Entry button pressed.")
+    
+    try:
+        entries_list = app.query_one("#ccp-editor-dict-entries-list", ListView)
+        
+        if entries_list.index is not None:
+            selected_item = entries_list.highlighted_child
+            if selected_item:
+                await entries_list.remove(selected_item)
+                app.notify("Entry removed", severity="information")
+            else:
+                app.notify("No entry selected to remove.", severity="warning")
+        else:
+            app.notify("No entry selected to remove.", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error removing entry: {e}", exc_info=True)
+        app.notify("Error removing entry", severity="error")
+
+
+async def handle_ccp_editor_dict_cancel_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Cancel Edit button pressed.")
+    
+    app.editing_dictionary_id = None
+    if hasattr(app, 'loaded_dictionary_id') and app.loaded_dictionary_id:
+        # Switch back to dictionary view
+        app.switch_ccp_center_view("dictionary")
+        await handle_ccp_load_dictionary_button_pressed(app, event)  # Reload the dictionary
+    else:
+        # Switch to default view
+        app.switch_ccp_center_view("conversations")
+    
+    app.notify("Edit cancelled", severity="information")
+
+
+async def handle_ccp_dict_apply_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Apply the current dictionary to the active conversation."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Apply button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to apply.", severity="warning")
+        return
+        
+    if not app.current_ccp_conversation_id:
+        app.notify("No active conversation to apply dictionary to.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        
+        # Apply dictionary to conversation (store in conversation metadata)
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        if conv_details:
+            # Get current active dictionaries from metadata
+            metadata = json.loads(conv_details.get('metadata', '{}'))
+            active_dicts = metadata.get('active_dictionaries', [])
+            
+            # Add this dictionary if not already present
+            dict_id = int(app.loaded_dictionary_id)
+            if dict_id not in active_dicts:
+                active_dicts.append(dict_id)
+                metadata['active_dictionaries'] = active_dicts
+                
+                # Update conversation metadata
+                db.update_conversation(
+                    app.current_ccp_conversation_id,
+                    metadata=json.dumps(metadata)
+                )
+                
+                app.notify("Dictionary applied to conversation.", severity="information")
+                
+                # Update the active dictionaries list in right pane if visible
+                try:
+                    await populate_active_dictionaries_list(app)
+                except Exception as e:
+                    loguru_logger.warning(f"Failed to update active dictionaries list: {e}")
+            else:
+                app.notify("Dictionary is already applied to this conversation.", severity="information")
+        else:
+            app.notify("Failed to load conversation details.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error applying dictionary: {e}", exc_info=True)
+        app.notify("Error applying dictionary", severity="error")
+
+
+async def handle_ccp_dict_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Clone the current dictionary."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Clone button pressed.")
+    
+    if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
+        app.notify("No dictionary loaded to clone.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        db = app.notes_service._get_db(app.notes_user_id)
+        dict_data = cdl.load_chat_dictionary(db, int(app.loaded_dictionary_id))
+        
+        if dict_data:
+            # Create a clone with modified name
+            clone_name = f"{dict_data['name']} (Clone)"
+            dict_id = cdl.save_chat_dictionary(
+                db,
+                name=clone_name,
+                description=dict_data.get('description', ''),
+                entries=dict_data.get('entries', []),
+                strategy=dict_data.get('strategy', 'sorted_evenly'),
+                max_tokens=dict_data.get('max_tokens', 1000)
+            )
+            
+            if dict_id:
+                app.notify(f"Dictionary cloned as '{clone_name}'.", severity="information")
+                await populate_ccp_dictionary_select(app)  # Refresh dropdown
+                
+                # Optionally load the cloned dictionary
+                dict_select = app.query_one("#ccp-dictionary-select", Select)
+                dict_select.value = dict_id
+                app.loaded_dictionary_id = dict_id
+                await handle_ccp_load_dictionary_button_pressed(app, event)
+            else:
+                app.notify("Failed to clone dictionary.", severity="error")
+        else:
+            app.notify("Failed to load dictionary for cloning.", severity="error")
+            
+    except Exception as e:
+        logger.error(f"Error cloning dictionary: {e}", exc_info=True)
+        app.notify("Error cloning dictionary", severity="error")
+
+
+async def handle_ccp_dict_remove_from_conv_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Remove selected dictionary from the active conversation."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Remove from Conversation button pressed.")
+    
+    if not app.current_ccp_conversation_id:
+        app.notify("No active conversation.", severity="warning")
+        return
+        
+    if not app.notes_service:
+        app.notify("Database service not available.", severity="error")
+        return
+        
+    try:
+        # Get selected dictionary from active list
+        active_list = app.query_one("#ccp-active-dictionaries-list", ListView)
+        if active_list.index is not None:
+            selected_item = active_list.highlighted_child
+            if selected_item and hasattr(selected_item, 'dict_id'):
+                dict_id = selected_item.dict_id
+                
+                db = app.notes_service._get_db(app.notes_user_id)
+                conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+                
+                if conv_details:
+                    # Remove from active dictionaries
+                    metadata = json.loads(conv_details.get('metadata', '{}'))
+                    active_dicts = metadata.get('active_dictionaries', [])
+                    
+                    if dict_id in active_dicts:
+                        active_dicts.remove(dict_id)
+                        metadata['active_dictionaries'] = active_dicts
+                        
+                        # Update conversation metadata
+                        db.update_conversation(
+                            app.current_ccp_conversation_id,
+                            metadata=json.dumps(metadata)
+                        )
+                        
+                        app.notify("Dictionary removed from conversation.", severity="information")
+                        await populate_active_dictionaries_list(app)
+                    else:
+                        app.notify("Dictionary not found in conversation.", severity="warning")
+                else:
+                    app.notify("Failed to load conversation details.", severity="error")
+            else:
+                app.notify("No dictionary selected.", severity="warning")
+        else:
+            app.notify("No dictionary selected.", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error removing dictionary from conversation: {e}", exc_info=True)
+        app.notify("Error removing dictionary", severity="error")
+
+
+async def handle_ccp_dict_update_priority_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Update the priority of dictionaries in the conversation."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("CCP Dictionary Update Priority button pressed.")
+    
+    # This is a placeholder for future priority ordering functionality
+    app.notify("Dictionary priority ordering not yet implemented.", severity="information")
+
+
+async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
+    """Populate the active dictionaries list for the current conversation."""
+    logger = getattr(app, 'loguru_logger', logging)
+    
+    if not app.current_ccp_conversation_id or not app.notes_service:
+        return
+        
+    try:
+        active_list = app.query_one("#ccp-active-dictionaries-list", ListView)
+        await active_list.clear()
+        
+        db = app.notes_service._get_db(app.notes_user_id)
+        conv_details = db.get_conversation_by_id(app.current_ccp_conversation_id)
+        
+        if conv_details:
+            metadata = json.loads(conv_details.get('metadata', '{}'))
+            active_dict_ids = metadata.get('active_dictionaries', [])
+            
+            for dict_id in active_dict_ids:
+                dict_data = cdl.load_chat_dictionary(db, dict_id)
+                if dict_data:
+                    item = ListItem(Label(dict_data['name']))
+                    item.dict_id = dict_id  # Store dict ID for removal
+                    await active_list.append(item)
+                    
+            logger.info(f"Populated active dictionaries list with {len(active_dict_ids)} items.")
+            
+    except Exception as e:
+        logger.error(f"Error populating active dictionaries: {e}", exc_info=True)
+
+
+########################################################################################################################
+#
+# World Book Event Handlers
+#
+########################################################################################################################
+
+async def handle_ccp_import_worldbook_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Import World Book button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Import World Book button pressed")
+    app.notify("Import World Book functionality coming soon!", severity="information")
+    # TODO: Implement file picker and import logic
+
+async def handle_ccp_create_worldbook_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Create World Book button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Create World Book button pressed")
+    
+    try:
+        from ..Character_Chat.world_book_manager import WorldBookManager
+        
+        if not app.db:
+            app.notify("Database not initialized", severity="error")
+            return
+            
+        # TODO: Show dialog to get world book details
+        # For now, create a sample world book
+        wb_manager = WorldBookManager(app.db)
+        world_book_id = wb_manager.create_world_book(
+            name=f"New World Book {datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            description="A new world book for your stories",
+            scan_depth=3,
+            token_budget=500,
+            recursive_scanning=False,
+            enabled=True
+        )
+        
+        app.notify(f"Created new world book with ID {world_book_id}", severity="success")
+        await handle_ccp_refresh_worldbook_list_button_pressed(app, event)
+        
+    except Exception as e:
+        logger.error(f"Error creating world book: {e}", exc_info=True)
+        app.notify(f"Failed to create world book: {e}", severity="error")
+
+async def handle_ccp_worldbook_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:
+    """Handle world book search input changes."""
+    if event.input.id != "ccp-worldbook-search-input":
+        return
+        
+    logger = getattr(app, 'loguru_logger', logging)
+    search_term = event.value
+    logger.debug(f"World book search term: '{search_term}'")
+    
+    await populate_ccp_worldbook_list(app, search_term)
+
+async def handle_ccp_worldbook_load_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Load Selected World Book button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Load World Book button pressed")
+    
+    try:
+        listview = app.query_one("#ccp-worldbooks-listview", ListView)
+        if listview.highlighted_child is None:
+            app.notify("Please select a world book to load", severity="warning")
+            return
+            
+        selected_item = listview.highlighted_child
+        if hasattr(selected_item, 'world_book_id'):
+            world_book_id = selected_item.world_book_id
+            logger.info(f"Loading world book ID: {world_book_id}")
+            
+            # TODO: Display world book details in center pane
+            app.notify(f"Loaded world book ID {world_book_id}", severity="success")
+            
+    except Exception as e:
+        logger.error(f"Error loading world book: {e}", exc_info=True)
+        app.notify(f"Failed to load world book: {e}", severity="error")
+
+async def handle_ccp_worldbook_edit_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Edit Selected World Book button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Edit World Book button pressed")
+    
+    try:
+        listview = app.query_one("#ccp-worldbooks-listview", ListView)
+        if listview.highlighted_child is None:
+            app.notify("Please select a world book to edit", severity="warning")
+            return
+            
+        selected_item = listview.highlighted_child
+        if hasattr(selected_item, 'world_book_id'):
+            world_book_id = selected_item.world_book_id
+            logger.info(f"Editing world book ID: {world_book_id}")
+            
+            # TODO: Show edit dialog/view
+            app.notify(f"Editing world book ID {world_book_id}", severity="information")
+            
+    except Exception as e:
+        logger.error(f"Error editing world book: {e}", exc_info=True)
+        app.notify(f"Failed to edit world book: {e}", severity="error")
+
+async def handle_ccp_refresh_worldbook_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle Refresh World Book List button press."""
+    logger = getattr(app, 'loguru_logger', logging)
+    logger.info("Refresh World Book List button pressed")
+    
+    await populate_ccp_worldbook_list(app)
+
+async def populate_ccp_worldbook_list(app: 'TldwCli', search_term: str = "") -> None:
+    """Populate the world book list view."""
+    logger = getattr(app, 'loguru_logger', logging)
+    
+    try:
+        from ..Character_Chat.world_book_manager import WorldBookManager
+        
+        listview = app.query_one("#ccp-worldbooks-listview", ListView)
+        await listview.clear()
+        
+        if not app.db:
+            app.notify("Database not initialized", severity="error")
+            return
+            
+        wb_manager = WorldBookManager(app.db)
+        all_books = wb_manager.list_world_books(include_disabled=False)
+        
+        # Filter by search term if provided
+        if search_term.strip():
+            search_lower = search_term.lower()
+            filtered_books = [
+                book for book in all_books
+                if search_lower in book['name'].lower() or 
+                   (book.get('description') and search_lower in book['description'].lower())
+            ]
+        else:
+            filtered_books = all_books
+        
+        # Populate the list
+        for book in filtered_books:
+            label_text = book['name']
+            if book.get('description'):
+                label_text += f" - {book['description'][:50]}..."
+                
+            item = ListItem(Label(label_text))
+            item.world_book_id = book['id']  # Store ID for later use
+            await listview.append(item)
+            
+        logger.info(f"Populated world book list with {len(filtered_books)} items")
+        
+        if not filtered_books:
+            if search_term:
+                await listview.append(ListItem(Label("No world books found matching search")))
+            else:
+                await listview.append(ListItem(Label("No world books available")))
+                
+    except Exception as e:
+        logger.error(f"Error populating world book list: {e}", exc_info=True)
+        app.notify(f"Failed to load world books: {e}", severity="error")
+
+
 CCP_BUTTON_HANDLERS = {
     # Left Pane
     "ccp-import-character-button": handle_ccp_import_character_button_pressed,
+    "ccp-create-character-button": handle_ccp_create_character_button_pressed,
+    "ccp-refresh-character-list-button": handle_ccp_refresh_character_list_button_pressed,
     "ccp-import-conversation-button": handle_ccp_import_conversation_button_pressed,
     "ccp-import-prompt-button": handle_ccp_import_prompt_button_pressed,
     "conv-char-conversation-search-button": handle_ccp_conversation_search_button_pressed,
@@ -1919,6 +3818,30 @@ CCP_BUTTON_HANDLERS = {
     "ccp-prompt-create-new-button": handle_ccp_center_pane_new_prompt_button_pressed,
     "ccp-prompt-load-selected-button": handle_ccp_prompt_load_selected_button_pressed,
     "ccp-right-pane-load-character-button": handle_ccp_left_load_character_button_pressed,
+    
+    # Dictionary buttons
+    "ccp-import-dictionary-button": handle_ccp_import_dictionary_button_pressed,
+    "ccp-create-dictionary-button": handle_ccp_create_dictionary_button_pressed,
+    "ccp-load-dictionary-button": handle_ccp_load_dictionary_button_pressed,
+    "ccp-refresh-dictionary-list-button": handle_ccp_refresh_dictionary_list_button_pressed,
+    
+    # World Book buttons
+    "ccp-import-worldbook-button": handle_ccp_import_worldbook_button_pressed,
+    "ccp-create-worldbook-button": handle_ccp_create_worldbook_button_pressed,
+    "ccp-worldbook-load-button": handle_ccp_worldbook_load_button_pressed,
+    "ccp-worldbook-edit-button": handle_ccp_worldbook_edit_button_pressed,
+    "ccp-refresh-worldbook-list-button": handle_ccp_refresh_worldbook_list_button_pressed,
+    "ccp-dict-edit-button": handle_ccp_dict_edit_button_pressed,
+    "ccp-dict-export-button": handle_ccp_dict_export_button_pressed,
+    "ccp-dict-apply-button": handle_ccp_dict_apply_button_pressed,
+    "ccp-editor-dict-save-button": handle_ccp_editor_dict_save_button_pressed,
+    "ccp-editor-dict-cancel-button": handle_ccp_editor_dict_cancel_button_pressed,
+    "ccp-dict-add-entry-button": handle_ccp_dict_add_entry_button_pressed,
+    "ccp-dict-remove-entry-button": handle_ccp_dict_remove_entry_button_pressed,
+    "ccp-dict-delete-button": handle_ccp_dict_delete_button_pressed,
+    "ccp-dict-clone-button": handle_ccp_dict_clone_button_pressed,
+    "ccp-dict-remove-from-conv-button": handle_ccp_dict_remove_from_conv_button_pressed,
+    "ccp-dict-update-priority-button": handle_ccp_dict_update_priority_button_pressed,
 
     # Center Pane
     "ccp-card-edit-button": handle_ccp_card_edit_button_pressed,
@@ -1928,6 +3851,16 @@ CCP_BUTTON_HANDLERS = {
     "ccp-editor-char-delete-button": handle_ccp_editor_char_delete_button_pressed,
     "ccp-editor-char-clone-button": handle_ccp_editor_char_clone_button_pressed,
     "ccp-editor-char-cancel-button": handle_ccp_editor_char_cancel_button_pressed,
+    "ccp-editor-char-image-button": handle_ccp_editor_char_image_button_pressed,
+    "ccp-editor-char-clear-image-button": handle_ccp_editor_char_clear_image_button_pressed,
+    
+    # AI Generation Buttons
+    "ccp-generate-all-button": handle_ccp_generate_all_button_pressed,
+    "ccp-generate-description-button": handle_ccp_generate_description_button_pressed,
+    "ccp-generate-personality-button": handle_ccp_generate_personality_button_pressed,
+    "ccp-generate-scenario-button": handle_ccp_generate_scenario_button_pressed,
+    "ccp-generate-first-message-button": handle_ccp_generate_first_message_button_pressed,
+    "ccp-generate-system-prompt-button": handle_ccp_generate_system_prompt_button_pressed,
     "ccp-editor-prompt-save-button": handle_ccp_editor_prompt_save_button_pressed,
     "ccp-prompt-clone-button": handle_ccp_prompt_clone_button_pressed,
     "ccp-prompt-delete-button": handle_ccp_prompt_delete_button_pressed,
@@ -1938,6 +3871,11 @@ CCP_BUTTON_HANDLERS = {
     "conv-char-save-details-button": handle_ccp_save_conversation_details_button_pressed,
     "ccp-editor-prompt-delete-button": handle_ccp_editor_prompt_delete_button_pressed,
     "ccp-character-delete-button": handle_ccp_right_delete_character_button_pressed,
+    
+    # Export buttons
+    "conv-char-export-text-button": handle_conv_char_export_text_button_pressed,
+    "conv-char-export-json-button": handle_conv_char_export_json_button_pressed,
+    "ccp-export-character-button": handle_ccp_export_character_button_pressed,
 
     # Sidebar Toggles
     "toggle-conv-char-left-sidebar": handle_ccp_tab_sidebar_toggle,

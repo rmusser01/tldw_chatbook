@@ -7,6 +7,7 @@
 import json
 import os
 import subprocess
+import time
 from typing import Any, Generator, Union, Dict, Optional, List
 
 import requests
@@ -17,6 +18,7 @@ from tldw_chatbook.Chat.Chat_Deps import ChatProviderError, ChatBadRequestError,
 from tldw_chatbook.Utils.Utils import logging
 from tldw_chatbook.config import load_settings, settings
 from tldw_chatbook.Local_Inference.mlx_lm_inference_local import start_mlx_lm_server, stop_mlx_lm_server
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
 ####################
@@ -34,6 +36,30 @@ from tldw_chatbook.Local_Inference.mlx_lm_inference_local import start_mlx_lm_se
 ####################
 # Import necessary libraries
 # Import Local
+#
+#######################################################################################################################
+# Provider Parameter Support Documentation
+#
+# IMPORTANT: Only some local providers accept a 'provider_name' parameter for dynamic configuration loading.
+# This parameter allows these providers to load configuration from different sections in the settings.
+#
+# Local providers that ACCEPT provider_name (as an optional parameter):
+# - chat_with_llama (uses it to select config section, defaults to 'llama_cpp')
+# - chat_with_vllm (uses it to select config section, defaults to 'vllm_api')
+# - chat_with_ollama (uses it to select config section, defaults to 'ollama')
+# - chat_with_mlx_lm (uses it to select config section, defaults to 'mlx_lm')
+#
+# Local providers that DO NOT accept provider_name:
+# - chat_with_local_llm
+# - chat_with_kobold
+# - chat_with_oobabooga
+# - chat_with_tabbyapi
+# - chat_with_aphrodite
+# - chat_with_custom_openai
+# - chat_with_custom_openai_2
+#
+# Internal helper that uses provider_name:
+# - _chat_with_openai_compatible_local_server (used by llama, vllm, ollama, mlx_lm)
 #
 #######################################################################################################################
 # Function Definitions
@@ -89,7 +115,15 @@ def _chat_with_openai_compatible_local_server(
         api_retries: int = 1,
         api_retry_delay: int = 1
 ):
+    start_time = time.time()
     logging.debug(f"{provider_name}: Chat request starting. API Base: {api_base_url}, Model: {model_name}")
+    
+    # Log request metrics
+    log_counter("local_openai_compatible_api_request", labels={
+        "provider": provider_name,
+        "model": model_name or "default",
+        "streaming": str(streaming)
+    })
 
     headers = {'Content-Type': 'application/json'}
     if api_key: # Some local servers might use a key
@@ -176,6 +210,20 @@ def _chat_with_openai_compatible_local_server(
             response = session.post(full_api_url, headers=headers, json=payload, stream=True, timeout=timeout + 60)
             response.raise_for_status()
             logging.debug(f"{provider_name}: Streaming response received.")
+            
+            # Log streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("local_openai_compatible_api_response_time", duration, labels={
+                "provider": provider_name,
+                "model": model_name or "default",
+                "streaming": "true",
+                "status_code": str(response.status_code)
+            })
+            log_counter("local_openai_compatible_api_success", labels={
+                "provider": provider_name,
+                "model": model_name or "default", 
+                "streaming": "true"
+            })
 
             def stream_generator():
                 try:
@@ -202,16 +250,88 @@ def _chat_with_openai_compatible_local_server(
             response.raise_for_status()
             response_data = response.json()
             logging.debug(f"{provider_name}: Non-streaming request successful.")
+            
+            # Log non-streaming success metrics
+            duration = time.time() - start_time
+            log_histogram("local_openai_compatible_api_response_time", duration, labels={
+                "provider": provider_name,
+                "model": model_name or "default",
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("local_openai_compatible_api_success", labels={
+                "provider": provider_name,
+                "model": model_name or "default",
+                "streaming": "false"
+            })
+            
+            # Log token usage if available
+            usage = response_data.get("usage", {})
+            if usage:
+                log_histogram("local_openai_compatible_api_input_tokens", usage.get("prompt_tokens", 0), labels={
+                    "provider": provider_name,
+                    "model": model_name or "default"
+                })
+                log_histogram("local_openai_compatible_api_output_tokens", usage.get("completion_tokens", 0), labels={
+                    "provider": provider_name,
+                    "model": model_name or "default"
+                })
+                log_histogram("local_openai_compatible_api_total_tokens", usage.get("total_tokens", 0), labels={
+                    "provider": provider_name,
+                    "model": model_name or "default"
+                })
+            
             return response_data
     except requests.exceptions.HTTPError as e_http:
         # Logged by a higher level, but good to note here too
         logging.error(f"{provider_name}: HTTP Error: {getattr(e_http.response, 'status_code', 'N/A')} - {getattr(e_http.response, 'text', str(e_http))[:500]}", exc_info=False)
+        
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        status_code = getattr(e_http.response, 'status_code', 500)
+        log_counter("local_openai_compatible_api_error", labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("local_openai_compatible_api_error_response_time", duration, labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "status_code": str(status_code)
+        })
         raise # Re-raise to be caught by chat_api_call's handler
     except requests.RequestException as e_req:
         logging.error(f"{provider_name}: Request Exception: {e_req}", exc_info=True)
+        
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("local_openai_compatible_api_error", labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "network_error"
+        })
+        log_histogram("local_openai_compatible_api_error_response_time", duration, labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "network_error"
+        })
         raise ChatProviderError(provider=provider_name, message=f"Network error making request to {provider_name}: {e_req}", status_code=503) # 503 Service Unavailable
     except (ValueError, KeyError, TypeError) as e_data: # Issues with payload construction or response parsing
         logging.error(f"{provider_name}: Data processing or configuration error: {e_data}", exc_info=True)
+        
+        # Log data error metrics
+        duration = time.time() - start_time
+        log_counter("local_openai_compatible_api_error", labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "data_error"
+        })
+        log_histogram("local_openai_compatible_api_error_response_time", duration, labels={
+            "provider": provider_name,
+            "model": model_name or "default",
+            "error_type": "data_error"
+        })
         raise ChatBadRequestError(provider=provider_name, message=f"{provider_name} data or configuration error: {e_data}")
 
 
@@ -335,22 +455,23 @@ def chat_with_llama(
         # api_url is tricky. Your notes say "positional argument".
         # If chat_api_call is the sole entry, this needs to be passed via kwargs if mapped,
         # or loaded from config if not passed. Let's assume it's primarily from config for now.
-        api_url: Optional[str] = None # This is specific to this function's call from API_CALL_HANDLERS if special handling exists
+        api_url: Optional[str] = None, # This is specific to this function's call from API_CALL_HANDLERS if special handling exists
+        provider_name: Optional[str] = None  # Added to support dynamic configuration loading
 ):
     if model and (model.lower() == "none" or model.strip() == ""): model = None
 
     # --- Settings Load ---
-    llama_cpp_config_key_in_api_settings = 'llama_cpp'
+    # Use provider_name if provided, otherwise default to 'llama_cpp'
+    llama_cpp_config_key_in_api_settings = provider_name if provider_name else 'llama_cpp'
     provider_display_name = "Llama.cpp"
 
     api_settings_table = settings.get('api_settings', {})  # Safely get the api_settings table
     llama_config = api_settings_table.get(llama_cpp_config_key_in_api_settings, {})  # Safely get the llama_cpp config
     api_base_url = llama_config.get('api_url')
     if not api_base_url:
-        # Using the original provider string "llama_api" from your snippet for the error.
-        # If you want it to be dynamic or match "llama_cpp", you can change "llama_api".
+        # Using the provider name for the error message
         raise ChatConfigurationError(
-            provider="llama_api",
+            provider=llama_cpp_config_key_in_api_settings,
             message=f"{provider_display_name} API URL (api_url) is required and could not be determined from configuration."
         )
     current_api_key = api_key or llama_config.get('api_key')
@@ -436,6 +557,7 @@ def chat_with_kobold(
         # Add api_url as an optional parameter if it can be passed directly
         api_url: Optional[str] = None
 ):
+    start_time = time.time()
     if model and (model.lower() == "none" or model.strip() == ""): model = None
     logging.debug("KoboldAI (Native): Chat request starting...")
 
@@ -459,6 +581,15 @@ def chat_with_kobold(
     current_model = model or cfg.get('model')
     if not current_model:
         logging.info("Kobold API model namenot passed and or could not be determined from arguments or configuration.")
+    
+    # Define current_streaming before using it
+    current_streaming = streaming if streaming is not None else cfg.get('streaming', False)
+    
+    # Log request metrics
+    log_counter("kobold_api_request", labels={
+        "model": current_model or "default",
+        "streaming": str(current_streaming)
+    })
 
     current_temp = temp if temp is not None else float(cfg.get('temperature', 0.7)) # Kobold native 'temp'
     current_top_k = top_k if top_k is not None else cfg.get('top_k')
@@ -472,7 +603,6 @@ def chat_with_kobold(
     # Original code forced it to False. Maintaining that unless KoboldCPP has improved this significantly
     # for the native endpoint and it's easy to parse.
     # If KoboldCPP offers an OpenAI compatible streaming endpoint, that's usually preferred.
-    current_streaming = streaming if streaming is not None else cfg.get('streaming', False)
     if current_streaming:
         logging.warning("KoboldAI (Native): Streaming with /api/v1/generate is often non-standard. "
                         "Consider using KoboldCpp's OpenAI compatible endpoint (/v1) for reliable streaming. Forcing non-streaming for native.")
@@ -552,6 +682,19 @@ def chat_with_kobold(
             # If n > 1, there might be multiple. For now, taking the first.
             generated_text = response_data['results'][0].get('text', '').strip()
             logging.debug("KoboldAI (Native): Chat request successful.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("kobold_api_response_time", duration, labels={
+                "model": current_model or "default",
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("kobold_api_success", labels={
+                "model": current_model or "default",
+                "streaming": "false"
+            })
+            
             # To make it somewhat OpenAI-like for the dispatcher, wrap in a choices structure.
             # This assumes non-streaming. Streaming would need a generator yielding SSE-like events.
             return {"choices": [{"message": {"role": "assistant", "content": generated_text}, "finish_reason": "stop"}]} # Assuming "stop"
@@ -561,12 +704,47 @@ def chat_with_kobold(
 
     except requests.exceptions.HTTPError as e_http:
         logging.error(f"KoboldAI (Native): HTTP Error: {getattr(e_http.response, 'status_code', 'N/A')} - {getattr(e_http.response, 'text', str(e_http))[:500]}", exc_info=False)
+        
+        # Log HTTP error metrics
+        duration = time.time() - start_time
+        status_code = getattr(e_http.response, 'status_code', 500)
+        log_counter("kobold_api_error", labels={
+            "model": current_model or "default",
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("kobold_api_error_response_time", duration, labels={
+            "model": current_model or "default",
+            "status_code": str(status_code)
+        })
         raise
     except requests.RequestException as e_req:
         logging.error(f"KoboldAI (Native): Request Exception: {e_req}", exc_info=True)
+        
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("kobold_api_error", labels={
+            "model": current_model or "default",
+            "error_type": "network_error"
+        })
+        log_histogram("kobold_api_error_response_time", duration, labels={
+            "model": current_model or "default",
+            "error_type": "network_error"
+        })
         raise ChatProviderError(provider="kobold", message=f"Network error calling KoboldAI (Native): {e_req}", status_code=503)
     except (ValueError, KeyError, TypeError) as e_data:
         logging.error(f"KoboldAI (Native): Data or configuration error: {e_data}", exc_info=True)
+        
+        # Log data error metrics
+        duration = time.time() - start_time
+        log_counter("kobold_api_error", labels={
+            "model": current_model or "default",
+            "error_type": "data_error"
+        })
+        log_histogram("kobold_api_error_response_time", duration, labels={
+            "model": current_model or "default",
+            "error_type": "data_error"
+        })
         raise ChatBadRequestError(provider="kobold", message=f"KoboldAI (Native) config/data error: {e_data}")
 
 
@@ -771,20 +949,22 @@ def chat_with_vllm(
     frequency_penalty: Optional[float] = None, # from map
     logprobs: Optional[bool] = None,     # from map
     user_identifier: Optional[str] = None, # from map
-    vllm_api_url: Optional[str] = None # Specific config, not from generic map typically
+    vllm_api_url: Optional[str] = None, # Specific config, not from generic map typically
                                        # Could be loaded from cfg or passed if chat_api_call handles it
+    provider_name: Optional[str] = None  # Added to support dynamic configuration loading
 ):
     if model and (model.lower() == "none" or model.strip() == ""): model = None
 
     # --- Settings Load ---
+    # Use provider_name if provided, otherwise default to 'vllm_api'
+    vllm_config_key = provider_name if provider_name else 'vllm_api'
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
-    # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
-    cfg = cli_api_settings.get('vllm_api', {})
+    cfg = cli_api_settings.get(vllm_config_key, {})
 
     vllm_api_url = cfg.get('api_url')  # api_url passed via chat_api_call or from config
     if not vllm_api_url:
         raise ChatConfigurationError(
-            provider="vllm",
+            provider=vllm_config_key,
             message="vLLM API URL (api_url) is required and could not be determined from arguments or configuration."
         )
     current_api_key = api_key or cfg.get('api_key')
@@ -975,19 +1155,22 @@ def chat_with_ollama(
     # Missing from Ollama PROVIDER_PARAM_MAP that _openai_compatible_server handles:
     # logit_bias, n (num_choices), user_identifier, logprobs, top_logprobs, tools, tool_choice, min_p
     # Add to signature and pass if Ollama supports them.
+    provider_name: Optional[str] = None  # Added to support dynamic configuration loading
 ):
     if model and (model.lower() == "none" or model.strip() == ""): model = None
 
     # --- Settings Load for CLI config structure ---
+    # Use provider_name if provided, otherwise default to 'ollama'
+    ollama_config_key = provider_name if provider_name else 'ollama'
     cli_api_settings = settings.get('api_settings', {}) # Get the [api_settings] table
-    cfg = cli_api_settings.get('ollama', {})             # Get the [api_settings.ollama] sub-table
+    cfg = cli_api_settings.get(ollama_config_key, {})   # Get the config for the specific provider
 
     # API URL: function argument 'api_url' takes precedence, then config.
     # The config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.ollama].api_url
     current_api_base_url = api_url or cfg.get('api_url')
     if not current_api_base_url:
         raise ChatConfigurationError(
-            provider="ollama", # Matches the key 'ollama' used for cfg
+            provider=ollama_config_key, # Use the dynamic provider name
             message="Ollama API URL (api_url) is required and could not be determined from arguments or configuration."
         )
 
@@ -1347,22 +1530,25 @@ def chat_with_mlx_lm(
     max_tokens: Optional[int] = None,
     top_p: Optional[float] = None,
     api_url: Optional[str] = None, # If passed, overrides config for base URL
+    provider_name: Optional[str] = None,  # Added to support dynamic configuration loading
     **kwargs: Any # To catch any other params from API_CALL_HANDLERS
 ) -> Union[Dict[str, Any], Generator[str, None, None]]:
     """
     Sends a chat request to a running MLX-LM server (assumed OpenAI compatible).
     """
-    provider_name = "MLX-LM"
-    logging.debug(f"{provider_name}: Chat request initiated.")
+    provider_display_name = "MLX-LM"
+    logging.debug(f"{provider_display_name}: Chat request initiated.")
 
     # --- Settings Load ---
+    # Use provider_name if provided, otherwise default to 'mlx_lm'
+    mlx_config_key = provider_name if provider_name else 'mlx_lm'
     api_settings_table = settings.get('api_settings', {})
-    mlx_cfg = api_settings_table.get('mlx_lm', {})
+    mlx_cfg = api_settings_table.get(mlx_config_key, {})
 
     current_model_path = model or mlx_cfg.get('model_path') or mlx_cfg.get('model')
     if not current_model_path:
         raise ChatConfigurationError(
-            provider=provider_name,
+            provider=mlx_config_key,
             message="MLX-LM model path (model_path or model in config) is required and could not be determined."
         )
 

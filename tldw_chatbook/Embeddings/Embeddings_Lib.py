@@ -30,9 +30,13 @@ import asyncio
 import random
 import threading
 import time
+import os
+import sys
+import subprocess
 from collections import OrderedDict
 from typing import (Any, Annotated, Callable, Dict, List, Literal, Optional,
                     Protocol, TypedDict, Union)
+from contextlib import contextmanager
 #
 # Third-Party Libraries
 import requests
@@ -82,11 +86,97 @@ else:
 #
 ########################################################################################################################
 #
-__all__ = ["EmbeddingFactory", "EmbeddingConfigSchema"]
+__all__ = [
+    "EmbeddingFactory", 
+    "EmbeddingConfigSchema",
+    "get_default_embedding_config",
+    "get_common_embedding_models",
+    "create_embedding_factory_with_defaults"
+]
 #
 # Configure logger with context
 logger = logger.bind(module="Embeddings_Lib")
 #
+###############################################################################
+# File Descriptor Protection for macOS subprocess issues
+###############################################################################
+
+@contextmanager
+def protect_file_descriptors():
+    """Context manager to protect file descriptors during subprocess operations.
+    
+    This fixes the "bad value(s) in fds_to_keep" error on macOS when the 
+    transformers library spawns subprocesses for model downloads.
+    """
+    # Save original file descriptors
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    original_stdin = sys.stdin
+    
+    # Save original environment
+    env_backup = os.environ.copy()
+    
+    # Save original subprocess.Popen to restore later
+    original_popen = subprocess.Popen
+    
+    try:
+        # Ensure we have real file descriptors, not wrapped objects
+        # This is crucial for subprocess operations
+        try:
+            # Test if stdout/stderr are real files with valid file descriptors
+            stdout_fd = sys.stdout.fileno()
+            stderr_fd = sys.stderr.fileno()
+            # Verify they're valid by attempting to use them
+            os.fstat(stdout_fd)
+            os.fstat(stderr_fd)
+        except (AttributeError, ValueError, OSError):
+            # stdout/stderr are wrapped/captured or invalid, create new ones
+            # Use the original file descriptors 1 and 2 directly
+            try:
+                sys.stdout = os.fdopen(1, 'w')
+                sys.stderr = os.fdopen(2, 'w')
+            except OSError:
+                # If that fails, use devnull as a fallback
+                devnull = open(os.devnull, 'w')
+                sys.stdout = devnull
+                sys.stderr = devnull
+        
+        # Set environment to prevent subprocess issues
+        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+        os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+        
+        # For macOS specifically
+        if sys.platform == 'darwin':
+            os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
+            # Ensure subprocess doesn't inherit bad file descriptors
+            os.environ['PYTHONNOUSERSITE'] = '1'
+            # Force subprocess to close all file descriptors except 0,1,2
+            os.environ['PYTHON_SUBPROCESS_CLOSE_FDS'] = '1'
+        
+        yield
+        
+    finally:
+        # Restore original file descriptors
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        sys.stdin = original_stdin
+        
+        # Close any temporary files we created
+        if sys.stdout != original_stdout and hasattr(sys.stdout, 'close'):
+            try:
+                sys.stdout.close()
+            except:
+                pass
+        if sys.stderr != original_stderr and hasattr(sys.stderr, 'close'):
+            try:
+                sys.stderr.close()
+            except:
+                pass
+        
+        # Restore original environment
+        os.environ.clear()
+        os.environ.update(env_backup)
+
 ###############################################################################
 # Configuration schema (with Discriminated Union)
 ###############################################################################
@@ -110,6 +200,8 @@ class EmbeddingConfigSchema(BaseModel):
 
 def _masked_mean(last_hidden: Tensor, attn: Tensor) -> Tensor:
     """Default pooling: mean of vectors where attention_mask is 1."""
+    if torch is None:
+        raise ImportError("torch is required for pooling operations")
     mask = attn.unsqueeze(-1).type_as(last_hidden)
     summed = (last_hidden * mask).sum(dim=1)
     lengths = mask.sum(dim=1).clamp(min=1e-9)
@@ -126,6 +218,8 @@ class HFModelCfg(BaseModel):
     batch_size: int = 32
     pooling: Optional[PoolingFn] = None  # default: masked mean
     dimension: Optional[int] = None
+    cache_dir: Optional[str] = None  # Custom cache directory for model downloads
+    revision: Optional[str] = None  # Git revision (commit/tag) for security pinning
 
 
 class OpenAICfg(BaseModel):
@@ -193,15 +287,42 @@ class _HuggingFaceEmbedder:
 
     def __init__(self, cfg: HFModelCfg):
         try:
-            self._tok = AutoTokenizer.from_pretrained(
-                cfg.model_name_or_path, trust_remote_code=cfg.trust_remote_code
-            )
-            dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-            self._model = AutoModel.from_pretrained(
-                cfg.model_name_or_path,
-                torch_dtype=dtype,
-                trust_remote_code=cfg.trust_remote_code,
-            )
+            # Use cache_dir if provided, otherwise HuggingFace will use default
+            cache_dir = cfg.cache_dir if cfg.cache_dir else None
+            if cache_dir:
+                # Expand user home directory if present
+                import os
+                cache_dir = os.path.expanduser(cache_dir)
+                logger.info(f"Using custom cache directory: {cache_dir}")
+            
+            # Log if we're using a pinned revision for security
+            if cfg.revision:
+                logger.info(f"Loading model {cfg.model_name_or_path} at revision {cfg.revision} for security")
+            
+            # Use context manager to protect file descriptors during model loading
+            with protect_file_descriptors():
+                self._tok = AutoTokenizer.from_pretrained(
+                    cfg.model_name_or_path, 
+                    trust_remote_code=cfg.trust_remote_code,
+                    cache_dir=cache_dir,
+                    revision=cfg.revision  # Pin to specific revision if provided
+                )
+                # Check if torch is available before using it
+                if torch is not None:
+                    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+                else:
+                    # This shouldn't happen due to the check in _build, but just in case
+                    raise ImportError("torch is required for HuggingFace embeddings")
+                
+                # Load model with low_cpu_mem_usage to avoid meta tensors
+                self._model = AutoModel.from_pretrained(
+                    cfg.model_name_or_path,
+                    torch_dtype=dtype,
+                    trust_remote_code=cfg.trust_remote_code,
+                    cache_dir=cache_dir,
+                    revision=cfg.revision,  # Pin to specific revision if provided
+                    low_cpu_mem_usage=False  # Avoid meta tensors
+                )
         # --- [FIX] Added robust error handling for model loading ---
         except (OSError, requests.exceptions.RequestException) as e:
             raise IOError(
@@ -209,18 +330,93 @@ class _HuggingFaceEmbedder:
                 "Check the model name and your network connection."
             ) from e
 
-        self._device = torch.device(
-            cfg.device if cfg.device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
-        self._model.to(self._device).eval()
+        # Handle device selection including "auto" option
+        if torch is None:
+            raise ImportError("torch is required for HuggingFace embeddings")
+            
+        if cfg.device == "auto" or cfg.device is None:
+            # Auto-detect best available device
+            if torch.cuda.is_available():
+                self._device = torch.device("cuda")
+                logger.info("Auto-selected CUDA device for embeddings")
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                self._device = torch.device("mps")
+                logger.info("Auto-selected MPS device for embeddings")
+            else:
+                self._device = torch.device("cpu")
+                logger.info("Auto-selected CPU device for embeddings")
+        else:
+            # Use explicitly specified device
+            self._device = torch.device(cfg.device)
+        # Try to move model to device, handling meta tensor issues
+        try:
+            # Check if model is on meta device first
+            if hasattr(self._model, 'device') and str(self._model.device) == 'meta':
+                logger.warning("Model is on meta device, reloading with proper initialization")
+                # Delete the meta model and reload properly
+                del self._model
+                
+                # Force garbage collection to free memory
+                import gc
+                gc.collect()
+                
+                # Reload the model with explicit device placement
+                self._model = AutoModel.from_pretrained(
+                    cfg.model_name_or_path,
+                    torch_dtype=dtype,
+                    trust_remote_code=cfg.trust_remote_code,
+                    cache_dir=cache_dir,
+                    revision=cfg.revision,
+                    low_cpu_mem_usage=False,  # Avoid meta tensors
+                    device_map=None,  # Disable device mapping
+                    _fast_init=False  # Force proper initialization
+                )
+                # Move to target device
+                self._model = self._model.to(self._device)
+            else:
+                # Normal device transfer
+                self._model = self._model.to(self._device)
+        except RuntimeError as e:
+            if "Cannot copy out of meta tensor" in str(e):
+                logger.warning(f"Caught meta tensor error: {e}. Reloading model properly.")
+                # Delete the problematic model
+                if hasattr(self, '_model'):
+                    del self._model
+                
+                # Force garbage collection
+                import gc
+                gc.collect()
+                
+                # Reload with explicit settings to avoid meta tensors
+                self._model = AutoModel.from_pretrained(
+                    cfg.model_name_or_path,
+                    torch_dtype=dtype,
+                    trust_remote_code=cfg.trust_remote_code,
+                    cache_dir=cache_dir,
+                    revision=cfg.revision,
+                    low_cpu_mem_usage=False,
+                    device_map=None,
+                    _fast_init=False
+                ).to(self._device)
+            else:
+                raise
+        
+        self._model.eval()
+        
         self._max_len = cfg.max_length
         self._batch_size = cfg.batch_size
         self._pool = cfg.pooling or _masked_mean
 
-    @torch.inference_mode()
     def _forward(self, inp: Dict[str, Tensor]) -> Tensor:
-        out = self._model(**inp).last_hidden_state
-        return self._pool(out, inp["attention_mask"])
+        # Apply inference mode only if torch is available
+        if torch is not None:
+            with torch.inference_mode():
+                out = self._model(**inp).last_hidden_state
+                return self._pool(out, inp["attention_mask"])
+        else:
+            # This shouldn't happen since _HuggingFaceEmbedder requires torch
+            out = self._model(**inp).last_hidden_state
+            return self._pool(out, inp["attention_mask"])
 
     def embed(self, texts: List[str], *, as_list: bool = False) -> np.ndarray | List[List[float]]:
         vecs: List[Tensor] = []
@@ -238,12 +434,14 @@ class _HuggingFaceEmbedder:
             vecs.append(self._forward(tok))
 
         # --- [FIX] Performance: concatenate on GPU, then move to CPU once ---
+        if torch is None:
+            raise ImportError("torch is required for HuggingFace embeddings")
         joined = torch.cat(vecs, dim=0).float().cpu().numpy()
         return joined.tolist() if as_list else joined
 
     def close(self) -> None:
         del self._model, self._tok
-        if torch.cuda.is_available():
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
 
@@ -364,6 +562,13 @@ class EmbeddingFactory:
 
         t0 = time.perf_counter()
         if spec.provider == "huggingface":
+            # Check if torch and transformers are available
+            if torch is None or transformers is None:
+                raise ImportError(
+                    "HuggingFace embeddings require torch and transformers. "
+                    "Install with: pip install tldw_chatbook[embeddings_rag]"
+                )
+            
             # Ensure spec is correctly typed for HFModelCfg
             if not isinstance(spec, HFModelCfg):
                 logger.error(f"_build: Type mismatch for model {model_id} - expected HFModelCfg, got {type(spec)}")
@@ -520,6 +725,165 @@ class EmbeddingFactory:
 
     def __exit__(self, exc_type, exc, tb):
         self.close()
+
+###############################################################################
+# Default configuration helpers
+###############################################################################
+
+def get_default_embedding_config() -> EmbeddingConfigSchema:
+    """
+    Get a minimal default embedding configuration.
+    
+    This provides a working configuration with the mxbai-embed-large-v1 model,
+    which offers high-quality embeddings with flexible dimension support.
+    
+    Returns:
+        EmbeddingConfigSchema with default settings
+    """
+    return EmbeddingConfigSchema(
+        default_model_id='mxbai-embed-large-v1',
+        models={
+            'mxbai-embed-large-v1': HFModelCfg(
+                provider='huggingface',
+                model_name_or_path='mixedbread-ai/mxbai-embed-large-v1',
+                dimension=1024,  # Supports Matryoshka - can use 512 for speed/storage
+                trust_remote_code=False,
+                max_length=512,
+                device=None,  # Will auto-detect best device
+                batch_size=16  # Reduced for larger model
+            )
+        }
+    )
+
+
+def get_common_embedding_models() -> Dict[str, ModelCfg]:
+    """
+    Get a dictionary of commonly used embedding models.
+    
+    Returns:
+        Dictionary mapping model IDs to their configurations
+    """
+    return {
+        # High-quality models with flexible dimensions
+        'mxbai-embed-large-v1': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='mixedbread-ai/mxbai-embed-large-v1',
+            dimension=1024,  # Supports 512, 256 via Matryoshka
+            max_length=512,
+            batch_size=16
+        ),
+        
+        # Small, fast models (good for development/testing)
+        'e5-small-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='intfloat/e5-small-v2',
+            dimension=384,
+            max_length=512
+        ),
+        'all-MiniLM-L6-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='sentence-transformers/all-MiniLM-L6-v2',
+            dimension=384,
+            max_length=256
+        ),
+        'bge-small-en-v1.5': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='BAAI/bge-small-en-v1.5',
+            dimension=384,
+            max_length=512
+        ),
+        
+        # Medium models (good balance)
+        'e5-base-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='intfloat/e5-base-v2',
+            dimension=768,
+            max_length=512
+        ),
+        'all-mpnet-base-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='sentence-transformers/all-mpnet-base-v2',
+            dimension=768,
+            max_length=384
+        ),
+        'bge-base-en-v1.5': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='BAAI/bge-base-en-v1.5',
+            dimension=768,
+            max_length=512
+        ),
+        
+        # Large models (best quality)
+        'e5-large-v2': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='intfloat/e5-large-v2',
+            dimension=1024,
+            max_length=512
+        ),
+        'multilingual-e5-large-instruct': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='intfloat/multilingual-e5-large-instruct',
+            dimension=1024,
+            max_length=512
+        ),
+        
+        # OpenAI models (require API key)
+        'openai-ada-002': OpenAICfg(
+            provider='openai',
+            model_name_or_path='text-embedding-ada-002',
+            dimension=1536
+        ),
+        'openai-3-small': OpenAICfg(
+            provider='openai',
+            model_name_or_path='text-embedding-3-small',
+            dimension=1536
+        ),
+        'openai-3-large': OpenAICfg(
+            provider='openai',
+            model_name_or_path='text-embedding-3-large',
+            dimension=3072
+        ),
+        
+        # State-of-the-art models (require trust_remote_code)
+        'stella_en_1.5B_v5': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='NovaSearch/stella_en_1.5B_v5',
+            dimension=1024,  # Supports 512-8192 via Matryoshka
+            trust_remote_code=True,
+            revision='4bbc0f1e9df5b9563d418e9b5663e98070713eb8',  # Pinned for security
+            max_length=512,
+            batch_size=8
+        ),
+        'qwen3-embedding-4b': HFModelCfg(
+            provider='huggingface',
+            model_name_or_path='Qwen/Qwen3-Embedding-4B',
+            dimension=4096,  # Flexible up to 4096
+            trust_remote_code=True,
+            max_length=32768,  # 32k context
+            batch_size=4
+        )
+    }
+
+
+def create_embedding_factory_with_defaults(
+    config: Optional[Union[Dict[str, Any], EmbeddingConfigSchema]] = None,
+    **kwargs
+) -> EmbeddingFactory:
+    """
+    Create an EmbeddingFactory with sensible defaults if no config provided.
+    
+    Args:
+        config: Optional configuration dict or EmbeddingConfigSchema
+        **kwargs: Additional arguments passed to EmbeddingFactory constructor
+        
+    Returns:
+        Configured EmbeddingFactory instance
+    """
+    if config is None:
+        logger.info("No embedding configuration provided, using defaults")
+        config = get_default_embedding_config()
+    
+    return EmbeddingFactory(config, **kwargs)
 
 #
 # End of Embeddings_Lib.py

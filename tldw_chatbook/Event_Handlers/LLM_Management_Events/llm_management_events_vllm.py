@@ -26,7 +26,8 @@ if TYPE_CHECKING:
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events import _make_path_update_callback
-from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
 #
 #
 ########################################################################################################################
@@ -142,8 +143,9 @@ async def handle_vllm_browse_python_button_pressed(app: "TldwCli", event: Button
             location=str(Path.home()),
             title="Select Python interpreter for vLLM",
             filters=Filters(("Python executable", lambda p: p.name.startswith("python"))),
+            context="vllm_models"
         ),
-        callback=_make_path_update_callback(app, "vllm-python-path"),
+        callback=_make_path_update_callback(app, "vllm-python-path")
     )
 
 
@@ -153,8 +155,9 @@ async def handle_vllm_browse_model_button_pressed(app: "TldwCli", event: Button.
             location=str(Path.home()),
             title="Select Model (checkpoint or GGUF) for vLLM",
             filters=Filters(("All files", lambda p: True)),
+            context="vllm_models"
         ),
-        callback=_make_path_update_callback(app, "vllm-model-path"),
+        callback=_make_path_update_callback(app, "vllm-model-path")
     )
 
 ###############################################################################

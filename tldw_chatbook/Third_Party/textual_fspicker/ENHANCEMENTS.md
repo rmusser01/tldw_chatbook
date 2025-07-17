@@ -6,7 +6,7 @@ This document describes the enhancements made to the textual-fspicker module to 
 
 ### 1. Enhanced Keyboard Shortcuts
 - **Ctrl+H** - Toggle hidden files (in addition to existing '.')
-- **Ctrl+L** - Focus path input field for direct path entry
+- **Ctrl+L** - Toggle path input field for direct path entry (shows/hides a text field where you can type absolute or relative paths)
 - **Ctrl+R** - Toggle recent locations panel
 - **Ctrl+F** - Toggle search mode and focus search input
 - **F5** - Refresh current directory
@@ -28,6 +28,14 @@ This document describes the enhancements made to the textual-fspicker module to 
 - Toggle with Ctrl+F
 - Filters files and folders by name
 - Clear button to reset search
+
+### 5. Direct Path Input
+- Toggle with Ctrl+L to show/hide a path input field
+- Enter absolute paths (e.g., `/home/user/documents`) or relative paths (e.g., `../folder`)
+- Supports home directory expansion (e.g., `~/Documents`)
+- Press Enter or click "Go" to navigate
+- Automatically navigates to parent directory if a file path is entered
+- Shows error notification if path doesn't exist
 
 ### 5. Improved Visual Feedback
 - Notifications for keyboard actions

@@ -1,0 +1,668 @@
+/* ========================================
+ * FEATURES: Media
+ * ======================================== 
+ * Media tab specific styles
+ * ======================================== */
+
+/* --- Media Tab --- */
+#media-window {
+    layout: horizontal;
+    height: 100%;
+}
+
+.media-nav-pane {
+    dock: left;
+    width: 25%;
+    min-width: 20;
+    max-width: 50;
+    height: 100%;
+    background: $boost;
+    padding: 1;
+    border-right: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.media-nav-pane.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-right: none !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: none !important;
+}
+
+.media-nav-pane .media-nav-button {
+    width: 100%;
+    margin-bottom: 1;
+    border: none;
+    height: 3;
+}
+.media-nav-pane .media-nav-button:hover {
+    background: $accent 75%;
+}
+
+.media-content-pane {
+    width: 1fr;
+    height: 1fr;
+    padding: 0;
+    layout: vertical;
+}
+
+#media-content-pane > Button#media-sidebar-toggle-button {
+    dock: top; /* Will be at the top of media-content-pane */
+    height: 3;
+    width: 5;
+    margin: 0 0 1 1;
+    /* Removed position:absolute, dock:top is better here */
+}
+
+.media-view-area {
+    width: 100%;
+    height: 1fr; /* Use 1fr to take all available space */
+    layout: horizontal;
+    /* border: 1px solid red; /* For debugging */
+}
+
+/* Target ListItems inside the media list to control their height */
+.media-items-list > ListItem {
+    height: auto; /* This prevents a single item from stretching to fill the whole ListView */
+    padding: 1;
+    margin-bottom: 1;
+}
+
+/* Styles for media item components */
+.media-item-title {
+    height: auto;
+    text-style: bold;
+}
+
+.media-item-snippet {
+    height: auto;
+    color: $text-muted;
+    max-height: 2;
+    overflow-y: hidden;
+}
+
+.media-item-meta {
+    height: auto;
+    text-style: italic;
+    color: $text-disabled;
+}
+
+/* Style for the Vertical container inside ListItems */
+.media-items-list > ListItem > Vertical {
+    height: auto;
+    width: 100%;
+}
+
+.media-content-left-pane { /* This is the Vertical container */
+    width: 35%;
+    height: 1fr;          /* Use 1fr to properly fill the vertical space */
+    layout: vertical;
+    padding: 0 1 1 1;      /* Optional: Add some padding (Top, Right, Bottom, Left) */
+}
+
+
+/* Children of .media-content-left-pane */
+.media-content-left-pane > Label.pane-title {
+    height: auto; /* Or a fixed height like 2 or 3 if you prefer */
+    width: 100%;
+    text-align: center;
+    margin-bottom: 1;
+}
+.media-content-left-pane > Input.media-search-input {
+    height: 3; /* Fixed height for the input field */
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* ListView for media items */
+.media-items-list {
+    height: 1fr; /* Crucial: Make the ListView take all available vertical space */
+    /* Add styles that were previously inherited from .sidebar-listview */
+    border: round $primary-lighten-2;
+    background: $primary-background;
+    margin-bottom: 1; /* Add a little space before the pagination */
+    overflow-y: auto; /* Enable vertical scrolling if needed */
+    overflow-x: hidden; /* Hide horizontal overflow */
+}
+
+.media-pagination-bar { /* Container for pagination buttons */
+    height: 3; /* Fixed height for the pagination bar */
+    width: 100%;
+    align-horizontal: center;
+    /* padding: 1 0; /* Removed, height:3 should be enough */
+}
+.media-pagination-bar Button {
+    width: auto;
+    min-width: 10;
+    margin: 0 1;
+    height: 100%; /* Fill the pagination bar height */
+}
+.media-pagination-bar .media-page-label {
+    width: 1fr;
+    text-align: center;
+    height: 100%; /* Fill the pagination bar height */
+    padding: 0 1;
+}
+
+.media-content-right-pane { /* This is a VerticalScroll */
+    width: 1fr;
+    height: 1fr; /* Ensure it takes all available vertical space */
+    padding: 1; /* Padding for the content area within the scroll view */
+    /* border: 1px solid orange; /* For debugging */
+    overflow-y: auto; /* Enable vertical scrolling when content exceeds height */
+    layout: vertical; /* Ensure vertical layout for child elements */
+}
+
+.media-details-theme {
+    height: 1fr; /* Use 1fr to take all available space within the scroll container */
+    width: 100%; /* Explicitly set width to 100% too */
+    overflow-y: auto !important;
+    min-height: 0; /* Allow the content to shrink if needed and expand when there's space */
+}
+
+/* Force Markdown content in Media tab to expand fully */
+.media-content-right-pane Markdown {
+    height: 1fr !important;
+    overflow-y: auto !important;
+}
+
+/* Additional override for any potential Textual default constraints */
+VerticalScroll.media-content-right-pane {
+    height: 1fr !important;
+}
+
+VerticalScroll.media-content-right-pane > Markdown {
+    height: 1fr !important;
+}
+
+/* --- Media Details Widget --- */
+MediaDetailsWidget {
+    height: 1fr;
+    width: 100%;
+    layout: vertical;
+}
+
+.metadata-section {
+    width: 100%;
+    height: auto;
+    padding: 1;
+    background: $boost;
+    border-bottom: thick $background-darken-1;
+}
+
+.metadata-view {
+    layout: vertical;
+    height: auto;
+}
+
+.metadata-section {
+    height: auto;
+    width: 100%;
+    layout: vertical;
+    margin-bottom: 1;
+}
+
+.metadata-view {
+    layout: vertical;
+    height: auto;
+    width: 100%;
+}
+
+.metadata-display {
+    padding: 0 1;
+    margin-bottom: 0;
+    height: auto;
+}
+
+
+.metadata-edit {
+    layout: vertical;
+    padding: 1;
+    height: auto;
+    min-height: 30;
+}
+
+.edit-fields {
+    layout: vertical;
+    margin-bottom: 1;
+}
+
+.edit-fields Label {
+    margin-top: 0;
+    margin-bottom: 0;
+    text-style: bold;
+    height: 1;
+}
+
+.edit-fields Input {
+    width: 100%;
+    margin-bottom: 0;
+    height: 3;
+}
+
+.edit-fields Input:disabled {
+    opacity: 0.6;
+    background: $boost-darken-1;
+}
+
+/* --- Formatting Options --- */
+.formatting-options {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    margin-bottom: 1;
+    layout: horizontal;
+    align: center middle;
+}
+
+.format-reading-checkbox {
+    width: auto;
+    height: 3;
+    padding: 0 1;
+}
+
+.format-reading-checkbox:hover {
+    background: $boost;
+}
+
+.edit-actions {
+    layout: horizontal;
+    height: auto;
+    align: left top;
+    margin-top: 1;
+}
+
+.edit-actions Button {
+    margin-right: 1;
+    min-width: 10;
+}
+
+.media-content-display {
+    height: 1fr;
+    width: 100%;
+    padding: 1;
+}
+
+/* --- Deleted Items Styling --- */
+.deleted-media-item {
+    opacity: 0.6;
+}
+
+.deleted-media-item:hover {
+    opacity: 0.8;
+}
+
+.media-item-deleted {
+    color: $text-disabled;
+    text-style: strike;
+}
+
+.media-item-title.media-item-deleted {
+    color: $error;
+    text-style: strike;
+}
+
+/* Show deleted checkbox styling */
+.show-deleted-checkbox {
+    width: 100%;
+    margin-bottom: 1;
+    padding: 0 1;
+}
+
+/* Metadata buttons container */
+.metadata-buttons {
+    layout: horizontal;
+    height: 3;
+    width: 100%;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+.metadata-edit-button {
+    width: auto;
+    min-width: 10;
+    dock: left;
+}
+
+.metadata-delete-button {
+    width: auto;
+    min-width: 10;
+    dock: right;
+}
+
+/* --- Collections/Tags Window --- */
+.collections-main-container {
+    layout: horizontal;
+    height: 100%;
+    width: 100%;
+}
+
+.collections-left-pane {
+    width: 40%;
+    min-width: 30;
+    height: 100%;
+    layout: vertical;
+    padding: 1;
+    border-right: thick $background-darken-1;
+}
+
+.collections-right-pane {
+    width: 1fr;
+    height: 100%;
+    padding: 1;
+    overflow-y: auto;
+}
+
+.keyword-list {
+    height: 1fr;
+    border: round $primary-lighten-2;
+    background: $primary-background;
+    overflow-y: auto;
+}
+
+.keyword-item {
+    padding: 1;
+    margin-bottom: 0;
+}
+
+.keyword-item.selected {
+    background: $accent-lighten-1;
+}
+
+.keyword-item:hover {
+    background: $accent 50%;
+}
+
+.keyword-action-buttons {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+}
+
+.keyword-action-buttons Button {
+    width: 1fr;
+    margin-right: 1;
+}
+
+.action-buttons-container {
+    layout: vertical;
+    margin-bottom: 2;
+}
+
+.action-buttons-container Button {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.selection-info {
+    padding: 1;
+    background: $boost;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+.keyword-details, .usage-stats {
+    padding: 1;
+    background: $boost;
+    margin-top: 1;
+    min-height: 10;
+}
+
+/* Rename/Merge Dialog Styles */
+#rename-dialog-container, #merge-dialog-container {
+    align: center middle;
+    width: 50;
+    min-height: 10;
+    padding: 2;
+    background: $surface;
+    border: thick $primary;
+}
+
+#rename-title, #merge-title {
+    text-align: center;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#merge-instruction {
+    text-align: center;
+    margin-bottom: 1;
+    color: $text-muted;
+}
+
+#new-keyword-input, #new-target-input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#target-keyword-list {
+    height: 15;
+    margin-bottom: 1;
+    border: round $primary-lighten-2;
+    background: $primary-background;
+}
+
+#rename-buttons, #merge-buttons {
+    layout: horizontal;
+    height: 3;
+    align: center middle;
+}
+
+#rename-buttons Button, #merge-buttons Button {
+    margin: 0 1;
+    min-width: 12;
+}
+
+/* --- Multi-Item Review Window --- */
+.multi-review-container {
+    height: 100%;
+    width: 100%;
+    padding: 1;
+}
+
+.selection-section, .items-section, .analysis-section {
+    width: 100%;
+    margin-bottom: 1;
+    padding: 1;
+    background: $boost;
+}
+
+.selection-section {
+    height: auto;
+    min-height: 15;
+}
+
+.items-section {
+    height: auto;
+    min-height: 20;
+    max-height: 40;
+}
+
+.analysis-section {
+    height: auto;
+    min-height: 30;
+}
+
+.search-controls, .tag-filter-section, .selection-controls {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+}
+
+.search-controls Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+.tag-filter-section Label {
+    width: auto;
+    margin-right: 1;
+}
+
+.tag-input {
+    width: 1fr;
+}
+
+.selection-controls Button {
+    margin-right: 1;
+}
+
+.selection-info {
+    width: auto;
+    padding: 0 1;
+}
+
+.review-items-list {
+    height: 1fr;
+    border: round $primary-lighten-2;
+    background: $primary-background;
+    overflow-y: auto;
+}
+
+.review-item {
+    padding: 1;
+    margin-bottom: 0;
+}
+
+.review-item.selected {
+    background: $accent-lighten-1;
+}
+
+.review-item:hover {
+    background: $accent 50%;
+}
+
+.item-title {
+    text-style: bold;
+    color: $text;
+}
+
+.item-meta {
+    color: $text-muted;
+    text-style: italic;
+}
+
+.analysis-prompt {
+    width: 100%;
+    height: 10;
+    margin-bottom: 1;
+}
+
+.analysis-controls {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+}
+
+.analysis-controls Checkbox {
+    width: auto;
+    margin-right: 2;
+}
+
+.analysis-controls Button {
+    margin-right: 1;
+    min-width: 15;
+}
+
+.analysis-progress {
+    width: 100%;
+    height: 1;
+    margin-bottom: 1;
+}
+
+.progress-label {
+    text-align: center;
+    margin-bottom: 1;
+    color: $text-muted;
+}
+
+.results-container {
+    height: 1fr;
+    background: $primary-background;
+    padding: 1;
+}
+
+.analysis-results {
+    layout: vertical;
+    width: 100%;
+}
+
+.analysis-result-card {
+    width: 100%;
+    padding: 1;
+    margin-bottom: 1;
+    background: $boost;
+    border: round $primary-lighten-2;
+}
+
+.result-header {
+    layout: horizontal;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.result-title {
+    width: 1fr;
+    text-style: bold;
+}
+
+.result-meta {
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+.result-content {
+    padding: 1;
+    max-height: 20;
+    overflow-y: auto;
+}
+
+.result-separator {
+    text-align: center;
+    color: $text-disabled;
+    margin-top: 1;
+}
+
+/* Hidden state for progress elements */
+.hidden {
+    display: none;
+}
+
+/* Delete confirmation dialog for keywords */
+#delete-dialog {
+    layout: vertical;
+    padding: 2;
+}
+
+.dialog-title {
+    text-align: center;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.dialog-subtitle {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+.dialog-message {
+    text-align: center;
+    margin-bottom: 2;
+}
+
+.dialog-buttons {
+    layout: horizontal;
+    height: 3;
+    align: center middle;
+}
+
+.dialog-buttons Button {
+    margin: 0 1;
+    min-width: 12;
+}
+
+/* --- End of Media Tab --- */

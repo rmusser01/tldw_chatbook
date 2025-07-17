@@ -1,19 +1,19 @@
 """
-Unit tests for pagination functionality in database functions.
+Integration tests for pagination functionality in database functions.
 """
 
-import logging
+from loguru import logger
 import sqlite3
 import tempfile
 from pathlib import Path
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase, get_unprocessed_media, get_all_content_from_database
 )
 
 
+@pytest.mark.integration
 class TestMediaDatabasePagination:
     """Test pagination in Media database functions."""
     
@@ -26,8 +26,8 @@ class TestMediaDatabasePagination:
         Path(tmp.name).unlink(missing_ok=True)
     
     @pytest.fixture
-    def mock_media_db(self, temp_db_path):
-        """Create a mock MediaDatabase with test data."""
+    def test_media_db(self, temp_db_path):
+        """Create a MediaDatabase with test data."""
         db = MediaDatabase(temp_db_path, client_id="test_client")
         
         # The MediaDatabase constructor automatically creates the schema
@@ -60,55 +60,55 @@ class TestMediaDatabasePagination:
             
         except Exception as e:
             # Log error and re-raise
-            logging.error(f"Error creating test data: {e}")
+            logger.error(f"Error creating test data: {e}")
             raise
         
         return db
     
-    def test_get_all_active_media_for_embedding_pagination(self, mock_media_db):
+    def test_get_all_active_media_for_embedding_pagination(self, test_media_db):
         """Test pagination in get_all_active_media_for_embedding."""
         # Test default behavior (no limit)
-        results = mock_media_db.get_all_active_media_for_embedding()
+        results = test_media_db.get_all_active_media_for_embedding()
         assert len(results) == 250  # All non-deleted, non-trash items
         
         # Test with limit
-        results = mock_media_db.get_all_active_media_for_embedding(limit=10)
+        results = test_media_db.get_all_active_media_for_embedding(limit=10)
         assert len(results) == 10
         assert results[0]['id'] == 1
         assert results[9]['id'] == 10
         
         # Test with limit and offset
-        results = mock_media_db.get_all_active_media_for_embedding(limit=10, offset=20)
+        results = test_media_db.get_all_active_media_for_embedding(limit=10, offset=20)
         assert len(results) == 10
         assert results[0]['id'] == 21
         assert results[9]['id'] == 30
         
         # Test offset beyond data
-        results = mock_media_db.get_all_active_media_for_embedding(limit=10, offset=300)
+        results = test_media_db.get_all_active_media_for_embedding(limit=10, offset=300)
         assert len(results) == 0
     
-    def test_fetch_all_keywords_no_pagination(self, mock_media_db):
+    def test_fetch_all_keywords_no_pagination(self, test_media_db):
         """Test fetch_all_keywords returns all keywords (no pagination support)."""
         # fetch_all_keywords doesn't support pagination parameters
-        results = mock_media_db.fetch_all_keywords()
+        results = test_media_db.fetch_all_keywords()
         assert len(results) == 500  # All keywords returned
         assert results[0] == "keyword_0"  # Verify ordering
         assert results[-1] == "keyword_99"  # Keywords are sorted
     
-    def test_get_unprocessed_media_no_pagination(self, mock_media_db):
+    def test_get_unprocessed_media_no_pagination(self, test_media_db):
         """Test get_unprocessed_media returns all unprocessed items."""
         # get_unprocessed_media doesn't support pagination parameters
-        results = get_unprocessed_media(mock_media_db)
+        results = get_unprocessed_media(test_media_db)
         assert len(results) == 150  # All unprocessed items (vector_processing=0)
         
         # Verify they are the correct items
         for result in results:
             assert result['id'] <= 150  # First 150 have vector_processing=0
     
-    def test_get_all_content_from_database_no_pagination(self, mock_media_db):
+    def test_get_all_content_from_database_no_pagination(self, test_media_db):
         """Test get_all_content_from_database returns all active items."""
         # get_all_content_from_database doesn't support pagination parameters
-        results = get_all_content_from_database(mock_media_db)
+        results = get_all_content_from_database(test_media_db)
         assert len(results) == 250  # All active, non-trashed items
         
         # Verify we got all items
@@ -117,21 +117,22 @@ class TestMediaDatabasePagination:
         all_ids = {r['id'] for r in results}
         assert all_ids == set(range(1, 251))  # All IDs from 1 to 250
     
-    def test_get_all_active_media_for_embedding_supports_pagination(self, mock_media_db):
+    def test_get_all_active_media_for_embedding_supports_pagination(self, test_media_db):
         """Test that get_all_active_media_for_embedding supports pagination."""
         # This method DOES support pagination
-        results = mock_media_db.get_all_active_media_for_embedding(limit=None)
+        results = test_media_db.get_all_active_media_for_embedding(limit=None)
         assert len(results) == 250  # All media items
         
         # Test with limit
-        results = mock_media_db.get_all_active_media_for_embedding(limit=10)
+        results = test_media_db.get_all_active_media_for_embedding(limit=10)
         assert len(results) == 10
         
         # Test with limit and offset
-        results = mock_media_db.get_all_active_media_for_embedding(limit=10, offset=20)
+        results = test_media_db.get_all_active_media_for_embedding(limit=10, offset=20)
         assert len(results) == 10
 
 
+@pytest.mark.integration
 class TestPaginationEdgeCases:
     """Test edge cases in pagination."""
     
@@ -171,6 +172,7 @@ class TestPaginationEdgeCases:
             Path(tmp.name).unlink(missing_ok=True)
 
 
+@pytest.mark.integration
 class TestBatchQueryOptimization:
     """Test query patterns in search results."""
     
@@ -228,6 +230,7 @@ class TestBatchQueryOptimization:
             Path(tmp.name).unlink(missing_ok=True)
 
 
+@pytest.mark.integration
 class TestPaginationConsistency:
     """Test that pagination maintains consistency across queries."""
     

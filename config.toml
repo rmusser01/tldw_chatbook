@@ -1,344 +1,176 @@
-# tldw_cli/config.toml
+# Configuration for tldw-cli TUI App
+# Located at: ~/.config/tldw_cli/config.toml
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
-log_level = "DEBUG" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "textual-light", or any theme name from themes.py)
+palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
+log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+users_name = "default_user" # Default user name for the TUI
 
-[logging]
-# Log file will be placed in the same directory as the database file specified below.
-log_filename = "tldw_cli_app.log"
-file_log_level = "INFO" # File Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-log_max_bytes = 10485760 # 10 MB
-log_backup_count = 5
+[tldw_api]
+base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
+# Default auth token can be stored here, or leave empty if user must always provide
+auth_token = "default-secret-key-for-single-user"
 
-[database]
-# Path to the ChaChaNotes (Character, Chat, Notes) database.
-chachanotes_db_path = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
-# Path to the Prompts database.
-prompts_db_path = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
-# Path to the Media V2 database.
-media_db_path = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+[splash_screen]
+# Splash screen configuration for startup animations
+enabled = true  # Enable/disable splash screen
+duration = 1.5  # Duration in seconds to display splash screen
+skip_on_keypress = true  # Allow users to skip with any keypress
 
-[api_endpoints]
-# Optional: Specify URLs for local/custom endpoints if they differ from library defaults
-# These keys should match the provider names used in the app (adjust if needed)
-Ollama = "http://localhost:11434"
-llama_cpp = "http://localhost:8080" # Check if your API provider uses this address
-Oobabooga = "http://localhost:5000/api" # Check if your API provider uses this address
-koboldcpp = "http://localhost:5001/api" # Check if your API provider uses this address
-vllm = "http://localhost:8000" # Check if your API provider uses this address
-Custom = "http://localhost:1234/v1"
-Custom_2 = "http://localhost:5678/v1"
-# Add other local URLs if needed
+# Card selection mode:
+# - "random": Randomly selects from active_cards list (default)
+# - "sequential": Cycles through active_cards in order (not yet implemented)
+# - "<card_name>": Always use a specific card (e.g., "matrix", "glitch", etc.)
+card_selection = "random"
+
+show_progress = true  # Show initialization progress bar
+
+# All available splash cards are enabled by default for variety
+# To customize: Remove cards you don't want, or replace the entire list with your preferred cards
+# Static cards: default, classic, compact, minimal, blueprint
+# Animated cards: matrix, glitch, retro, tech_pulse, code_scroll, minimal_fade, arcade_high_score,
+#                digital_rain, loading_bar, starfield, terminal_boot, glitch_reveal, ascii_morph,
+#                game_of_life, scrolling_credits, spotlight_reveal, sound_bars, raindrops_pond,
+#                pixel_zoom, text_explosion, old_film, maze_generator, dwarf_fortress
+active_cards = [
+    "default", "matrix", "glitch", "retro", "classic", "compact", "minimal",
+    "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
+    "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal",
+    "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars",
+    "raindrops_pond", "pixel_zoom", "text_explosion", "old_film", "maze_generator",
+    "dwarf_fortress"
+]
+
+[splash_screen.effects]
+# Animation effect settings
+fade_in_duration = 0.3  # Fade in time in seconds
+fade_out_duration = 0.2  # Fade out time in seconds
+animation_speed = 1.0  # Animation playback speed multiplier
+
+[api_settings]
+# API endpoint configuration
+# Each API provider can have its own configuration
+# Format: [api_settings.<provider>]
+#
+# Refer to example configuration below and also to the default example config at:
+# https://github.com/rmusser01/tldw/blob/dev/Config_Files/config.txt
+
+[api_settings.openai]
+api_key = ""
+model = "gpt-4o-2024-11-20"
+temperature = 0.7
+max_tokens = 4096
+
+# [api_settings.anthropic]
+# api_key = ""
+# model = "claude-3-5-sonnet-20241022"
+# temperature = 0.7
+# max_tokens = 4096
+
+# [api_settings.moonshot]
+# api_key = ""
+# model = "kimi-latest"  # Options: kimi-latest, kimi-thinking-preview, moonshot-v1-auto, moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k, moonshot-v1-8k-vision-preview, moonshot-v1-32k-vision-preview, moonshot-v1-128k-vision-preview, kimi-k2-0711-preview
+# temperature = 0.7
+# max_tokens = 4096
+# api_region = "international"  # Options: "international" or "china"
+
+# --- Add other API providers as needed ---
 
 [providers]
-# This section primarily lists providers and their *available* models for the UI dropdown.
-# Actual default model/settings used for calls are defined in [api_settings.*] or [chat_defaults]/[character_defaults].
-OpenAI = ["gpt-4.1-2025-04-14", "o4-mini-2025-04-16", "o3-2025-04-16", "o3-mini-2025-01-31", "o1-2024-12-17", "chatgpt-4o-latest", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06", "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano-2025-04-14", "gpt-4o-mini-2024-07-18", ]
-Anthropic = ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307", "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-2.1", "claude-2.0"]
-Cohere = ["command-a-03-2025", "command-r7b-12-2024", "command-r-plus-04-2024", "command-r-plus", "command-r-08-2024", "command-r-03-2024", "command", "command-nightly", "command-light", "command-light-nightly"]
-DeepSeek = ["deepseek-chat", "deepseek-reasoner"]
-Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",]
-Google = ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
-HuggingFace = ["meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
-MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
-OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
-# Local Providers
-llama_cpp = ["None"]
-koboldcpp = ["None"]
-Oobabooga = ["None"]
-Ollama = ["gemma3:12b", "gemma3:4b", "gemma3:27b", "qwen3:4b", "qwen3:8b", "qwen3:14b", "qwen3:30b", "qwen3:32b", "qwen3:235b", "devstral:24b", "deepseek-r1:671b"]
-vllm = ["vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"]
-Custom = ["custom-model-alpha", "custom-model-beta"]
-Custom_2 = ["custom-model-gamma", "custom-model-delta"]
-TabbyAPI = ["tabby-model", "tabby-model-2", "tabby-model-3"]
-Aphrodite = ["aphrodite-engine", "aphrodite-engine-2"]
-local-llm = ["None"] # Add if you have a specific local-llm provider entry
-
-[api_settings] # Parent section for all API provider specific settings
-
-    # --- Cloud Providers ---
-    [api_settings.openai]
-    api_key_env_var = "OPENAI_API_KEY"
-    # api_key = "" # Less secure fallback - use env var instead
-    model = "gpt-4o" # Default model for direct calls (if not overridden)
-    temperature = 0.7
-    top_p = 1.0 # OpenAI uses top_p (represented as maxp sometimes in UI)
-    max_tokens = 4096
-    timeout = 60 # seconds
-    retries = 3
-    retry_delay = 5 # seconds (backoff factor)
-    streaming = false
-
-    [api_settings.anthropic]
-    api_key_env_var = "ANTHROPIC_API_KEY"
-    model = "claude-3-haiku-20240307"
-    temperature = 0.7
-    top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)
-    top_k = 0 # Anthropic specific, 0 or -1 usually disables it
-    max_tokens = 4096
-    timeout = 90
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.google]
-    api_key_env_var = "GOOGLE_API_KEY"
-    model = "gemini-1.5-pro-latest"
-    temperature = 0.7
-    top_p = 0.9 # Google uses topP (represented as topp in UI)
-    top_k = 100 # Google uses topK
-    max_tokens = 8192 # Google uses maxOutputTokens
-    timeout = 120
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.mistralai] # Matches key in [providers]
-    api_key_env_var = "MISTRAL_API_KEY"
-    model = "mistral-large-latest"
-    temperature = 0.7
-    top_p = 1.0 # Mistral uses top_p (represented as topp in UI)
-    max_tokens = 4096
-    timeout = 60
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.groq]
-    api_key_env_var = "GROQ_API_KEY"
-    model = "llama3-70b-8192"
-    temperature = 0.7
-    top_p = 1.0 # Groq uses top_p (represented as maxp in UI)
-    max_tokens = 8192
-    timeout = 60
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.cohere]
-    api_key_env_var = "COHERE_API_KEY"
-    model = "command-r-plus"
-    temperature = 0.3
-    top_p = 0.75 # Cohere uses 'p' (represented as topp in UI)
-    top_k = 0 # Cohere uses 'k'
-    max_tokens = 4096 # Cohere uses max_tokens
-    timeout = 90
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.openrouter]
-    api_key_env_var = "OPENROUTER_API_KEY"
-    model = "meta-llama/Llama-3.1-8B-Instruct"
-    temperature = 0.7
-    top_p = 1.0 # OpenRouter uses top_p
-    top_k = 0   # OpenRouter uses top_k
-    min_p = 0.0 # OpenRouter uses min_p
-    max_tokens = 4096
-    timeout = 120
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.huggingface]
-    api_key_env_var = "HUGGINGFACE_API_KEY"
-    model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-    temperature = 0.7
-    top_p = 1.0 # HF Inference API uses top_p
-    top_k = 50  # HF Inference API uses top_k
-    max_tokens = 4096 # HF Inf API uses max_tokens / max_new_tokens
-    timeout = 60
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    [api_settings.deepseek]
-    api_key_env_var = "DEEPSEEK_API_KEY"
-    model = "deepseek-chat"
-    temperature = 0.7
-    top_p = 1.0 # Deepseek uses top_p (represented as topp in UI)
-    max_tokens = 4096
-    timeout = 60
-    retries = 3
-    retry_delay = 5
-    streaming = false
-
-    # --- Local Providers ---
-    [api_settings.ollama]
-    # No API Key usually needed
-    api_url = "http://localhost:11434/v1/chat/completions" # Default Ollama OpenAI endpoint
-    model = "llama3:latest"
-    temperature = 0.7
-    top_p = 0.9
-    top_k = 40 # Ollama supports top_k via OpenAI endpoint
-    # min_p = 0.05 # Ollama OpenAI endpoint doesn't support min_p directly
-    max_tokens = 4096
-    timeout = 300 # Longer timeout for local models
-    retries = 1
-    retry_delay = 2
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.llama_cpp] # Matches key in [providers]
-    api_key_env_var = "LLAMA_CPP_API_KEY" # If you set one on the server
-    # api_key = ""
-    api_url = "http://localhost:8080/completion" # llama.cpp /completion endpoint
-    model = "" # Often not needed if server serves one model
-    temperature = 0.7
-    top_p = 0.95
-    top_k = 40
-    min_p = 0.05
-    max_tokens = 4096 # llama.cpp uses n_predict
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.oobabooga] # Matches key in [providers]
-    api_key_env_var = "OOBABOOGA_API_KEY" # If API extension needs one
-    api_url = "http://localhost:5000/v1/chat/completions" # Ooba OpenAI compatible endpoint
-    model = "" # Model loaded in Ooba UI
-    temperature = 0.7
-    top_p = 0.9
-    # top_k = 50 # Check Ooba endpoint docs for OpenAI compatibility params
-    # min_p = 0.0
-    max_tokens = 4096
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.koboldcpp] # Matches key in [providers]
-    # api_key = "" # Kobold doesn't use keys
-    api_url = "http://localhost:5001/api/v1/generate" # Kobold non-streaming API
-    # api_streaming_url = "http://localhost:5001/api/v1/stream" # Kobold streaming API (different format)
-    model = "" # Model loaded in Kobold UI
-    temperature = 0.7
-    top_p = 0.9
-    top_k = 50
-    max_tokens = 4096 # Kobold uses max_context_length / max_length
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = false # Kobold streaming is non-standard, handle carefully
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.vllm] # Matches key in [providers]
-    api_key_env_var = "VLLM_API_KEY" # If served behind auth
-    api_url = "http://localhost:8000/v1/chat/completions" # vLLM OpenAI compatible endpoint
-    model = "" # Model specified when starting vLLM server
-    temperature = 0.7
-    top_p = 0.95
-    top_k = 50
-    min_p = 0.05
-    max_tokens = 4096
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.custom] # Matches key in [providers]
-    api_key_env_var = "CUSTOM_API_KEY"
-    api_url = "http://localhost:1234/v1/chat/completions"
-    model = "custom-model-alpha"
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.custom_2] # Matches key in [providers]
-    api_key_env_var = "CUSTOM_2_API_KEY"
-    api_url = "http://localhost:5678/v1/chat/completions"
-    model = "custom-model-gamma"
-    temperature = 0.7
-    top_p = 1.0
-    top_k = 0
-    min_p = 0.0
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 5
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.tabbyapi] # Matches key in [providers]
-    api_key_env_var = "TABBYAPI_API_KEY"
-    api_url = "http://localhost:8080/v1/chat/completions" # Check TabbyAPI docs for exact URL
-    model = "tabby-model" # Model configured in TabbyAPI
-    temperature = 0.7
-    top_p = 0.95
-    top_k = 50
-    min_p = 0.05
-    max_tokens = 4096
-    timeout = 120
-    retries = 2
-    retry_delay = 3
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    [api_settings.aphrodite] # Matches key in [providers]
-    api_key_env_var = "APHRODITE_API_KEY" # If served behind auth
-    api_url = "http://localhost:2242/v1/chat/completions" # Default Aphrodite port
-    model = "aphrodite-engine" # Model loaded in Aphrodite
-    temperature = 0.7
-    top_p = 0.95
-    top_k = 50
-    min_p = 0.05
-    max_tokens = 4096
-    timeout = 300
-    retries = 1
-    retry_delay = 2
-    streaming = false
-    system_prompt = "You are a helpful AI assistant"
-
-    # [api_settings.local-llm] # If you have a generic local-llm setup
-    # api_url = "http://127.0.0.1:8080/v1/chat/completions" # Example LM Studio / Jan
-    # model = ""
-    # temperature = 0.7
-    # ... etc ...
+# List of available LLM providers to show in UI
+available = ["openai", "anthropic", "moonshot", "local"]
 
 [chat_defaults]
-# Default settings specifically for the 'Chat' tab
-provider = "Ollama"
-model = "llama3:latest"
-system_prompt = "You are a helpful AI assistant."
+system_message = ""
+provider = "openai"  # Default provider for new chats
+model = ""  # Leave empty to use provider's default
 temperature = 0.7
-top_p = 0.95
-min_p = 0.05
-top_k = 50
+max_tokens = 4096
+api_endpoint = ""
 
 [character_defaults]
-# Default settings specifically for the 'Character' tab
-provider = "Anthropic"
-model = "claude-3-haiku-20240307" # Make sure this exists in [providers.Anthropic]
-system_prompt = "You are roleplaying as a witty pirate captain."
-temperature = 0.8
-top_p = 0.9
-min_p = 0.0 # Check if API supports this
-top_k = 100 # Check if API supports this
+# Default settings for new character cards
+version = "v3"
+creator = ""
+tags = []
 
-# --- Sections below are placeholders based on config.txt, integrate as needed ---
-# [tts_settings]
-# default_provider = "kokoro"
-# ...
+[database]
+# Database file paths (relative to user data directory)
+prompts_db = "prompts.db"
+rag_qa_db = "rag_qa.db"
+character_chat_db = "chatDB.db"
 
+[logging]
+# Logging configuration
+log_file = "chatbook.log"
+file_log_level = "INFO"  # File logging level
+console_log_level = "WARNING"  # Console/TUI logging level (for stderr)
+log_format = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{line} - {message}"
+log_rotation = "10 MB"  # Rotate when file reaches this size
+log_retention = "7 days"  # Keep logs for this duration
+log_compression = "zip"  # Compress rotated logs
+
+[notes]
+# Notes feature settings
+auto_save_enabled = true
+auto_save_interval = 300  # seconds
+sync_with_filesystem = true
+default_template = ""
+
+[themes]
+# Custom theme definitions
+# You can define your own themes here
+# Example:
+# [themes.my_custom_theme]
+# primary = "#FF6B6B"
+# secondary = "#4ECDC4"
+# warning = "#FFE66D"
+# error = "#FF6B6B"
+# success = "#95E1D3"
+# accent = "#C7CEEA"
+# background = "#2D3436"
+# surface = "#34495E"
+# panel = "#2C3E50"
+# dark = true
+
+[encryption]
+# Config file encryption settings (managed by the app)
+enabled = false
+
+# --- TTS Settings ---
+[TTSSettings]
+ALLTALK_TTS_URL_DEFAULT = "http://127.0.0.1:7851"
+ALLTALK_TTS_VOICE_DEFAULT = "female_01.wav"
+ALLTALK_TTS_LANGUAGE_DEFAULT = "en"
+ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT = "wav"
+
+KOKORO_TTS_MODEL_DEFAULT = "kokoro-v0_19.onnx"
+KOKORO_ONNX_MODELS_PATH_DEFAULT = "~/.config/tldw_cli/models/kokoro"
+KOKORO_ONNX_VOICES_JSON_DEFAULT = "~/.config/tldw_cli/models/kokoro/voices.json"
+KOKORO_DEVICE_DEFAULT = "cpu"  # Options: "cpu", "cuda", "cuda:0"
+KOKORO_MAX_TOKENS = 500        # Maximum tokens per chunk
+KOKORO_ENABLE_VOICE_MIXING = false  # Enable voice mixing feature
+KOKORO_TRACK_PERFORMANCE = true     # Track performance metrics
+
+# ElevenLabs TTS settings  
+ELEVENLABS_API_KEY_fallback = ""  # Fallback if not in environment
+ELEVENLABS_DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM"  # Rachel voice ID
+ELEVENLABS_DEFAULT_MODEL = "eleven_multilingual_v2"  # Options: eleven_multilingual_v2, eleven_turbo_v2
+ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_192"  # High quality MP3
+ELEVENLABS_VOICE_STABILITY = 0.5    # Voice consistency (0.0-1.0)
+ELEVENLABS_SIMILARITY_BOOST = 0.8   # Voice clarity (0.0-1.0)
+ELEVENLABS_STYLE = 0.0              # Style exaggeration (0.0-1.0)
+ELEVENLABS_USE_SPEAKER_BOOST = true # Enhanced speaker clarity
+
+# --- STT Settings ---
+[STTSettings]
+# Default Speech-to-Text provider
+# Options: "faster-whisper", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx"
+# Note: On macOS, automatically defaults to parakeet-mlx or lightning-whisper-mlx if available
+default_stt_provider = "faster-whisper"
+
+# --- Search Settings ---
 # [search_settings]
 # default_provider = "google"
-# ...
-
-# [embedding_settings]
-# provider = "openai"
-# ...
-
-# [chunking_settings]
-# default_method = "words"
 # ...

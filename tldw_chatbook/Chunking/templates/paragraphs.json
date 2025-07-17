@@ -1,0 +1,36 @@
+{
+  "name": "paragraphs",
+  "description": "Paragraph-based chunking that preserves document structure",
+  "base_method": "paragraphs",
+  "pipeline": [
+    {
+      "stage": "chunk",
+      "method": "paragraphs",
+      "options": {
+        "max_size": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "stage": "postprocess",
+      "operations": [
+        {
+          "type": "filter_empty",
+          "params": {
+            "min_length": 50
+          }
+        },
+        {
+          "type": "merge_small",
+          "params": {
+            "min_size": 200
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["structured_documents", "reports", "essays"],
+    "preserves_structure": true
+  }
+}

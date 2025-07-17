@@ -6,6 +6,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from textual.command import Hit
 
+@pytest.mark.unit
 def test_command_palette_imports():
     """Test that command palette providers can be imported."""
     try:
@@ -21,6 +22,7 @@ def test_command_palette_imports():
     except ImportError as e:
         pytest.skip(f"Command palette providers not available: {e}")
 
+@pytest.mark.unit
 def test_theme_provider_basic():
     """Basic test for ThemeProvider without app context."""
     try:
@@ -45,6 +47,7 @@ def test_theme_provider_basic():
     except ImportError:
         pytest.skip("ThemeProvider not available")
 
+@pytest.mark.unit
 def test_tab_navigation_provider_basic():
     """Basic test for TabNavigationProvider without app context."""
     try:
@@ -66,6 +69,7 @@ def test_tab_navigation_provider_basic():
     except ImportError:
         pytest.skip("TabNavigationProvider not available")
 
+@pytest.mark.unit
 def test_constants_available():
     """Test that tab constants are available."""
     try:
@@ -79,17 +83,24 @@ def test_constants_available():
         pytest.skip("Constants not available")
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_theme_provider_discover_structure():
     """Test that ThemeProvider.discover returns proper structure."""
     try:
         from tldw_chatbook.app import ThemeProvider
         
+        # Create mock screen with app attached
+        mock_app = MagicMock()
         mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        
         provider = ThemeProvider(mock_screen)
         
-        # Mock the app and matcher
-        provider.app = MagicMock()
-        provider.matcher = MagicMock()
+        # Mock the matcher to return proper numeric values
+        mock_matcher = MagicMock()
+        mock_matcher.match = MagicMock(return_value=1.0)
+        mock_matcher.highlight = MagicMock(side_effect=lambda x: x)
+        provider.matcher = MagicMock(return_value=mock_matcher)
         
         hits = []
         async for hit in provider.discover():
@@ -106,17 +117,22 @@ async def test_theme_provider_discover_structure():
     except Exception as e:
         pytest.fail(f"discover() method failed: {e}")
 
+@pytest.mark.unit
 def test_provider_error_handling_basic():
     """Test basic error handling in providers."""
     try:
         from tldw_chatbook.app import ThemeProvider
         
-        mock_screen = MagicMock()
-        provider = ThemeProvider(mock_screen)
+        # Create mock screen with app attached
         mock_app = MagicMock()
         mock_app.notify = MagicMock()
-        mock_app.theme = MagicMock(side_effect=Exception("Test error"))
-        provider.app = mock_app
+        # Mock the theme setter to raise an exception
+        type(mock_app).theme = property(lambda self: None, lambda self, value: (_ for _ in ()).throw(Exception("Test error")))
+        
+        mock_screen = MagicMock()
+        mock_screen.app = mock_app
+        
+        provider = ThemeProvider(mock_screen)
         
         # Should not raise exception
         provider.switch_theme("test-theme")
@@ -177,10 +193,12 @@ def test_theme_config_integration():
             with patch('tldw_chatbook.config.save_setting_to_cli_config') as mock_save_setting:
                 from tldw_chatbook.app import ThemeProvider
                 
-                mock_screen = MagicMock()
-                provider = ThemeProvider(mock_screen)
+                # Create mock screen with app attached
                 mock_app = MagicMock()
-                provider.app = mock_app
+                mock_screen = MagicMock()
+                mock_screen.app = mock_app
+                
+                provider = ThemeProvider(mock_screen)
                 
                 # Test theme switching saves to config
                 provider.switch_theme("test-theme")

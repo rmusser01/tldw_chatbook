@@ -23,7 +23,7 @@ def safe_filename_strategy():
         alphabet=string.ascii_letters + string.digits + "-_.() ",
         min_size=1,
         max_size=255
-    ).filter(lambda x: x.strip() != "")
+    ).filter(lambda x: x.strip() != "" and '..' not in x)
 
 
 def unsafe_filename_strategy():

@@ -1,0 +1,39 @@
+{
+  "name": "words",
+  "description": "Basic word-based chunking with configurable size and overlap",
+  "base_method": "words",
+  "pipeline": [
+    {
+      "stage": "preprocess",
+      "operations": [
+        {
+          "type": "normalize_whitespace",
+          "params": {}
+        }
+      ]
+    },
+    {
+      "stage": "chunk",
+      "method": "words",
+      "options": {
+        "max_size": 400,
+        "overlap": 200
+      }
+    },
+    {
+      "stage": "postprocess",
+      "operations": [
+        {
+          "type": "filter_empty",
+          "params": {
+            "min_length": 10
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["general_text", "articles", "documents"],
+    "language_aware": true
+  }
+}

@@ -1,6 +1,7 @@
 # chat_streaming_events.py
 #
 # Imports
+import json
 import logging
 import re
 import threading
@@ -9,7 +10,7 @@ import threading
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
-from textual.widgets import Static, TextArea, Label
+from textual.widgets import Static, TextArea, Label, Markdown
 from rich.markup import escape as escape_markup
 #
 # Local Imports
@@ -17,6 +18,9 @@ from tldw_chatbook.DB.ChaChaNotes_DB import InputError, CharactersRAGDBError
 from tldw_chatbook.Constants import TAB_CHAT, TAB_CCP
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
+from tldw_chatbook.Chat.Chat_Functions import parse_tool_calls_from_response
+from tldw_chatbook.Tools import get_tool_executor
+from tldw_chatbook.Widgets.tool_message_widgets import ToolExecutionWidget
 #
 ########################################################################################################################
 #
@@ -30,18 +34,19 @@ async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
     current_widget = self.get_current_ai_message_widget()
     if current_widget and current_widget.is_mounted:
         try:
-            # The thinking placeholder should have been cleared when the worker started.
-            # The role and header should also have been set at the start of the AI turn.
-            static_text_widget = current_widget.query_one(".message-text", Static)
-
-            # Atomically append the clean text chunk and update display
-            # This prevents race conditions during concurrent text updates
-            new_text = current_widget.message_text + event.text_chunk
-            current_widget.message_text = new_text
-
-            # --- Update the display by wrapping the text in a Text object ---
-            # This is safer than escape_markup for arbitrary streaming content.
-            static_text_widget.update(Text(new_text))
+            markdown_widget = current_widget.query_one(".message-text", Markdown)
+            
+            # Check if we need to clear the thinking emoji (first real chunk)
+            if not hasattr(current_widget, '_streaming_started'):
+                # This is the first chunk - replace any placeholder content
+                current_widget.message_text = event.text_chunk
+                current_widget._streaming_started = True
+            else:
+                # Subsequent chunks - append to internal state
+                current_widget.message_text += event.text_chunk
+            
+            # Always update markdown widget with full text to prevent flickering
+            markdown_widget.update(current_widget.message_text)
 
             # Scroll the chat log to the end, conditionally
             chat_log_id_to_query = None
@@ -97,7 +102,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
         return
 
     try:
-        static_text_widget = ai_widget.query_one(".message-text", Static)
+        markdown_widget = ai_widget.query_one(".message-text", Markdown)
 
         if event.error:
             logger.error(f"Stream completed with error: {event.error}")
@@ -105,8 +110,8 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             # Display partial text along with the error.
             error_message_content = event.full_text + f"\n\n[bold red]Stream Error:[/]\n{escape_markup(event.error)}"
 
-            ai_widget.message_text = event.full_text + f"\nStream Error: {event.error}"  # Update internal raw text
-            static_text_widget.update(Text.from_markup(error_message_content))
+            ai_widget.message_text = event.full_text + f"\n\nStream Error:\n{event.error}"  # Update internal raw text
+            markdown_widget.update(ai_widget.message_text)
             ai_widget.role = "System"  # Change role to "System" or "Error"
             try:
                 header_label = ai_widget.query_one(".message-header", Label)
@@ -120,8 +125,10 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             # Apply thinking tag stripping if enabled
             if event.full_text:  # Check if there's any text to process
                 strip_tags_setting = self.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                self.loguru_logger.info(f"Strip thinking tags setting: {strip_tags_setting} (from config: {self.app_config.get('chat_defaults', {})})")
                 if strip_tags_setting:
-                    think_blocks = list(re.finditer(r"<think>.*?</think>", event.full_text, re.DOTALL))
+                    # Match both <think> and <thinking> tags
+                    think_blocks = list(re.finditer(r"<think(?:ing)?>.*?</think(?:ing)?>", event.full_text, re.DOTALL))
                     if len(think_blocks) > 1:
                         self.loguru_logger.debug(
                             f"Stripping thinking tags from streamed response. Found {len(think_blocks)} blocks.")
@@ -135,13 +142,76 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                         event.full_text = "".join(text_parts)  # Modify the event's full_text
                         self.loguru_logger.debug(f"Streamed response after stripping: {event.full_text[:200]}...")
                     else:
-                        self.loguru_logger.debug(
+                        self.loguru_logger.info(
                             f"Not stripping tags from stream: {len(think_blocks)} block(s) found (need >1), setting is {strip_tags_setting}.")
                 else:
                     self.loguru_logger.debug("Not stripping tags from stream: strip_thinking_tags setting is disabled.")
 
             ai_widget.message_text = event.full_text  # Ensure internal state has the final, complete text
-            static_text_widget.update(escape_markup(event.full_text))  # Update display with final, escaped text
+            markdown_widget.update(event.full_text)  # Update display with final text
+
+            # Check for tool calls in the response
+            tool_calls = None
+            if hasattr(event, 'response_data') and event.response_data:
+                logger.debug(f"Checking for tool calls in response data: {type(event.response_data)}")
+                tool_calls = parse_tool_calls_from_response(event.response_data)
+                if tool_calls:
+                    logger.info(f"Detected {len(tool_calls)} tool call(s) in streaming response")
+                    
+                    # Get the chat container from the AI widget's parent
+                    chat_container = ai_widget.parent
+                    if chat_container:
+                        # Create and mount tool execution widget
+                        tool_widget = ToolExecutionWidget(tool_calls)
+                        await chat_container.mount(tool_widget)
+                        chat_container.scroll_end(animate=False)
+                        
+                        # Execute tools asynchronously
+                        executor = get_tool_executor()
+                        try:
+                            results = await executor.execute_tool_calls(tool_calls)
+                            logger.info(f"Tool execution completed with {len(results)} result(s)")
+                            
+                            # Update widget with results
+                            tool_widget.update_results(results)
+                            
+                            # Save tool messages to database if applicable
+                            if self.chachanotes_db and self.current_chat_conversation_id and not self.current_chat_is_ephemeral:
+                                try:
+                                    # Save tool call message
+                                    tool_call_msg = f"Tool Calls:\n{json.dumps(tool_calls, indent=2)}"
+                                    tool_call_db_id = ccl.add_message_to_conversation(
+                                        self.chachanotes_db,
+                                        self.current_chat_conversation_id,
+                                        "tool",  # This will map to role='tool'
+                                        tool_call_msg
+                                    )
+                                    logger.debug(f"Saved tool call message to DB with ID: {tool_call_db_id}")
+                                    
+                                    # Save tool results message
+                                    tool_results_msg = f"Tool Results:\n{json.dumps(results, indent=2)}"
+                                    tool_result_db_id = ccl.add_message_to_conversation(
+                                        self.chachanotes_db,
+                                        self.current_chat_conversation_id,
+                                        "tool",
+                                        tool_results_msg
+                                    )
+                                    logger.debug(f"Saved tool results message to DB with ID: {tool_result_db_id}")
+                                except Exception as e:
+                                    logger.error(f"Error saving tool messages to DB: {e}", exc_info=True)
+                            
+                            # Continue conversation with tool results
+                            await self._continue_conversation_with_tools(results, tool_calls)
+                            
+                        except Exception as e:
+                            logger.error(f"Error executing tools: {e}", exc_info=True)
+                            self.notify(f"Tool execution error: {str(e)}", severity="error")
+                    else:
+                        logger.warning("Could not find chat container for mounting tool widgets")
+                        # Fallback: just append a notice
+                        tool_notice = f"\n\n[Tool Calls Detected: {len(tool_calls)} function(s) to execute]"
+                        ai_widget.message_text += tool_notice
+                        markdown_widget.update(ai_widget.message_text)
 
             # Determine sender name for DB (already set on widget by handle_api_call_worker_state_changed)
             # This is just to ensure the correct name is used for DB saving if needed.
@@ -181,6 +251,16 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                 logger.info("Stream finished with no error but content was empty/whitespace. Not saving to DB.")
 
         ai_widget.mark_generation_complete()  # Mark as complete in both error/success cases if widget exists
+        # Clean up streaming flag
+        if hasattr(ai_widget, '_streaming_started'):
+            delattr(ai_widget, '_streaming_started')
+        
+        # Update token counter after AI response is complete
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(self)
+        except Exception as e:
+            logger.debug(f"Could not update token counter: {e}")
 
     except QueryError as e:
         logger.error(f"QueryError during StreamDone UI update (event.error='{event.error}'): {e}", exc_info=True)
@@ -196,6 +276,10 @@ async def handle_stream_done(self, event: StreamDone) -> None:
         # Crucial for resetting state and UI.
         self.current_ai_message_widget = None  # Clear the reference to the AI message widget
         logger.debug("Cleared current_ai_message_widget in on_stream_done's finally block.")
+        
+        # Reset streaming state using thread-safe method
+        self.set_current_chat_is_streaming(False)
+        logger.debug("Reset current_chat_is_streaming to False in on_stream_done's finally block.")
 
         # Focus the appropriate input based on the current tab
         input_id_to_focus = None
@@ -216,6 +300,70 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                              exc_info=True)
         else:
             logger.debug(f"No specific input to focus for tab {self.current_tab} in on_stream_done.")
+
+async def _continue_conversation_with_tools(self, tool_results, tool_calls):
+    """
+    Continue the conversation by sending tool results back to the LLM.
+    
+    Args:
+        tool_results: List of tool execution results
+        tool_calls: Original tool calls that were executed
+    """
+    logger = getattr(self, 'loguru_logger', logging)
+    
+    try:
+        # Format tool results for the conversation
+        tool_results_text = []
+        for i, result in enumerate(tool_results):
+            tool_call_id = result.get('tool_call_id', f'call_{i}')
+            if 'error' in result:
+                tool_results_text.append(f"Tool call {tool_call_id} failed: {result['error']}")
+            else:
+                tool_result_data = result.get('result', {})
+                tool_results_text.append(f"Tool call {tool_call_id} result: {json.dumps(tool_result_data, indent=2)}")
+        
+        # Join all tool results
+        formatted_results = "\n\n".join(tool_results_text)
+        
+        # Create a new user message with the tool results
+        tool_response_message = f"[Tool Results]\n{formatted_results}\n\n[Continue with the original request using these tool results]"
+        
+        # Find the chat input widget
+        try:
+            if self.current_tab == TAB_CHAT:
+                input_widget = self.query_one("#chat-input", TextArea)
+            elif self.current_tab == TAB_CCP:
+                input_widget = self.query_one("#ccp-chat-input", TextArea)
+            else:
+                logger.warning(f"Unknown tab {self.current_tab}, cannot continue conversation")
+                return
+            
+            # Set the input with the tool results
+            input_widget.text = tool_response_message
+            
+            # Trigger send button programmatically
+            try:
+                if self.current_tab == TAB_CHAT:
+                    send_button = self.query_one("#chat-send-button")
+                elif self.current_tab == TAB_CCP:
+                    send_button = self.query_one("#ccp-send-button")
+                
+                # Post a button pressed event
+                from textual.events import Click
+                await send_button.post_message(Click(send_button, 0, 0, 0, 0, 0, False, False, False))
+                logger.info("Triggered conversation continuation with tool results")
+                
+            except QueryError:
+                logger.error("Could not find send button to continue conversation")
+                self.notify("Could not automatically continue conversation with tool results", severity="warning")
+                
+        except QueryError as e:
+            logger.error(f"Could not find chat input to continue conversation: {e}")
+            self.notify("Could not continue conversation with tool results", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error continuing conversation with tool results: {e}", exc_info=True)
+        self.notify(f"Error continuing conversation: {str(e)}", severity="error")
 
 #
 # End of Event Handlers for Streaming Events

@@ -12,20 +12,25 @@ authors = [
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file="LICENSE" }
-keywords = ["tui", "cli", "llm", "textual", "ai", "chat"]
+license = {text = "AGPL-3.0-or-later"}
+keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Science/Research",
     "Topic :: Utilities",
     "Topic :: Terminals",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Topic :: Communications :: Chat",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Environment :: Console",
     "Operating System :: OS Independent",
+    "Natural Language :: English",
+    "Typing :: Typed",
 ]
 
 # --- Dependencies ---
@@ -36,12 +41,20 @@ dependencies = [
     "textual>=3.3.0",
     "requests",
     "rich",
+    "rich-pixels>=3.0.0",
     "pillow",
     "PyYAML",
     "pydantic",
     "psutil",
     "toml",
+    "tomli; python_version < '3.11'",
     "pyperclip",
+    "emoji",
+    "jinja2",
+    "pycryptodomex",
+    "keyring",
+    "markdownify",
+    "aiofiles",
 ]
 
 # --- Optional Dependencies ---
@@ -71,10 +84,14 @@ embeddings_rag = [
     "numpy",
     "pydantic",
     "transformers",
+    "chromadb>=0.4.0",
+    "sentence-transformers",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
 ]
 websearch = [
     "lxml",
-    "bs4",#beautifulsoup
+    "beautifulsoup4",
     "pandas",
     "playwright",
     #"playwright_stealth",
@@ -82,23 +99,117 @@ websearch = [
     "langdetect",
     "nltk",
     "scikit-learn",
+    "aiohttp",
 ]
 local_vllm = ["vllm"]
 local_mlx = ["mlx-lm"]
+mlx_whisper = [
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
+    "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
+]
 local_transformers = ["transformers"]
-dev = [ # Example for development dependencies
+mcp = [
+    "mcp[cli]>=1.0.0",
+]
+pdf = [
+    "pymupdf",
+    "pymupdf4llm",
+    "docling",
+]
+ebook = [
+    "ebooklib",
+    "beautifulsoup4",
+    "lxml",
+    "html2text",
+    "markdownify",
+    "defusedxml",
+]
+audio = [
+    "soundfile",
+    "scipy",
+    "faster-whisper",
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
+    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
+    "yt-dlp",
+    "numpy",
+]
+video = [
+    "soundfile",
+    "scipy",
+    "faster-whisper",
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
+    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
+    "yt-dlp",
+    "numpy",
+]
+media_processing = [
+    "soundfile",
+    "scipy",
+    "faster-whisper",
+    "lightning-whisper-mlx; sys_platform == 'darwin'",  # macOS only
+    "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
+    "yt-dlp",
+    "numpy",
+]
+chatterbox = [
+    "chatterbox-tts",
+    "torchaudio",
+    "torch",
+    "faster-whisper",  # For validation of generated audio
+]
+local_tts = [
+    "kokoro-onnx",
+    "scipy",
+    "numpy",
+    "nltk",
+    "pyaudio",
+    "pydub",
+    "transformers",  # For tokenization
+    "torch",  # For PyTorch-based models
+    "onnxruntime",  # For ONNX models
+    "av",  # pyav for audio format conversion
+]
+nemo = [
+    "nemo-toolkit[asr]>=1.20.0",  # For NVIDIA Parakeet and Canary models
+    "torch",  # Required by NeMo
+    "torchaudio",  # Required for audio processing
+]
+ocr_docext = [
+    "docext",  # NanoNets document extraction toolkit
+    "gradio_client",  # For API-based usage
+    "transformers>=4.30.0",  # For direct model usage (optional)
+    "torch",  # For direct model usage (optional)
+    "openai",  # For OpenAI-compatible API usage
+    "Pillow",  # For image handling
+]
+dev = [
     "pytest",
+    "pytest-timeout",  # For handling hanging tests
     "textual-dev", # For Textual development tools
     "hypothesis",
-    "pytest_asyncio",
+    "pytest-asyncio",
+    "build",  # For building distributions
+    "twine",  # For uploading to PyPI
+    "wheel",  # For building wheel distributions
+    "prometheus_client",  # For metrics collection during development
+]
+debugging = [
+    "prometheus_client",  # For metrics collection and monitoring
+    "opentelemetry-api",  # For advanced telemetry
+    "opentelemetry-sdk",  # OpenTelemetry SDK
+    "opentelemetry-exporter-prometheus",  # Export metrics to Prometheus
+    "opentelemetry-instrumentation-system-metrics",  # System metrics collection
 ]
 
 
 [project.urls]
 "Homepage" = "https://github.com/rmusser01/tldw_chatbook"
 "Bug Tracker" = "https://github.com/rmusser01/tldw_chatbook/issues"
+"Documentation" = "https://github.com/rmusser01/tldw_chatbook#readme"
+"Source Code" = "https://github.com/rmusser01/tldw_chatbook"
+"Changelog" = "https://github.com/rmusser01/tldw_chatbook/blob/main/CHANGELOG.md"
 
-# This creates a command-line script called 'tldw-cli'
+# This creates a command-line script called 'tldw-chatbook'
 [project.scripts]
 # Points to the main function in your tldw_chatbook package's app module.
 # Structure: project_root/tldw_chatbook/app.py, function main_cli_runner
@@ -111,9 +222,16 @@ include = ["tldw_chatbook*"]
 exclude = ["Tests*", ".venv*"]
 
 [tool.setuptools.package-data]
-# Include .tcss files in the tldw_chatbook.css package/submodule
-# This assumes your CSS is in project_root/tldw_chatbook/css/*.tcss
-"tldw_chatbook.css" = ["*.tcss"]
+# Include all .tcss files in css directory and subdirectories
+"tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]
+# Include theme files
+"tldw_chatbook.css.Themes" = ["*.tcss"]
+# Include JSON template files and guides
+"tldw_chatbook.Config_Files" = ["*.json", "*.md"]
+# Include CSS files in subdirectories
+"tldw_chatbook.css.core" = ["*.tcss"]
+"tldw_chatbook.css.features" = ["*.tcss"]
+"tldw_chatbook.css.layout" = ["*.tcss"]
 # If you have other assets inside your tldw_chatbook package (e.g., tldw_chatbook/assets/), add them here:
 # "tldw_chatbook.assets" = ["*"]
 
@@ -121,8 +239,15 @@ exclude = ["Tests*", ".venv*"]
 testpaths = ["Tests"]
 # Exclude server tests that don't belong in the TUI
 addopts = "--ignore=STests"
+# Default timeout for all tests (in seconds)
+timeout = 300
+# Timeout method: thread (default) or signal
+timeout_method = "thread"
 markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",
     "asyncio: marks tests as async",
+    "timeout: marks tests with custom timeout values",
+    "optional: marks tests that require optional dependencies",
 ]
+

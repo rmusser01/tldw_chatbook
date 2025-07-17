@@ -19,10 +19,12 @@ providing insights into search behavior and result effectiveness.
 
 import sqlite3
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple, Union
 from loguru import logger
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 class SearchHistoryDB:
     """
@@ -169,6 +171,8 @@ class SearchHistoryDB:
         Returns:
             Search ID for the recorded search
         """
+        start_time = time.time()
+        
         try:
             with self._get_connection() as conn:
                 # Insert search record
@@ -216,9 +220,42 @@ class SearchHistoryDB:
                 
                 conn.commit()
                 logger.debug(f"Recorded search: '{query}' with {len(results)} results")
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("search_history_db_operation_duration", duration, labels={
+                    "operation": "record_search",
+                    "search_type": search_type,
+                    "result_count": str(len(results))
+                })
+                log_counter("search_history_db_operation_count", labels={
+                    "operation": "record_search",
+                    "search_type": search_type,
+                    "status": "success",
+                    "has_error": "true" if error_message else "false"
+                })
+                # Also log the search execution time from the search itself
+                log_histogram("search_history_db_search_execution_time", execution_time_ms / 1000.0, labels={
+                    "search_type": search_type
+                })
+                
                 return search_id
                 
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("search_history_db_operation_duration", duration, labels={
+                "operation": "record_search",
+                "search_type": search_type,
+                "result_count": "0"
+            })
+            log_counter("search_history_db_operation_count", labels={
+                "operation": "record_search",
+                "search_type": search_type,
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Error recording search: {e}")
             return -1
             
@@ -239,6 +276,8 @@ class SearchHistoryDB:
         Returns:
             List of search history records
         """
+        start_time = time.time()
+        
         try:
             query = """
             SELECT id, query, search_type, timestamp, execution_time_ms, 
@@ -277,18 +316,45 @@ class SearchHistoryDB:
                         'search_params': search_params
                     })
                 
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("search_history_db_operation_duration", duration, labels={
+                    "operation": "get_search_history",
+                    "result_count": str(len(history))
+                })
+                log_counter("search_history_db_operation_count", labels={
+                    "operation": "get_search_history",
+                    "status": "success",
+                    "result_count": str(len(history)),
+                    "filtered_by": search_type or "none"
+                })
+                
                 return history
                 
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("search_history_db_operation_duration", duration, labels={
+                "operation": "get_search_history",
+                "result_count": "0"
+            })
+            log_counter("search_history_db_operation_count", labels={
+                "operation": "get_search_history",
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Error getting search history: {e}")
             return []
             
-    def get_search_results(self, search_id: int) -> List[Dict[str, Any]]:
+    def get_search_results(self, search_id: int, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """
         Get results for a specific search.
         
         Args:
             search_id: ID of the search
+            limit: Maximum number of results to return
+            offset: Number of results to skip
             
         Returns:
             List of search results
@@ -299,10 +365,11 @@ class SearchHistoryDB:
             FROM search_results
             WHERE search_id = ?
             ORDER BY result_index
+            LIMIT ? OFFSET ?
             """
             
             with self._get_connection() as conn:
-                cursor = conn.execute(query, (search_id,))
+                cursor = conn.execute(query, (search_id, limit, offset))
                 
                 results = []
                 for row in cursor:
@@ -347,6 +414,8 @@ class SearchHistoryDB:
         Returns:
             True if feedback was recorded successfully
         """
+        start_time = time.time()
+        
         try:
             # First get the result_id
             with self._get_connection() as conn:
@@ -373,9 +442,35 @@ class SearchHistoryDB:
                 conn.commit()
                 
                 logger.debug(f"Recorded feedback for search {search_id} result {result_index}")
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                feedback_type = "rating" if rating else "helpful" if helpful is not None else "clicked"
+                log_histogram("search_history_db_operation_duration", duration, labels={
+                    "operation": "record_feedback",
+                    "feedback_type": feedback_type
+                })
+                log_counter("search_history_db_operation_count", labels={
+                    "operation": "record_feedback",
+                    "feedback_type": feedback_type,
+                    "status": "success"
+                })
+                
                 return True
                 
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("search_history_db_operation_duration", duration, labels={
+                "operation": "record_feedback",
+                "feedback_type": "unknown"
+            })
+            log_counter("search_history_db_operation_count", labels={
+                "operation": "record_feedback",
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Error recording result feedback: {e}")
             return False
             
@@ -560,6 +655,8 @@ class SearchHistoryDB:
         Returns:
             Number of search records deleted
         """
+        start_time = time.time()
+        
         try:
             with self._get_connection() as conn:
                 # Delete old search records (cascades to results and feedback)
@@ -570,8 +667,33 @@ class SearchHistoryDB:
                 conn.commit()
                 
                 logger.info(f"Deleted {deleted_count} old search records (older than {days_to_keep} days)")
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("search_history_db_operation_duration", duration, labels={
+                    "operation": "clear_old_data",
+                    "days_to_keep": str(days_to_keep)
+                })
+                log_counter("search_history_db_operation_count", labels={
+                    "operation": "clear_old_data",
+                    "status": "success",
+                    "records_deleted": str(deleted_count)
+                })
+                
                 return deleted_count
                 
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("search_history_db_operation_duration", duration, labels={
+                "operation": "clear_old_data",
+                "days_to_keep": str(days_to_keep)
+            })
+            log_counter("search_history_db_operation_count", labels={
+                "operation": "clear_old_data",
+                "status": "error",
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Error clearing old search data: {e}")
             return 0

@@ -17,14 +17,16 @@ from textual.widgets import Static
 class AppFooterStatus(Widget):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._key_quit = Static("Ctrl+Q (quit) / Ctrl+P or Cmd+P (palette menu)", id="footer-key-quit")
+        self._key_quit = Static("Ctrl+Q quit | Ctrl+P palette", id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
+        self._token_count_display: Static = Static("Tokens: -- | ", id="footer-token-count")
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
 
     def compose(self) -> ComposeResult:
         yield self._key_quit
         yield Static(id="footer-spacer") # This will push items to the right
         yield self._word_count_display # Word count display
+        yield self._token_count_display # Token count display
         yield self._db_status_display # This is the existing DB size display
 
     def update_db_sizes_display(self, status_string: str) -> None:
@@ -44,6 +46,16 @@ class AppFooterStatus(Widget):
                 self._word_count_display.update("")
         except Exception as e:
             print(f"Error updating word count display: {e}")
+    
+    def update_token_count(self, display_text: str) -> None:
+        """Update the token count display in the footer."""
+        try:
+            if display_text:
+                self._token_count_display.update(f"{display_text} | ")
+            else:
+                self._token_count_display.update("")
+        except Exception as e:
+            print(f"Error updating token count display: {e}")
 
 #
 # End of AppFooterStatus.py

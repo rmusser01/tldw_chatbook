@@ -1,0 +1,45 @@
+# Butterfly Effect splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "fireworks"
+style = "gradient(purple, blue, cyan)"
+
+# Fireworks effect parameters for chaos visualization
+chaos_sensitivity = 0.999
+ripple_propagation = true
+butterfly_flaps = 1
+
+content = """
+                ¸.·´¯`·.¸¸.·´¯`·.¸
+               (  A tiny change   )
+                `·.¸¸.·´¯`·.¸¸.·´
+                        ╲│╱
+                        ─ ─
+                        ╱│╲
+    
+    if (butterfly.flaps_wings) {
+        // Chaos theory activated
+        ripple_effect.propagate();
+    }
+    
+    🦋 → 🌪️
+    
+    COMMIT: "Fixed typo"
+    RESULT: Complete architecture rewrite
+    
+    "In the garden of forking paths,
+     every decision creates a new universe"
+"""
+
+# Progress messages
+progress_messages = [
+    "One small bug, one giant system crash...",
+    "Tracking ripples through the codebase...",
+    "Butterfly in the CPU...",
+    "Chaos theory in version control...",
+    "Sensitive dependence on initial conditions..."
+]
+
+# Additional styling
+css_classes = ["butterfly-chaos", "ripple-effect"]

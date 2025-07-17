@@ -1,0 +1,18 @@
+# Template for ~/.pypirc configuration file
+# Copy this to ~/.pypirc and fill in your credentials
+# IMPORTANT: Keep your actual .pypirc file secure and never commit it to version control
+
+[distutils]
+index-servers =
+    pypi
+    testpypi
+
+[pypi]
+repository = https://upload.pypi.org/legacy/
+username = __token__
+password = pypi-YOUR_API_TOKEN_HERE
+
+[testpypi]
+repository = https://test.pypi.org/legacy/
+username = __token__
+password = pypi-YOUR_TEST_API_TOKEN_HERE

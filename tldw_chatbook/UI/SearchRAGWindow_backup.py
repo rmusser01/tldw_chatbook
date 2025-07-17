@@ -127,7 +127,7 @@ class SearchRAGWindow(Container):
         self.current_search_id: Optional[int] = None
         
         # Initialize search history database
-        history_db_path = get_user_data_dir() / "databases" / "search_history.db"
+        history_db_path = get_user_data_dir() / "search_history.db"
         self.search_history_db = SearchHistoryDB(history_db_path)
         
         # Load recent search history for quick access

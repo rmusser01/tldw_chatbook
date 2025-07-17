@@ -12,10 +12,11 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Static, Button, Label # Added Label
+from textual.widgets import Static, Button, Label, Markdown # Added Label and Markdown
 from textual.reactive import reactive
 #
 # Local Imports
+from tldw_chatbook.Utils.file_extraction import FileExtractor
 #
 #######################################################################################################################
 #
@@ -59,6 +60,12 @@ class ChatMessage(Widget):
         width: 100%;
         height: auto;
     }
+    .message-text Markdown {
+        width: 100%;
+        background: transparent;
+        margin: 0;
+        padding: 0;
+    }
     .message-actions {
         height: auto;
         width: 100%;
@@ -92,7 +99,7 @@ class ChatMessage(Widget):
     """
 
     # Store the raw text content
-    message_text = reactive("", repaint=True)
+    message_text = reactive("")  # Remove repaint=True to prevent double rendering during streaming
     role = reactive("User", repaint=True)
     # Use an internal reactive to manage generation status and trigger UI updates
     _generation_complete_internal = reactive(True)
@@ -105,6 +112,11 @@ class ChatMessage(Widget):
     # Store image data if message has an image
     image_data: reactive[Optional[bytes]] = reactive(None)
     image_mime_type: reactive[Optional[str]] = reactive(None)
+    # Store feedback (thumbs up/down)
+    feedback: reactive[Optional[str]] = reactive(None)
+    # Store extracted files
+    _extracted_files = None
+    _file_extractor = None
 
     def __init__(self,
                  message: str,
@@ -115,6 +127,7 @@ class ChatMessage(Widget):
                  timestamp: Optional[str] = None,
                  image_data: Optional[bytes] = None,
                  image_mime_type: Optional[str] = None,
+                 feedback: Optional[str] = None,
                  **kwargs):
         super().__init__(**kwargs)
         self.message_text = message
@@ -126,6 +139,7 @@ class ChatMessage(Widget):
         self.timestamp = timestamp
         self.image_data = image_data
         self.image_mime_type = image_mime_type
+        self.feedback = feedback
 
         #self.add_class(f"-{role.lower()}") # Add role-specific class
         # For CSS styling, we use a generic class based on whether it's the user or not.
@@ -143,7 +157,7 @@ class ChatMessage(Widget):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(f"{self.role}", classes="message-header")
-            yield Static(self.message_text, classes="message-text")
+            yield Markdown(self.message_text, classes="message-text")
             actions_class = "message-actions"
             # Logic for the '-generating' class on the actions container
             # This should only apply if it's an AI message AND generation is not complete
@@ -153,19 +167,33 @@ class ChatMessage(Widget):
             with Horizontal(classes=actions_class) as actions_bar:
                 actions_bar.id = f"actions-bar-{self.id or self.message_id_internal or 'new'}"
                 # Common buttons
-                yield Button("Edit", classes="action-button edit-button")
-                yield Button("📋", classes="action-button copy-button", id="copy") # Emoji for copy
-                yield Button("🔊", classes="action-button speak-button", id="speak") # Emoji for speak
+                yield Button("Edit", classes="action-button edit-button", tooltip="Edit message")
+                yield Button("📋", classes="action-button copy-button", id="copy", tooltip="Copy message to clipboard") # Emoji for copy
+                yield Button("📝", classes="action-button note-button", id="create-note", tooltip="Create note from message")
+                
+                # Add file extraction button if files detected
+                if self._extracted_files is None:
+                    self._check_for_files()
+                if self._extracted_files:
+                    file_count = len(self._extracted_files)
+                    yield Button(f"📎 {file_count}", classes="action-button file-extract-button", 
+                               id="extract-files", 
+                               tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
+                
+                yield Button("🔊", classes="action-button speak-button", id="speak", tooltip="Read message aloud") # Emoji for speak
 
                 # AI-specific buttons
                 if self.has_class("-ai"):
-                    yield Button("👍", classes="action-button thumb-up-button", id="thumb-up")
-                    yield Button("👎", classes="action-button thumb-down-button", id="thumb-down")
-                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate") # Emoji for regenerate
-                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button")
+                    # Display feedback state on thumb buttons
+                    thumb_up_label = "👍✓" if self.feedback == "1;" else "👍"
+                    thumb_down_label = "👎✓" if self.feedback == "2;" else "👎"
+                    yield Button(thumb_up_label, classes="action-button thumb-up-button", id="thumb-up", tooltip="Mark as helpful")
+                    yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down", tooltip="Mark as unhelpful")
+                    yield Button("🔄", classes="action-button regenerate-button", id="regenerate", tooltip="Regenerate response") # Emoji for regenerate
+                    yield Button("↪️", id="continue-response-button", classes="action-button continue-button", tooltip="Continue response")
 
                 # Add delete button for all messages at very end
-                yield Button("🗑️", classes="action-button delete-button")  # Emoji for delete ; Label: Delete, Class: delete-button
+                yield Button("🗑️", classes="action-button delete-button", tooltip="Delete message")  # Emoji for delete ; Label: Delete, Class: delete-button
 
     def watch__generation_complete_internal(self, complete: bool) -> None:
         """
@@ -240,11 +268,22 @@ class ChatMessage(Widget):
         # This method is called by handle_streaming_chunk.
         # The _generation_complete_internal should be False during streaming.
         if self.has_class("-ai") and not self._generation_complete_internal:
-            # The static_text_widget.update is handled in handle_streaming_chunk
+            # The markdown_widget.update is handled in handle_streaming_chunk
             # This method primarily updates the internal message_text.
             self.message_text += chunk
-        # If called at other times, ensure it doesn't break if static_text_widget not found.
-        # For streaming, handle_streaming_chunk updates the Static widget directly.
+        # If called at other times, ensure it doesn't break if markdown_widget not found.
+        # For streaming, handle_streaming_chunk updates the Markdown widget directly.
+    
+    def _check_for_files(self):
+        """Check if the message contains extractable files."""
+        if not self._file_extractor:
+            self._file_extractor = FileExtractor()
+        
+        try:
+            self._extracted_files = self._file_extractor.extract_files(self.message_text)
+        except Exception as e:
+            logging.error(f"Error extracting files from message: {e}")
+            self._extracted_files = []
 
 #
 #

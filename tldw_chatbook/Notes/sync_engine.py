@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,8 @@ from loguru import logger
 # Local Imports
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, ConflictError
 from .Notes_Library import NotesInteropService
+from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.atomic_file_ops import atomic_write_text
 #
 ########################################################################################################################
 #
@@ -141,17 +144,35 @@ class NotesSyncEngine:
         Returns:
             Dictionary mapping relative paths to file info
         """
+        start_time = time.time()
+        log_counter("sync_engine_scan_directory_attempt", labels={"extensions_count": str(len(extensions) if extensions else 2)})
+        
         if extensions is None:
             extensions = ['.md', '.txt']
         
         files_map = {}
+        files_scanned = 0
+        files_failed = 0
         
         for ext in extensions:
             for file_path in root_path.rglob(f'*{ext}'):
                 if file_path.is_file():
+                    files_scanned += 1
                     file_info = self._get_file_info(file_path, root_path)
                     if file_info:
                         files_map[file_info.relative_path] = file_info
+                    else:
+                        files_failed += 1
+        
+        # Log metrics
+        duration = time.time() - start_time
+        log_histogram("sync_engine_scan_directory_duration", duration)
+        log_histogram("sync_engine_scan_files_found", len(files_map))
+        log_histogram("sync_engine_scan_files_failed", files_failed)
+        log_counter("sync_engine_scan_directory_success", labels={
+            "files_found": str(len(files_map)),
+            "files_failed": str(files_failed)
+        })
         
         logger.info(f"Scanned {len(files_map)} files in {root_path}")
         return files_map
@@ -260,7 +281,7 @@ class NotesSyncEngine:
             now = datetime.now(timezone.utc).isoformat()
             new_version = version + 1
             
-            conn.execute("""
+            cursor = conn.execute("""
                 UPDATE notes
                 SET file_path_on_disk = ?,
                     relative_file_path_on_disk = ?,
@@ -276,7 +297,7 @@ class NotesSyncEngine:
                   str(root_path), file_info.content_hash, file_info.mtime,
                   file_info.extension, now, new_version, note_id, version))
             
-            if conn.changes() == 0:
+            if cursor.rowcount == 0:
                 raise ConflictError(f"Version mismatch updating sync metadata for note {note_id}")
     
     def _unlink_note_from_sync(self, note_id: str, version: int):
@@ -285,7 +306,7 @@ class NotesSyncEngine:
             now = datetime.now(timezone.utc).isoformat()
             new_version = version + 1
             
-            conn.execute("""
+            cursor = conn.execute("""
                 UPDATE notes
                 SET file_path_on_disk = NULL,
                     relative_file_path_on_disk = NULL,
@@ -297,7 +318,7 @@ class NotesSyncEngine:
                 WHERE id = ? AND version = ?
             """, (now, new_version, note_id, version))
             
-            if conn.changes() == 0:
+            if cursor.rowcount == 0:
                 raise ConflictError(f"Version mismatch unlinking note {note_id}")
     
     def cancel_sync(self, session_id: str):
@@ -330,6 +351,13 @@ class NotesSyncEngine:
         Returns:
             Tuple of (session_id, progress)
         """
+        start_time = time.time()
+        log_counter("sync_engine_sync_attempt", labels={
+            "direction": direction.value,
+            "conflict_resolution": conflict_resolution.value,
+            "post_sync_cleanup": str(post_sync_cleanup)
+        })
+        
         session_id = self._create_sync_session(root_path, direction, conflict_resolution, user_id)
         progress = self._active_sessions[session_id]
         
@@ -370,9 +398,38 @@ class NotesSyncEngine:
             if session_id in self._cancelled_sessions:
                 self._cancelled_sessions.remove(session_id)
             
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("sync_engine_sync_duration", duration, labels={
+                "status": "success",
+                "direction": direction.value
+            })
+            log_counter("sync_engine_sync_complete", labels={
+                "direction": direction.value,
+                "created_notes": str(summary['created_notes']),
+                "updated_notes": str(summary['updated_notes']),
+                "created_files": str(summary['created_files']),
+                "updated_files": str(summary['updated_files']),
+                "conflicts": str(summary['conflicts']),
+                "errors": str(summary['errors'])
+            })
+            log_histogram("sync_engine_sync_conflicts", len(progress.conflicts))
+            log_histogram("sync_engine_sync_errors", len(progress.errors))
+            
             logger.info(f"Sync session {session_id} completed: {summary}")
             
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("sync_engine_sync_duration", duration, labels={
+                "status": "error",
+                "direction": direction.value
+            })
+            log_counter("sync_engine_sync_error", labels={
+                "direction": direction.value,
+                "error_type": type(e).__name__
+            })
+            
             logger.error(f"Sync session {session_id} failed: {e}", exc_info=True)
             self._update_sync_session(session_id, progress, SyncStatus.FAILED)
             raise
@@ -480,7 +537,7 @@ class NotesSyncEngine:
                 if rel_path not in disk_files:
                     # Note in DB but no file -> Create file
                     file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.write_text(db_note['content'], encoding='utf-8')
+                    atomic_write_text(file_path, db_note['content'], encoding='utf-8')
                     
                     # Update sync metadata
                     new_file_info = self._get_file_info(file_path, root_path)
@@ -514,11 +571,11 @@ class NotesSyncEngine:
                             
                             # Resolve based on strategy
                             if conflict_resolution == ConflictResolution.DB_WINS:
-                                file_path.write_text(db_note['content'], encoding='utf-8')
+                                atomic_write_text(file_path, db_note['content'], encoding='utf-8')
                                 progress.updated_files.append(file_path)
                         else:
                             # Only DB changed
-                            file_path.write_text(db_note['content'], encoding='utf-8')
+                            atomic_write_text(file_path, db_note['content'], encoding='utf-8')
                             progress.updated_files.append(file_path)
                             
                             # Update sync metadata
@@ -585,7 +642,7 @@ class NotesSyncEngine:
                         # Recreate file
                         file_path = root_path / rel_path
                         file_path.parent.mkdir(parents=True, exist_ok=True)
-                        file_path.write_text(db_note['content'], encoding='utf-8')
+                        atomic_write_text(file_path, db_note['content'], encoding='utf-8')
                         progress.created_files.append(file_path)
                         
                 elif disk_file and db_note:
@@ -599,7 +656,7 @@ class NotesSyncEngine:
                     
                     if db_changed and not disk_changed:
                         # Only DB changed -> Update disk
-                        disk_file.absolute_path.write_text(db_note['content'], encoding='utf-8')
+                        atomic_write_text(disk_file.absolute_path, db_note['content'], encoding='utf-8')
                         new_file_info = self._get_file_info(disk_file.absolute_path, root_path)
                         if new_file_info:
                             self._update_note_sync_metadata(
@@ -651,7 +708,7 @@ class NotesSyncEngine:
                             
                             if db_modified > disk_modified:
                                 # DB is newer
-                                disk_file.absolute_path.write_text(db_note['content'], encoding='utf-8')
+                                atomic_write_text(disk_file.absolute_path, db_note['content'], encoding='utf-8')
                                 progress.updated_files.append(disk_file.absolute_path)
                             else:
                                 # Disk is newer

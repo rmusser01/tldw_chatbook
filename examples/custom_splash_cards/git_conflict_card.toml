@@ -1,0 +1,42 @@
+# Git Merge Conflict Hell splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "glitch"
+style = "red on black"
+
+# Glitch effect parameters
+glitch_intensity = 0.7
+conflict_markers = true
+merge_chaos = 0.9
+
+content = """
+<<<<<<< HEAD
+╔═══════════════════════════════════╗
+║     WELCOME TO TLDW CLI v2.0      ║
+║     Everything is fine! 😊        ║
+╚═══════════════════════════════════╝
+=======
+╔═══════════════════════════════════╗
+║     WELCOME TO TLDW CLI v1.9      ║  
+║     Everything is on fire! 🔥     ║
+╚═══════════════════════════════════╝
+>>>>>>> feature/new-splash-screen
+
+PANIC: Too many conflicts to handle
+Attempting automatic resolution...
+[████████████████████████] 99%
+ERROR: Human intervention required
+"""
+
+# Progress messages
+progress_messages = [
+    "Resolving conflicts with coin flip...",
+    "Blame mode activated...",
+    "Searching for who broke main...",
+    "Creating 47 new branches to avoid conflict...",
+    "git push --force and pray..."
+]
+
+# Additional styling
+css_classes = ["git-conflict", "merge-hell"]

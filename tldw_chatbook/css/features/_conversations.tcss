@@ -1,0 +1,322 @@
+/* ========================================
+ * FEATURES: Conversations
+ * ======================================== 
+ * Conversations, Characters, and Prompts tab
+ * ======================================== */
+
+/* --- Conversations, Characters & Prompts Window specific layouts (previously Character Chat) --- */
+/* Main container for the three-pane layout */
+#conversations_characters_prompts-window {
+    layout: horizontal; /* Crucial for side-by-side panes */
+    /* Ensure it takes full height if not already by .window */
+    height: 100%;
+}
+
+/* Left Pane Styling */
+.cc-left-pane {
+    width: 25%; /* Keep 25% or 30% - adjust as needed */
+    min-width: 20; /* ADD a minimum width */
+    height: 100%;
+    background: $boost;
+    padding: 1;
+    border-right: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Center Pane Styling */
+.cc-center-pane {
+    width: 1fr; /* Takes remaining space */
+    height: 100%;
+    padding: 1;
+    overflow-y: auto; /* For conversation history */
+}
+
+
+/* Right Pane Styling */
+.cc-right-pane {
+    width: 25%; /* Keep 25% or 30% - adjust as needed */
+    min-width: 20; /* ADD a minimum width */
+    height: 100%;
+    background: $boost;
+    padding: 1;
+    border-left: thick $background-darken-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* General styles for elements within these panes (can reuse/adapt from .sidebar styles) */
+.cc-left-pane Input, .cc-right-pane Input {
+    width: 100%; margin-bottom: 1;
+}
+.cc-left-pane ListView {
+    height: 1fr; /* Make ListView take available space */
+    margin-bottom: 1;
+    border: round $surface;
+}
+.cc-left-pane Button, .cc-right-pane Button { /* Typo in original was .cc-right_pane */
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* Ensure Select widgets in left and right panes also get full width */
+.cc-left-pane Select, .cc-right-pane Select {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* Specific title style for panes */
+.pane-title {
+    text-style: bold;
+    margin-bottom: 1;
+    text-align: center;
+    width: 100%; /* Ensure it spans width for centering */
+}
+
+/* Specific style for keywords TextArea in the right pane */
+.conv-char-keywords-textarea {
+    height: 5; /* Example height */
+    width: 100%;
+    margin-bottom: 1;
+    border: round $surface; /* Re-apply border if not inherited */
+}
+
+/* Specific style for the "Export Options" label */
+.export-label {
+    margin-top: 2; /* Add some space above export options */
+}
+
+/* Old styles for #conv-char-main-content, #conv-char-top-area etc. are removed */
+/* as the structure within #conversations_characters_prompts-window is now different. */
+/* Portrait styling - if still needed, would be part of a specific pane's content now */
+/* #conv-char-portrait {
+    width: 25;
+    height: 100%;
+    border: round $surface;
+    padding: 1;
+    margin: 0;
+    overflow: hidden;
+    align: center top;
+}
+
+/* ADD THIS: Collapsed state for the CCP tab's right pane */
+.cc-right-pane.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    border-left: none !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: none !important; /* Ensures it doesn't take space or grab focus */
+}
+
+/* Styles for the dynamic view areas within the CCP center pane */
+.ccp-view-area {
+    width: 100%;
+    height: 100%; /* Fill parent container */
+    overflow-y: auto; /* Allow vertical scrolling */
+    overflow-x: hidden; /* No horizontal scroll */
+}
+
+/* Add this class to hide elements */
+.ccp-view-area.hidden,
+.ccp-right-pane-section.hidden { /* For sections in the right pane */
+    display: none !important;
+}
+
+/* By default, let conversation messages be visible, and editor hidden */
+#ccp-conversation-messages-view {
+    /* display: block; /* or whatever its natural display is, usually block for Container */
+}
+
+/* Style for the messages scroll container */
+#ccp-conversation-messages-scroll {
+    width: 100%;
+    height: 1fr; /* Take remaining space after title */
+    overflow-y: auto;
+    padding: 1;
+}
+#ccp-prompt-editor-view {
+    display: none; /* Initially hidden by CSS */
+}
+
+#ccp-character-card-view {
+    display: none; /* Initially hidden, to be shown by Python logic */
+}
+
+#ccp-character-editor-view {
+    display: none; /* Initially hidden */
+    layout: vertical; /* Important for stacking the scroller and button bar */
+    width: 100%;
+    height: 100%; /* Fill the .cc-center-pane */
+}
+
+/* Ensure the right pane sections also respect hidden class */
+#ccp-right-pane-llm-settings-container {
+    /* display: block; default */
+}
+#ccp-right-pane-llm-settings-container.hidden {
+    display: none !important;
+}
+
+/* Collapsible Sidebar Toggle Button For Character/Conversation Editing Page */
+.cc-sidebar-toggle-button { /* Applied to the "☰" button */
+    width: 5; /* Adjust width as needed */
+    height: 100%; /* Match parent Horizontal height, or set fixed e.g., 1 or 3 */
+    min-width: 0; /* Override other button styles if necessary */
+    border: none; /* Style as you like, e.g., remove border */
+    background: $surface-darken-1; /* Example background */
+    color: $text;
+}
+.cc-sidebar-toggle-button:hover {
+    background: $surface;
+}
+/* End of Collapsible Sidebar Toggle Button for character/conversation editing */
+
+/* --- Prompts Sidebar Vertical --- */
+.ccp-prompt-textarea { /* Specific class for prompt textareas if needed */
+    height: 20; /* Example height - Increased from 10 */
+    /* width: 100%; (from .sidebar-textarea) */
+    /* margin-bottom: 1; (from .sidebar-textarea) */
+}
+
+#ccp-prompts-listview { /* ID for the prompt list */
+    height: 10; /* Or 1fr if it's the main element in its collapsible */
+    border: round $surface;
+    margin-bottom: 1;
+}
+.ccp-card-action-buttons {
+    height: auto; /* Let it size to content */
+    width: 100%;
+    margin-top: 1; /* Space above buttons */
+    margin-bottom: 2; /* Extra space below to ensure buttons are visible */
+}
+.ccp-prompt-action-buttons {
+    margin-top: 1; /* Add space above the button bar */
+    height: auto; /* Allow container height to fit buttons */
+    width: 100%; /* Full width for the button bar */
+    /* padding-bottom: 1; Removed, parent #ccp-character-editor-view now handles this */
+}
+
+.ccp-prompt-action-buttons Button {
+    width: 1fr; /* Make buttons share space */
+    margin: 0 1 0 0; /* Small right margin for all but last */
+    height: auto; /* Let button height fit its content (typically 1 line) */
+}
+.ccp-prompt-action-buttons Button:last-of-type { /* Corrected pseudo-class */
+    margin-right: 0;
+}
+
+/* Ensure Collapsible titles are clear */
+#conv-char-right-pane Collapsible > .collapsible--header {
+    background: $primary-background-darken-1; /* Example to differentiate */
+    color: $text;
+}
+
+#conv-char-right-pane Collapsible.-active > .collapsible--header { /* Optional: when expanded */
+    background: $primary-background;
+}
+
+/* TextAreas for Character Card Display */
+.ccp-card-textarea {
+    height: 15;
+    width: 100%;
+    margin-bottom: 1;
+    border: round $surface; /* Ensuring consistent styling */
+}
+
+/* --- End of Prompts Sidebar Vertical --- */
+
+/* AI Generation Buttons for Character Editor */
+.field-with-ai-button {
+    layout: horizontal;
+    height: auto;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.field-with-ai-button TextArea {
+    width: 80%;
+    margin-right: 1;
+}
+
+.ai-generate-button {
+    width: 18%;
+    height: 3;
+    margin-top: 0;
+}
+
+/* Image Upload Controls */
+.image-upload-controls {
+    layout: horizontal;
+    height: 3;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.image-upload-button {
+    width: 45%;
+    height: 3;
+    margin-right: 1;
+}
+
+.image-clear-button {
+    width: 45%;
+    height: 3;
+}
+
+.image-status-display {
+    margin-bottom: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+.ai-generate-all-button {
+    width: 100%;
+    height: 3;
+    margin-bottom: 1;
+    margin-top: 1;
+}
+
+#ccp-dictionary-view {
+    display: none; /* Initially hidden by CSS */
+}
+
+#ccp-dictionary-editor-view {
+    display: none; /* Initially hidden by CSS */
+    layout: vertical; /* Important for stacking content */
+    width: 100%;
+    height: 100%; /* Fill the parent container */
+    padding-bottom: 1; /* Space at bottom for buttons */
+}
+
+/* Dictionary entries list */
+#ccp-editor-dict-entries-list {
+    height: 10; /* Fixed height to prevent it from expanding too much */
+    margin-bottom: 1;
+}
+
+/* Dictionary entry controls styling */
+.ccp-dict-entry-controls {
+    margin-top: 1;
+    margin-bottom: 1;
+    height: auto;
+    width: 100%;
+}
+
+.ccp-dict-entry-controls Button {
+    width: 1fr; /* Equal width buttons */
+    margin: 0 1 0 0; /* Right margin except last */
+    height: 3; /* Standard button height */
+}
+
+.ccp-dict-entry-controls Button:last-child {
+    margin-right: 0;
+}
+
+/* Dictionary entry value textarea */
+#ccp-dict-entry-value-textarea {
+    height: 5; /* Make the textarea visible and editable */
+    min-height: 5;
+}
+
+/* --- End of Conversations, Characters & Prompts Window specific layouts --- */

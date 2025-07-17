@@ -21,6 +21,7 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, SchemaError as ChaChaSchemaError, ConflictError as ChaChaConflictError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError as MediaDBError, SchemaError as MediaSchemaError, ConflictError as MediaConflictError
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase, DatabaseError as PromptsDBError, SchemaError as PromptsSchemaError, ConflictError as PromptsConflictError
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 #
 #######################################################################################################################
 #
@@ -35,6 +36,10 @@ CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"
 
 # --- Path to the CLI's configuration file ---
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tldw_cli" / "config.toml"
+
+# --- Encryption support ---
+_ENCRYPTION_PASSWORD = None  # Cached password for the session
+_ENCRYPTION_MODULE = None    # Lazily loaded encryption module
 
 # --- Chunking Settings (Default, can be overridden by TOML) ---
 global_default_chunk_language = "en"
@@ -123,6 +128,129 @@ DEFAULT_RAG_SEARCH_CONFIG = {
     }
 }
 
+DEFAULT_MEDIA_INGESTION_CONFIG = {
+    "pdf": {
+        "chunk_method": "semantic",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": "",
+        # OCR settings
+        "enable_ocr": False,  # Default to disabled for performance
+        "ocr_language": "en",  # Default OCR language
+        "ocr_backend": "docling",  # Default OCR backend
+        "ocr_confidence_threshold": 0.8  # Minimum confidence score
+    },
+    "ebook": {
+        "chunk_method": "ebook_chapters",
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    },
+    "document": {
+        "chunk_method": "sentences",
+        "chunk_size": 1500,
+        "chunk_overlap": 100,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": "",
+        # OCR settings
+        "enable_ocr": False,  # Default to disabled for performance
+        "ocr_language": "en",  # Default OCR language
+        "ocr_backend": "docling",  # Default OCR backend
+        "ocr_confidence_threshold": 0.8  # Minimum confidence score
+    },
+    "plaintext": {
+        "chunk_method": "paragraphs",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    },
+    "web_article": {
+        "chunk_method": "paragraphs",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    },
+    "audio": {
+        "chunk_method": "sentences",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": "",
+        "transcription_model": "base",
+        "transcription_language": "en",
+        "vad_filter": False,
+        "diarize": False
+    },
+    "video": {
+        "chunk_method": "sentences",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": "",
+        "transcription_model": "base",
+        "transcription_language": "en",
+        "vad_filter": False,
+        "diarize": False,
+        "extract_audio_only": True
+    },
+    "image": {
+        "chunk_method": "visual_blocks",
+        "chunk_size": 1000,
+        "chunk_overlap": 100,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": "",
+        # OCR settings
+        "enable_ocr": True,  # Default to enabled for images
+        "ocr_backend": "auto",  # Auto-select best available backend
+        "ocr_language": "en",
+        "ocr_confidence_threshold": 0.8,
+        # Visual processing settings
+        "extract_visual_features": True,
+        "visual_feature_model": "basic",
+        "image_preprocessing": True,
+        "max_image_size": 4096  # Max dimension in pixels
+    }
+}
+
+# OCR Backend Configurations
+DEFAULT_OCR_BACKEND_CONFIG = {
+    "docext": {
+        "mode": "api",  # "api", "model", or "openai"
+        "api_url": "http://localhost:7860",
+        "model_name": "nanonets/Nanonets-OCR-s",
+        "username": "admin",
+        "password": "admin",
+        "max_new_tokens": 4096,
+        # For OpenAI mode
+        "openai_base_url": "http://localhost:8000/v1",
+        "openai_api_key": "123"
+    },
+    "tesseract": {
+        "config": "",  # Additional tesseract config options
+        "lang": "eng"  # Default language
+    },
+    "easyocr": {
+        "use_gpu": True,
+        "languages": ["en"]
+    },
+    "paddleocr": {
+        "use_gpu": True,
+        "lang": "en"
+    }
+}
+
 def load_openai_mappings() -> Dict:
     current_file_path = Path(__file__).resolve()
     api_component_root = current_file_path.parent.parent.parent
@@ -172,6 +300,116 @@ def deep_merge_dicts(base: Dict, update: Dict) -> Dict:
     return merged
 
 
+def get_encryption_module():
+    """Lazily load and return the encryption module."""
+    global _ENCRYPTION_MODULE
+    if _ENCRYPTION_MODULE is None:
+        from tldw_chatbook.Utils.config_encryption import config_encryption
+        _ENCRYPTION_MODULE = config_encryption
+    return _ENCRYPTION_MODULE
+
+
+def set_encryption_password(password: str):
+    """Set the encryption password for the current session."""
+    global _ENCRYPTION_PASSWORD
+    _ENCRYPTION_PASSWORD = password
+    logger.info("Encryption password set for current session")
+
+
+def get_encryption_password() -> Optional[str]:
+    """Get the encryption password for the current session."""
+    return _ENCRYPTION_PASSWORD
+
+
+def clear_encryption_password():
+    """Clear the encryption password from memory."""
+    global _ENCRYPTION_PASSWORD
+    _ENCRYPTION_PASSWORD = None
+    logger.info("Encryption password cleared from memory")
+
+
+def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Decrypt encrypted values in the config if encryption is enabled.
+    
+    Args:
+        config_data: The config dictionary potentially containing encrypted values
+        
+    Returns:
+        Config dictionary with decrypted values
+    """
+    # Check if encryption is enabled
+    encryption_config = config_data.get("encryption", {})
+    if not encryption_config.get("enabled", False):
+        return config_data
+    
+    password = get_encryption_password()
+    if not password:
+        logger.warning("Encryption is enabled but no password is set. Cannot decrypt config.")
+        return config_data
+    
+    salt_b64 = encryption_config.get("salt")
+    if not salt_b64:
+        logger.error("Encryption is enabled but no salt found in config.")
+        return config_data
+    
+    try:
+        import base64
+        salt = base64.b64decode(salt_b64)
+        enc_module = get_encryption_module()
+        
+        # Decrypt api_settings sections
+        decrypted_config = copy.deepcopy(config_data)
+        for section_name, section_value in config_data.items():
+            if section_name.startswith('api_settings.') and isinstance(section_value, dict):
+                decrypted_section = enc_module.decrypt_config_section(section_value, password, salt)
+                decrypted_config[section_name] = decrypted_section
+        
+        return decrypted_config
+    except Exception as e:
+        logger.error(f"Failed to decrypt config: {e}")
+        return config_data
+
+
+def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Dict[str, Any]:
+    """
+    Encrypt API keys in the config data.
+    
+    Args:
+        config_data: The config dictionary
+        password: The password to use for encryption
+        
+    Returns:
+        Config dictionary with encrypted API keys
+    """
+    enc_module = get_encryption_module()
+    encrypted_config = copy.deepcopy(config_data)
+    
+    # Generate salt if not present
+    encryption_config = encrypted_config.get("encryption", {})
+    if not encryption_config.get("salt"):
+        salt = enc_module.generate_salt()
+        import base64
+        encryption_config["salt"] = base64.b64encode(salt).decode('utf-8')
+    else:
+        import base64
+        salt = base64.b64decode(encryption_config["salt"])
+    
+    # Set encryption metadata
+    encryption_config["enabled"] = True
+    encryption_config["method"] = "AES-256-CBC"
+    encryption_config["password_hash"] = enc_module.hash_password(password)
+    encrypted_config["encryption"] = encryption_config
+    
+    # Encrypt api_settings sections
+    for section_name, section_value in config_data.items():
+        if section_name.startswith('api_settings.') and isinstance(section_value, dict):
+            encrypted_section, _ = enc_module.encrypt_config_section(section_value, password, salt)
+            encrypted_config[section_name] = encrypted_section
+    
+    return encrypted_config
+
+
 def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type = str) -> Any:
     """Helper to get value from dict and cast to type, with logging for type errors."""
     value = data_dict.get(key, default)
@@ -193,12 +431,34 @@ def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type 
         logger.warning(f"Config key '{key}' has value '{value}' which could not be converted to {target_type}. Using default: '{default}'. Error: {e}")
         return default
 
-def load_settings() -> Dict:
+# Global cache for load_settings to avoid redundant file I/O
+_SETTINGS_CACHE: Optional[Dict[str, Any]] = None
+_SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
+
+def load_settings(force_reload: bool = False) -> Dict:
     """
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.
     It first loads a base config (e.g., server-local), then attempts to load a user-specific
     CLI config which can override or extend the base settings.
+    
+    Args:
+        force_reload: If True, bypasses the cache and reloads from disk.
+    
+    Returns:
+        Dictionary containing all configuration settings.
     """
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_LOCK
+    
+    # Initialize lock on first use to avoid import issues
+    if _SETTINGS_CACHE_LOCK is None:
+        import threading
+        _SETTINGS_CACHE_LOCK = threading.Lock()
+    
+    # Thread-safe cache check
+    with _SETTINGS_CACHE_LOCK:
+        if _SETTINGS_CACHE is not None and not force_reload:
+            logger.debug("load_settings: Returning cached configuration (cache hit)")
+            return _SETTINGS_CACHE
 
     current_file_path = Path(__file__).resolve()
     # config.py is in project_root/tldw_server_api/app/core/config.py
@@ -250,6 +510,7 @@ def load_settings() -> Dict:
     toml_config_data = deep_merge_dicts(toml_config_data, base_config_data) # Merge primary config
     toml_config_data = deep_merge_dicts(toml_config_data, user_override_config_data) # Merge user CLI overrides
     logger.info("Merged all configurations: CLI Defaults < Primary Config < User CLI Config.")
+    logger.debug("load_settings: Configuration loaded from disk (cache miss or forced reload)")
     # logger.debug(f"Final toml_config_data after potential merge: {toml_config_data}") # Optional: for verbose debugging
 
     # --- Extract settings from the (potentially merged) TOML, with fallbacks ---
@@ -274,6 +535,7 @@ def load_settings() -> Dict:
     search_engines_section = get_toml_section('SearchEngines')
     search_settings_section = get_toml_section('SearchSettings')
     web_scraper_section = get_toml_section('WebScraper')
+    confluence_section = get_toml_section('Confluence')
     file_validation_section = get_toml_section('FileValidation')
     providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
 
@@ -284,6 +546,7 @@ def load_settings() -> Dict:
     final_database_settings_cli = get_toml_section('database')
     final_chat_defaults_cli = get_toml_section('chat_defaults')
     final_character_defaults_cli = get_toml_section('character_defaults')
+    final_notes_settings_cli = get_toml_section('notes')
 
     # --- Application Mode ---
     single_user_mode_str = os.getenv("APP_MODE", _get_typed_value(processing_section, "app_mode", "single")).lower()
@@ -331,6 +594,21 @@ def load_settings() -> Dict:
     google_api_key = get_api_key('google_api_key', 'GOOGLE_API_KEY')
     elevenlabs_api_key = get_api_key('elevenlabs_api_key', 'ELEVENLABS_API_KEY')
 
+    # Determine platform-specific default STT provider
+    default_stt_provider = 'faster_whisper'
+    if sys.platform == 'darwin':
+        # Check if macOS-specific providers are available
+        try:
+            import parakeet_mlx
+            default_stt_provider = 'parakeet-mlx'
+            logger.debug("Detected parakeet-mlx available on macOS, setting as default STT provider")
+        except ImportError:
+            try:
+                from lightning_whisper_mlx import LightningWhisperMLX
+                default_stt_provider = 'lightning-whisper-mlx'
+                logger.debug("Detected lightning-whisper-mlx available on macOS, setting as default STT provider")
+            except ImportError:
+                logger.debug("No macOS-specific STT providers found, using faster-whisper as default")
 
     config_dict = {
         # General App
@@ -349,6 +627,7 @@ def load_settings() -> Dict:
         "providers": final_providers_settings,  # For UI dropdowns
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
+        "notes": final_notes_settings_cli,  # For notes auto-save settings
 
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
@@ -608,7 +887,8 @@ def load_settings() -> Dict:
             'chat_dict_RAG_prompts': _get_typed_value(chat_dicts_section, 'chat_dictionary_RAG_prompts', ''),
             'chat_dict_replacement_strategy': _get_typed_value(chat_dicts_section, 'chat_dictionary_replacement_strategy', 'character_lore_first'),
             'chat_dict_max_tokens': _get_typed_value(chat_dicts_section, 'chat_dictionary_max_tokens', 1000, int),
-            'default_rag_prompt': _get_typed_value(chat_dicts_section, 'default_rag_prompt', '')
+            'default_rag_prompt': _get_typed_value(chat_dicts_section, 'default_rag_prompt', ''),
+            'chat_dicts_folder': ''  # Will be set dynamically below
         },
         "chunking_config": {
             # Global defaults
@@ -696,7 +976,7 @@ def load_settings() -> Dict:
             'save_rag_chats': _get_typed_value(auto_save_section, 'save_rag_chats', False, bool),
         },
         "STT_settings": { # Corrected key from STT-Settings
-            'default_stt_provider': _get_typed_value(stt_settings_section, 'default_stt_provider', 'faster_whisper'),
+            'default_stt_provider': _get_typed_value(stt_settings_section, 'default_stt_provider', default_stt_provider),
         },
         "tts_settings": {
             'default_tts_provider': _get_typed_value(tts_settings_section, 'default_tts_provider', 'openai'),
@@ -803,6 +1083,21 @@ def load_settings() -> Dict:
             'web_scraper_api_url': _get_typed_value(web_scraper_section, 'web_scraper_api_url', ''),
             # ... (all web scraper settings)
         },
+        "confluence": {
+            'base_url': _get_typed_value(confluence_section, 'base_url', os.getenv('CONFLUENCE_BASE_URL', '')),
+            'auth_method': _get_typed_value(confluence_section, 'auth_method', os.getenv('CONFLUENCE_AUTH_METHOD', 'api_token')),
+            'username': _get_typed_value(confluence_section, 'username', os.getenv('CONFLUENCE_USERNAME', '')),
+            'api_token': _get_typed_value(confluence_section, 'api_token', os.getenv('CONFLUENCE_API_TOKEN', '')),
+            'oauth_token': _get_typed_value(confluence_section, 'oauth_token', os.getenv('CONFLUENCE_OAUTH_TOKEN', '')),
+            'password': _get_typed_value(confluence_section, 'password', os.getenv('CONFLUENCE_PASSWORD', '')),
+            'browser': _get_typed_value(confluence_section, 'browser', 'all'),
+            'space_keys': _get_typed_value(confluence_section, 'space_keys', [], list),
+            'max_pages_per_space': _get_typed_value(confluence_section, 'max_pages_per_space', 100, int),
+            'max_crawl_depth': _get_typed_value(confluence_section, 'max_crawl_depth', 5, int),
+            'include_attachments': _get_typed_value(confluence_section, 'include_attachments', False, bool),
+            'follow_links': _get_typed_value(confluence_section, 'follow_links', False, bool),
+            'rate_limit_delay': _get_typed_value(confluence_section, 'rate_limit_delay', 0.5, float),
+        },
 
         # Configurations from hardcoded dicts (now from TOML or fallback to Python dicts)
         "APP_TTS_CONFIG": {**DEFAULT_APP_TTS_CONFIG, **app_tts_config},
@@ -867,6 +1162,24 @@ def load_settings() -> Dict:
             user_data_base_dir_server.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             logger.error(f"Could not create server user data base directory {user_data_base_dir_server}: {e}")
+    
+    # Set the chat dictionaries folder path dynamically
+    from .Utils.paths import get_user_data_dir
+    chat_dicts_folder = get_user_data_dir() / "chat_dicts"
+    config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
+    
+    # Create the chat dictionaries folder if it doesn't exist
+    try:
+        chat_dicts_folder.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Ensured chat dictionaries folder exists: {chat_dicts_folder}")
+    except Exception as e:
+        logger.error(f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}")
+    
+    # Cache the configuration before returning
+    with _SETTINGS_CACHE_LOCK:
+        _SETTINGS_CACHE = config_dict
+        logger.debug("load_settings: Configuration cached for future use")
+    
     return config_dict
 
 # --- Define API Models (Combined Cloud & Local) ---
@@ -917,7 +1230,7 @@ LOCAL_PROVIDERS = {
 
 # --- Configuration File Content (for reference or auto-creation for the CLI) ---
 CONFIG_TOML_CONTENT = """
-# Configuration for tldw-cli TUI App
+# Configuration for tldw-chatbook TUI App
 # Located at: ~/.config/tldw_cli/config.toml
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
@@ -930,6 +1243,39 @@ users_name = "default_user" # Default user name for the TUI
 base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 # Default auth token can be stored here, or leave empty if user must always provide
 auth_token = "default-secret-key-for-single-user"
+
+[splash_screen]
+# Splash screen configuration for startup animations
+enabled = true  # Enable/disable splash screen
+duration = 1.5  # Duration in seconds to display splash screen
+skip_on_keypress = true  # Allow users to skip with any keypress
+
+# Card selection mode:
+# - "random": Randomly selects from active_cards list (default)
+# - "sequential": Cycles through active_cards in order (not yet implemented)
+# - "<card_name>": Always use a specific card (e.g., "matrix", "glitch", etc.)
+card_selection = "random"
+
+show_progress = true  # Show initialization progress bar
+
+# All available splash cards are enabled by default for variety
+# To customize: Remove cards you don't want, or replace the entire list with your preferred cards
+# Static cards: default, classic, compact, minimal, blueprint
+# Animated cards: matrix, glitch, retro, tech_pulse, code_scroll, minimal_fade, arcade_high_score,
+#                digital_rain, loading_bar, starfield, terminal_boot, glitch_reveal, ascii_morph,
+#                game_of_life, scrolling_credits, spotlight_reveal, sound_bars
+active_cards = [
+    "default", "matrix", "glitch", "retro", "classic", "compact", "minimal",
+    "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
+    "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal",
+    "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars"
+]
+
+[splash_screen.effects]
+# Animation effect settings
+fade_in_duration = 0.3  # Fade in time in seconds
+fade_out_duration = 0.2  # Fade out time in seconds
+animation_speed = 1.0  # Animation playback speed multiplier
 
 [logging]
 # Log file will be placed in the same directory as the chachanotes_db_path below.
@@ -946,6 +1292,19 @@ prompts_db_path = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
 # Path to the Media V2 database.
 media_db_path = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
 USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
+
+# Database integrity checking
+check_integrity_on_startup = false  # Enable/disable automatic integrity checks on startup
+integrity_check_timeout = 30  # Maximum seconds to wait for integrity check
+
+[media_cleanup]
+# Media cleanup settings for automatic hard deletion of soft-deleted items
+enabled = true  # Enable/disable automatic cleanup
+cleanup_days = 30  # Number of days after soft deletion before hard deletion
+cleanup_interval_hours = 24  # How often to run cleanup (in hours)
+cleanup_on_startup = true  # Run cleanup check on application startup
+max_items_per_cleanup = 100  # Maximum items to delete in one cleanup run
+notify_before_cleanup = true  # Show notification before performing cleanup
 
 [api_endpoints]
 # Optional: Specify URLs for local/custom endpoints if they differ from library defaults
@@ -975,6 +1334,7 @@ Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatil
 Google = ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
 HuggingFace = ["meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
+Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
 # Local Providers
 Llama_cpp = ["None"]
@@ -1000,7 +1360,7 @@ local_mlx_lm = ["None"]
     # --- Cloud Providers ---
     [api_settings.openai]
     api_key_env_var = "OPENAI_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "gpt-4o" # Default model for direct calls (if not overridden)
     temperature = 0.7
     top_p = 1.0 # OpenAI uses top_p (represented as maxp sometimes in UI)
@@ -1012,7 +1372,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.anthropic]
     api_key_env_var = "ANTHROPIC_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "claude-3-haiku-20240307"
     temperature = 0.7
     top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)
@@ -1025,7 +1385,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.cohere]
     api_key_env_var = "COHERE_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "command-r-plus"
     temperature = 0.3
     top_p = 0.75 # Cohere uses 'p' (represented as topp in UI)
@@ -1038,7 +1398,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.deepseek]
     api_key_env_var = "DEEPSEEK_API_KEY"
-    api_key = "<KEY_GOES_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "deepseek-chat"
     temperature = 0.7
     top_p = 1.0 # Deepseek uses top_p (represented as topp in UI)
@@ -1050,7 +1410,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.groq]
     api_key_env_var = "GROQ_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "llama3-70b-8192"
     temperature = 0.7
     top_p = 1.0 # Groq uses top_p (represented as maxp in UI)
@@ -1075,7 +1435,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.huggingface]
     api_key_env_var = "HUGGINGFACE_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
     temperature = 0.7
     top_p = 1.0 # HF Inference API uses top_p
@@ -1088,7 +1448,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.mistralai] # Matches key in [providers]
     api_key_env_var = "MISTRAL_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "mistral-large-latest"
     temperature = 0.7
     top_p = 1.0 # Mistral uses top_p (represented as topp in UI)
@@ -1100,7 +1460,7 @@ local_mlx_lm = ["None"]
 
     [api_settings.openrouter]
     api_key_env_var = "OPENROUTER_API_KEY"
-    api_key = "<API_KEY_HERE>" # Less secure fallback - use env var instead
+    # api_key = "" # Less secure fallback - use env var instead
     model = "meta-llama/Llama-3.1-8B-Instruct"
     temperature = 0.7
     top_p = 1.0 # OpenRouter uses top_p
@@ -1110,6 +1470,20 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 3
     retry_delay = 5
+    streaming = false
+
+    [api_settings.moonshot]
+    api_key_env_var = "MOONSHOT_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    model = "kimi-latest"  # Latest Kimi model, or use moonshot-v1-auto for auto selection
+    temperature = 0.7
+    top_p = 0.95 # Moonshot uses top_p (OpenAI compatible)
+    max_tokens = 4096
+    api_region = "international" # "international" or "china"
+    api_base_url = "https://api.moonshot.ai/v1" # Default for international; use https://api.moonshot.cn/v1 for China
+    timeout = 90
+    retries = 3
+    retry_delay = 1.0
     streaming = false
 
     # --- Local Providers ---
@@ -1367,14 +1741,34 @@ local_mlx_lm = ["None"]
 
 [chat_defaults]
 # Default settings specifically for the 'Chat' tab
-provider = "DeepSeek"
-model = "deepseek-chat"
+provider = "OpenAI"
+model = "gpt-4o"
 system_prompt = "You are a helpful AI assistant."
 temperature = 0.6
 top_p = 0.95
 min_p = 0.05
 top_k = 50
 strip_thinking_tags = true
+use_enhanced_window = false  # Enable enhanced chat window with image support
+enable_tabs = false  # Enable tabbed chat interface (experimental)
+max_tabs = 10  # Maximum number of chat tabs allowed
+
+# Image support settings (when use_enhanced_window = true)
+[chat.images]
+enabled = true
+show_attach_button = true  # Show/hide the attach file button in chat
+default_render_mode = "auto"  # auto, pixels, regular
+max_size_mb = 10.0
+auto_resize = true
+resize_max_dimension = 2048
+save_location = "~/Downloads"
+supported_formats = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
+
+[chat.images.terminal_overrides]
+kitty = "regular"
+wezterm = "regular"
+iterm2 = "regular"
+default = "pixels"
 
 [character_defaults]
 # Default settings specifically for the 'Character' tab
@@ -1385,6 +1779,19 @@ temperature = 0.8
 top_p = 0.9
 min_p = 0.0 # Check if API supports this
 top_k = 100 # Check if API supports this
+
+[notes]
+# Default settings for the Notes tab
+sync_directory = "~/Documents/Notes"  # Default directory for notes synchronization
+auto_sync_enabled = false            # Enable automatic sync on startup
+sync_on_close = false               # Sync when closing the app
+conflict_resolution = "newer_wins"   # Default conflict resolution: newer_wins, ask, disk_wins, db_wins
+sync_direction = "bidirectional"     # Default sync direction: bidirectional, disk_to_db, db_to_disk
+
+# Auto-save settings
+auto_save_enabled = true             # Enable auto-save feature
+auto_save_delay_ms = 3000           # Delay in milliseconds before auto-saving (3 seconds)
+auto_save_on_every_key = false      # If true, saves on every keystroke; if false, uses delay
 
 
 # ==========================================================
@@ -1397,6 +1804,21 @@ search_result_relevance_eval_prompt = "Evaluate the relevance of the following s
 analyze_search_results_prompt = "Analyze the provided search results and synthesize a comprehensive answer to the original query."
 situate_chunk_context_prompt = "You are an AI assistant. Please follow the instructions provided in the input text carefully and accurately."
 
+[prompts.document_generation.timeline]
+prompt = "Create a detailed text-based timeline based on our conversation/materials being referenced. Include key dates, events, and their relationships in chronological order."
+temperature = 0.3
+max_tokens = 2000
+
+[prompts.document_generation.study_guide]
+prompt = "Create a detailed and well produced study guide based on the current focus of our conversation/materials in reference. Include key concepts, definitions, learning objectives, and potential exam questions."
+temperature = 0.5
+max_tokens = 3000
+
+[prompts.document_generation.briefing]
+prompt = "Create a detailed and well produced executive briefing document regarding this conversation and the subject material. Include key points, actionable insights, strategic implications, and recommendations."
+temperature = 0.4
+max_tokens = 2500
+
 
 # ==========================================================
 # Embedding Configuration
@@ -1404,6 +1826,9 @@ situate_chunk_context_prompt = "You are an AI assistant. Please follow the instr
 [embedding_config]
 default_model_id = "e5-small-v2"
 default_llm_for_contextualization = "gpt-3.5-turbo"
+model_cache_dir = "~/.local/share/tldw_cli/models/embeddings"
+auto_download = true
+cache_size_limit_gb = 10.0
 
     # --- HuggingFace Models ---
     [embedding_config.models.e5-small-v2]
@@ -1417,6 +1842,55 @@ default_llm_for_contextualization = "gpt-3.5-turbo"
     provider = "huggingface"
     model_name_or_path = "intfloat/multilingual-e5-large-instruct"
     dimension = 1024
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.e5-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-base-v2"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.e5-large-v2]
+    provider = "huggingface"
+    model_name_or_path = "intfloat/e5-large-v2"
+    dimension = 1024
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.all-MiniLM-L6-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-MiniLM-L6-v2"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 256
+
+    [embedding_config.models.all-mpnet-base-v2]
+    provider = "huggingface"
+    model_name_or_path = "sentence-transformers/all-mpnet-base-v2"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 384
+
+    [embedding_config.models.bge-small-en-v1.5]
+    provider = "huggingface"
+    model_name_or_path = "BAAI/bge-small-en-v1.5"
+    dimension = 384
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.bge-base-en-v1.5]
+    provider = "huggingface"
+    model_name_or_path = "BAAI/bge-base-en-v1.5"
+    dimension = 768
+    trust_remote_code = false
+    max_length = 512
+
+    [embedding_config.models.gte-small]
+    provider = "huggingface"
+    model_name_or_path = "thenlper/gte-small"
+    dimension = 384
     trust_remote_code = false
     max_length = 512
 
@@ -1541,6 +2015,70 @@ llm_context_document_limit = 10
 chat_context_limit = 10
 
 
+# --- Model Capabilities Configuration ---
+[model_capabilities]
+# This section defines which models have specific capabilities like vision support.
+# Users can override or extend these patterns in their config file.
+
+# Direct model-to-capability mappings (highest priority)
+[model_capabilities.models]
+# OpenAI models
+"gpt-4-vision-preview" = { vision = true, max_images = 1 }
+"gpt-4-turbo" = { vision = true, max_images = 10 }
+"gpt-4-turbo-2024-04-09" = { vision = true, max_images = 10 }
+"gpt-4o" = { vision = true, max_images = 10 }
+"gpt-4o-mini" = { vision = true, max_images = 10 }
+
+# Anthropic models
+"claude-3-opus-20240229" = { vision = true, max_images = 5 }
+"claude-3-sonnet-20240229" = { vision = true, max_images = 5 }
+"claude-3-haiku-20240307" = { vision = true, max_images = 5 }
+"claude-3-5-sonnet-20240620" = { vision = true, max_images = 5 }
+"claude-3-5-sonnet-20241022" = { vision = true, max_images = 5 }
+
+# Google models
+"gemini-pro-vision" = { vision = true, max_images = 1 }
+"gemini-1.5-pro" = { vision = true, max_images = 10 }
+"gemini-1.5-flash" = { vision = true, max_images = 10 }
+"gemini-2.0-flash" = { vision = true, max_images = 10 }
+
+# Pattern-based matching for model families (fallback if not in direct mappings)
+[model_capabilities.patterns]
+# OpenAI patterns
+OpenAI = [
+    { pattern = "^gpt-4.*vision", vision = true },
+    { pattern = "^gpt-4[o0](?:-mini)?", vision = true },  # gpt-4o, gpt-40, gpt-4o-mini
+    { pattern = "^gpt-4.*turbo", vision = true }
+]
+
+# Anthropic patterns
+Anthropic = [
+    { pattern = "^claude-3", vision = true },             # All Claude 3 models have vision
+    { pattern = "^claude.*opus-4", vision = true },      # Claude Opus 4 series
+    { pattern = "^claude.*sonnet-4", vision = true }     # Claude Sonnet 4 series
+]
+
+# Google patterns
+Google = [
+    { pattern = "gemini.*vision", vision = true },
+    { pattern = "gemini-[0-9.]+-(pro|flash)", vision = true },  # Modern Gemini models
+    { pattern = "gemini-2\\\\.", vision = true }                 # Gemini 2.x series
+]
+
+# OpenRouter patterns (uses provider/model format)
+OpenRouter = [
+    { pattern = "openai/gpt-4.*vision", vision = true },
+    { pattern = "openai/gpt-4[o0]", vision = true },
+    { pattern = "anthropic/claude-3", vision = true },
+    { pattern = "google/gemini.*vision", vision = true },
+    { pattern = "google/gemini-[0-9.]+-(pro|flash)", vision = true }
+]
+
+# Default behavior for unknown models
+[model_capabilities.defaults]
+unknown_models_vision = false  # Whether to assume unknown models have vision capabilities
+log_unknown_models = true      # Whether to log when an unknown model is queried
+
 # --- Sections below are placeholders based on config.txt, integrate as needed ---
 # [tts_settings]
 # default_provider = "kokoro"
@@ -1549,6 +2087,129 @@ chat_context_limit = 10
 # [search_settings]
 # default_provider = "google"
 # ...
+
+# ============================================================================
+# Media Processing Configuration
+# ============================================================================
+
+[media_processing]
+# Maximum file sizes for processing
+max_audio_file_size_mb = 500
+max_video_file_size_mb = 2000
+
+# FFmpeg path (optional - will try to find automatically if not set)
+# ffmpeg_path = "/usr/bin/ffmpeg"
+
+# Temporary file cleanup
+cleanup_temp_files = true
+temp_dir = ""  # Empty means use system temp
+
+[transcription]
+# Default transcription provider
+# Options: "faster-whisper", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx"
+# Note: On macOS, defaults to parakeet-mlx or lightning-whisper-mlx if available
+default_provider = "faster-whisper"
+
+# Default model for transcription
+# For faster-whisper: large-v1, large-v2, large-v3, large, distil-large-v2, distil-large-v3,
+#                     distil-medium.en, distil-small.en, deepdml/faster-distil-whisper-large-v3.5,
+#                     deepdml/faster-whisper-large-v3-turbo-ct2, nyrahealth/faster_CrisperWhisper
+#   Note: faster-whisper supports translation to English for non-English audio
+# For qwen2audio: Qwen2-Audio-7B-Instruct
+# For parakeet: nvidia/parakeet-tdt-1.1b, nvidia/parakeet-rnnt-1.1b, nvidia/parakeet-ctc-1.1b,
+#               nvidia/parakeet-tdt-0.6b, nvidia/parakeet-rnnt-0.6b, nvidia/parakeet-ctc-0.6b,
+#               nvidia/parakeet-tdt-0.6b-v2
+# For canary: nvidia/canary-1b-flash, nvidia/canary-1b
+#   Note: Canary supports multilingual ASR and translation between en, de, es, fr
+default_model = "distil-large-v3"
+
+# Default language for transcription (use "auto" for automatic detection)
+# For source language in transcription
+default_language = "en"
+
+# Default source language (overrides default_language if specified)
+# Used for explicitly setting the audio's language
+default_source_language = ""
+
+# Default target language for translation (leave empty for no translation)
+# Supported by:
+#   - faster-whisper: Only supports translation to English ("en")
+#   - canary: Supports translation between en, de, es, fr
+default_target_language = ""
+
+# Device to use for transcription
+# Options: "cpu", "cuda", "mps" (Apple Silicon)
+device = "cpu"
+
+# Compute type for faster-whisper
+# Options: "int8", "float16", "float32"
+compute_type = "int8"
+
+# Voice Activity Detection
+use_vad_by_default = false
+
+# Speaker diarization (not yet fully implemented)
+use_diarization_by_default = false
+
+# Chunk length for long audio processing (in seconds)
+# Used by Canary model for efficient processing of long audio files
+chunk_length_seconds = 40.0
+
+[local_ingestion]
+# YouTube/URL download settings
+enable_url_downloads = true
+use_cookies_for_downloads = false
+cookie_file_path = ""
+
+# Audio extraction settings for videos
+extract_audio_format = "mp3"
+audio_bitrate = "192k"
+audio_sample_rate = 44100
+
+# Processing defaults
+keep_original_files = false
+auto_analyze_transcripts = true
+
+# Parallel processing
+max_concurrent_processes = 2
+
+[mcp]
+# Model Context Protocol (MCP) settings
+enabled = false  # Enable MCP server functionality
+server_name = "tldw_chatbook"
+server_version = "0.1.0"
+transport = "stdio"  # "stdio" for Claude Desktop, "http" for web-based clients
+http_port = 3000  # Port for HTTP transport
+allowed_clients = ["claude-desktop", "localhost"]  # List of allowed client identifiers
+
+# Feature toggles
+expose_tools = true  # Expose tools (chat, search, etc.)
+expose_resources = true  # Expose resources (conversations, notes, etc.)
+expose_prompts = true  # Expose prompt templates
+
+# Security settings
+require_auth = false  # Require authentication (not implemented yet)
+rate_limit = 100  # Max requests per minute per client
+max_concurrent_requests = 10  # Max concurrent requests
+
+# Tool-specific settings
+[mcp.tools]
+chat_default_provider = "openai"
+chat_default_temperature = 0.7
+chat_default_max_tokens = 4096
+search_default_limit = 10
+enable_media_ingestion = true  # Allow media ingestion via MCP
+
+# Resource-specific settings
+[mcp.resources]
+max_list_limit = 100  # Maximum items to return in list operations
+default_list_limit = 10  # Default items to return in list operations
+enable_binary_resources = false  # Allow serving binary resources (images, etc.)
+
+# Prompt-specific settings
+[mcp.prompts]
+enable_custom_prompts = true  # Allow custom prompt creation
+max_prompt_length = 10000  # Maximum prompt length in characters
 """
 
 try:
@@ -1591,9 +2252,28 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
             with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
                 f.write(CONFIG_TOML_CONTENT) # Write the raw TOML string
             logger.info(f"Created default CLI config file at {DEFAULT_CONFIG_PATH}")
+            # Set a flag to notify the user on first run
+            loaded_config["_first_run"] = True
             # loaded_config is already correct as it's from DEFAULT_CONFIG_FROM_TOML
+        except PermissionError as e:
+            # Try alternative location in user's home directory
+            logger.warning(f"Permission denied creating config at {DEFAULT_CONFIG_PATH}: {e}")
+            alt_config_path = Path.home() / ".tldw_cli_config.toml"
+            logger.info(f"Attempting to create config at alternative location: {alt_config_path}")
+            try:
+                with open(alt_config_path, "w", encoding="utf-8") as f:
+                    f.write(CONFIG_TOML_CONTENT)
+                logger.warning(f"Created config file at alternative location: {alt_config_path}")
+                logger.warning("Please move this file to the standard location when possible.")
+                # Note: We don't update DEFAULT_CONFIG_PATH here to maintain consistency
+            except Exception as alt_e:
+                logger.error(f"Could not create config file at alternative location either: {alt_e}")
+                logger.error("Application will use internal defaults only.")
         except OSError as e:
             logger.error(f"Could not create default CLI config file {DEFAULT_CONFIG_PATH}: {e}. Using internal defaults.")
+            # Log more helpful information for the user
+            logger.info(f"You may need to manually create the directory: {DEFAULT_CONFIG_PATH.parent}")
+            logger.info("Or check that you have write permissions to this location.")
     else:
         logger.info(f"Attempting to load CLI config from: {DEFAULT_CONFIG_PATH}")
         try:
@@ -1602,6 +2282,9 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
             # Merge user's file settings on top of the programmatic defaults
             loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
             logger.info(f"Successfully loaded and merged CLI config from {DEFAULT_CONFIG_PATH}")
+            
+            # Decrypt config if encryption is enabled
+            loaded_config = decrypt_config_section(loaded_config)
         except tomllib.TOMLDecodeError as e:
             logger.error(f"Error decoding CLI TOML config file {DEFAULT_CONFIG_PATH}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
             # `loaded_config` remains the programmatic defaults in this case.
@@ -1637,7 +2320,7 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
     Returns:
         True if the setting was saved successfully, False otherwise.
     """
-    global _CONFIG_CACHE, settings
+    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     logger.info(f"Attempting to save setting: [{section}].{key} = {repr(value)}")
 
     # Ensure the parent directory for the config file exists.
@@ -1681,16 +2364,44 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
         )
         return False
 
-    # Step 3: Write the updated configuration back to the TOML file.
+    # Step 3: Check if we need to encrypt the value
+    # If we're saving to an api_settings section and encryption is enabled, encrypt the value
+    encryption_config = config_data.get("encryption", {})
+    if (encryption_config.get("enabled", False) and 
+        section.startswith("api_settings.") and 
+        key == "api_key" and 
+        isinstance(value, str) and 
+        value and 
+        not value.startswith("enc:")):
+        
+        password = get_encryption_password()
+        if password:
+            try:
+                enc_module = get_encryption_module()
+                salt_b64 = encryption_config.get("salt")
+                if salt_b64:
+                    import base64
+                    salt = base64.b64decode(salt_b64)
+                    encrypted_value, _ = enc_module.encrypt_value(value, password, salt)
+                    current_level[key] = encrypted_value
+                    logger.info(f"Encrypted API key for {section}")
+            except Exception as e:
+                logger.error(f"Failed to encrypt value: {e}")
+                # Continue with unencrypted value
+    
+    # Step 4: Write the updated configuration back to the TOML file.
     try:
         with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
             toml.dump(config_data, f)
         logger.success(f"Successfully saved setting to {DEFAULT_CONFIG_PATH}")
 
         # Step 4: Invalidate and reload global config caches to reflect changes immediately.
+        # Clear both caches
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
         load_cli_config_and_ensure_existence(force_reload=True)
-        settings = load_settings()
-        logger.info("Global configuration caches reloaded.")
+        settings = load_settings(force_reload=True)
+        logger.info("Global configuration caches invalidated and reloaded.")
 
         return True
     except (IOError, toml.TomlDecodeError) as e:
@@ -1699,20 +2410,101 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
 
 
 # --- CLI Setting Getter ---
-def get_cli_setting(section: str, key: str, default: Any = None) -> Any:
-    """Helper to get a specific setting from the loaded CLI configuration."""
+def get_cli_setting(section: str, key: str = None, default: Any = None) -> Any:
+    """Helper to get a specific setting from the loaded CLI configuration.
+    
+    Can be called in two ways:
+    1. get_cli_setting("section", "key", default)  # Traditional format
+    2. get_cli_setting("section.key", default)     # Dotted format
+    """
     config = load_cli_config_and_ensure_existence() # Ensures config is loaded
+    
+    # Handle dotted notation when key is None (called with positional args)
+    if key is None and '.' in section:
+        # Split on first dot only to handle nested keys
+        parts = section.split('.', 1)
+        section = parts[0]
+        key = parts[1]
+    elif key is None:
+        # No dot found and no key provided - invalid call
+        return default
+    
+    # Handle the case where default was passed as second argument in dotted notation
+    # e.g., get_cli_setting("section.key", 500) where 500 is the default
+    if not isinstance(key, str) and default is None:
+        default = key
+        if '.' in section:
+            parts = section.split('.', 1)
+            section = parts[0]
+            key = parts[1]
+        else:
+            return default
+    
     # Use `config.get(section, {})` to safely access potentially missing sections
     section_data = config.get(section)
     if isinstance(section_data, dict):
         return section_data.get(key, default)
     # If section is not a dict or not found, return default
-    if default is not None:
-        return default
-    # If no default and key/section not found, standard dict behavior would raise KeyError
-    # or return None if that's preferred for missing keys without defaults.
-    # For simplicity, returning None if not found and no default.
-    return None
+    return default
+
+
+def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
+    """
+    Get default chunking settings for a specific media type.
+    
+    Args:
+        media_type: Type of media ('pdf', 'ebook', 'document', 'plaintext', 'web_article')
+        
+    Returns:
+        Dictionary containing chunking configuration for the media type
+    """
+    # First check if user has custom settings in config
+    config = load_cli_config_and_ensure_existence()
+    media_ingestion_config = config.get("media_ingestion", {})
+    
+    # Get media-specific config if it exists
+    if media_type in media_ingestion_config and isinstance(media_ingestion_config[media_type], dict):
+        # Use deep merge to combine with defaults, allowing partial overrides
+        return deep_merge_dicts(
+            DEFAULT_MEDIA_INGESTION_CONFIG.get(media_type, {}),
+            media_ingestion_config[media_type]
+        )
+    
+    # Fall back to hardcoded defaults
+    return DEFAULT_MEDIA_INGESTION_CONFIG.get(media_type, {
+        "chunk_method": "paragraphs",
+        "chunk_size": 500,
+        "chunk_overlap": 200,
+        "use_adaptive_chunking": False,
+        "use_multi_level_chunking": False,
+        "chunk_language": ""
+    })
+
+
+def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
+    """
+    Get configuration for a specific OCR backend.
+    
+    Args:
+        backend_name: Name of the OCR backend (e.g., 'docext', 'tesseract')
+        
+    Returns:
+        Dictionary containing backend configuration
+    """
+    # First check if user has custom settings in config
+    config = load_cli_config_and_ensure_existence()
+    ocr_backend_config = config.get("ocr_backends", {})
+    
+    # Get backend-specific config if it exists
+    if backend_name in ocr_backend_config and isinstance(ocr_backend_config[backend_name], dict):
+        # Use deep merge to combine with defaults, allowing partial overrides
+        return deep_merge_dicts(
+            DEFAULT_OCR_BACKEND_CONFIG.get(backend_name, {}),
+            ocr_backend_config[backend_name]
+        )
+    
+    # Fall back to hardcoded defaults
+    return DEFAULT_OCR_BACKEND_CONFIG.get(backend_name, {})
 
 
 # --- CLI Providers and Models Getter ---
@@ -1731,37 +2523,296 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
     return valid_providers
 
 
+def check_encryption_needed() -> bool:
+    """
+    Check if the config has API keys that should be encrypted.
+    
+    Returns:
+        True if API keys are detected and encryption is not enabled
+    """
+    config = load_cli_config_and_ensure_existence()
+    
+    # Check if encryption is already enabled
+    if config.get("encryption", {}).get("enabled", False):
+        return False
+    
+    # Check for API keys
+    enc_module = get_encryption_module()
+    return enc_module.detect_api_keys(config)
+
+
+def get_detected_api_providers() -> List[str]:
+    """
+    Get list of providers with detected API keys.
+    
+    Returns:
+        List of provider names with API keys
+    """
+    config = load_cli_config_and_ensure_existence()
+    providers = []
+    
+    for section_name, section_value in config.items():
+        if section_name.startswith('api_settings.') and isinstance(section_value, dict):
+            api_key = section_value.get('api_key', '')
+            # Check if API key exists and is not a placeholder
+            if api_key and not api_key.startswith('<') and not api_key.endswith('>'):
+                provider_name = section_name.replace('api_settings.', '')
+                providers.append(provider_name)
+    
+    return providers
+
+
+def enable_config_encryption(password: str) -> bool:
+    """
+    Enable encryption for the config file and encrypt existing API keys.
+    
+    Args:
+        password: The master password to use for encryption
+        
+    Returns:
+        True if encryption was enabled successfully
+    """
+    try:
+        # Load current config
+        config_data = {}
+        if DEFAULT_CONFIG_PATH.exists():
+            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+                config_data = tomllib.load(f)
+        
+        # Encrypt the config
+        encrypted_config = encrypt_api_keys_in_config(config_data, password)
+        
+        # Save the encrypted config
+        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
+            toml.dump(encrypted_config, f)
+        
+        # Set the password for the current session
+        set_encryption_password(password)
+        
+        # Clear and reload caches
+        global _CONFIG_CACHE, _SETTINGS_CACHE
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
+        
+        logger.success("Config encryption enabled successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to enable config encryption: {e}")
+        return False
+
+
+def disable_config_encryption(password: str) -> bool:
+    """
+    Disable encryption for the config file and decrypt all values.
+    
+    Args:
+        password: The master password to verify before disabling
+        
+    Returns:
+        True if encryption was disabled successfully
+    """
+    try:
+        # Load current config
+        config_data = {}
+        if DEFAULT_CONFIG_PATH.exists():
+            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+                config_data = tomllib.load(f)
+        
+        # Verify password
+        encryption_config = config_data.get("encryption", {})
+        if encryption_config.get("enabled", False):
+            enc_module = get_encryption_module()
+            stored_hash = encryption_config.get("password_hash", "")
+            if not enc_module.verify_password(password, stored_hash):
+                logger.error("Invalid password provided")
+                return False
+        
+        # Set password temporarily for decryption
+        set_encryption_password(password)
+        
+        # Decrypt the config
+        decrypted_config = decrypt_config_section(config_data)
+        
+        # Remove encryption metadata
+        if "encryption" in decrypted_config:
+            del decrypted_config["encryption"]
+        
+        # Save the decrypted config
+        config_str = toml.dumps(decrypted_config)
+        atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
+        
+        # Clear password
+        clear_encryption_password()
+        
+        # Clear and reload caches
+        global _CONFIG_CACHE, _SETTINGS_CACHE
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
+        
+        logger.success("Config encryption disabled successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to disable config encryption: {e}")
+        return False
+
+
+def change_encryption_password(old_password: str, new_password: str) -> bool:
+    """
+    Change the encryption password.
+    
+    Args:
+        old_password: The current password
+        new_password: The new password to set
+        
+    Returns:
+        True if password was changed successfully
+    """
+    try:
+        # Load current config
+        config_data = {}
+        if DEFAULT_CONFIG_PATH.exists():
+            with open(DEFAULT_CONFIG_PATH, "rb") as f:
+                config_data = tomllib.load(f)
+        
+        # Verify old password
+        encryption_config = config_data.get("encryption", {})
+        if encryption_config.get("enabled", False):
+            enc_module = get_encryption_module()
+            stored_hash = encryption_config.get("password_hash", "")
+            if not enc_module.verify_password(old_password, stored_hash):
+                logger.error("Invalid current password provided")
+                return False
+        else:
+            logger.error("Encryption is not enabled")
+            return False
+        
+        # Set old password temporarily for decryption
+        set_encryption_password(old_password)
+        
+        # Decrypt the config
+        decrypted_config = decrypt_config_section(config_data)
+        
+        # Re-encrypt with new password
+        encrypted_config = encrypt_api_keys_in_config(decrypted_config, new_password)
+        
+        # Save the re-encrypted config
+        config_str = toml.dumps(encrypted_config)
+        atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
+        
+        # Set the new password for the current session
+        set_encryption_password(new_password)
+        
+        # Clear and reload caches
+        global _CONFIG_CACHE, _SETTINGS_CACHE
+        _CONFIG_CACHE = None
+        _SETTINGS_CACHE = None
+        
+        logger.success("Encryption password changed successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to change encryption password: {e}")
+        return False
+
+
 # --- CLI Database and Log File Path Getters ---
 BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli" # Renamed for clarity
 
+def get_user_folder_name() -> str:
+    """Get the current user folder name from configuration."""
+    default_user = DEFAULT_CONFIG_FROM_TOML.get("general", {}).get("users_name", "default_user")
+    user_name = get_cli_setting("general", "users_name", default_user)
+    # Sanitize user name to make it safe for folder names
+    # Replace spaces and special characters with underscores
+    import re
+    safe_user_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_name)
+    return safe_user_name if safe_user_name else "default_user"
+
+def get_user_data_dir() -> Path:
+    """Get the user-specific data directory."""
+    user_folder = get_user_folder_name()
+    user_dir = BASE_DATA_DIR_CLI / user_folder
+    # Create directory if it doesn't exist
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
+
 def get_chachanotes_db_path() -> Path:
-    default_db_path_str = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("chachanotes_db_path", str(BASE_DATA_DIR_CLI / "tldw_chatbook_ChaChaNotes.db"))
-    db_path_str = get_cli_setting("database", "chachanotes_db_path", default_db_path_str)
-    db_path = Path(db_path_str).expanduser().resolve()
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "chachanotes_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("chachanotes_db_path"):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_ChaChaNotes.db"
     return db_path
 
 def get_prompts_db_path() -> Path:
-    default_db_path_str = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("prompts_db_path", str(BASE_DATA_DIR_CLI / "tldw_chatbook_prompts.db"))
-    db_path_str = get_cli_setting("database", "prompts_db_path", default_db_path_str)
-    db_path = Path(db_path_str).expanduser().resolve()
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "prompts_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("prompts_db_path"):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_prompts.db"
     return db_path
 
 def get_media_db_path() -> Path:
-    default_db_path_str = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("media_db_path", str(BASE_DATA_DIR_CLI / "tldw_chatbook_media_v2.db"))
-    db_path_str = get_cli_setting("database", "media_db_path", default_db_path_str)
-    db_path = Path(db_path_str).expanduser().resolve()
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "media_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("media_db_path"):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_media_v2.db"
     return db_path
 
 def get_cli_log_file_path() -> Path:
-    chachanotes_parent_dir = get_chachanotes_db_path().parent
+    # Use user-specific folder for logs
+    user_dir = get_user_data_dir()
     default_log_filename = DEFAULT_CONFIG_FROM_TOML.get("logging", {}).get("log_filename", "tldw_cli_app.log")
     log_filename = get_cli_setting("logging", "log_filename", default_log_filename)
-    log_file_path = chachanotes_parent_dir / log_filename
+    log_file_path = user_dir / log_filename
     try:
         log_file_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         logger.error(f"Could not create log directory {log_file_path.parent}: {e}", exc_info=True)
     return log_file_path
+
+
+def get_cli_data_dir() -> Path:
+    """Get the CLI data directory for storing application data."""
+    # Return user-specific directory
+    return get_user_data_dir()
+
+def get_model_cache_dir() -> Path:
+    """Get the user-specific model cache directory for embeddings."""
+    # Check if a custom cache dir is configured
+    default_cache_dir = DEFAULT_CONFIG_FROM_TOML.get("embedding_config", {}).get("model_cache_dir", None)
+    custom_cache_dir = get_cli_setting("embedding_config", "model_cache_dir", default_cache_dir)
+    
+    if custom_cache_dir and custom_cache_dir != default_cache_dir:
+        # Use custom path if explicitly configured
+        cache_path = Path(custom_cache_dir).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        cache_path = user_dir / "models" / "embeddings"
+    
+    # Create directory if it doesn't exist
+    try:
+        cache_path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(f"Could not create model cache directory {cache_path}: {e}", exc_info=True)
+    
+    return cache_path
 
 # --- Global CLI Database Instances ---
 chachanotes_db: Optional[CharactersRAGDB] = None
@@ -1801,6 +2852,68 @@ def initialize_all_databases():
         logger.error(f"Failed to initialize Media_DB_v2 at {media_path}: {e}", exc_info=True)
         media_db = None
     logger.info("CLI database initialization complete.")
+
+
+# --- Lazy Database Getters ---
+def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
+    """Get the ChaChaNotes database instance, initializing it lazily if needed."""
+    global chachanotes_db
+    if chachanotes_db is None:
+        chachanotes_path = get_chachanotes_db_path()
+        logger.info(f"Lazy-initializing ChaChaNotes_DB at: {chachanotes_path}")
+        try:
+            # Get integrity check configuration
+            config = load_settings()
+            check_integrity = config.get('database', {}).get('check_integrity_on_startup', False)
+            
+            chachanotes_db = CharactersRAGDB(
+                db_path=chachanotes_path, 
+                client_id=CLI_APP_CLIENT_ID,
+                check_integrity_on_startup=check_integrity
+            )
+            logger.success(f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}")
+        except Exception as e:
+            logger.error(f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}", exc_info=True)
+            chachanotes_db = None
+    return chachanotes_db
+
+
+def get_prompts_db_lazy() -> Optional[PromptsDatabase]:
+    """Get the Prompts database instance, initializing it lazily if needed."""
+    global prompts_db
+    if prompts_db is None:
+        prompts_path = get_prompts_db_path()
+        logger.info(f"Lazy-initializing Prompts_DB at: {prompts_path}")
+        try:
+            # Get integrity check configuration
+            config = load_settings()
+            check_integrity = config.get('database', {}).get('check_integrity_on_startup', False)
+            
+            prompts_db = PromptsDatabase(
+                db_path=prompts_path, 
+                client_id=CLI_APP_CLIENT_ID,
+                check_integrity_on_startup=check_integrity
+            )
+            logger.success(f"Prompts_DB lazy-initialized successfully at {prompts_path}")
+        except Exception as e:
+            logger.error(f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}", exc_info=True)
+            prompts_db = None
+    return prompts_db
+
+
+def get_media_db_lazy() -> Optional[MediaDatabase]:
+    """Get the Media database instance, initializing it lazily if needed."""
+    global media_db
+    if media_db is None:
+        media_path = get_media_db_path()
+        logger.info(f"Lazy-initializing Media_DB_v2 at: {media_path}")
+        try:
+            media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
+            logger.success(f"Media_DB_v2 lazy-initialized successfully at {media_path}")
+        except Exception as e:
+            logger.error(f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}", exc_info=True)
+            media_db = None
+    return media_db
 
 
 # --- API Models (should be defined based on CONFIG_TOML_CONTENT or loaded from it) ---
@@ -1857,8 +2970,10 @@ CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT = settings.get("prompts_strings", {}).get("s
 
 # --- Load CLI Config and Initialize Databases on module import ---
 # The `settings` global variable is now the result of the unified load_settings()
-logger.debug("CRITICAL DEBUG: CALLING initialize_all_databases() from config.py module level.") # Add this
-initialize_all_databases()
+logger.debug("CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access")
+
+# Databases will be initialized lazily on first access
+# This significantly improves startup time by deferring expensive DB operations
 
 # Make APP_CONFIG available globally if needed by other modules that import from config.py
 # This will be the same as `settings` if `load_settings` is the sole config loader.

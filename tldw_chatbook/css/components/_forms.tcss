@@ -1,0 +1,124 @@
+/* ========================================
+ * COMPONENTS: Forms
+ * ======================================== 
+ * Form elements: inputs, textareas, selects
+ * ======================================== */
+
+.form-label {
+    margin-bottom: 1;
+    text-style: bold;
+}
+
+.form-section-title {
+    text-style: bold;
+    color: $secondary;
+    margin: 2 0 1 0;
+    border-bottom: solid $primary-background;
+    padding-bottom: 1;
+}
+
+.form-description {
+    color: $text-muted;
+    margin-bottom: 2;
+    text-style: italic;
+}
+
+.form-actions {
+    margin-top: 2;
+    layout: horizontal;
+    height: auto;
+    align: center middle;
+}
+
+.form-actions Button {
+    margin: 0 1 0 0;
+}
+
+.provider-models-textarea {
+    height: 5;
+    margin-bottom: 1;
+}
+
+/* Standardized form components */
+.form-input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.form-textarea {
+    width: 100%;
+    min-height: 5;
+    margin-bottom: 1;
+}
+
+.form-select {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+.form-checkbox {
+    margin: 1 0;
+}
+
+/* Form layout helpers */
+.form-row {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.form-col {
+    width: 1fr;
+    padding: 0 1;
+}
+
+.form-col:first-child {
+    padding-left: 0;
+}
+
+.form-col:last-child {
+    padding-right: 0;
+}
+
+/* Form sections */
+.form-section-collapsible {
+    margin: 1 0;
+}
+
+/* Button groups */
+.button-group {
+    width: 100%;
+    height: auto;
+    margin: 2 0;
+}
+
+.button-group-left {
+    align: left top;
+}
+
+.button-group-center {
+    align: center top;
+}
+
+.button-group-right {
+    align: right top;
+}
+
+.form-button {
+    margin: 0 1;
+}
+
+/* Status areas */
+.status-label {
+    margin-top: 2;
+    margin-bottom: 0;
+    color: $text-muted;
+}
+
+.status-area {
+    width: 100%;
+    background: $surface;
+    border: round $border;
+    padding: 1;
+    margin-top: 1;
+}

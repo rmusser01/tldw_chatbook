@@ -68,6 +68,7 @@ def create_base64_image():
 # --- Test Classes ---
 
 @patch('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
+@pytest.mark.unit
 class TestChatApiCall:
     def test_routes_to_correct_handler(self, mock_handlers, mocker):
         mock_openai_handler = mocker.MagicMock(return_value="OpenAI response")
@@ -106,6 +107,7 @@ class TestChatApiCall:
             chat_api_call("openai", messages_payload=[])
 
 
+@pytest.mark.unit
 class TestChatFunction:
     @patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call')
     def test_chat_basic_flow(self, mock_chat_api_call):
@@ -198,6 +200,7 @@ class TestChatFunction:
         assert adapted_payload[2]['content'] == "Hello"
 
 
+@pytest.mark.integration
 class TestChatHistorySaving:
     def test_save_chat_history_to_db_new_conversation(self, db_instance: CharactersRAGDB):
         # Create default character first
@@ -284,6 +287,7 @@ class TestChatHistorySaving:
         assert messages[0]['content'] == "New first message"
 
 
+@pytest.mark.integration
 class TestCharacterManagement:
     def test_save_and_load_character(self, db_instance: CharactersRAGDB):
         char_data = {
@@ -310,8 +314,9 @@ class TestCharacterManagement:
         assert names == ["Alpha", "Beta", "Default Assistant"]
 
 
+@pytest.mark.unit
 class TestChatDictionary:
-    @patch('tldw_chatbook.Chat.Chat_Functions.validate_path')
+    @patch('tldw_chatbook.Character_Chat.Chat_Dictionary_Lib.validate_path')
     def test_parse_user_dict_markdown_file(self, mock_validate_path, tmp_path):
         # Mock validate_path to return the validated path
         dict_file = tmp_path / "test_dict.md"

@@ -1,12 +1,16 @@
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
-from textual.widgets import Static, Input, TextArea, Button, Collapsible
+from textual.containers import VerticalScroll, Horizontal
+from textual.widgets import Static, Input, TextArea, Button, Collapsible, Switch, Label
 
 #from ..Widgets.emoji_picker import
 
 
 class NotesSidebarRight(VerticalScroll):
     """A sidebar for displaying and editing note details."""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._auto_save_enabled = True  # Default value
 
     DEFAULT_CSS = """
     NotesSidebarRight {
@@ -46,6 +50,19 @@ class NotesSidebarRight(VerticalScroll):
         /* width: 100%; (inherited) */
         /* margin-bottom: 1; (inherited) */
     }
+    .auto-save-container {
+        layout: horizontal;
+        height: 3;
+        width: 100%;
+        margin-bottom: 1;
+        align: left middle;
+    }
+    .auto-save-container Switch {
+        margin-right: 1;
+    }
+    .auto-save-container Label {
+        width: auto;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -59,6 +76,11 @@ class NotesSidebarRight(VerticalScroll):
         yield TextArea("", id="notes-keywords-area", classes="notes-keywords-textarea")
         yield Button("Save All Changes", id="notes-save-current-button",
                      variant="success")  # Saves both note content and keywords
+        
+        # Auto-save toggle
+        with Horizontal(classes="auto-save-container"):
+            yield Switch(id="notes-auto-save-toggle", value=self._auto_save_enabled, tooltip="Auto-save")
+            yield Label("Auto-save", classes="auto-save-label")
 
         # New Collapsible for Emojis
         with Collapsible(title="Emojis", collapsed=True):
@@ -72,3 +94,15 @@ class NotesSidebarRight(VerticalScroll):
             yield Button("Copy as Text", id="notes-copy-text-button")
         with Collapsible(title="Delete Note", collapsed=True):
             yield Button("Delete Selected Note", id="notes-delete-button", variant="error")
+    
+    async def on_mount(self) -> None:
+        """Called when the widget is mounted to the app."""
+        # Get the current auto-save setting from the app
+        if hasattr(self.app, 'notes_auto_save_enabled'):
+            self._auto_save_enabled = self.app.notes_auto_save_enabled
+            # Update the switch value if it exists
+            try:
+                switch = self.query_one("#notes-auto-save-toggle", Switch)
+                switch.value = self._auto_save_enabled
+            except:
+                pass  # Switch might not be mounted yet

@@ -1,0 +1,45 @@
+# Digital Meditation splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "fade"
+style = "dim cyan on rgb(10,10,20)"
+
+# Fade effect parameters
+fade_duration = 0.8
+breathe_cycle = 4.0
+zen_opacity = 0.7
+
+content = """
+           ○
+          ╱│╲
+         ╱ │ ╲
+        ╱  │  ╲
+       ╱   │   ╲
+      ╱    │    ╲
+     ╱     │     ╲
+    ○──────○──────○
+    
+    while (true) {
+        breathe.in();
+        process.thoughts();
+        breathe.out();
+        release.attachments();
+    }
+    
+    // finding peace in the infinite loop
+    
+    zen = (mind == null) ? true : false;
+"""
+
+# Progress messages
+progress_messages = [
+    "Achieving digital enlightenment...",
+    "Clearing cache of worldly desires...",
+    "Meditating on the emptiness of NULL...",
+    "Finding inner peace through recursion...",
+    "Becoming one with the code..."
+]
+
+# Additional styling
+css_classes = ["zen-meditation", "breathing-glow"]

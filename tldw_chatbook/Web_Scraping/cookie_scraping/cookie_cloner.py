@@ -1,7 +1,49 @@
-# cookie_cloner.py
-#
-# Description: This script is used to clone cookies from the user's browser to be used in web scraping.
-#
+"""
+cookie_cloner.py
+================
+
+Browser cookie extraction for authenticated web scraping.
+
+This module provides cross-platform functionality to extract cookies
+from major web browsers, enabling scrapers to access authenticated
+content. Supports Chrome, Firefox, Edge, and Safari with automatic
+cookie decryption.
+
+Security Note:
+--------------
+This module accesses browser cookie stores which may contain
+sensitive authentication tokens. Use responsibly and only for
+legitimate purposes on sites you have permission to access.
+
+Supported Browsers:
+------------------
+- Chrome/Chromium (Windows, macOS, Linux)
+- Firefox (Windows, macOS, Linux)
+- Microsoft Edge (Windows, macOS, Linux)
+- Safari (macOS only)
+
+Main Functions:
+--------------
+- get_cookies(domain, browser): Extract cookies for a domain
+- get_chrome_cookies(): Chrome-specific extraction
+- get_firefox_cookies(): Firefox-specific extraction
+- get_edge_cookies(): Edge-specific extraction
+- get_safari_cookies(): Safari-specific extraction
+
+Example:
+--------
+    # Get cookies for a specific domain from Chrome
+    cookies = get_cookies("example.com", browser="chrome")
+    
+    # Get cookies from all browsers
+    all_cookies = get_cookies("example.com", browser="all")
+    
+    # Use with Playwright
+    browser_cookies = [
+        {"name": k, "value": v, "domain": ".example.com", "path": "/"}
+        for k, v in cookies.items()
+    ]
+"""
 # Imports
 from Cryptodome.Cipher import AES
 from Cryptodome.Protocol.KDF import PBKDF2
@@ -15,15 +57,64 @@ import shutil
 import sqlite3
 import struct
 import sys
+import tempfile
+import time
 #
 # Third-Party Imports
 from loguru import logger
 #
+# Local Imports
+from ...Metrics.metrics_logger import log_counter, log_histogram
+#
+########################################################################################################################
+#
+# Helper functions for SQL safety
+
+def escape_sql_like_pattern(pattern: str) -> str:
+    """Escape special characters in SQL LIKE patterns to prevent injection.
+    
+    Args:
+        pattern: The pattern string to escape
+        
+    Returns:
+        str: The escaped pattern safe for use in LIKE queries
+    """
+    if not pattern:
+        return pattern
+    
+    # Escape special LIKE characters: % and _
+    # Also escape the escape character itself (backslash)
+    escaped = pattern.replace('\\', '\\\\')
+    escaped = escaped.replace('%', '\\%')
+    escaped = escaped.replace('_', '\\_')
+    
+    return escaped
+
 ########################################################################################################################
 #
 # Chrome Cookies
 
 def get_chrome_cookies(domain_name):
+    """
+    Extract cookies from Chrome/Chromium browsers.
+    
+    Handles cookie decryption across different platforms:
+    - Windows: Uses DPAPI and/or AES decryption
+    - macOS: Uses Keychain for decryption key
+    - Linux: Uses default password 'peanuts'
+    
+    Args:
+        domain_name (str): Domain to filter cookies (e.g., 'example.com')
+        
+    Returns:
+        dict: Cookie names mapped to values
+        
+    Note:
+        Requires browser to be closed for database access
+    """
+    start_time = time.time()
+    log_counter("cookie_cloner_chrome_attempt", labels={"platform": sys.platform})
+    
     global win32crypt
     if sys.platform == 'win32':
         import win32crypt
@@ -71,36 +162,77 @@ def get_chrome_cookies(domain_name):
         salt = b'saltysalt'
         key = PBKDF2(password.encode('utf-8'), salt, dkLen=16, count=iterations)
 
-    # Copy the Cookies file to avoid locking the database
-    temp_cookie_path = os.path.join(os.getcwd(), 'chrome_cookies_temp')
-    shutil.copyfile(cookie_path, temp_cookie_path)
+    # Copy the Cookies file to a secure temporary location to avoid locking the database
+    temp_fd, temp_cookie_path = tempfile.mkstemp(prefix='chrome_cookies_', suffix='.db')
+    os.close(temp_fd)  # Close the file descriptor as we'll use the path
+    
+    try:
+        shutil.copyfile(cookie_path, temp_cookie_path)
+    except Exception as e:
+        duration = time.time() - start_time
+        log_histogram("cookie_cloner_chrome_duration", duration, labels={"status": "error"})
+        log_counter("cookie_cloner_chrome_error", labels={"error_type": "file_copy_failed", "platform": sys.platform})
+        raise
 
     conn = sqlite3.connect(temp_cookie_path)
     cursor = conn.cursor()
 
     cookies = {}
+    total_cookies = 0
+    expired_cookies = 0
+    decryption_errors = 0
+    
     try:
-        cursor.execute("SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE ?",
-                       ('%' + domain_name + '%',))
-        for host_key, name, path, encrypted_value, expires_utc in cursor.fetchall():
-            if sys.platform == 'win32':
-                try:
-                    decrypted_value = win32crypt.CryptUnprotectData(encrypted_value, None, None, None, 0)[1]
-                except:
+        # Escape the domain name to prevent SQL injection in LIKE pattern
+        safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
+        cursor.execute("SELECT host_key, name, path, encrypted_value, expires_utc FROM cookies WHERE host_key LIKE ? ESCAPE '\\'",
+                       (safe_pattern,))
+        
+        rows = cursor.fetchall()
+        total_cookies = len(rows)
+        
+        for host_key, name, path, encrypted_value, expires_utc in rows:
+            try:
+                if sys.platform == 'win32':
+                    try:
+                        decrypted_value = win32crypt.CryptUnprotectData(encrypted_value, None, None, None, 0)[1]
+                    except:
+                        decrypted_value = decrypt_edge_cookie(encrypted_value, key)
+                else:
                     decrypted_value = decrypt_edge_cookie(encrypted_value, key)
-            else:
-                decrypted_value = decrypt_edge_cookie(encrypted_value, key)
 
-            expires = datetime.datetime(1601, 1, 1) + datetime.timedelta(microseconds=expires_utc)
-            if expires < datetime.datetime.now():
-                continue  # Skip expired cookies
+                expires = datetime.datetime(1601, 1, 1) + datetime.timedelta(microseconds=expires_utc)
+                if expires < datetime.datetime.now():
+                    expired_cookies += 1
+                    continue  # Skip expired cookies
 
-            cookies[name] = decrypted_value.decode('utf-8', 'ignore')
+                cookies[name] = decrypted_value.decode('utf-8', 'ignore')
+            except Exception as e:
+                decryption_errors += 1
+                logger.debug(f"Failed to decrypt cookie {name}: {e}")
+                
+    except Exception as e:
+        duration = time.time() - start_time
+        log_histogram("cookie_cloner_chrome_duration", duration, labels={"status": "error"})
+        log_counter("cookie_cloner_chrome_error", labels={"error_type": "database_error", "platform": sys.platform})
+        raise
     finally:
         cursor.close()
         conn.close()
         os.remove(temp_cookie_path)
 
+    # Log success metrics
+    duration = time.time() - start_time
+    log_histogram("cookie_cloner_chrome_duration", duration, labels={"status": "success", "platform": sys.platform})
+    log_histogram("cookie_cloner_chrome_cookies_found", len(cookies))
+    log_counter("cookie_cloner_chrome_success", labels={
+        "platform": sys.platform,
+        "total_cookies": str(total_cookies),
+        "valid_cookies": str(len(cookies)),
+        "expired": str(expired_cookies),
+        "decryption_errors": str(decryption_errors)
+    })
+    
     return cookies
 
 def decrypt_chrome_cookie(encrypted_value, key):
@@ -125,6 +257,23 @@ def decrypt_chrome_cookie(encrypted_value, key):
 # Firefox Cookies
 
 def get_firefox_cookies(domain_name):
+    """
+    Extract cookies from Firefox browser.
+    
+    Firefox stores cookies in an SQLite database without encryption,
+    making extraction simpler than Chromium-based browsers.
+    
+    Args:
+        domain_name (str): Domain to filter cookies
+        
+    Returns:
+        dict: Cookie names mapped to values
+        
+    Note:
+        Searches for default-release profile
+    """
+    start_time = time.time()
+    log_counter("cookie_cloner_firefox_attempt", labels={"platform": sys.platform})
     if sys.platform == 'win32':
         appdata_path = os.getenv('APPDATA')
         profile_path = os.path.join(appdata_path, 'Mozilla', 'Firefox', 'Profiles')
@@ -141,14 +290,18 @@ def get_firefox_cookies(domain_name):
         if not os.path.exists(cookie_db):
             continue
 
-        temp_cookie_db = os.path.join(os.getcwd(), 'firefox_cookies_temp')
+        # Copy to a secure temporary location
+        temp_fd, temp_cookie_db = tempfile.mkstemp(prefix='firefox_cookies_', suffix='.db')
+        os.close(temp_fd)  # Close the file descriptor as we'll use the path
         shutil.copyfile(cookie_db, temp_cookie_db)
 
         conn = sqlite3.connect(temp_cookie_db)
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT host, name, value, expiry FROM moz_cookies WHERE host LIKE ?",
-                           ('%' + domain_name + '%',))
+            # Escape the domain name to prevent SQL injection in LIKE pattern
+            safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
+            cursor.execute("SELECT host, name, value, expiry FROM moz_cookies WHERE host LIKE ? ESCAPE '\\'",
+                           (safe_pattern,))
             for host, name, value, expiry in cursor.fetchall():
                 expires = datetime.datetime.fromtimestamp(expiry)
                 if expires < datetime.datetime.now():
@@ -173,6 +326,21 @@ def get_firefox_cookies(domain_name):
 # MS Edge Cookies
 
 def get_edge_cookies(domain_name):
+    """
+    Extract cookies from Microsoft Edge browser.
+    
+    Uses similar decryption methods as Chrome since Edge is
+    Chromium-based, but with different storage locations.
+    
+    Args:
+        domain_name (str): Domain to filter cookies
+        
+    Returns:
+        dict: Cookie names mapped to values
+        
+    Raises:
+        FileNotFoundError: If Edge cookie files not found
+    """
     try:
         if sys.platform == 'win32':
             import win32crypt
@@ -218,8 +386,9 @@ def get_edge_cookies(domain_name):
             salt = b'saltysalt'
             key = PBKDF2(password.encode('utf-8'), salt, dkLen=16, count=iterations)
 
-        # Copy the Cookies file to avoid database lock
-        temp_cookie_path = os.path.join(os.getcwd(), 'edge_cookies_temp')
+        # Copy the Cookies file to a secure temporary location to avoid database lock
+        temp_fd, temp_cookie_path = tempfile.mkstemp(prefix='edge_cookies_', suffix='.db')
+        os.close(temp_fd)  # Close the file descriptor as we'll use the path
         shutil.copyfile(cookie_path, temp_cookie_path)
 
         conn = sqlite3.connect(temp_cookie_path)
@@ -227,10 +396,12 @@ def get_edge_cookies(domain_name):
 
         cookies = {}
         try:
+            # Escape the domain name to prevent SQL injection in LIKE pattern
+            safe_pattern = f"%{escape_sql_like_pattern(domain_name)}%"
             cursor.execute("""
                 SELECT host_key, name, path, encrypted_value, expires_utc
-                FROM cookies WHERE host_key LIKE ?
-            """, ('%' + domain_name + '%',))
+                FROM cookies WHERE host_key LIKE ? ESCAPE '\\'
+            """, (safe_pattern,))
 
             for host_key, name, path, encrypted_value, expires_utc in cursor.fetchall():
                 if sys.platform == 'win32':
@@ -286,6 +457,20 @@ def decrypt_edge_cookie(encrypted_value, key):
 # Safari Cookies
 
 def get_safari_cookies(domain_name):
+    """
+    Extract cookies from Safari browser (macOS only).
+    
+    Parses Safari's binary cookie format (.binarycookies).
+    
+    Args:
+        domain_name (str): Domain to filter cookies
+        
+    Returns:
+        dict: Cookie names mapped to values
+        
+    Note:
+        Only available on macOS
+    """
     cookie_file_paths = [
         os.path.expanduser('~/Library/Cookies/Cookies.binarycookies'),
         os.path.expanduser('~/Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies')
@@ -351,6 +536,34 @@ def parse_safari_cookie(data, domain_name):
 # Main Function
 
 def get_cookies(domain_name, browser='all'):
+    """
+    Extract cookies for a domain from specified browser(s).
+    
+    Main entry point for cookie extraction. Attempts to extract
+    cookies from specified browser(s) and combines results.
+    
+    Args:
+        domain_name (str): Domain to extract cookies for
+        browser (str): Browser to extract from:
+            - 'all': Try all available browsers
+            - 'chrome': Chrome/Chromium only
+            - 'firefox': Firefox only
+            - 'edge': Microsoft Edge only
+            - 'safari': Safari only (macOS)
+            
+    Returns:
+        dict: Combined cookies from all specified browsers
+            Format: {cookie_name: cookie_value, ...}
+            
+    Example:
+        >>> cookies = get_cookies("github.com", "chrome")
+        >>> print(f"Found {len(cookies)} cookies")
+        
+    Note:
+        - Errors are logged but don't stop execution
+        - Returns empty dict if no cookies found
+        - Browsers must be closed for reliable access
+    """
     cookies = {}
 
     if browser in ('all', 'chrome'):

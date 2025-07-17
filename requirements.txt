@@ -1,6 +1,22 @@
-# Base
+################################################################################
+# IMPORTANT: pyproject.toml is the authoritative source for dependencies
+################################################################################
+# This requirements.txt file is maintained for development convenience only.
+# All dependencies are properly defined in pyproject.toml with optional groups.
+#
+# To install the package with dependencies, use:
+#   pip install -e .                                    # Core dependencies only
+#   pip install -e ".[embeddings_rag]"                 # With RAG support
+#   pip install -e ".[websearch]"                      # With web search
+#   pip install -e ".[embeddings_rag,websearch,dev]"   # Multiple groups
+#
+# The commented dependencies below are available as optional groups in pyproject.toml
+################################################################################
+
+# Base/Core Dependencies (always installed)
 chardet
 toml
+tomli
 rich
 textual
 psutil
@@ -10,17 +26,29 @@ loguru
 pydantic
 pyyaml
 httpx
-#pytest
 emoji
-# Chunk Library
+jinja2
+pyperclip
+rich-pixels>=3.0.0
+pycryptodomex
+keyring
+markdownify
+prometheus_client
+aiofiles
+yt_dlp
+#pytest  # In dev group
+
+# Optional Dependencies (install via pip install -e ".[group_name]")
+# Chunk Library (chunker group)
 #tqdm
 #langdetect
 #transformers
 #nltk
 #scikit-learn
-# LLM
+
+# LLM (local_vllm, local_mlx groups)
 #vllm
 #transformers
 #mlx-lm
-#
+
 # Audio

@@ -1,0 +1,226 @@
+/* Splash Screen Viewer Styles */
+
+/* Main container */
+.splash-viewer {
+    width: 100%;
+    height: 100%;
+    padding: 1;
+}
+
+SplashScreenViewer {
+    width: 100%;
+    height: 100%;
+    layout: vertical;
+}
+
+.splash-viewer-container {
+    width: 100%;
+    height: 1fr;
+    layout: vertical;
+}
+
+/* Header */
+.viewer-header {
+    text-align: center;
+    text-style: bold;
+    padding: 1;
+    background: $primary-darken-3;
+    color: $text;
+    height: 3;
+    dock: top;
+}
+
+/* Main section layout */
+.viewer-main {
+    height: 1fr;
+    layout: horizontal;
+    padding: 1;
+}
+
+/* Main horizontal container */
+SplashScreenViewer > Horizontal {
+    height: 25;
+    width: 100%;
+    min-height: 20;
+}
+
+/* Card list section - responsive with min/max */
+.card-list-container {
+    width: 40%;
+    min-width: 30;
+    max-width: 50;
+    height: 100%;
+    border: solid $primary;
+    padding: 1;
+    margin-right: 1;
+    layout: vertical;
+}
+
+.card-list {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
+
+/* Panel layouts */
+.card-list-panel {
+    width: 35%;
+    min-width: 30;
+    height: 100%;
+    border: solid $primary;
+    padding: 1;
+    margin-right: 1;
+}
+
+.preview-panel {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary;
+    padding: 1;
+}
+
+/* Preview section - takes remaining space */
+.preview-container {
+    width: 1fr;
+    layout: vertical;
+    border: solid $primary;
+    padding: 1;
+}
+
+.preview-widget {
+    height: 20;
+    min-height: 15;
+    border: solid $primary-lighten-2;
+    margin-bottom: 1;
+}
+
+.preview-content {
+    padding: 1;
+    text-align: center;
+}
+
+/* Card info section */
+.card-info {
+    height: 5;
+    padding: 1;
+    background: $surface;
+    border: solid $primary-lighten-2;
+}
+
+/* Settings section */
+.settings-section {
+    height: auto;
+    padding: 1;
+    margin-top: 1;
+    border-top: solid $primary;
+}
+
+.setting-row {
+    height: 3;
+    layout: horizontal;
+    align: center middle;
+    margin-bottom: 1;
+}
+
+.setting-label {
+    width: 20;
+    text-align: right;
+    margin-right: 1;
+}
+
+.setting-control {
+    width: 1fr;
+    max-width: 40;
+}
+
+.value-label {
+    width: 10;
+    margin-left: 1;
+    text-align: left;
+}
+
+/* Active cards section */
+.active-cards-container {
+    height: auto;
+    max-height: 10;
+    border: solid $primary-lighten-2;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+.checkbox-button {
+    width: 100%;
+    text-align: left;
+    margin: 0 0 1 0;
+    height: 3;
+}
+
+/* Action buttons */
+.action-buttons {
+    height: 3;
+    layout: horizontal;
+    align: center middle;
+    padding: 1;
+    margin-top: 1;
+}
+
+.action-buttons Button {
+    margin: 0 1;
+}
+
+/* Section headers */
+.section-header {
+    text-style: bold;
+    color: $primary;
+    padding: 1 0;
+}
+
+/* Help text */
+.help-text {
+    text-style: italic;
+    color: $text-muted;
+    padding: 0 0 1 0;
+    text-align: center;
+}
+
+/* Modal styles */
+.modal-container {
+    width: 80%;
+    height: 80%;
+    max-width: 100;
+    max-height: 40;
+    align: center middle;
+    background: $surface;
+    border: double $primary;
+    padding: 2;
+}
+
+.splash-gallery-modal {
+    width: 100%;
+    height: 100%;
+    layout: vertical;
+}
+
+/* Simplified card list */
+SplashScreenViewer .card-list {
+    height: 20;
+    width: 100%;
+    border: solid $primary;
+    margin: 1 0;
+}
+
+/* Card info display */
+SplashScreenViewer .card-info {
+    height: 5;
+    width: 100%;
+    padding: 1;
+    margin: 1 0;
+    border: solid $primary-lighten-2;
+    background: $surface;
+}
+
+/* Scrollbar styling */
+VerticalScroll {
+    scrollbar-color: $primary;
+    scrollbar-color-hover: $primary-lighten-1;
+    scrollbar-color-active: $primary-lighten-2;
+}

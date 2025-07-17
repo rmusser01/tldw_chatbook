@@ -1,0 +1,21 @@
+{
+  "name": "json",
+  "description": "JSON-aware chunking that preserves data structure",
+  "base_method": "json",
+  "pipeline": [
+    {
+      "stage": "chunk",
+      "method": "json",
+      "options": {
+        "max_size": 50,
+        "overlap": 10,
+        "json_chunkable_data_key": "data"
+      }
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["json_data", "api_responses", "structured_data"],
+    "preserves_structure": true,
+    "handles_arrays_and_objects": true
+  }
+}

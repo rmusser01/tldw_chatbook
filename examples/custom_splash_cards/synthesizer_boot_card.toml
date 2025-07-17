@@ -1,0 +1,42 @@
+# Synthesizer Boot splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "sound_bars"
+style = "magenta on black"
+
+# Sound bars effect parameters
+oscillator_count = 3
+filter_cutoff = 0.7
+resonance = 0.9
+
+content = """
+┌─────────────── MOOG SYSTEM 55 ───────────────┐
+│     ◯ ◯ ◯     VOLTAGE CONTROLLED     ◯ ◯ ◯    │
+│  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐    │
+│  │ VCO │ │ VCF │ │ VCA │ │ LFO │ │ ENV │    │
+│  └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘    │
+│     │       │       │       │       │         │
+│  ╱╲╱╲╱╲  ╱╲╱╲╱╲  ╱╲╱╲╱╲  ~~~~~  /╲___       │
+│                                               │
+│  PATCH MATRIX: [▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓]      │
+│                                               │
+│  ◉ CUTOFF  ◉ RESONANCE  ◉ ATTACK  ◉ DECAY   │
+│  ████████  ██████████   ████      ████████   │
+│                                               │
+│         > TLDW SEQUENCE LOADED <              │
+│                                               │
+└───────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Warming up analog oscillators...",
+    "Calibrating voltage control...",
+    "Patching modular connections...",
+    "Stabilizing filter resonance...",
+    "Engaging ring modulation..."
+]
+
+# Additional styling
+css_classes = ["synth-glow", "analog-warmth"]

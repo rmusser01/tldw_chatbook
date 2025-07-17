@@ -28,22 +28,25 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
     initial_ephemeral_state determines the initial state of controls related to saving.
     """
     with VerticalScroll(id="chat-right-sidebar", classes="sidebar"): # Main ID for the whole sidebar
-        yield Static("Session & Character", classes="sidebar-title")
+        # Sidebar header with resize controls
+        with Horizontal(classes="sidebar-header-with-resize"):
+            yield Button("<<<", id=f"{id_prefix}-sidebar-expand", classes="sidebar-resize-button", tooltip="Expand sidebar")
+            yield Static("Session & Character", classes="sidebar-title flex-grow")
+            yield Button(">>>", id=f"{id_prefix}-sidebar-shrink", classes="sidebar-resize-button", tooltip="Collapse sidebar")
 
         # Section for current chat session details (title, keywords, etc.)
         with Collapsible(title="Current Chat Details", collapsed=False, id=f"{id_prefix}-chat-details-collapsible"):
-            # NEW "New Chat" Button
+            # "New Chat" Button
             yield Button(
                 "New Temp Chat",
                 id=f"{id_prefix}-new-temp-chat-button",  # New ID
                 classes="sidebar-button",
-                variant="primary"  # Optional: different styling
+                variant="primary"
             )
             yield Button(
                 "New Chat",
-                id=f"{id_prefix}-new-conversation-button", # Matches app.py query
+                id=f"{id_prefix}-new-conversation-button",
                 classes="sidebar-button"
-                # No variant, or choose one like "default"
             )
             yield Label("Conversation ID:", classes="sidebar-label", id=f"{id_prefix}-uuid-label-displayonly")
             yield Input(
@@ -82,6 +85,14 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                 classes="sidebar-button save-chat-button",
                 variant="success",
                 disabled=not initial_ephemeral_state # Enabled if ephemeral, disabled if already saved
+            )
+
+            # Button to convert entire conversation to note
+            yield Button(
+                "📋 Convert to Note",
+                id=f"{id_prefix}-convert-to-note-button",
+                classes="sidebar-button convert-to-note-button",
+                variant="default"
             )
 
             # Retrieve initial value for strip_thinking_tags checkbox
@@ -261,10 +272,19 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                     classes="sidebar-input"
                 )
 
+                # Expand button above note content
+                yield Button(
+                    "Expand Notes",
+                    id=f"{id_prefix}-notes-expand-button",
+                    classes="notes-expand-button sidebar-button"
+                )
+                
+                # Note content label
                 yield Label("Note Content:", classes="sidebar-label")
+                
                 note_content_area = TextArea(
                     id=f"{id_prefix}-notes-content-textarea",
-                    classes="sidebar-textarea" # Assuming a general class, can be more specific
+                    classes="sidebar-textarea notes-textarea-normal"
                 )
                 note_content_area.styles.height = 10
                 yield note_content_area
@@ -273,6 +293,13 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                     "Save Note",
                     id=f"{id_prefix}-notes-save-button",
                     variant="success",
+                    classes="sidebar-button"
+                )
+                
+                yield Button(
+                    "Copy Note",
+                    id=f"{id_prefix}-notes-copy-button",
+                    variant="default",
                     classes="sidebar-button"
                 )
 
@@ -301,26 +328,32 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                     classes="sidebar-button",
                     variant="warning" # Optional: different styling
                 )
+                yield Label("Character Name:", classes="sidebar-label")
                 yield Input(
                     id="chat-character-name-edit",
                     placeholder="Name"
                 )
+                yield Label("Description:", classes="sidebar-label")
                 description_edit_ta = TextArea(id="chat-character-description-edit")
                 description_edit_ta.styles.height = 30
                 yield description_edit_ta
 
+                yield Label("Personality:", classes="sidebar-label")
                 personality_edit_ta = TextArea(id="chat-character-personality-edit")
                 personality_edit_ta.styles.height = 30
                 yield personality_edit_ta
 
+                yield Label("Scenario:", classes="sidebar-label")
                 scenario_edit_ta = TextArea(id="chat-character-scenario-edit")
                 scenario_edit_ta.styles.height = 30
                 yield scenario_edit_ta
 
+                yield Label("System Prompt:", classes="sidebar-label")
                 system_prompt_edit_ta = TextArea(id="chat-character-system-prompt-edit")
                 system_prompt_edit_ta.styles.height = 30
                 yield system_prompt_edit_ta
 
+                yield Label("First Message:", classes="sidebar-label")
                 first_message_edit_ta = TextArea(id="chat-character-first-message-edit")
                 first_message_edit_ta.styles.height = 30
                 yield first_message_edit_ta
@@ -328,6 +361,149 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
             # Could add a select here to change the character for the *current* chat,
             # which would then influence the AI's persona for subsequent messages.
             # This is a more advanced feature than just for filtering searches.
+
+        # ===================================================================
+        # Chat Dictionaries (only for chat tab)
+        # ===================================================================
+        if id_prefix == "chat":
+            with Collapsible(title="Chat Dictionaries", collapsed=True, id=f"{id_prefix}-dictionaries-collapsible"):
+                # Search for available dictionaries
+                yield Label("Search Dictionaries:", classes="sidebar-label")
+                yield Input(
+                    id=f"{id_prefix}-dictionary-search-input",
+                    placeholder="Search dictionaries...",
+                    classes="sidebar-input"
+                )
+                
+                # List of available dictionaries
+                yield Label("Available Dictionaries:", classes="sidebar-label")
+                dictionary_available_list = ListView(
+                    id=f"{id_prefix}-dictionary-available-listview",
+                    classes="sidebar-listview"
+                )
+                dictionary_available_list.styles.height = 5
+                yield dictionary_available_list
+                
+                # Add button for dictionaries
+                yield Button(
+                    "Add to Chat",
+                    id=f"{id_prefix}-dictionary-add-button",
+                    classes="sidebar-button",
+                    variant="primary",
+                    disabled=True
+                )
+                
+                # Currently associated dictionaries
+                yield Label("Active Dictionaries:", classes="sidebar-label")
+                dictionary_active_list = ListView(
+                    id=f"{id_prefix}-dictionary-active-listview",
+                    classes="sidebar-listview"
+                )
+                dictionary_active_list.styles.height = 5
+                yield dictionary_active_list
+                
+                # Remove button for active dictionaries
+                yield Button(
+                    "Remove from Chat",
+                    id=f"{id_prefix}-dictionary-remove-button",
+                    classes="sidebar-button",
+                    variant="warning",
+                    disabled=True
+                )
+                
+                # Quick enable/disable for dictionary processing
+                yield Checkbox(
+                    "Enable Dictionary Processing",
+                    value=True,
+                    id=f"{id_prefix}-dictionary-enable-checkbox",
+                    classes="sidebar-checkbox"
+                )
+                
+                # Selected dictionary details
+                yield Label("Selected Dictionary Details:", classes="sidebar-label")
+                dictionary_details = TextArea(
+                    "",
+                    id=f"{id_prefix}-dictionary-details-display",
+                    classes="sidebar-textarea",
+                    read_only=True
+                )
+                dictionary_details.styles.height = 8
+                yield dictionary_details
+
+        # ===================================================================
+        # World Books (only for chat tab)
+        # ===================================================================
+        if id_prefix == "chat":
+            with Collapsible(title="World Books", collapsed=True, id=f"{id_prefix}-worldbooks-collapsible"):
+                # Search for available world books
+                yield Label("Search World Books:", classes="sidebar-label")
+                yield Input(
+                    id=f"{id_prefix}-worldbook-search-input",
+                    placeholder="Search world books...",
+                    classes="sidebar-input"
+                )
+                
+                # List of available world books
+                yield Label("Available World Books:", classes="sidebar-label")
+                worldbook_available_list = ListView(
+                    id=f"{id_prefix}-worldbook-available-listview",
+                    classes="sidebar-listview"
+                )
+                worldbook_available_list.styles.height = 5
+                yield worldbook_available_list
+                
+                # Association controls
+                with Horizontal(classes="worldbook-association-controls"):
+                    yield Button(
+                        "Add to Chat",
+                        id=f"{id_prefix}-worldbook-add-button",
+                        classes="sidebar-button",
+                        variant="primary",
+                        disabled=True
+                    )
+                    yield Select(
+                        [(f"Priority {i}", str(i)) for i in range(11)],
+                        value="5",
+                        id=f"{id_prefix}-worldbook-priority-select",
+                        classes="worldbook-priority-select"
+                    )
+                
+                # Currently associated world books
+                yield Label("Active World Books:", classes="sidebar-label")
+                worldbook_active_list = ListView(
+                    id=f"{id_prefix}-worldbook-active-listview",
+                    classes="sidebar-listview"
+                )
+                worldbook_active_list.styles.height = 5
+                yield worldbook_active_list
+                
+                # Remove button for active world books
+                yield Button(
+                    "Remove from Chat",
+                    id=f"{id_prefix}-worldbook-remove-button",
+                    classes="sidebar-button",
+                    variant="warning",
+                    disabled=True
+                )
+                
+                # Quick enable/disable for all world books
+                yield Checkbox(
+                    "Enable World Info Processing",
+                    value=True,
+                    id=f"{id_prefix}-worldbook-enable-checkbox",
+                    classes="sidebar-checkbox"
+                )
+                
+                # Selected world book details
+                yield Label("Selected World Book Details:", classes="sidebar-label")
+                worldbook_details = TextArea(
+                    "",
+                    id=f"{id_prefix}-worldbook-details-display",
+                    classes="sidebar-textarea",
+                    read_only=True
+                )
+                worldbook_details.styles.height = 8
+                yield worldbook_details
 
         with Collapsible(title="Other Character Tools", collapsed=True):
             yield Placeholder("Tool 1")

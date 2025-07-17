@@ -1,0 +1,142 @@
+/* Chat Tabs Styling */
+
+/* Tab bar container */
+#chat-tab-bar {
+    height: 2;
+    background: $panel;
+    border-bottom: tall $primary;
+}
+
+/* Tab scroll container */
+.chat-tabs-scroll {
+    height: 2;
+    width: 100%;
+}
+
+/* Individual tab container */
+.chat-tab-container {
+    height: 2;
+    layout: horizontal;
+    margin: 0 1;
+}
+
+/* Tab buttons */
+.chat-tab {
+    min-width: 15;
+    max-width: 30;
+    height: 2;
+    padding: 0 1;
+    margin: 0;
+    background: $panel;
+    color: $text-muted;
+    border: none;
+    text-align: center;
+}
+
+.chat-tab:hover {
+    background: $boost;
+    color: $text;
+}
+
+.chat-tab.active {
+    background: $primary;
+    color: $text;
+    text-style: bold;
+}
+
+/* Close tab button */
+.close-tab-button {
+    width: 3;
+    height: 2;
+    padding: 0;
+    margin-left: 1;
+    background: transparent;
+    color: $text-muted;
+    border: none;
+}
+
+.close-tab-button:hover {
+    background: $error;
+    color: $text;
+}
+
+/* New tab button */
+.new-tab-button {
+    width: 5;
+    height: 2;
+    padding: 0;
+    margin: 0 1;
+    background: $panel;
+    color: $text-muted;
+    border: round $accent;
+}
+
+.new-tab-button:hover {
+    background: $accent;
+    color: $text;
+}
+
+/* Chat sessions container */
+.chat-sessions-container {
+    width: 100%;
+    height: 100%;
+}
+
+/* Individual chat session */
+.chat-session {
+    width: 100%;
+    height: 100%;
+    display: none;
+}
+
+/* No sessions placeholder */
+.no-sessions-placeholder {
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    text-style: italic;
+    color: $text-muted;
+}
+
+/* Chat log in tabbed interface */
+.chat-session .chat-log {
+    height: 1fr;
+    overflow-y: scroll;
+    padding: 1;
+    background: $surface;
+}
+
+/* Chat input area in tabbed interface */
+.chat-session .chat-input-area {
+    height: 5;
+    layout: horizontal;
+    padding: 1;
+    background: $panel;
+}
+
+/* Responsive adjustments for small screens */
+/* Note: Textual doesn't support @media queries, so these rules are applied directly */
+/* @media (max-width: 100) { */
+/*     .chat-tab { */
+/*         min-width: 10; */
+/*         max-width: 20; */
+/*     } */
+/*      */
+/*     .chat-tab-container { */
+/*         margin: 0; */
+/*     } */
+/* } */
+
+/* Animation for tab switching */
+.chat-session {
+    transition: opacity 200ms;
+}
+
+/* Image attachment indicator in tabbed mode */
+.chat-session .image-attachment-indicator {
+    height: 3;
+    margin: 0 1;
+    padding: 0 1;
+    background: $surface;
+    color: $text-muted;
+}

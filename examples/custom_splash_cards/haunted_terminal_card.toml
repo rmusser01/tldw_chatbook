@@ -1,0 +1,51 @@
+# Haunted Terminal splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "glitch"
+style = "red on black"
+
+# Glitch effect parameters
+paranormal_activity = 0.95
+ghost_processes = true
+cursed_memory = 666
+
+content = """
+┌─────────────── HAUNTED TERMINAL v6.66 ───────────────┐
+│                                                      │
+│  user@void:~$ whoami                                 │
+│  y̸̧͖̰̺͎̲̰͇̫̾̌̈́̈́͆o̷̢̨̦̣̱̲̙̍̏͊̌͘͜ͅų̵̛̛͖̦̈́́̇̄͊͋̚ ̴̨̧̬̖̼̺̈́ͅa̶̧̨̖̯̣̅̀͌̑̒͝r̷̰̈́̌e̴̡̛̲̣̦̅̐̈̿̎̾̇̚ ̷̢̠̙̜̄̿̔̃̍͋n̶̨̩̣̗̫̲̤͇͖̈́̈́̂̓̍̊̿o̴̧͚̜̭̺̝̾t̵̨̬̤̫̋ ̷̯̓͐̎a̵̧̨̝̣̳̦͖̽̑͜ͅl̵̢̫͍̣̱̃̓͒̋͊́o̶̩̬̅̍̋̿̚n̸̞̳̆͆̍̈́̎͆̿͋̚e̴͇̬̗̩̭̽ͅ            │
+│                                                      │
+│  user@void:~$ ps aux | grep ghost                   │
+│  PID   TTY  STAT   TIME   COMMAND                   │
+│  666   ?    Z      13:13  [defunct_soul]            │
+│  1337  ?    Z      03:33  [restless_spirit]         │
+│  2187  ?    Z      00:00  [phantom_process]         │
+│  ????  ?    ?      ??:??  [T̸͎̅H̶̱̾E̴̬͐Y̶̜̌_̷͉̈́W̶͇̌A̸̱̐T̸̮̄C̶̣̈́H̷̳̊]        │
+│                                                      │
+│  user@void:~$ free -h                               │
+│         total    used    free   cursed             │
+│  Mem:    16G     13G     2.9G    666M              │
+│  Souls:   ∞      ???      0      ALL               │
+│                                                      │
+│  user@void:~$ echo $USER                            │
+│  h̷̢̰̣̤̣̻̳̽̈́̎̊ë̴̡̳́͋̈́̇̈́̚͠͝ ̶̨̣̹̖̼͔͛̍͝c̶̡̰͉͚̈́̄ȯ̴̧̨̜̣̲̩̗̿̈́m̵̛̘̟̈́͋͌͊̕͝ë̵͙̝̱̲́̎̚ṡ̴̖̯̿                               │
+│                                                      │
+│  WARNING: /dev/null is full of screams              │
+│  ERROR: Permission denied by the ancient ones       │
+│                                                      │
+│  T L D W: They're Looking, Don't Watch             │
+└──────────────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Awakening dormant processes...",
+    "Detecting paranormal RAM activity...",
+    "Exorcising corrupted cache...",
+    "Something is crawling through port 666...",
+    "The system whispers your name..."
+]
+
+# Additional styling
+css_classes = ["haunted-glow", "blood-drip"]

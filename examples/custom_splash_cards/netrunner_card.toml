@@ -1,0 +1,44 @@
+# Cyberpunk Netrunner splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "digital_rain"
+style = "neon_green on black"
+
+# Digital rain effect parameters for cyberspace
+matrix_density = 0.9
+ice_breaker_active = true
+cyberspace_immersion = 1.0
+
+content = """
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃    NETRUNNER INTERFACE v2.0.77   ┃
+┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫
+┃ USER: N0M4D_H4CK3R               ┃
+┃ REP:  ████████████ LEGENDARY     ┃
+┃ ICE:  ▓▓▓▓░░░░░░░░ BREACHING     ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+ CYBERSPACE MAP:
+ ╱═══════════════════════════════╲
+│ ◆ Corporate Database [LOCKED]   │
+│ ◇ Black ICE Detected [DANGER]   │
+│ ◆ Encrypted Vault    [78%]      │
+│ ◇ AI Core           [ACTIVE]    │
+│ ◆ TLDW Gateway      [ACCESSING] │
+ ╲═══════════════════════════════╱
+
+[JACK IN] [JACK OUT] [FLATLINE]
+"""
+
+# Progress messages
+progress_messages = [
+    "Bypassing corporate firewall...",
+    "Deploying daemon processes...",
+    "Evading Black ICE countermeasures...",
+    "Downloading RAM directly to brain...",
+    "Achieving digital transcendence..."
+]
+
+# Additional styling
+css_classes = ["cyberpunk-neon", "netrunner-hud"]

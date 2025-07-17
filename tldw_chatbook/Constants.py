@@ -19,14 +19,16 @@ TAB_NOTES = "notes"
 TAB_MEDIA = "media"
 TAB_SEARCH = "search"
 TAB_INGEST = "ingest"
-TAB_TOOLS_SETTINGS = "tools_settings"
+TAB_EMBEDDINGS = "embeddings"
+TAB_EVALS = "evals"
 TAB_LLM = "llm_management"
+TAB_TOOLS_SETTINGS = "tools_settings"
 TAB_STATS = "stats"
 TAB_LOGS = "logs"
-TAB_EVALS = "evals"
 TAB_CODING = "coding"
+TAB_STTS = "stts"
 ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
-            TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, TAB_STATS, TAB_EVALS, TAB_CODING]
+            TAB_EMBEDDINGS, TAB_EVALS, TAB_LLM, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_STATS, TAB_STTS]
 
 # --- TLDW API Form Specific Option Containers (IDs) ---
 TLDW_API_VIDEO_OPTIONS_ID = "tldw-api-video-options"
@@ -36,11 +38,12 @@ TLDW_API_EBOOK_OPTIONS_ID = "tldw-api-ebook-options"
 TLDW_API_DOCUMENT_OPTIONS_ID = "tldw-api-document-options"
 TLDW_API_XML_OPTIONS_ID = "tldw-api-xml-options"
 TLDW_API_MEDIAWIKI_OPTIONS_ID = "tldw-api-mediawiki-options"
+TLDW_API_PLAINTEXT_OPTIONS_ID = "tldw-api-plaintext-options"
 
 ALL_TLDW_API_OPTION_CONTAINERS = [
     TLDW_API_VIDEO_OPTIONS_ID, TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_PDF_OPTIONS_ID,
     TLDW_API_EBOOK_OPTIONS_ID, TLDW_API_DOCUMENT_OPTIONS_ID, TLDW_API_XML_OPTIONS_ID,
-    TLDW_API_MEDIAWIKI_OPTIONS_ID
+    TLDW_API_MEDIAWIKI_OPTIONS_ID, TLDW_API_PLAINTEXT_OPTIONS_ID
 ]
 
 
@@ -121,6 +124,44 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 .sidebar-input { width: 100%; margin-bottom: 1; }
 .sidebar-textarea { width: 100%; border: round $surface; margin-bottom: 1; }
 .sidebar Select { width: 100%; margin-bottom: 1; }
+
+/* Sidebar resize buttons */
+.sidebar-resize-button {
+    min-width: 8;  /* Increased minimum width to 8 cells */
+    width: 8;      /* Fixed width for better visibility */
+    height: 2;     /* Standard button height */
+    margin: 0 1;   /* Small margin on sides */
+    padding: 0 1;  /* Padding for text */
+    border: none;
+    background: $primary;
+    color: white;
+    text-align: center;
+    text-style: bold;
+}
+.sidebar-resize-button:hover {
+    background: $primary-lighten-1;
+    color: white;
+    text-style: bold;
+}
+.sidebar-resize-button:focus {
+    background: $primary-lighten-2;
+    color: white;
+    text-style: bold;
+}
+
+/* Header container for sidebar with resize controls */
+.sidebar-header-with-resize {
+    layout: horizontal;
+    height: auto;
+    width: 100%;
+    align: center middle;
+    margin-bottom: 1;
+}
+
+/* Flex grow utility class */
+.flex-grow {
+    width: 1fr;  /* Takes up remaining space in horizontal layout */
+}
 
 .prompt-display-textarea {
     height: 7; /* Example height */

@@ -1,0 +1,39 @@
+# MS-DOS Boot Sequence splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "terminal_boot"
+style = "white on black"
+
+# Terminal boot effect parameters
+boot_speed = 0.03
+show_cursor = true
+line_delay = 0.1
+
+content = """
+Starting MS-DOS...
+
+C:\>MEM
+655360 bytes total conventional memory
+655360 bytes available to MS-DOS
+599072 largest executable program size
+
+C:\>CD TLDW
+C:\TLDW>TLDW.EXE
+Loading HIMEM.SYS...
+Loading EMM386.EXE...
+Loading MOUSE.COM...
+Loading SOUNDBLASTER.DRV...
+"""
+
+# Progress messages
+progress_messages = [
+    "INSUFFICIENT MEMORY FOR HUMOR.EXE",
+    "AUTOEXEC.BAT NOT FOUND. STARTING MANUAL MODE...",
+    "EXTENDED MEMORY DETECTED. IGNORING IT.",
+    "KEYBOARD NOT FOUND. PRESS F1 TO CONTINUE.",
+    "CONFIG.SYS OPTIMIZED FOR MAXIMUM CONFUSION"
+]
+
+# Additional styling
+css_classes = ["dos-terminal", "monospace"]

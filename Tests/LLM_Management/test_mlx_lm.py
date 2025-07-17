@@ -30,6 +30,9 @@ except ImportError:
             self.status_code = status_code
             super().__init__(f"{provider}: {message}")
 
+# Mark all tests in this file as unit tests
+pytestmark = pytest.mark.unit
+
 # Helper to reset settings if modified directly (use with caution or preferably mock settings.get)
 def_mlx_settings = {
     "model_path": "mlx-community/test-model",
@@ -232,7 +235,7 @@ def test_chat_with_mlx_lm_success_with_config(mock_openai_call, mock_mlx_setting
         logprobs=None,
         top_logprobs=None,
         user_identifier=None,
-        provider_name="MLX-LM",
+        provider_name=None,
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
         api_retry_delay=def_mlx_settings["api_retry_delay"]
@@ -288,7 +291,7 @@ def test_chat_with_mlx_lm_args_override_config(mock_openai_call, mock_mlx_settin
         logprobs=None,
         top_logprobs=None,
         user_identifier=None,
-        provider_name="MLX-LM",
+        provider_name=None,
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
         api_retry_delay=def_mlx_settings["api_retry_delay"]
@@ -320,7 +323,7 @@ def test_chat_with_mlx_lm_api_url_override(mock_openai_call, mock_mlx_settings):
         top_k=None, min_p=None, n=None, stop=None, presence_penalty=None, frequency_penalty=None,
         logit_bias=None, seed=None, response_format=None, tools=None, tool_choice=None,
         logprobs=None, top_logprobs=None, user_identifier=None,
-        provider_name="MLX-LM",
+        provider_name=None,
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
         api_retry_delay=def_mlx_settings["api_retry_delay"]
@@ -396,7 +399,7 @@ def test_chat_with_mlx_lm_kwargs_passthrough(mock_openai_call, mock_mlx_settings
         logprobs=None,
         top_logprobs=None,
         user_identifier=None,
-        provider_name="MLX-LM",
+        provider_name=None,
         timeout=def_mlx_settings["api_timeout"],
         api_retries=def_mlx_settings["api_retries"],
         api_retry_delay=def_mlx_settings["api_retry_delay"]

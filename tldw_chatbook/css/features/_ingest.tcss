@@ -1,0 +1,283 @@
+/* ========================================
+ * FEATURES: Ingest
+ * ======================================== 
+ * Media ingestion tab styles
+ * ======================================== */
+
+/* --- Ingest Content Tab --- */
+#ingest-window { /* Matches TAB_INGEST */
+    layout: horizontal;
+}
+.tldw-api-media-specific-options { /* Common class for specific option blocks */
+    padding: 1;
+    border: round $surface;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+/* Added to ensure initially hidden specific options are indeed hidden */
+.tldw-api-media-specific-options.hidden {
+     display: none;
+}
+
+.ingest-nav-pane { /* Style for the left navigation pane */
+    dock: left;
+    width: 25%;
+    min-width: 20;
+    max-width: 40;
+    height: 100%;
+    background: $boost; /* Or a slightly different shade */
+    padding: 1;
+    border-right: thick $background-darken-1;
+    /* Removed overflow properties - let VerticalScroll handle scrolling */
+}
+
+.ingest-nav-pane .ingest-nav-button { /* Style for navigation buttons */
+    width: 100%;
+    margin-bottom: 1;
+    border: none;
+    height: 3;
+}
+.ingest-nav-pane .ingest-nav-button:hover {
+    background: $accent 60%; /* Slightly different hover potentially */
+}
+/* Active state for selected ingest nav button */
+.ingest-nav-pane .ingest-nav-button.active {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
+
+/* Collapsible sidebar styles */
+.ingest-nav-pane.collapsed {
+    width: 4;
+    min-width: 4;
+    padding: 1 0;
+}
+
+.nav-header {
+    width: 100%;
+    height: 3;
+    margin-bottom: 1;
+}
+
+.nav-toggle-button {
+    width: 3;
+    height: 3;
+    min-width: 3;
+    padding: 0;
+    text-align: center;
+}
+
+/* Hide text when collapsed */
+.collapsed-hidden {
+    display: none;
+}
+
+/* Adjust button appearance when collapsed */
+.ingest-nav-pane.collapsed .ingest-nav-button {
+    width: 3;
+    padding: 0;
+    /* Show only first letter or icon */
+    overflow: hidden;
+}
+
+/* Style for sidebar section titles */
+.ingest-nav-pane .sidebar-title {
+    text-style: bold;
+    color: $primary;
+    margin-top: 2;
+    margin-bottom: 1;
+    padding-left: 1;
+    border-left: thick $accent;
+}
+/* Active state for selected ingest nav button (optional) */
+/* .ingest-nav-pane .ingest-nav-button.-active-view {
+    background: $accent-darken-1;
+    color: $text;
+} */
+
+.ingest-content-pane { /* Style for the right content display area */
+    width: 1fr;
+    height: 100%;
+    padding: 1 2;
+    /* Removed overflow - let child VerticalScroll widgets handle scrolling */
+}
+
+.ingest-view-area { /* Common class for individual content areas */
+    width: 100%;
+    height: 100%;
+}
+.ingest-label {
+    margin-top: 1;
+    margin-bottom: 0;
+}
+.ingest-selected-files-list {
+    min-height: 5;
+    max-height: 10;
+    height: auto;
+    border: round $primary;
+    margin-bottom: 1;
+    background: $surface;
+}
+.ingest-preview-area {
+    height: 1fr;
+    min-height: 10;
+    border: round $primary-lighten-2;
+    padding: 1;
+    margin-bottom: 1;
+    background: $surface;
+}
+.ingest-preview-area > Static#ingest-prompts-preview-placeholder {
+    color: $text-muted;
+    width: 100%;
+    text-align: center;
+    padding: 2 0;
+}
+.ingest-status-area {
+    min-height: 5;
+    max-height: 15;
+    height: auto;
+    margin-top: 1;
+}
+
+.prompt-preview-item {
+    border: panel $background-lighten-2;
+    padding: 1;
+    margin-bottom: 1;
+}
+.prompt-preview-item .prompt-title {
+    text-style: bold;
+}
+.prompt-preview-item .prompt-field-label {
+    text-style: italic;
+    color: $text-muted;
+}
+.prompt-preview-item Markdown {
+    background: $surface-darken-1;
+    padding: 0 1;
+    margin-top: 1;
+    margin-bottom: 1;
+    border: solid $primary-darken-1; /* Use 'solid' instead of 'narrow' */
+    max-height: 10;
+    overflow-y: auto;
+}
+.prompt-preview-item .prompt-details-text {
+    max-height: 5;
+    overflow-y: auto;
+    background: $surface;
+    padding: 0 1;
+    border: dashed $primary-darken-2; /* Use 'dashed' instead of 'dotted' */
+    margin-bottom: 1;
+}
+
+/* Ensure VerticalScroll containers fill their parent */
+.ingest-view-area VerticalScroll {
+    height: 100%;
+    width: 100%;
+}
+
+/* Scrollable form container needs padding to prevent content cutoff */
+.ingest-form-scrollable {
+    height: 100%;
+    overflow-y: auto;
+    padding: 1;
+}
+
+/* Removed .ingest-media-tab-content - no longer needed since parent is VerticalScroll */
+
+.ingest-file-section {
+    margin-bottom: 2;
+    padding: 1;
+    border: round $primary;
+    background: $surface;
+}
+
+.ingest-options-section {
+    border: round $primary;
+    padding: 1;
+    margin-bottom: 2;
+    background: $surface;
+}
+
+.ingest-metadata-section {
+    margin-bottom: 2;
+    padding: 1;
+    border: round $primary;
+    background: $surface;
+}
+
+.ingest-action-section {
+    border-top: solid $primary;
+    padding-top: 1;
+    padding: 1;
+}
+
+.ingest-controls-row {
+    margin-bottom: 1;
+    height: 3;
+}
+
+.ingest-controls-row Button {
+    height: 3;
+    min-height: 3;
+}
+
+.ingest-url-button {
+    width: auto;
+    height: 3;
+    margin-bottom: 1;
+}
+
+.ingest-form-row {
+    margin-top: 1;
+}
+
+.ingest-form-col {
+    width: 50%;
+    padding-right: 1;
+}
+
+.title-author-row {
+    margin-bottom: 1;
+}
+
+.ingest-textarea-small {
+    min-height: 3;
+    max-height: 8;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.ingest-textarea-medium {
+    min-height: 10;
+    max-height: 20;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.ingest-textarea-large {
+    min-height: 15;
+    max-height: 30;
+    height: auto;
+    margin-bottom: 1;
+}
+
+/* Responsive textarea that grows with content */
+.ingest-textarea-responsive {
+    min-height: 5;
+    height: auto;
+    margin-bottom: 1;
+}
+
+/* All ingest views are controlled programmatically */
+.ingest-view-area {
+    /* display controlled by app.py watcher */
+    height: 100%;
+    width: 100%;
+}
+
+/* --- Visibility styles for ingest views --- */
+/* Views are controlled programmatically via styles.display */
+
+/* --- END OF INTEGRATED NEW CSS --- */

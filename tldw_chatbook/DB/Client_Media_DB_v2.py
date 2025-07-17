@@ -82,6 +82,15 @@ class ConflictError(DatabaseError):
             details.append(f"ID: {self.identifier}")
         return f"{base} ({', '.join(details)})" if details else base
 
+# --- Custom JSON Encoder for DateTime ---
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            # Convert to ISO format string
+            return obj.isoformat()
+        return super().default(obj)
+
 # --- Database Class ---
 class MediaDatabase:
     """
@@ -391,7 +400,8 @@ class MediaDatabase:
     );
     """
 
-    def __init__(self, db_path: Union[str, Path], client_id: str):
+    def __init__(self, db_path: Union[str, Path], client_id: str, 
+                 check_integrity_on_startup: bool = False):
         """
         Initializes the Database instance, sets up the connection pool (via threading.local),
         and ensures the database schema is correctly initialized or migrated.
@@ -399,6 +409,7 @@ class MediaDatabase:
         Args:
             db_path (Union[str, Path]): The path to the SQLite database file or ':memory:'.
             client_id (str): A unique identifier for the client using this database instance.
+            check_integrity_on_startup: Whether to run integrity check on startup.
 
         Raises:
             ValueError: If client_id is empty or None.
@@ -444,6 +455,16 @@ class MediaDatabase:
             # This establishes the first connection for the current thread
             # and applies/verifies the schema.
             self._initialize_schema()
+            
+            # Run integrity check if requested and not in-memory
+            if check_integrity_on_startup and not self.is_memory_db:
+                logging.info(f"Running startup integrity check for MediaDatabase")
+                if not self.check_integrity():
+                    logging.warning(f"Database integrity check failed for {self.db_path_str}. "
+                                  "Consider running repairs or restoring from backup.")
+                    # Note: We don't raise an exception here to allow the app to continue
+                    # with potentially degraded functionality.
+            
             initialization_successful = True  # Mark as successful if no exception occurred
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             # Catch specific DB/Schema errors and general SQLite errors during init
@@ -872,7 +893,7 @@ class MediaDatabase:
                 del payload['vector_embedding']
             #  Add other fields to exclude if necessary
 
-        payload_json = json.dumps(payload, separators=(',', ':')) if payload else None  # Compact JSON
+        payload_json = json.dumps(payload, separators=(',', ':'), cls=DateTimeEncoder) if payload else None  # Compact JSON with datetime support
 
         try:
             conn.execute("""
@@ -903,6 +924,11 @@ class MediaDatabase:
             DatabaseError: If the FTS update fails.
         """
         content = content or ""
+        # Remove null bytes from content and title as they break FTS indexing
+        # Replace null bytes with spaces to preserve word boundaries
+        title = title.replace('\x00', ' ')
+        content = content.replace('\x00', ' ')
+        logging.debug(f"FTS update for media {media_id}: sanitized content - null bytes replaced")
         try:
             # Use INSERT OR REPLACE
             conn.execute("INSERT OR REPLACE INTO media_fts (rowid, title, content) VALUES (?, ?, ?)",
@@ -950,6 +976,8 @@ class MediaDatabase:
         Raises:
             DatabaseError: If the FTS update fails.
         """
+        # Remove null bytes from keyword as they break FTS indexing
+        keyword = keyword.replace('\x00', ' ')
         try:
             # Use INSERT OR REPLACE
             conn.execute("INSERT OR REPLACE INTO keyword_fts (rowid, keyword) VALUES (?, ?)",
@@ -1753,6 +1781,7 @@ class MediaDatabase:
             ConflictError: If the media item's version has changed since being read.
             DatabaseError: For other database errors during the operation or sync logging.
         """
+        start_time = time.time()
         current_time = self._get_current_utc_timestamp_str()  # Get time
         client_id = self.client_id
         logger.info(f"Attempting soft delete for Media ID: {media_id} [Client: {client_id}, Cascade: {cascade}]")
@@ -1764,6 +1793,17 @@ class MediaDatabase:
                 media_info = cursor.fetchone()
                 if not media_info:
                     logger.warning(f"Cannot soft delete: Media ID {media_id} not found or already deleted.")
+                    # Log metrics for not found
+                    duration = time.time() - start_time
+                    log_histogram("client_media_db_media_operation_duration", duration, labels={
+                        "operation": "soft_delete",
+                        "cascade": str(cascade)
+                    })
+                    log_counter("client_media_db_media_operation_count", labels={
+                        "operation": "soft_delete",
+                        "status": "not_found",
+                        "cascade": str(cascade)
+                    })
                     return False
                 media_uuid, current_media_version = media_info['uuid'], media_info['version']
                 new_media_version = current_media_version + 1
@@ -1830,16 +1870,278 @@ class MediaDatabase:
                         logger.debug(f"Cascade deleted {processed_children_count}/{len(children)} records in {table}.")
 
             logger.info(f"Soft delete successful for Media ID: {media_id}.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "cascade": str(cascade)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "success",
+                "cascade": str(cascade)
+            })
+            
             return True
         except (ConflictError, DatabaseError, sqlite3.Error) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "conflict" if isinstance(e, ConflictError) else "database_error" if isinstance(e, DatabaseError) else "sqlite_error"
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "cascade": str(cascade)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "error",
+                "error_type": error_type,
+                "cascade": str(cascade)
+            })
             logger.error(f"Error soft deleting media ID {media_id}: {e}", exc_info=True)
             if isinstance(e, (ConflictError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed to soft delete media: {e}") from e
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "cascade": str(cascade)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "error",
+                "error_type": "unexpected",
+                "cascade": str(cascade)
+            })
             logger.error(f"Unexpected error soft deleting media ID {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error during soft delete: {e}") from e
+
+    def undelete_media(self, media_id: int, cascade: bool = True) -> bool:
+        """
+        Undeletes a soft-deleted Media item by setting its 'deleted' flag to 0.
+
+        Increments the version number, updates `last_modified`, logs an 'undelete'
+        sync event for the Media item, and restores its FTS entry.
+        If `cascade` is True (default), it also performs the following within
+        the same transaction:
+        - Restores soft-deleted child records (Transcripts, MediaChunks,
+          UnvectorizedMediaChunks, DocumentVersions), logging 'undelete' events
+          for each child.
+
+        Args:
+            media_id (int): The ID of the Media item to undelete.
+            cascade (bool): Whether to also undelete related child records.
+                            Defaults to True.
+
+        Returns:
+            bool: True if the media item was successfully undeleted,
+                  False if the item was not found or not deleted.
+
+        Raises:
+            ConflictError: If the media item's version has changed since being read.
+            DatabaseError: For other database errors during the operation or sync logging.
+        """
+        current_time = self._get_current_utc_timestamp_str()
+        client_id = self.client_id
+        logger.info(f"Attempting undelete for Media ID: {media_id} [Client: {client_id}, Cascade: {cascade}]")
+
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT uuid, version, title, content FROM Media WHERE id = ? AND deleted = 1", (media_id,))
+                media_info = cursor.fetchone()
+                if not media_info:
+                    logger.warning(f"Cannot undelete: Media ID {media_id} not found or not deleted.")
+                    return False
+                media_uuid, current_media_version, title, content = media_info['uuid'], media_info['version'], media_info['title'], media_info['content']
+                new_media_version = current_media_version + 1
+
+                # Update Media: Set deleted = 0
+                cursor.execute("UPDATE Media SET deleted = 0, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ?",
+                               (current_time, new_media_version, client_id, media_id, current_media_version))
+                if cursor.rowcount == 0:
+                    raise ConflictError(entity="Media", identifier=media_id)
+
+                # Payload reflects the state after the update
+                undelete_payload = {'uuid': media_uuid, 'last_modified': current_time, 'version': new_media_version, 'client_id': client_id, 'deleted': 0}
+                self._log_sync_event(conn, 'Media', media_uuid, 'undelete', new_media_version, undelete_payload)
+                
+                # Restore FTS entry
+                self._update_fts_media(conn, media_id, title, content)
+
+                if cascade:
+                    logger.info(f"Performing cascade undelete for Media ID: {media_id}")
+                    # Undelete child tables
+                    child_tables = [("Transcripts", "media_id", "uuid"), ("MediaChunks", "media_id", "uuid"),
+                                    ("UnvectorizedMediaChunks", "media_id", "uuid"), ("DocumentVersions", "media_id", "uuid")]
+                    for table, fk_col, uuid_col in child_tables:
+                        # Validate SQL identifiers to prevent injection
+                        if not validate_table_name(table, 'media'):
+                            raise InputError(f"Invalid table name: {table}")
+                        if not validate_column_name(fk_col, table):
+                            raise InputError(f"Invalid column name: {fk_col}")
+                        if not validate_column_name(uuid_col, table):
+                            raise InputError(f"Invalid column name: {uuid_col}")
+
+                        cursor.execute(f"SELECT id, {uuid_col} AS uuid, version FROM {table} WHERE {fk_col} = ? AND deleted = 1", (media_id,))
+                        items_to_undelete = cursor.fetchall()
+                        for item in items_to_undelete:
+                            new_item_version = item['version'] + 1
+                            cursor.execute(f"UPDATE {table} SET deleted = 0, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ?",
+                                           (current_time, new_item_version, client_id, item['id'], item['version']))
+                            if cursor.rowcount > 0:
+                                undelete_item_payload = {'uuid': item['uuid'], 'last_modified': current_time, 'version': new_item_version, 'client_id': client_id, 'deleted': 0}
+                                self._log_sync_event(conn, table, item['uuid'], 'undelete', new_item_version, undelete_item_payload)
+
+        except (ConflictError, DatabaseError, InputError, Exception) as e:
+            logger.error(f"Error undeleting Media ID {media_id}: {e}", exc_info=True)
+            if isinstance(e, ConflictError):
+                raise e
+            else:
+                raise DatabaseError(f"Error undeleting Media ID {media_id}: {e}") from e
+
+        logger.info(f"Successfully undeleted Media ID: {media_id} and related records.")
+        return True
+
+    def hard_delete_old_media(self, days_old: int = 30) -> int:
+        """
+        Permanently delete media items that have been soft-deleted for more than X days.
+        
+        This method performs a true deletion, removing records from the database entirely.
+        It cascades to all related tables (MediaKeywords, Transcripts, MediaChunks, etc.)
+        
+        Args:
+            days_old: Number of days after soft deletion to wait before hard deletion.
+                     Defaults to 30 days.
+                     
+        Returns:
+            Number of items permanently deleted
+            
+        Raises:
+            DatabaseError: If there's an error during the deletion process
+        """
+        from datetime import datetime, timedelta
+        
+        # Calculate cutoff date
+        cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+        cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
+        
+        logger.info(f"Starting hard deletion of media soft-deleted before {cutoff_str} (>{days_old} days old)")
+        
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                
+                # First get the items to be deleted for logging and cleanup
+                cursor.execute(
+                    """SELECT id, uuid, title, type 
+                       FROM Media 
+                       WHERE deleted = 1 AND last_modified < ?
+                       ORDER BY last_modified""",
+                    (cutoff_str,)
+                )
+                items_to_delete = cursor.fetchall()
+                
+                if not items_to_delete:
+                    logger.info("No media items found for hard deletion")
+                    return 0
+                
+                deleted_count = 0
+                
+                # Process each item for deletion
+                for item in items_to_delete:
+                    media_id = item['id']
+                    media_uuid = item['uuid']
+                    title = item['title']
+                    media_type = item['type']
+                    
+                    try:
+                        # Delete from FTS if it exists (shouldn't, but just in case)
+                        self._delete_fts_media(conn, media_id)
+                        
+                        # Delete related records in order of dependencies
+                        # 1. Delete MediaKeywords links
+                        cursor.execute("DELETE FROM MediaKeywords WHERE media_id = ?", (media_id,))
+                        keywords_deleted = cursor.rowcount
+                        
+                        # 2. Delete Transcripts
+                        cursor.execute("DELETE FROM Transcripts WHERE media_id = ?", (media_id,))
+                        transcripts_deleted = cursor.rowcount
+                        
+                        # 3. Delete MediaChunks
+                        cursor.execute("DELETE FROM MediaChunks WHERE media_id = ?", (media_id,))
+                        chunks_deleted = cursor.rowcount
+                        
+                        # 4. Delete UnvectorizedMediaChunks
+                        cursor.execute("DELETE FROM UnvectorizedMediaChunks WHERE media_id = ?", (media_id,))
+                        unvectorized_chunks_deleted = cursor.rowcount
+                        
+                        # 5. Delete DocumentVersions
+                        cursor.execute("DELETE FROM DocumentVersions WHERE media_id = ?", (media_id,))
+                        doc_versions_deleted = cursor.rowcount
+                        
+                        # 6. Finally delete the Media record itself
+                        cursor.execute("DELETE FROM Media WHERE id = ?", (media_id,))
+                        
+                        if cursor.rowcount > 0:
+                            deleted_count += 1
+                            logger.info(
+                                f"Hard deleted media '{title}' (ID: {media_id}, UUID: {media_uuid}, Type: {media_type}). "
+                                f"Cascade deleted: {keywords_deleted} keywords, {transcripts_deleted} transcripts, "
+                                f"{chunks_deleted} chunks, {unvectorized_chunks_deleted} unvectorized chunks, "
+                                f"{doc_versions_deleted} document versions"
+                            )
+                            
+                            # Log final deletion event (for audit purposes if sync log is being monitored)
+                            self._log_sync_event(
+                                conn, 'Media', media_uuid, 'hard_delete', 0,
+                                {'uuid': media_uuid, 'title': title, 'permanent': True}
+                            )
+                        else:
+                            logger.warning(f"Failed to delete media ID {media_id} - may have been deleted already")
+                            
+                    except Exception as e:
+                        logger.error(f"Error hard deleting media ID {media_id}: {e}", exc_info=True)
+                        # Continue with other deletions rather than failing entirely
+                        continue
+                
+                logger.info(f"Hard deletion complete. Permanently deleted {deleted_count} media items.")
+                return deleted_count
+                
+        except Exception as e:
+            logger.error(f"Error during hard deletion process: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to perform hard deletion: {e}") from e
+
+    def get_deletion_candidates(self, days_old: int = 30) -> List[Dict[str, Any]]:
+        """
+        Get a list of media items that are candidates for hard deletion.
+        
+        Args:
+            days_old: Number of days after soft deletion to consider for hard deletion
+            
+        Returns:
+            List of dictionaries containing media info (id, uuid, title, type, last_modified)
+        """
+        from datetime import datetime, timedelta
+        
+        cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+        cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
+        
+        try:
+            cursor = self.execute_query(
+                """SELECT id, uuid, title, type, last_modified 
+                   FROM Media 
+                   WHERE deleted = 1 AND last_modified < ?
+                   ORDER BY last_modified""",
+                (cutoff_str,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting deletion candidates: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to get deletion candidates: {e}") from e
 
     def add_media_with_keywords(
             self,
@@ -1859,6 +2161,8 @@ class MediaDatabase:
             chunks: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Optional[int], Optional[str], str]:
         """Add or update a media record, handle keyword links, optional chunks and full-text sync."""
+        
+        start_time = time.time()
 
         # ---------------------------------------------------------------------
         # 1. Fast‑fail validation & normalisation
@@ -1934,7 +2238,7 @@ class MediaDatabase:
                     (
                         media_id, ch["text"], idx, ch.get("start_char"), ch.get("end_char"), ch.get("chunk_type"),
                         created, created, False,
-                        json.dumps(ch.get("metadata")) if isinstance(ch.get("metadata"), dict) else None,
+                        json.dumps(ch.get("metadata"), cls=DateTimeEncoder) if isinstance(ch.get("metadata"), dict) else None,
                         chunk_uuid, created, 1, client_id, 0, None, None,
                     ),
                 )
@@ -1956,14 +2260,14 @@ class MediaDatabase:
 
                 # Find existing record by URL or content_hash
                 cur.execute(
-                    "SELECT id, uuid, version, url, content_hash FROM Media WHERE url = ? AND deleted = 0 LIMIT 1",
+                    "SELECT id, uuid, version, url, content_hash, title, type, author FROM Media WHERE url = ? AND deleted = 0 LIMIT 1",
                     (url,),
                 )
                 row = cur.fetchone()
 
                 if not row:
                     cur.execute(
-                        "SELECT id, uuid, version, url, content_hash FROM Media WHERE content_hash = ? AND deleted = 0 LIMIT 1",
+                        "SELECT id, uuid, version, url, content_hash, title, type, author FROM Media WHERE content_hash = ? AND deleted = 0 LIMIT 1",
                         (content_hash,),
                     )
                     row = cur.fetchone()
@@ -1978,30 +2282,86 @@ class MediaDatabase:
 
                     # Case A.1: Overwrite is requested.
                     if overwrite:
-                        # Case A.1.a: Content is identical. No version bump needed for main content.
+                        # Case A.1.a: Content is identical. Check if metadata needs updating.
                         if content_hash == existing_hash:
-                            logging.info(f"Media content for ID {media_id} is identical. Updating metadata/chunks only.")
+                            logging.info(f"Media content for ID {media_id} is identical. Checking metadata/chunks.")
 
-                            # Update keywords and chunks without changing the main Media record yet.
+                            # Check if any metadata has changed
+                            metadata_changed = False
+                            if row['title'] != title or row['author'] != author or row['type'] != media_type:
+                                metadata_changed = True
+                                logging.info(f"Metadata changed for media ID {media_id}: title, author, or type differs")
+
+                            # Update keywords first
                             self.update_keywords_for_media(media_id, keywords_norm)
                             _persist_chunks(conn, media_id)
 
-                            # If new chunks were provided, the media's chunking status has changed,
-                            # which justifies a version bump on the parent Media record.
-                            if chunks is not None:
-                                logging.info(f"Chunks provided for identical media; updating media chunk_status and version for ID {media_id}.")
+                            # If metadata changed or chunks were provided, update the Media record
+                            if metadata_changed or chunks is not None:
+                                logging.info(f"Updating media metadata/chunks for ID {media_id}.")
                                 new_ver = current_ver + 1
-                                cur.execute(
-                                    """UPDATE Media SET chunking_status = 'completed', version = ?, last_modified = ?
-                                       WHERE id = ? AND version = ?""",
-                                    (new_ver, now, media_id, current_ver)
-                                )
+                                
+                                # Build update query based on what changed
+                                update_fields = ["version = ?", "last_modified = ?", "client_id = ?"]
+                                update_params = [new_ver, now, client_id]
+                                
+                                if metadata_changed:
+                                    update_fields.extend(["title = ?", "type = ?", "author = ?"])
+                                    update_params.extend([title, media_type, author])
+                                
+                                if chunks is not None:
+                                    update_fields.append("chunking_status = ?")
+                                    update_params.append(final_chunk_status)
+                                
+                                update_params.extend([media_id, current_ver])
+                                update_sql = f"UPDATE Media SET {', '.join(update_fields)} WHERE id = ? AND version = ?"
+                                
+                                cur.execute(update_sql, update_params)
                                 if cur.rowcount == 0:
-                                    raise ConflictError(f"Media (updating chunk status for identical content id={media_id})", media_id)
+                                    raise ConflictError(f"Media (updating metadata for identical content id={media_id})", media_id)
 
-                                self._log_sync_event(conn, "Media", media_uuid, "update", new_ver, {"chunking_status": "completed", "last_modified": now})
+                                # Log sync event with updated fields
+                                sync_payload = {"last_modified": now, "version": new_ver, "client_id": client_id}
+                                if metadata_changed:
+                                    sync_payload.update({"title": title, "type": media_type, "author": author})
+                                if chunks is not None:
+                                    sync_payload["chunking_status"] = final_chunk_status
+                                
+                                self._log_sync_event(conn, "Media", media_uuid, "update", new_ver, sync_payload)
+                                
+                                # Update FTS with new title if it changed
+                                if metadata_changed:
+                                    self._update_fts_media(conn, media_id, title, content)
 
-                            return media_id, media_uuid, f"Media '{title}' is already up-to-date."
+                                # Log metrics for metadata update
+                                duration = time.time() - start_time
+                                log_histogram("client_media_db_media_operation_duration", duration, labels={
+                                    "operation": "add_media",
+                                    "path": "update_metadata_only",
+                                    "has_chunks": str(chunks is not None)
+                                })
+                                log_counter("client_media_db_media_operation_count", labels={
+                                    "operation": "add_media",
+                                    "path": "update_metadata_only",
+                                    "status": "success"
+                                })
+                                
+                                return media_id, media_uuid, f"Media '{title}' metadata updated."
+                            else:
+                                # Log metrics for no-op (already up-to-date)
+                                duration = time.time() - start_time
+                                log_histogram("client_media_db_media_operation_duration", duration, labels={
+                                    "operation": "add_media",
+                                    "path": "no_op",
+                                    "has_chunks": "false"
+                                })
+                                log_counter("client_media_db_media_operation_count", labels={
+                                    "operation": "add_media",
+                                    "path": "no_op",
+                                    "status": "success"
+                                })
+                                
+                                return media_id, media_uuid, f"Media '{title}' is already up-to-date."
 
                         # Case A.1.b: Content is different. Proceed with a full versioned update.
                         new_ver = current_ver + 1
@@ -2026,6 +2386,19 @@ class MediaDatabase:
                             media_id=media_id, content=content, prompt=prompt, analysis_content=analysis_content
                         )
                         _persist_chunks(conn, media_id)
+                        # Log metrics for content update
+                        duration = time.time() - start_time
+                        log_histogram("client_media_db_media_operation_duration", duration, labels={
+                            "operation": "add_media",
+                            "path": "update_content",
+                            "has_chunks": str(chunks is not None)
+                        })
+                        log_counter("client_media_db_media_operation_count", labels={
+                            "operation": "add_media",
+                            "path": "update_content",
+                            "status": "success"
+                        })
+                        
                         return media_id, media_uuid, f"Media '{title}' updated to new version."
 
                     # Case A.2: Overwrite is FALSE.
@@ -2048,8 +2421,34 @@ class MediaDatabase:
                             self._log_sync_event(
                                 conn, "Media", media_uuid, "update", new_ver, {"url": url, "last_modified": now}
                             )
+                            # Log metrics for URL canonicalization
+                            duration = time.time() - start_time
+                            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                                "operation": "add_media",
+                                "path": "canonicalize_url",
+                                "has_chunks": "false"
+                            })
+                            log_counter("client_media_db_media_operation_count", labels={
+                                "operation": "add_media",
+                                "path": "canonicalize_url",
+                                "status": "success"
+                            })
+                            
                             return media_id, media_uuid, f"Media '{title}' URL canonicalized."
 
+                        # Log metrics for duplicate skip
+                        duration = time.time() - start_time
+                        log_histogram("client_media_db_media_operation_duration", duration, labels={
+                            "operation": "add_media",
+                            "path": "skip_duplicate",
+                            "has_chunks": "false"
+                        })
+                        log_counter("client_media_db_media_operation_count", labels={
+                            "operation": "add_media",
+                            "path": "skip_duplicate",
+                            "status": "success"
+                        })
+                        
                         return None, None, f"Media '{title}' already exists. Overwrite not enabled."
 
                 # --- Path B: Record does not exist, perform INSERT ---
@@ -2082,13 +2481,53 @@ class MediaDatabase:
                     if chunk_options:
                         logging.info("chunk_options ignored (placeholder): %s", chunk_options)
 
+                    # Log metrics for new media creation
+                    duration = time.time() - start_time
+                    log_histogram("client_media_db_media_operation_duration", duration, labels={
+                        "operation": "add_media",
+                        "path": "create_new",
+                        "has_chunks": str(chunks is not None)
+                    })
+                    log_counter("client_media_db_media_operation_count", labels={
+                        "operation": "add_media",
+                        "path": "create_new",
+                        "status": "success"
+                    })
+                    
                     return media_id, media_uuid, f"Media '{title}' added."
 
         except (InputError, ConflictError, sqlite3.IntegrityError) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "input_error" if isinstance(e, InputError) else "conflict" if isinstance(e, ConflictError) else "integrity_error"
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "add_media",
+                "path": "error",
+                "has_chunks": str(chunks is not None)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "add_media",
+                "path": "error",
+                "status": "error",
+                "error_type": error_type
+            })
             # Catch the specific IntegrityError from the trigger and re-raise as a more descriptive error if you want
             logging.error(f"Transaction failed, rolling back: {type(e).__name__} - {e}")
             raise  # Re-raise the original exception
         except Exception as exc:
+            # Log error metrics for unexpected errors
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "add_media",
+                "path": "error",
+                "has_chunks": str(chunks is not None)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "add_media",
+                "path": "error",
+                "status": "error",
+                "error_type": "unexpected"
+            })
             logging.error(f"Unexpected error in transaction: {type(exc).__name__} - {exc}")
             raise DatabaseError(f"Unexpected error processing media: {exc}") from exc
 
@@ -2268,6 +2707,188 @@ class MediaDatabase:
             logger.error(f"Unexpected keywords error media {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected keyword update error: {e}") from e
 
+    def update_media_metadata(self, media_id: int, title: str = None, media_type: str = None,
+                             author: str = None, url: str = None, keywords: List[str] = None) -> Tuple[bool, str]:
+        """
+        Updates metadata fields for a media item with optimistic locking.
+        
+        Args:
+            media_id (int): The ID of the media item to update
+            title (str, optional): New title for the media item
+            media_type (str, optional): New type for the media item
+            author (str, optional): New author for the media item
+            url (str, optional): New URL for the media item
+            keywords (List[str], optional): New list of keywords (replaces existing)
+            
+        Returns:
+            Tuple[bool, str]: (success, message) - success status and descriptive message
+            
+        Raises:
+            InputError: If media_id is invalid or media item not found
+            ConflictError: If optimistic locking fails (version mismatch)
+            DatabaseError: For database errors
+        """
+        start_time = time.time()
+        logger = logging.getLogger(__name__)
+        client_id = self.client_id
+        now = self._get_current_utc_timestamp_str()
+        
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                
+                # Get current media item with version for optimistic locking
+                cursor.execute(
+                    "SELECT id, uuid, version, title, type, author, url FROM Media WHERE id = ? AND deleted = 0",
+                    (media_id,)
+                )
+                row = cursor.fetchone()
+                
+                if not row:
+                    raise InputError(f"Media item with ID {media_id} not found or deleted")
+                
+                media_uuid = row['uuid']
+                current_version = row['version']
+                
+                # Build update fields dynamically based on provided parameters
+                update_fields = ["last_modified = ?", "version = ?", "client_id = ?"]
+                update_params = [now, current_version + 1, client_id]
+                sync_payload = {"last_modified": now, "version": current_version + 1, "client_id": client_id}
+                
+                # Track what's being updated for the message
+                updates_made = []
+                
+                if title is not None and title != row['title']:
+                    update_fields.append("title = ?")
+                    update_params.append(title)
+                    sync_payload["title"] = title
+                    updates_made.append("title")
+                    
+                if media_type is not None and media_type != row['type']:
+                    update_fields.append("type = ?")
+                    update_params.append(media_type)
+                    sync_payload["type"] = media_type
+                    updates_made.append("type")
+                    
+                if author is not None and author != row['author']:
+                    update_fields.append("author = ?")
+                    update_params.append(author)
+                    sync_payload["author"] = author
+                    updates_made.append("author")
+                    
+                if url is not None and url != row['url']:
+                    update_fields.append("url = ?")
+                    update_params.append(url)
+                    sync_payload["url"] = url
+                    updates_made.append("URL")
+                
+                # Only update if there are actual changes
+                if len(update_fields) > 3 or keywords is not None:  # More than just version/timestamp fields
+                    # Add WHERE clause parameters
+                    update_params.extend([media_id, current_version])
+                    
+                    # Execute update with optimistic locking
+                    update_sql = f"UPDATE Media SET {', '.join(update_fields)} WHERE id = ? AND version = ?"
+                    cursor.execute(update_sql, update_params)
+                    
+                    if cursor.rowcount == 0:
+                        raise ConflictError(f"Media metadata update failed due to version conflict", media_id)
+                    
+                    # Log sync event for the update
+                    self._log_sync_event(conn, "Media", media_uuid, "update", current_version + 1, sync_payload)
+                    
+                    # Update FTS if title changed
+                    if title is not None and title != row['title']:
+                        # Get current content for FTS update
+                        cursor.execute("SELECT content FROM Media WHERE id = ?", (media_id,))
+                        content_row = cursor.fetchone()
+                        content = content_row['content'] if content_row else ""
+                        self._update_fts_media(conn, media_id, title, content)
+                    
+                    # Update keywords if provided
+                    if keywords is not None:
+                        self.update_keywords_for_media(media_id, keywords)
+                        updates_made.append("keywords")
+                    
+                    # Construct success message
+                    if updates_made:
+                        message = f"Successfully updated {', '.join(updates_made)} for media ID {media_id}"
+                    else:
+                        message = f"No changes needed for media ID {media_id}"
+                        
+                    logger.info(message)
+                    
+                    # Log metrics for successful update
+                    duration = time.time() - start_time
+                    log_histogram("client_media_db_media_operation_duration", duration, labels={
+                        "operation": "update_metadata",
+                        "fields_updated": str(len(updates_made))
+                    })
+                    log_counter("client_media_db_media_operation_count", labels={
+                        "operation": "update_metadata",
+                        "status": "success",
+                        "fields_updated": str(len(updates_made))
+                    })
+                    
+                    return True, message
+                else:
+                    # Log metrics for no-op
+                    duration = time.time() - start_time
+                    log_histogram("client_media_db_media_operation_duration", duration, labels={
+                        "operation": "update_metadata",
+                        "fields_updated": "0"
+                    })
+                    log_counter("client_media_db_media_operation_count", labels={
+                        "operation": "update_metadata",
+                        "status": "no_op"
+                    })
+                    
+                    return True, "No changes to update"
+                    
+        except (InputError, ConflictError, DatabaseError) as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            error_type = "input_error" if isinstance(e, InputError) else "conflict" if isinstance(e, ConflictError) else "database_error"
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "update_metadata",
+                "fields_updated": "0"
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "update_metadata",
+                "status": "error",
+                "error_type": error_type
+            })
+            logger.error(f"Error updating media metadata for ID {media_id}: {e}")
+            raise
+        except sqlite3.Error as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "update_metadata",
+                "fields_updated": "0"
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "update_metadata",
+                "status": "error",
+                "error_type": "sqlite_error"
+            })
+            logger.error(f"Database error updating media metadata: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to update media metadata: {e}") from e
+        except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "update_metadata",
+                "fields_updated": "0"
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "update_metadata",
+                "status": "error",
+                "error_type": "unexpected"
+            })
+            logger.error(f"Unexpected error updating media metadata: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error: {e}") from e
+
     def soft_delete_keyword(self, keyword: str) -> bool:
         """
         Soft deletes a keyword by setting its 'deleted' flag to 1.
@@ -2342,6 +2963,227 @@ class MediaDatabase:
         except Exception as e:
             logger.error(f"Unexpected soft delete keyword error '{keyword}': {e}", exc_info=True)
             raise DatabaseError(f"Unexpected soft delete keyword error: {e}") from e
+
+    def rename_keyword(self, keyword_id: int, new_keyword: str) -> bool:
+        """
+        Rename a keyword to a new name.
+        
+        Args:
+            keyword_id (int): ID of the keyword to rename
+            new_keyword (str): New keyword name
+            
+        Returns:
+            bool: True if successful, False otherwise
+            
+        Raises:
+            ValueError: If new_keyword is empty or already exists
+            DatabaseError: For database operation errors
+        """
+        new_keyword = new_keyword.strip().lower()
+        if not new_keyword:
+            raise ValueError("New keyword cannot be empty")
+            
+        current_time = self._get_current_utc_timestamp_str()
+        client_id = self.client_id
+        
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                
+                # Check if keyword exists and is not deleted
+                cursor.execute('SELECT keyword, uuid, version FROM Keywords WHERE id = ? AND deleted = 0', (keyword_id,))
+                keyword_info = cursor.fetchone()
+                if not keyword_info:
+                    logger.warning(f"Keyword ID {keyword_id} not found or deleted")
+                    return False
+                    
+                old_keyword = keyword_info['keyword']
+                keyword_uuid = keyword_info['uuid']
+                current_version = keyword_info['version']
+                
+                # Check if new keyword already exists
+                cursor.execute('SELECT id FROM Keywords WHERE keyword = ? AND deleted = 0 AND id != ?', (new_keyword, keyword_id))
+                if cursor.fetchone():
+                    raise ValueError(f"Keyword '{new_keyword}' already exists")
+                    
+                new_version = current_version + 1
+                
+                # Update the keyword
+                cursor.execute("""
+                    UPDATE Keywords 
+                    SET keyword = ?, last_modified = ?, version = ?, client_id = ?
+                    WHERE id = ? AND version = ?
+                """, (new_keyword, current_time, new_version, client_id, keyword_id, current_version))
+                
+                if cursor.rowcount == 0:
+                    raise ConflictError("Keywords", keyword_id)
+                    
+                # Update FTS
+                self._update_fts_keyword(conn, keyword_id, new_keyword)
+                
+                # Log sync event
+                update_payload = {
+                    'uuid': keyword_uuid,
+                    'keyword': new_keyword,
+                    'last_modified': current_time,
+                    'version': new_version,
+                    'client_id': client_id
+                }
+                self._log_sync_event(conn, 'Keywords', keyword_uuid, 'update', new_version, update_payload)
+                
+                logger.info(f"Renamed keyword '{old_keyword}' to '{new_keyword}' (ID: {keyword_id})")
+                return True
+                
+        except (ValueError, ConflictError, DatabaseError) as e:
+            logger.error(f"Error renaming keyword ID {keyword_id}: {e}")
+            raise
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error renaming keyword ID {keyword_id}: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to rename keyword: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error renaming keyword ID {keyword_id}: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected rename error: {e}") from e
+
+    def merge_keywords(self, source_keyword_ids: List[int], target_keyword: str, create_if_not_exists: bool = True) -> bool:
+        """
+        Merge multiple keywords into a single target keyword.
+        
+        Args:
+            source_keyword_ids (List[int]): IDs of keywords to merge
+            target_keyword (str): Target keyword to merge into
+            create_if_not_exists (bool): Create target keyword if it doesn't exist
+            
+        Returns:
+            bool: True if successful, False otherwise
+            
+        Raises:
+            ValueError: If source_keyword_ids is empty or target_keyword is empty
+            DatabaseError: For database operation errors
+        """
+        if not source_keyword_ids:
+            raise ValueError("Source keyword IDs cannot be empty")
+            
+        target_keyword = target_keyword.strip().lower()
+        if not target_keyword:
+            raise ValueError("Target keyword cannot be empty")
+            
+        current_time = self._get_current_utc_timestamp_str()
+        client_id = self.client_id
+        
+        try:
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                
+                # Get or create target keyword
+                cursor.execute('SELECT id FROM Keywords WHERE keyword = ? AND deleted = 0', (target_keyword,))
+                target_result = cursor.fetchone()
+                
+                if target_result:
+                    target_keyword_id = target_result['id']
+                elif create_if_not_exists:
+                    # Create new keyword
+                    result = self.add_keyword(target_keyword)
+                    if result[0] is None:
+                        raise DatabaseError(f"Failed to create target keyword: {result[1]}")
+                    target_keyword_id = result[0]
+                else:
+                    raise ValueError(f"Target keyword '{target_keyword}' does not exist")
+                    
+                # Get all media items associated with source keywords
+                placeholders = ','.join('?' * len(source_keyword_ids))
+                cursor.execute(f"""
+                    SELECT DISTINCT mk.media_id 
+                    FROM MediaKeywords mk
+                    JOIN Keywords k ON mk.keyword_id = k.id
+                    WHERE k.id IN ({placeholders}) AND k.deleted = 0
+                """, source_keyword_ids)
+                
+                media_ids = [row['media_id'] for row in cursor.fetchall()]
+                
+                # Add target keyword to all media items
+                for media_id in media_ids:
+                    # Check if link already exists
+                    cursor.execute("""
+                        SELECT id FROM MediaKeywords 
+                        WHERE media_id = ? AND keyword_id = ?
+                    """, (media_id, target_keyword_id))
+                    
+                    if not cursor.fetchone():
+                        # Create new link
+                        cursor.execute("""
+                            INSERT INTO MediaKeywords (media_id, keyword_id)
+                            VALUES (?, ?)
+                        """, (media_id, target_keyword_id))
+                        
+                # Remove source keywords from media items
+                cursor.execute(f"""
+                    DELETE FROM MediaKeywords 
+                    WHERE keyword_id IN ({placeholders})
+                """, source_keyword_ids)
+                
+                # Soft delete source keywords
+                for keyword_id in source_keyword_ids:
+                    if keyword_id != target_keyword_id:  # Don't delete if merging into itself
+                        cursor.execute("""
+                            UPDATE Keywords 
+                            SET deleted = 1, last_modified = ?, version = version + 1, client_id = ?
+                            WHERE id = ? AND deleted = 0
+                        """, (current_time, client_id, keyword_id))
+                        
+                        # Update FTS
+                        self._delete_fts_keyword(conn, keyword_id)
+                        
+                logger.info(f"Merged {len(source_keyword_ids)} keywords into '{target_keyword}' affecting {len(media_ids)} media items")
+                return True
+                
+        except (ValueError, DatabaseError) as e:
+            logger.error(f"Error merging keywords: {e}")
+            raise
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error merging keywords: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to merge keywords: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error merging keywords: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected merge error: {e}") from e
+
+    def get_keyword_usage_stats(self) -> List[Dict[str, Any]]:
+        """
+        Get usage statistics for all keywords.
+        
+        Returns:
+            List[Dict[str, Any]]: List of dictionaries containing keyword info and usage count
+                Each dict contains: id, keyword, uuid, usage_count, last_modified
+                
+        Raises:
+            DatabaseError: For database operation errors
+        """
+        try:
+            query = """
+                SELECT 
+                    k.id,
+                    k.keyword,
+                    k.uuid,
+                    k.last_modified,
+                    COUNT(DISTINCT mk.media_id) as usage_count
+                FROM Keywords k
+                LEFT JOIN MediaKeywords mk ON k.id = mk.keyword_id
+                WHERE k.deleted = 0
+                GROUP BY k.id, k.keyword, k.uuid, k.last_modified
+                ORDER BY usage_count DESC, k.keyword COLLATE NOCASE
+            """
+            
+            cursor = self.execute_query(query)
+            results = [dict(row) for row in cursor.fetchall()]
+            
+            logger.debug(f"Retrieved usage stats for {len(results)} keywords")
+            return results
+            
+        except sqlite3.Error as e:
+            logger.error(f"SQLite error getting keyword usage stats: {e}", exc_info=True)
+            raise DatabaseError(f"Failed to get keyword usage stats: {e}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error getting keyword usage stats: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected stats error: {e}") from e
 
     def soft_delete_document_version(self, version_uuid: str) -> bool:
         """
@@ -2808,7 +3650,7 @@ class MediaDatabase:
                             'last_modified_orig': chunk_dict.get('last_modified_orig') or current_time,
                             'is_processed': chunk_dict.get('is_processed', False),
                             # Ensure metadata is JSON string
-                            'metadata': json.dumps(chunk_dict.get('metadata')) if chunk_dict.get('metadata') else None,
+                            'metadata': json.dumps(chunk_dict.get('metadata'), cls=DateTimeEncoder) if chunk_dict.get('metadata') else None,
                             'uuid': chunk_uuid,
                             'last_modified': current_time,  # Set sync last_modified
                             'version': new_sync_version, 'client_id': client_id, 'deleted': 0,
@@ -2966,6 +3808,8 @@ class MediaDatabase:
             InputError: If `media_id` is not an integer.
             DatabaseError: If a database query error occurs.
         """
+        start_time = time.time()
+        
         if not isinstance(media_id, int):
             raise InputError("media_id must be an integer.")
 
@@ -2980,11 +3824,53 @@ class MediaDatabase:
         try:
             cursor = self.execute_query(query, tuple(params))
             result = cursor.fetchone()
-            return dict(result) if result else None
+            found_result = dict(result) if result else None
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "true" if found_result else "false",
+                "include_deleted": str(include_deleted),
+                "include_trash": str(include_trash)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "success",
+                "found": "true" if found_result else "false"
+            })
+            
+            return found_result
         except sqlite3.Error as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "false",
+                "include_deleted": str(include_deleted),
+                "include_trash": str(include_trash)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "error",
+                "error_type": "database_error"
+            })
             logger.error(f"Error fetching media by ID {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Failed to fetch media by ID: {e}") from e
         except Exception as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("client_media_db_media_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "false",
+                "include_deleted": str(include_deleted),
+                "include_trash": str(include_trash)
+            })
+            log_counter("client_media_db_media_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "error",
+                "error_type": "unexpected_error"
+            })
             logger.error(f"Unexpected error fetching media by ID {media_id}: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error fetching media by ID: {e}") from e
 
@@ -4008,6 +4894,27 @@ class MediaDatabase:
             raise DatabaseError(f"Failed to fetch keywords for media batch: {e}") from e
 
     # ============================= End of Chat UI Functions for Search ===================================================
+    
+    def close(self) -> None:
+        """Alias for close_connection() to maintain consistency with BaseDB."""
+        self.close_connection()
+    
+    def vacuum(self) -> None:
+        """Vacuum the database to reclaim unused space and optimize performance."""
+        if self.is_memory_db:
+            logger.debug("Skipping vacuum for in-memory database")
+            return
+            
+        try:
+            conn = self.get_connection()
+            # Vacuum must be run outside of a transaction
+            conn.isolation_level = None
+            conn.execute("VACUUM")
+            conn.isolation_level = ""  # Restore default
+            logger.info(f"Successfully vacuumed database: {self.db_path_str}")
+        except Exception as e:
+            logger.error(f"Failed to vacuum database: {e}")
+            raise DatabaseError(f"Vacuum failed: {e}") from e
 
 
 

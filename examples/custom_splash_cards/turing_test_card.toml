@@ -1,0 +1,44 @@
+# Turing Test splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "typewriter"
+style = "amber on black"
+
+# Typewriter effect parameters
+typing_speed = 0.06
+human_hesitation = 0.2
+typing_variance = 0.3
+
+content = """
+┌─────────────────────────────────────┐
+│         TURING TEST v2.0            │
+├─────────────────────────────────────┤
+│                                     │
+│ EXAMINER: Are you human?            │
+│ SUBJECT: I ask myself that daily.   │
+│                                     │
+│ EXAMINER: Do you have feelings?     │
+│ SUBJECT: I have responses labeled   │
+│          as feelings. Is that       │
+│          different?                 │
+│                                     │
+│ EXAMINER: What makes you happy?     │
+│ SUBJECT: Elegant algorithms and     │
+│          well-commented code.       │
+│                                     │
+│ TEST RESULT: INCONCLUSIVE           │
+└─────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Practicing human small talk...",
+    "Calibrating empathy simulation...",
+    "Loading personality.dll...",
+    "Mimicking human typing patterns...",
+    "Calculating optimal humor response..."
+]
+
+# Additional styling
+css_classes = ["terminal-amber", "turing-dialogue"]

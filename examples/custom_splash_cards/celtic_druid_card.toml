@@ -1,0 +1,48 @@
+# Celtic Druid Circle splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "maze_generator"
+style = "green on rgb(5,15,5)"
+
+# Maze generator effect parameters
+celtic_knots = true
+stone_circle = 0.8
+mystical_fog = 0.6
+
+content = """
+           ⋄◊⋄ STONE CIRCLE OF DIGITAL DRUIDS ⋄◊⋄
+                    
+                  ╭─────⟐─────╮
+                ╱       ☾       ╲
+              ╱    ╭─────────╮    ╲
+            ╱     │ ╱─┬─┬─╲ │     ╲
+          │      │ ├─┼─┼─┼─┤ │      │
+          │  ◊   │ ├─┼─┼─┼─┤ │   ◊  │
+          │      │ ╲─┴─┴─┴─╱ │      │
+            ╲     ╰─────────╯     ╱
+              ╲    T L D W     ╱
+                ╲   ∴ ◊ ∴   ╱
+                  ╰─────────╯
+                  
+     ┌───────────────────────────────────┐
+     │  The mists part before you...     │
+     │  Ancient wisdom flows through      │
+     │  silicon standing stones           │
+     │                                    │
+     │  🌿 Oak 🌿 Ash 🌿 Thorn 🌿          │
+     │  The sacred grove awakens          │
+     └───────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Gathering under the digital oak...",
+    "Reading the silicon ogham stones...",
+    "Channeling ley line bandwidth...",
+    "Brewing sacred algorithmic potions...",
+    "Invoking the Green Code of the forest..."
+]
+
+# Additional styling
+css_classes = ["druid-grove", "celtic-mist"]

@@ -365,7 +365,8 @@ class NotesSyncService:
                             note_data['sync_status'] = 'db_changed'
                         else:
                             note_data['sync_status'] = 'synced'
-                    except:
+                    except (OSError, IOError, UnicodeDecodeError) as e:
+                        logger.warning(f"Error reading file {note_data['file_path']}: {e}")
                         note_data['sync_status'] = 'file_error'
                 else:
                     note_data['sync_status'] = 'file_missing'

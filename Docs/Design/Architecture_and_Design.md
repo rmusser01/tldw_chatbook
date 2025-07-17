@@ -10,6 +10,12 @@
 - **`tldw_chatbook/app.py`**: The main entry point of the application, setting up the Textual app.
 - **`tldw_chatbook/Character_Chat/`**: Logic related to character-based chat.
 - **`tldw_chatbook/Chat/`**: Core logic for handling chat interactions, LLM API calls, and conversation management.
+- **`tldw_chatbook/Chunking/`**: Advanced text chunking system with template support for document processing.
+  - **`Chunk_Lib.py`**: Main chunking implementation with multiple methods (words, sentences, semantic, etc.)
+  - **`chunking_templates.py`**: Template-based chunking system for complex pipelines
+  - **`language_chunkers.py`**: Language-specific tokenization (Chinese, Japanese, etc.)
+  - **`token_chunker.py`**: Token-based chunking with transformer support
+  - **`templates/`**: JSON templates for various chunking strategies
 - **`tldw_chatbook/DB/`**: Database interaction layer (SQLite).
   - **`ChaChaNotes_DB.py`**: SQLite Database library used for Chats, Characters, and Notes.
   - **`Client_Media_DB_v2.py`**: Manages Media database operations. This is where all ingested media is stored.
@@ -64,3 +70,57 @@ Users can manage MLX-LM instances via the "LLM Management" tab, allowing configu
 *   **Additional Arguments**: Pass extra command-line arguments to the `mlx_lm.server` process.
 
 The integration starts a local `mlx_lm.server` process and interacts with it, assuming an OpenAI-compatible API endpoint (typically at `/v1`). This allows for efficient local inference leveraging MLX's performance benefits on supported hardware.
+
+
+## Chunking System
+
+The chunking system provides sophisticated text segmentation capabilities for document processing, RAG (Retrieval-Augmented Generation), and LLM context management.
+
+### Architecture Overview
+
+The chunking module (`tldw_chatbook/Chunking/`) implements a flexible, template-based approach to text chunking with the following components:
+
+- **Core Chunking Engine** (`Chunk_Lib.py`): Provides multiple chunking methods including words, sentences, paragraphs, tokens, semantic, JSON, XML, and specialized methods for e-books and rolling summarization.
+
+- **Template System** (`chunking_templates.py`): Enables declarative configuration of complex chunking pipelines with preprocessing and postprocessing stages. Templates are defined in JSON and support inheritance.
+
+- **Language Support** (`language_chunkers.py`): Language-specific tokenization for Chinese (jieba), Japanese (fugashi), and other languages with NLTK fallback.
+
+- **Token Support** (`token_chunker.py`): Precise token-based chunking using HuggingFace transformers with word-based fallback when transformers are unavailable.
+
+### Key Features
+
+- **Multiple Chunking Methods**: Words, sentences, paragraphs, tokens, semantic similarity, structured data (JSON/XML)
+- **Template-Based Configuration**: Define reusable chunking strategies without code
+- **Multi-Stage Pipelines**: Preprocessing → Chunking → Postprocessing
+- **Language Awareness**: Automatic language detection and appropriate tokenization
+- **Extensible Operations**: Register custom operations for specialized needs
+- **Graceful Degradation**: Fallbacks for missing optional dependencies
+
+### Integration Points
+
+The chunking system integrates with:
+- **Media Ingestion**: Processes documents during import with configurable strategies per media type
+- **RAG System**: Creates optimally-sized chunks for embedding and retrieval
+- **Chat System**: Manages context windows for LLM interactions
+- **Notes System**: Chunks content for synchronization and search
+
+### Usage Example
+
+```python
+from tldw_chatbook.Chunking import Chunker
+
+# Simple usage
+chunker = Chunker()
+chunks = chunker.chunk_text(text, method="semantic")
+
+# Template-based usage
+chunker = Chunker(template="academic_paper")
+chunks = chunker.chunk_text(research_paper_text)
+```
+
+For detailed information, see:
+- [Chunking Architecture](Chunking_Architecture.md)
+- [Chunking API Reference](Chunking_API_Reference.md)
+- [Chunking Templates Guide](Chunking_Templates_Guide.md)
+- [Chunking Use Cases](Chunking_Use_Cases.md)

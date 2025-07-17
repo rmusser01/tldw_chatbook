@@ -1,0 +1,36 @@
+# Commodore 64 Boot splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "retro_terminal"
+style = "blue on blue"
+
+# Retro terminal effect parameters
+typing_speed = 0.05
+cursor_blink = true
+phosphor_glow = true
+
+content = """
+    **** COMMODORE 64 BASIC V2 ****
+     64K RAM SYSTEM  38911 BASIC BYTES FREE
+    
+READY.
+LOAD "TLDW",8,1
+SEARCHING FOR TLDW
+LOADING
+RUN
+
+█
+"""
+
+# Progress messages to show during boot
+progress_messages = [
+    "PRESS PLAY ON TAPE...",
+    "GURU MEDITATION #00000004.0000AAC0",
+    "INSERT DISK 2 OF 47...",
+    "ADJUSTING TRACKING...",
+    "BLOWING ON CARTRIDGE..."
+]
+
+# Additional styling
+css_classes = ["retro-crt", "scanlines"]

@@ -1,0 +1,41 @@
+# Punch Card Reader splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "scroll"
+style = "white on rgb(40,40,40)"
+
+# Scroll effect parameters
+scroll_speed = 0.02
+card_feed_sound = true
+mechanical_delay = 0.15
+
+content = """
+┌─────────────────────────────────────────────┐
+│ IBM SYSTEM/360 - JOB CONTROL LANGUAGE       │
+├─────────────────────────────────────────────┤
+│                                             │
+│ //TLDWJOB JOB (ACCT),'CHAT CLI',CLASS=A    │
+│ //STEP1   EXEC PGM=TLDW                     │
+│ //STEPLIB DD DSN=SYS1.LINKLIB,DISP=SHR     │
+│ //SYSPRINT DD SYSOUT=A                      │
+│ //SYSIN    DD *                             │
+│ ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐  │
+│ │●│ │●│●│ │●│ │●│●│ │●│●│●│ │●│ │●│●│ │  │
+│ └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘  │
+│ /*                                          │
+│                                             │
+└─────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "FEEDING CARDS INTO HOPPER...",
+    "UNJAMMING CARD READER...",
+    "CHECKING FOR HANGING CHADS...",
+    "TRANSLATING EBCDIC TO ASCII...",
+    "HOPING NO ONE DROPS THE DECK..."
+]
+
+# Additional styling
+css_classes = ["ibm-mainframe", "monospace-bold"]

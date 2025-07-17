@@ -1,0 +1,58 @@
+/* ========================================
+ * FEATURES: Metrics
+ * ======================================== 
+ * Metrics display styles
+ * ======================================== */
+
+/* --- Metrics Screen Styling --- */
+MetricsScreen {
+    padding: 1 2; /* Add some padding around the screen content */
+    /* layout: vertical; /* MetricsScreen is a Static, VerticalScroll handles layout */
+    /* align: center top; /* If needed, but VerticalScroll might handle this */
+}
+
+#metrics-container {
+    padding: 1;
+    /* border: round $primary-lighten-2; /* Optional: a subtle border */
+    /* background: $surface; /* Optional: a slightly different background */
+}
+
+/* Styling for individual metric labels within MetricsScreen */
+MetricsScreen Label {
+    width: 100%;
+    margin-bottom: 1; /* Space between metric items */
+    padding: 1;       /* Padding inside each label's box */
+    background: $panel-lighten-1; /* A slightly lighter background for each item */
+    border: round $primary-darken-1; /* Border for each item */
+    /* Textual CSS doesn't allow direct styling of parts of a Label's text (like key vs value) */
+    /* The Python code uses [b] for keys, which Rich Text handles. */
+}
+
+/* Style for the title label: "Application Metrics" */
+/* This targets the first Label directly inside the VerticalScroll with ID metrics-container */
+#metrics-container > Label:first-of-type {
+    text-style: bold underline;
+    align: center middle;
+    padding: 1 0 2 0; /* More padding below the title */
+    background: transparent; /* No specific background for the title itself */
+    border: none; /* No border for the title itself */
+    margin-bottom: 2; /* Extra space after the title */
+}
+
+/* Style for error messages within MetricsScreen */
+/* These require the Python code to add the respective class to the Label widget */
+MetricsScreen Label.-error-message {
+    color: $error; /* Text color for errors */
+    background: $error 20%; /* Background for error messages, e.g., light red. USES $error WITH 20% ALPHA */
+    /* border: round $error; /* Optional: border for error messages */
+    text-style: bold;
+}
+
+/* Style for info messages (e.g. "file empty") within MetricsScreen */
+MetricsScreen Label.-info-message {
+    color: $text-muted; /* Or another color that indicates information */
+    background: $panel; /* A more subdued background, or $transparent */
+    /* border: round $primary-lighten-1; /* Optional: border for info messages */
+    text-style: italic;
+}
+/* --- End of Metrics Screen Styling --- */

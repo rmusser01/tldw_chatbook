@@ -1,0 +1,46 @@
+# Mars Colony Terminal splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "raindrops"
+style = "rgb(255,100,50) on rgb(40,20,10)"
+
+# Raindrops effect parameters adapted for dust storm
+dust_density = 0.7
+storm_approaching = true
+martian_atmosphere = 0.006
+
+content = """
+╭──── MARS COLONY ALPHA - SOL 3847 ────╮
+│                                      │
+│  Outside Temp: -63°C                 │
+│  Pressure: 0.6 kPa                   │
+│  O₂ Levels: ████████████ Optimal     │
+│  Dust Storm: APPROACHING IN 2:43:17  │
+│                                      │
+│  Systems Status:                     │
+│  ├─ Habitat Dome......... ✓         │
+│  ├─ Solar Panels........ ✓         │
+│  ├─ Water Recycling..... ✓         │
+│  ├─ Potato Farm......... ✓         │
+│  ├─ Communication Array.. ✓         │
+│  └─ TLDW Terminal....... ✓         │
+│                                      │
+│  Earth Distance: 225.7M km           │
+│  Signal Delay: 12.6 minutes          │
+│                                      │
+│  Message: "Hello from the Red Planet"│
+╰──────────────────────────────────────╯
+"""
+
+# Progress messages
+progress_messages = [
+    "Pressurizing airlock...",
+    "Checking suit integrity...",
+    "Growing potatoes in Martian soil...",
+    "Calculating optimal solar panel angle...",
+    "Missing Earth's blue skies..."
+]
+
+# Additional styling
+css_classes = ["mars-colony", "red-planet-theme"]

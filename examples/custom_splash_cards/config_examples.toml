@@ -1,0 +1,390 @@
+# Example splash screen configurations for config.toml
+# Copy the desired configuration to your ~/.config/tldw_cli/config.toml
+
+# ============================================
+# Example 1: Quick Professional Splash
+# ============================================
+[splash_screen_professional]
+enabled = true
+duration = 1.0
+skip_on_keypress = true
+card_selection = "minimal"
+show_progress = true
+active_cards = ["minimal"]
+
+[splash_screen_professional.effects]
+fade_in_duration = 0.2
+fade_out_duration = 0.1
+animation_speed = 1.5
+
+
+# ============================================
+# Example 2: Gaming Experience
+# ============================================
+[splash_screen_gaming]
+enabled = true
+duration = 3.5
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["matrix", "glitch", "retro", "gaming_card", "cyberpunk_card"]
+
+# ============================================
+# Example 2a: Full Collection - All Categories
+# ============================================
+[splash_screen_full_collection]
+enabled = true
+duration = 2.5
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = [
+    # Built-in cards
+    "matrix", "glitch", "retro", "terminal_boot", "starfield",
+    # Existing custom cards
+    "gaming_card", "cyberpunk_card", "minimalist_card",
+    # Retro Computing
+    "commodore64_card", "msdos_boot_card", "apple2_card", 
+    "bbs_dialing_card", "punchcard_card",
+    # Philosophical AI
+    "consciousness_bootstrap_card", "dream_state_card", 
+    "existential_query_card", "turing_test_card", "digital_meditation_card",
+    # Developer Humor
+    "git_conflict_card", "dependency_hell_card", "stackoverflow_card",
+    "code_review_card", "regex_madness_card",
+    # Sci-Fi Adventure
+    "starship_boot_card", "time_machine_card", "alien_contact_card",
+    "netrunner_card", "mars_colony_card",
+    # Nature & Organic
+    "digital_garden_card", "ocean_waves_card", "mountain_peak_card",
+    "forest_neural_card", "butterfly_effect_card",
+    # Music & Audio Production
+    "synthesizer_boot_card", "daw_loading_card", "mixing_console_card",
+    "waveform_visualizer_card", "midi_sequencer_card",
+    # Mythology & Ancient Legends
+    "greek_oracle_card", "egyptian_hieroglyphs_card", "norse_runes_card",
+    "celtic_druid_card", "aztec_calendar_card",
+    # Culinary Code Kitchen
+    "recipe_compiler_card", "chefs_terminal_card", "molecular_gastronomy_card",
+    "baking_algorithm_card", "sushi_assembly_card",
+    # Horror & Gothic Terminal
+    "haunted_terminal_card", "vampire_process_card", "zombie_apocalypse_card",
+    "lovecraftian_compiler_card", "gothic_cathedral_card",
+    # Social Media Simulator
+    "influencer_dashboard_card", "tweet_storm_card", "instagram_filter_card",
+    "tiktok_algorithm_card", "linkedin_networking_card"
+]
+
+[splash_screen_gaming.effects]
+fade_in_duration = 0.5
+fade_out_duration = 0.3
+animation_speed = 1.2
+
+# Future: Sound effects
+[splash_screen_gaming.audio]
+enabled = false
+volume = 0.7
+startup_sound = "startup_chime.wav"
+
+
+# ============================================
+# Example 3: Development/Debug Mode
+# ============================================
+[splash_screen_dev]
+enabled = true
+duration = 0.5
+skip_on_keypress = true
+card_selection = "debug"
+show_progress = true
+active_cards = ["debug"]
+debug = true  # Enable debug logging
+
+[splash_screen_dev.effects]
+fade_in_duration = 0.0
+fade_out_duration = 0.0
+animation_speed = 2.0
+
+
+# ============================================
+# Example 4: Seasonal/Holiday Themes
+# ============================================
+[splash_screen_seasonal]
+enabled = true
+duration = 2.5
+skip_on_keypress = true
+card_selection = "seasonal"  # Uses date-aware selection
+show_progress = true
+active_cards = ["winter_holiday", "halloween", "summer", "spring", "default"]
+
+[splash_screen_seasonal.effects]
+fade_in_duration = 0.4
+fade_out_duration = 0.3
+animation_speed = 1.0
+
+# Date ranges for seasonal cards (future feature)
+[splash_screen_seasonal.dates]
+winter_holiday = ["12-01", "12-31"]
+halloween = ["10-15", "11-01"]
+summer = ["06-21", "09-21"]
+spring = ["03-20", "06-20"]
+
+
+# ============================================
+# Example 5: Accessibility-Focused
+# ============================================
+[splash_screen_accessible]
+enabled = true
+duration = 2.0
+skip_on_keypress = true
+card_selection = "accessible"
+show_progress = true
+active_cards = ["simple_text"]
+
+[splash_screen_accessible.effects]
+# No animations for reduced motion preference
+fade_in_duration = 0.0
+fade_out_duration = 0.0
+animation_speed = 0.0
+
+[splash_screen_accessible.a11y]
+# Future accessibility features
+respect_reduced_motion = true
+high_contrast = true
+screen_reader_announce = true
+
+
+# ============================================
+# Example 5a: Retro Computing Theme
+# ============================================
+[splash_screen_retro]
+enabled = true
+duration = 2.0
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["commodore64_card", "msdos_boot_card", "apple2_card", 
+                "bbs_dialing_card", "punchcard_card"]
+
+[splash_screen_retro.effects]
+fade_in_duration = 0.1
+fade_out_duration = 0.1
+animation_speed = 0.8
+phosphor_glow = true
+
+# ============================================
+# Example 5b: Philosophical AI Theme
+# ============================================
+[splash_screen_philosophical]
+enabled = true
+duration = 3.0
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["consciousness_bootstrap_card", "dream_state_card", 
+                "existential_query_card", "turing_test_card", 
+                "digital_meditation_card"]
+
+[splash_screen_philosophical.effects]
+fade_in_duration = 0.5
+fade_out_duration = 0.5
+animation_speed = 0.7
+contemplation_mode = true
+
+# ============================================
+# Example 5c: Developer Humor Theme
+# ============================================
+[splash_screen_dev_humor]
+enabled = true
+duration = 2.5
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["git_conflict_card", "dependency_hell_card", 
+                "stackoverflow_card", "code_review_card", 
+                "regex_madness_card"]
+
+[splash_screen_dev_humor.effects]
+fade_in_duration = 0.2
+fade_out_duration = 0.2
+animation_speed = 1.2
+glitch_probability = 0.5
+
+# ============================================
+# Example 5d: Sci-Fi Adventure Theme
+# ============================================
+[splash_screen_scifi]
+enabled = true
+duration = 3.0
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["starship_boot_card", "time_machine_card", 
+                "alien_contact_card", "netrunner_card", 
+                "mars_colony_card"]
+
+[splash_screen_scifi.effects]
+fade_in_duration = 0.3
+fade_out_duration = 0.3
+animation_speed = 1.0
+warp_speed = true
+
+# ============================================
+# Example 5e: Nature & Organic Theme
+# ============================================
+[splash_screen_nature]
+enabled = true
+duration = 2.5
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["digital_garden_card", "ocean_waves_card", 
+                "mountain_peak_card", "forest_neural_card", 
+                "butterfly_effect_card"]
+
+[splash_screen_nature.effects]
+fade_in_duration = 0.6
+fade_out_duration = 0.4
+animation_speed = 0.8
+organic_flow = true
+
+# ============================================
+# Example 5f: Music & Audio Production Theme
+# ============================================
+[splash_screen_music]
+enabled = true
+duration = 2.5
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["synthesizer_boot_card", "daw_loading_card", 
+                "mixing_console_card", "waveform_visualizer_card", 
+                "midi_sequencer_card"]
+
+[splash_screen_music.effects]
+fade_in_duration = 0.3
+fade_out_duration = 0.3
+animation_speed = 1.1
+audio_reactive = true
+
+# ============================================
+# Example 5g: Mythology & Ancient Legends Theme
+# ============================================
+[splash_screen_mythology]
+enabled = true
+duration = 3.0
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["greek_oracle_card", "egyptian_hieroglyphs_card", 
+                "norse_runes_card", "celtic_druid_card", 
+                "aztec_calendar_card"]
+
+[splash_screen_mythology.effects]
+fade_in_duration = 0.5
+fade_out_duration = 0.5
+animation_speed = 0.8
+mystical_aura = true
+
+# ============================================
+# Example 5h: Culinary Code Kitchen Theme
+# ============================================
+[splash_screen_culinary]
+enabled = true
+duration = 2.5
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["recipe_compiler_card", "chefs_terminal_card", 
+                "molecular_gastronomy_card", "baking_algorithm_card", 
+                "sushi_assembly_card"]
+
+[splash_screen_culinary.effects]
+fade_in_duration = 0.3
+fade_out_duration = 0.3
+animation_speed = 1.0
+taste_simulation = true
+
+# ============================================
+# Example 5i: Horror & Gothic Terminal Theme
+# ============================================
+[splash_screen_horror]
+enabled = true
+duration = 3.0
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["haunted_terminal_card", "vampire_process_card", 
+                "zombie_apocalypse_card", "lovecraftian_compiler_card", 
+                "gothic_cathedral_card"]
+
+[splash_screen_horror.effects]
+fade_in_duration = 0.6
+fade_out_duration = 0.4
+animation_speed = 0.9
+spooky_factor = 0.95
+
+# ============================================
+# Example 5j: Social Media Simulator Theme
+# ============================================
+[splash_screen_social]
+enabled = true
+duration = 2.0
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["influencer_dashboard_card", "tweet_storm_card", 
+                "instagram_filter_card", "tiktok_algorithm_card", 
+                "linkedin_networking_card"]
+
+[splash_screen_social.effects]
+fade_in_duration = 0.2
+fade_out_duration = 0.2
+animation_speed = 1.5
+engagement_boost = true
+
+# ============================================
+# Example 6: Corporate Branding
+# ============================================
+[splash_screen_corporate]
+enabled = true
+duration = 2.0
+skip_on_keypress = false  # Force users to see branding
+card_selection = "company_logo"
+show_progress = true
+active_cards = ["company_logo"]
+
+[splash_screen_corporate.effects]
+fade_in_duration = 0.3
+fade_out_duration = 0.2
+animation_speed = 1.0
+
+[splash_screen_corporate.branding]
+# Company-specific settings
+company_name = "ACME Corporation"
+logo_file = "~/.config/tldw_cli/company_logo.txt"
+brand_colors = ["#003366", "#0066CC"]
+legal_text = "© 2024 ACME Corp. All rights reserved."
+
+
+# ============================================
+# Example 7: Performance Testing
+# ============================================
+[splash_screen_perf_test]
+enabled = true
+duration = 5.0
+skip_on_keypress = true
+card_selection = "random"
+show_progress = true
+active_cards = ["matrix", "glitch", "fire", "rainbow", "particle"]
+
+[splash_screen_perf_test.effects]
+fade_in_duration = 0.1
+fade_out_duration = 0.1
+animation_speed = 2.0  # Stress test animations
+
+[splash_screen_perf_test.metrics]
+# Future: Performance monitoring
+track_frame_rate = true
+track_cpu_usage = true
+track_render_time = true
+log_performance = true

@@ -5,7 +5,9 @@
 import logging
 import json
 import os
+import time
 from datetime import datetime
+import uuid
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 #
 # 3rd-Party Imports
@@ -13,25 +15,36 @@ from loguru import logger as loguru_logger
 from rich.text import Text
 from rich.markup import escape as escape_markup
 from textual.widgets import (
-    Button, Input, TextArea, Static, Select, Checkbox, ListView, ListItem, Label
+    Button, Input, TextArea, Static, Select, Checkbox, ListView, ListItem, Label, Markdown
 )
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
+from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
+from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
 from tldw_chatbook.Widgets.titlebar import TitleBar
 from tldw_chatbook.Utils.Emoji_Handling import (
     get_char, EMOJI_THINKING, FALLBACK_THINKING, EMOJI_EDIT, FALLBACK_EDIT,
-    EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_COPIED, FALLBACK_COPIED, EMOJI_COPY, FALLBACK_COPY
+    EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT, EMOJI_COPIED, FALLBACK_COPIED, EMOJI_COPY, FALLBACK_COPY,
+    EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
 )
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import load_character_and_image
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError, CharactersRAGDBError, InputError
 from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
+from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.model_capabilities import is_vision_capable
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+from tldw_chatbook.Widgets.file_extraction_dialog import FileExtractionDialog
+from tldw_chatbook.Widgets.document_generation_modal import DocumentGenerationModal
+from tldw_chatbook.Chat.document_generator import DocumentGenerator
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -88,6 +101,19 @@ async def handle_chat_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) 
 async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the send button press for the main chat tab."""
     prefix = "chat"  # This handler is specific to the main chat tab's send button
+    start_time = time.time()
+    
+    # Log button click event
+    log_counter("chat_ui_send_button_clicked", labels={"tab": prefix})
+    
+    # Check if there's an active chat generation running
+    if hasattr(app, 'current_chat_worker') and app.current_chat_worker and app.current_chat_worker.is_running:
+        # Stop the generation instead of sending
+        loguru_logger.info("Send button pressed - stopping active generation")
+        log_counter("chat_ui_generation_cancelled", labels={"tab": prefix})
+        await handle_stop_chat_generation_pressed(app, event)
+        return
+    
     loguru_logger.info(f"Send button pressed for '{prefix}' (main chat)") # Use loguru_logger consistently
 
     # --- 1. Query UI Widgets ---
@@ -120,12 +146,14 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         try:
             strip_tags_checkbox = app.query_one("#chat-strip-thinking-tags-checkbox", Checkbox)
             strip_thinking_tags_value = strip_tags_checkbox.value
+            loguru_logger.info(f"Read strip_thinking_tags checkbox value: {strip_thinking_tags_value}")
         except QueryError:
             loguru_logger.warning("Could not find '#chat-strip-thinking-tags-checkbox'. Defaulting to True for strip_thinking_tags.")
             strip_thinking_tags_value = True
 
     except QueryError as e:
         loguru_logger.error(f"Send Button: Could not find UI widgets for '{prefix}': {e}")
+        log_counter("chat_ui_widget_error", labels={"tab": prefix, "error": "query_error"})
         try:
             container_for_error = chat_container if 'chat_container' in locals() and chat_container.is_mounted else app.query_one(
                 f"#{prefix}-log", VerticalScroll) # Re-query if initial one failed
@@ -143,32 +171,53 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         if not validate_text_input(message_text_from_input, max_length=100000, allow_html=False):
             await chat_container.mount(ChatMessage(Text.from_markup("Error: Message contains invalid content or is too long."), role="System", classes="-error"))
             loguru_logger.warning(f"Invalid user message input rejected")
+            log_counter("chat_ui_message_validation_failed", labels={"tab": prefix, "reason": "invalid_content"})
             return
         
         # Sanitize the message text to remove dangerous characters
         message_text_from_input = sanitize_string(message_text_from_input, max_length=100000)
+        log_histogram("chat_ui_message_length", len(message_text_from_input), labels={"tab": prefix})
     
     reuse_last_user_bubble = False
+    resend_conversation = False  # New flag specifically for resending the entire conversation
 
-    if not message_text_from_input: # Try to reuse last user message if input is empty
+    if not message_text_from_input: # Try to resend conversation if last message is from user
         try:
-            last_msg_widget: Optional[ChatMessage] = None
-            # Iterate over a materialized list to avoid issues if querying during modification (though less likely here)
-            for widget in reversed(list(chat_container.query(ChatMessage))):
-                if widget.role == "User": # Only reuse User messages
-                    last_msg_widget = widget
-                    break
-            if last_msg_widget:
-                message_text_from_input = last_msg_widget.message_text
-                reuse_last_user_bubble = True
-                loguru_logger.debug("Reusing last user message as input is empty.")
+            # Check if the last message in the conversation is from the user
+            # Query both ChatMessage and ChatMessageEnhanced widgets
+            all_chat_messages = list(chat_container.query(ChatMessage))
+            all_enhanced_messages = list(chat_container.query(ChatMessageEnhanced))
+            
+            # Combine and sort by mount time to get proper order
+            all_messages = sorted(
+                all_chat_messages + all_enhanced_messages,
+                key=lambda msg: msg._mount_time if hasattr(msg, '_mount_time') else 0
+            )
+            
+            if all_messages:
+                last_message = all_messages[-1]
+                loguru_logger.debug(f"Found {len(all_messages)} messages. Last message role: {last_message.role}, type: {type(last_message).__name__}")
+                
+                if last_message.role == "User":
+                    # The last message is from the user, so we should resend the conversation
+                    loguru_logger.info("Last message is from user, resending conversation")
+                    resend_conversation = True
+                    # Set a dummy message to pass validation
+                    message_text_from_input = "[Resending conversation]"
+                else:
+                    # Last message is not from user (likely AI or System)
+                    loguru_logger.debug("Last message is not from user (role: %s), not resending", last_message.role)
+                    text_area.focus()
+                    return
+            else:
+                # No messages in conversation
+                loguru_logger.debug("No messages in conversation, nothing to resend")
+                text_area.focus()
+                return
         except Exception as exc:
-            loguru_logger.error("Failed to inspect last message for reuse: %s", exc, exc_info=True)
-
-    if not message_text_from_input:
-        loguru_logger.debug("Send Button: Empty message and no reusable user bubble in '%s'. Focusing input.", prefix)
-        text_area.focus()
-        return
+            loguru_logger.error("Failed to inspect last message for resend: %s", exc, exc_info=True)
+            text_area.focus()
+            return
 
     selected_provider = str(provider_widget.value) if provider_widget.value != Select.BLANK else None
     selected_model = str(model_widget.value) if model_widget.value != Select.BLANK else None
@@ -215,12 +264,36 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         loguru_logger.debug(f"Streaming for {selected_provider} set to {should_stream} based on config.")
     else:
         loguru_logger.debug("No provider selected, streaming defaults to False for this request.")
+    
+    # Check streaming checkbox to override provider setting
+    try:
+        streaming_checkbox = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+        streaming_override = streaming_checkbox.value
+        if streaming_override != should_stream:
+            loguru_logger.info(f"Streaming override: checkbox={streaming_override}, provider default={should_stream}")
+            should_stream = streaming_override
+    except QueryError:
+        loguru_logger.debug("Streaming checkbox not found, using provider default")
 
     # --- Integration of Active Character Data ---
     system_prompt_from_ui = system_prompt_widget.text # This is the system prompt from the LEFT sidebar
     active_char_data = app.current_chat_active_character_data  # This is from the RIGHT sidebar's loaded char
     final_system_prompt_for_api = system_prompt_from_ui  # Default to UI
+    
+    # Check if we're using enhanced chat window (needed for multiple places in this function)
+    use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+    
+    # Initialize pending_image and pending_attachment early (needed for multiple places in this function)
+    pending_image = None
+    pending_attachment = None
 
+    # Initialize world info processor
+    world_info_processor = None
+    
+    # Get DB and conversation ID early (needed for world info loading)
+    active_conversation_id = app.current_chat_conversation_id
+    db = app.chachanotes_db # Use the correct instance from app
+    
     if active_char_data:
         loguru_logger.info(
             f"Active character data found: {active_char_data.get('name', 'Unnamed')}. Checking for system prompt override.")
@@ -233,6 +306,39 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         else:
             loguru_logger.debug(
                 f"Active character has no system_prompt or it's empty. Using system_prompt from left sidebar: '{final_system_prompt_for_api[:100]}...'")
+        
+        # Check for world info/character book
+        if get_cli_setting("character_chat", "enable_world_info", True):
+            world_books = []
+            
+            # Get standalone world books for this conversation
+            if active_conversation_id and db:
+                try:
+                    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+                    wb_manager = WorldBookManager(db)
+                    world_books = wb_manager.get_world_books_for_conversation(active_conversation_id, enabled_only=True)
+                    if world_books:
+                        loguru_logger.info(f"Found {len(world_books)} world books for conversation {active_conversation_id}")
+                except Exception as e:
+                    loguru_logger.error(f"Failed to load world books: {e}", exc_info=True)
+            
+            # Check character's embedded world info
+            has_character_book = False
+            extensions = active_char_data.get('extensions', {}) if active_char_data else {}
+            if isinstance(extensions, dict) and extensions.get('character_book'):
+                has_character_book = True
+            
+            # Initialize processor if we have any world info sources
+            if has_character_book or world_books:
+                try:
+                    from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
+                    world_info_processor = WorldInfoProcessor(
+                        character_data=active_char_data if has_character_book else None,
+                        world_books=world_books if world_books else None
+                    )
+                    loguru_logger.info(f"World info processor initialized with {len(world_info_processor.entries)} active entries")
+                except Exception as e:
+                    loguru_logger.error(f"Failed to initialize world info processor: {e}", exc_info=True)
     else:
         loguru_logger.info("No active character data. Using system prompt from left sidebar UI.")
 
@@ -290,15 +396,24 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # The current user's input (`message_text_from_input`) will be passed as the `message` param to `app.chat_wrapper`.
     chat_history_for_api: List[Dict[str, Any]] = []
     try:
-        # Iterate through all messages currently in the UI
-        all_ui_messages = list(chat_container.query(ChatMessage))
+        # Iterate through all messages currently in the UI (both basic and enhanced)
+        # Sort by their position in the container to maintain order
+        all_chat_messages = list(chat_container.query(ChatMessage))
+        all_enhanced_messages = list(chat_container.query(ChatMessageEnhanced))
+        all_ui_messages = sorted(all_chat_messages + all_enhanced_messages, 
+                                key=lambda w: chat_container.children.index(w) if w in chat_container.children else float('inf'))
 
         # Determine how many messages to actually include in history sent to API
         # (e.g., based on token limits or a fixed number)
         # For now, let's take all completed User/AI messages *before* any reused bubble
 
         messages_to_process_for_history = all_ui_messages
-        if reuse_last_user_bubble and all_ui_messages:
+        
+        # When resending conversation, include ALL messages
+        if resend_conversation:
+            loguru_logger.debug("Resending conversation - including all messages in history")
+            messages_to_process_for_history = all_ui_messages
+        elif reuse_last_user_bubble and all_ui_messages:
             # If we are reusing the last bubble, it means it's already in the UI.
             # The history should include everything *before* that reused bubble.
             # Find the index of the last_msg_widget (which is the one being reused)
@@ -333,14 +448,25 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                     if msg_widget.role != "User": # Anything not "User" is treated as assistant for API history
                         api_role = "assistant"
 
-                    # Prepare content part(s) - for now, assuming text only
+                    # Prepare content part(s) - support multimodal if model supports it
                     content_for_api = msg_widget.message_text
-                    # if msg_widget.image_data and msg_widget.image_mime_type: # Future multimodal
-                    #     image_url = f"data:{msg_widget.image_mime_type};base64,{base64.b64encode(msg_widget.image_data).decode()}"
-                    #     content_for_api = [
-                    #         {"type": "text", "text": msg_widget.message_text},
-                    #         {"type": "image_url", "image_url": {"url": image_url}}
-                    #     ]
+                    
+                    # Check if this is a vision-capable model and message has image
+                    if (hasattr(msg_widget, 'image_data') and msg_widget.image_data and 
+                        msg_widget.image_mime_type and is_vision_capable(selected_provider, selected_model)):
+                        try:
+                            import base64
+                            image_url = f"data:{msg_widget.image_mime_type};base64,{base64.b64encode(msg_widget.image_data).decode()}"
+                            content_for_api = [
+                                {"type": "text", "text": msg_widget.message_text},
+                                {"type": "image_url", "image_url": {"url": image_url}}
+                            ]
+                            loguru_logger.debug(f"Including image in API history for {api_role} message")
+                        except Exception as e:
+                            loguru_logger.warning(f"Failed to encode image for API: {e}")
+                            # Fall back to text only
+                            content_for_api = msg_widget.message_text
+                    
                     chat_history_for_api.append({"role": api_role, "content": content_for_api})
         loguru_logger.debug(f"Built chat history for API with {len(chat_history_for_api)} messages.")
 
@@ -349,25 +475,105 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         await chat_container.mount(ChatMessage(Text.from_markup("Internal Error: Could not retrieve chat history."), role="System", classes="-error"))
         return
 
-    # --- 5. DB and Conversation ID Setup ---
-    active_conversation_id = app.current_chat_conversation_id
-    db = app.chachanotes_db # Use the correct instance from app
-    user_msg_widget_instance: Optional[ChatMessage] = None
+    # --- 5. User Message Widget Instance ---
+    # DB and conversation ID were already set up earlier
+    user_msg_widget_instance: Optional[Union[ChatMessage, ChatMessageEnhanced]] = None
 
     # --- 6. Mount User Message to UI ---
-    if not reuse_last_user_bubble:
-        user_msg_widget_instance = ChatMessage(message_text_from_input, role="User")
+    if not reuse_last_user_bubble and not resend_conversation:
+        # Check if we're using enhanced chat window and if there's a pending image
+        if use_enhanced_chat:
+            try:
+                from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
+                chat_window = app.query_one(ChatWindowEnhanced)
+                
+                # Try new attachment system first
+                if hasattr(chat_window, 'pending_attachment') and chat_window.pending_attachment:
+                    pending_attachment = chat_window.pending_attachment
+                    loguru_logger.info(f"DEBUG: Retrieved pending_attachment from chat window - file_type: {pending_attachment.get('file_type')}, insert_mode: {pending_attachment.get('insert_mode')}")
+                    # For backward compatibility, if it's an image, also set pending_image
+                    if pending_attachment.get('file_type') == 'image':
+                        pending_image = {
+                            'data': pending_attachment['data'],
+                            'mime_type': pending_attachment['mime_type'],
+                            'path': pending_attachment.get('path')
+                        }
+                        loguru_logger.info(f"DEBUG: Also set pending_image for backward compatibility")
+                    loguru_logger.debug(f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})")
+                # Fall back to old pending_image system
+                elif hasattr(chat_window, 'get_pending_image'):
+                    pending_image = chat_window.get_pending_image()
+                    loguru_logger.debug(f"Enhanced chat window - pending image (legacy): {'Yes' if pending_image else 'No'}")
+                
+            except QueryError:
+                loguru_logger.debug("Enhanced chat window not found in DOM")
+            except AttributeError as e:
+                loguru_logger.debug(f"Enhanced chat window attribute error: {e}")
+            except Exception as e:
+                loguru_logger.warning(f"Unexpected error getting pending attachment/image: {e}", exc_info=True)
+        
+        # Get user display name from User Identifier or default to "User"
+        user_display_name = llm_user_identifier_value or "User"
+        
+        # Create appropriate widget based on image presence
+        if pending_image:
+            user_msg_widget_instance = ChatMessageEnhanced(
+                message=message_text_from_input,
+                role=user_display_name,
+                image_data=pending_image['data'],
+                image_mime_type=pending_image['mime_type']
+            )
+            loguru_logger.info(f"Created ChatMessageEnhanced with image (type: {pending_image['mime_type']})")
+        else:
+            # Use enhanced widget if available and we're in enhanced mode, otherwise basic
+            if use_enhanced_chat:
+                user_msg_widget_instance = ChatMessageEnhanced(message_text_from_input, role=user_display_name)
+            else:
+                user_msg_widget_instance = ChatMessage(message_text_from_input, role=user_display_name)
+        
         await chat_container.mount(user_msg_widget_instance)
         loguru_logger.debug(f"Mounted new user message to UI: '{message_text_from_input[:50]}...'")
+        
+        # Add world info indicator if entries were matched
+        if hasattr(app, 'current_world_info_active') and app.current_world_info_active:
+            world_info_count = getattr(app, 'current_world_info_count', 0)
+            world_info_msg = f"[dim][World Info: {world_info_count} {'entry' if world_info_count == 1 else 'entries'} activated][/dim]"
+            world_info_widget = ChatMessage(Text.from_markup(world_info_msg), role="System", classes="-world-info-indicator")
+            await chat_container.mount(world_info_widget)
+            loguru_logger.debug(f"Added world info indicator: {world_info_count} entries")
+        
+        # Update token counter after adding user message
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(app)
+        except Exception as e:
+            loguru_logger.debug(f"Could not update token counter: {e}")
 
     # --- 7. Save User Message to DB (IF CHAT IS ALREADY PERSISTENT) ---
     if not app.current_chat_is_ephemeral and active_conversation_id and db:
-        if not reuse_last_user_bubble and user_msg_widget_instance:
+        if not reuse_last_user_bubble and not resend_conversation and user_msg_widget_instance:
             try:
                 loguru_logger.debug(f"Chat is persistent (ID: {active_conversation_id}). Saving user message to DB.")
+                # Include image data if present
+                image_data = None
+                image_mime_type = None
+                if pending_image:
+                    try:
+                        # Validate image data before saving
+                        from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
+                        if ChatImageHandler.validate_image_data(pending_image['data']):
+                            image_data = pending_image['data']
+                            image_mime_type = pending_image['mime_type']
+                            loguru_logger.debug(f"Including validated image in DB save (type: {image_mime_type}, size: {len(image_data)} bytes)")
+                        else:
+                            loguru_logger.warning("Image data validation failed, not saving to DB")
+                    except Exception as e:
+                        loguru_logger.error(f"Error validating image data: {e}")
+                        # Continue without image rather than failing the entire message
+                
                 user_message_db_id_version_tuple = ccl.add_message_to_conversation(
                     db, conversation_id=active_conversation_id, sender="User", content=message_text_from_input,
-                    image_data=None, image_mime_type=None
+                    image_data=image_data, image_mime_type=image_mime_type
                 )
                 # add_message_to_conversation in ccl returns message_id (str). Version is handled by DB.
                 # We need to fetch the message to get its version.
@@ -438,10 +644,23 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         return
 
     # --- 10. Mount Placeholder AI Message ---
-    ai_placeholder_widget = ChatMessage(
-        message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
-        role="AI", generation_complete=False
-    )
+    # Use the correct widget type based on which chat window is active
+    # Note: use_enhanced_chat was already defined above when handling user message
+    
+    # Get AI display name from active character or default to "AI"
+    ai_display_name = active_char_data.get('name', 'AI') if active_char_data else 'AI'
+    
+    if use_enhanced_chat:
+        ai_placeholder_widget = ChatMessageEnhanced(
+            message=f"{ai_display_name} {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
+            role=ai_display_name, generation_complete=False
+        )
+    else:
+        ai_placeholder_widget = ChatMessage(
+            message=f"{ai_display_name} {get_char(EMOJI_THINKING, FALLBACK_THINKING)}",
+            role=ai_display_name, generation_complete=False
+        )
+    
     await chat_container.mount(ai_placeholder_widget)
     chat_container.scroll_end(animate=False) # Scroll after mounting placeholder
     app.current_ai_message_widget = ai_placeholder_widget
@@ -466,8 +685,132 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     except Exception as e:
         loguru_logger.error(f"Error getting RAG context: {e}", exc_info=True)
     
+    # --- 10.6. Apply Chat Dictionaries if enabled ---
+    # Get active dictionaries for the current conversation
+    chatdict_entries = []
+    if app.current_chat_conversation_id and db:
+        try:
+            from ...Character_Chat import Chat_Dictionary_Lib as cdl
+            
+            # Get conversation metadata to find active dictionaries
+            conv_details = db.get_conversation_by_id(app.current_chat_conversation_id)
+            if conv_details:
+                metadata = json.loads(conv_details.get('metadata', '{}'))
+                active_dict_ids = metadata.get('active_dictionaries', [])
+                
+                # Load each active dictionary
+                for dict_id in active_dict_ids:
+                    dict_data = cdl.load_chat_dictionary(db, dict_id)
+                    if dict_data and dict_data.get('enabled', True):
+                        # Convert entries to expected format
+                        chatdict_entries.extend(dict_data.get('entries', []))
+                        loguru_logger.info(f"Loaded dictionary '{dict_data['name']}' with {len(dict_data.get('entries', []))} entries")
+                
+                if chatdict_entries:
+                    loguru_logger.info(f"Total chat dictionary entries loaded: {len(chatdict_entries)}")
+            
+        except Exception as e:
+            loguru_logger.error(f"Error loading chat dictionaries: {e}", exc_info=True)
+            # Continue without dictionaries on error
+    
+    # --- 10.7. Apply World Info if enabled ---
+    message_text_with_world_info = message_text_with_rag
+    world_info_injections = {}
+    
+    if world_info_processor:
+        try:
+            # Process messages to find matching world info entries
+            world_info_result = world_info_processor.process_messages(
+                message_text_with_rag,
+                chat_history_for_api
+            )
+            
+            if world_info_result['matched_entries']:
+                loguru_logger.info(f"World info: {len(world_info_result['matched_entries'])} entries matched")
+                
+                # Format the injections for use
+                world_info_injections = world_info_processor.format_injections(world_info_result['injections'])
+                
+                # Apply position-based injections
+                # For now, we'll inject "before_char" content before the message
+                # and "after_char" content after the message
+                before_content = world_info_injections.get('before_char', '')
+                after_content = world_info_injections.get('after_char', '')
+                at_start_content = world_info_injections.get('at_start', '')
+                at_end_content = world_info_injections.get('at_end', '')
+                
+                # Build the final message with world info
+                parts = []
+                if at_start_content:
+                    parts.append(at_start_content)
+                if before_content:
+                    parts.append(before_content)
+                parts.append(message_text_with_rag)
+                if after_content:
+                    parts.append(after_content)
+                if at_end_content:
+                    parts.append(at_end_content)
+                
+                message_text_with_world_info = '\n\n'.join(parts)
+                loguru_logger.debug(f"World info injected, new message length: {len(message_text_with_world_info)} chars")
+                
+                # Store world info status for UI indicator
+                app.current_world_info_active = True
+                app.current_world_info_count = len(world_info_result['matched_entries'])
+            else:
+                loguru_logger.debug("No world info entries matched")
+                app.current_world_info_active = False
+                app.current_world_info_count = 0
+        except Exception as e:
+            loguru_logger.error(f"Error processing world info: {e}", exc_info=True)
+            # Continue without world info on error
+    
     # --- 11. Prepare and Dispatch API Call via Worker ---
-    loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_with_rag[:50]}...', History items: {len(chat_history_for_api)}")
+    loguru_logger.debug(f"Dispatching API call to worker. Current message: '{message_text_with_world_info[:50]}...', History items: {len(chat_history_for_api)}")
+
+    # Prepare media content if attachment is present
+    media_content_for_api = {}
+    
+    # Debug log attachment status
+    loguru_logger.info(f"DEBUG: Before processing - pending_attachment exists: {bool(pending_attachment)}, pending_image exists: {bool(pending_image)}")
+    if pending_attachment:
+        loguru_logger.info(f"DEBUG: pending_attachment details - insert_mode: {pending_attachment.get('insert_mode')}, file_type: {pending_attachment.get('file_type')}")
+    
+    # Handle new unified attachment system
+    if pending_attachment and pending_attachment.get('insert_mode') == 'attachment':
+        file_type = pending_attachment.get('file_type', 'unknown')
+        
+        # For images, check if model supports vision
+        vision_capable = is_vision_capable(selected_provider, selected_model)
+        loguru_logger.info(f"DEBUG: Vision capability check - provider: {selected_provider}, model: {selected_model}, is_vision_capable: {vision_capable}")
+        if file_type == 'image' and vision_capable:
+            try:
+                import base64
+                media_content_for_api = {
+                    "base64_data": base64.b64encode(pending_attachment['data']).decode(),
+                    "mime_type": pending_attachment['mime_type']
+                }
+                loguru_logger.info(f"Including image attachment in API call (type: {pending_attachment['mime_type']}, size: {len(pending_attachment['data'])} bytes)")
+            except Exception as e:
+                loguru_logger.error(f"Failed to prepare image attachment for API: {e}")
+                # Continue without image
+        else:
+            # For non-image attachments, we could potentially handle them differently in the future
+            # For now, log that we have an attachment but it's not being sent
+            loguru_logger.debug(f"Attachment of type '{file_type}' present but not included in API call")
+    
+    # Fall back to legacy pending_image if no attachment
+    elif pending_image and is_vision_capable(selected_provider, selected_model):
+        try:
+            import base64
+            media_content_for_api = {
+                "base64_data": base64.b64encode(pending_image['data']).decode(),
+                "mime_type": pending_image['mime_type']
+            }
+            loguru_logger.info(f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
+        except Exception as e:
+            loguru_logger.error(f"Failed to prepare image for API (legacy): {e}")
+            # Continue without image
 
     # Log API parameters for debugging
     api_params = {
@@ -479,17 +822,25 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         "top_k": top_k,
         "max_tokens": llm_max_tokens_value,
         "streaming": should_stream,
-        "system_prompt_length": len(final_system_prompt_for_api) if final_system_prompt_for_api else 0
+        "system_prompt_length": len(final_system_prompt_for_api) if final_system_prompt_for_api else 0,
+        "has_media": bool(media_content_for_api)
     }
     loguru_logger.debug(f"API parameters: {api_params}")
 
-    # Set current_chat_is_streaming before running the worker
-    app.current_chat_is_streaming = should_stream
+    # Set current_chat_is_streaming before running the worker using thread-safe method
+    app.set_current_chat_is_streaming(should_stream)
     loguru_logger.info(f"Set app.current_chat_is_streaming to: {should_stream}")
+    
+    # Debug log the media content
+    if media_content_for_api:
+        loguru_logger.info(f"DEBUG: Passing media_content_for_api to chat_wrapper: mime_type={media_content_for_api.get('mime_type')}, has_base64_data={bool(media_content_for_api.get('base64_data'))}")
+    else:
+        loguru_logger.info("DEBUG: No media_content_for_api being passed to chat_wrapper")
 
     worker_target = lambda: app.chat_wrapper(
-        message=message_text_with_rag, # Current user utterance with RAG context
+        message=message_text_with_world_info, # Current user utterance with RAG context and world info
         history=chat_history_for_api,    # History *before* current utterance
+        media_content=media_content_for_api, # Pass media content as expected by chat function
         api_endpoint=selected_provider,
         api_key=api_key_for_call,
         custom_prompt=custom_prompt,
@@ -514,20 +865,52 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         llm_tools=llm_tools_value,
         llm_tool_choice=llm_tool_choice_value,
         llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value, # Added new parameter
-        media_content={}, # Placeholder for now
+        current_image_input=media_content_for_api, # Include image data if present
         selected_parts=[], # Placeholder for now
-        chatdict_entries=None, # Placeholder for now
+        chatdict_entries=chatdict_entries, # Pass loaded dictionary entries
         max_tokens=500, # This is the existing chatdict max_tokens, distinct from llm_max_tokens
         strategy="sorted_evenly", # Default or get from config/UI
         strip_thinking_tags=strip_thinking_tags_value # Pass the new setting
     )
-    app.run_worker(worker_target, name=f"API_Call_{prefix}",
+    worker = app.run_worker(worker_target, name=f"API_Call_{prefix}",
                    group="api_calls",
                    thread=True,
                    description=f"Calling {selected_provider}")
+    app.set_current_chat_worker(worker)
+    
+    # Clear pending attachment/image after sending
+    if use_enhanced_chat and (pending_image or pending_attachment):
+        try:
+            # Clear both old and new attachment systems
+            if hasattr(chat_window, 'pending_attachment'):
+                chat_window.pending_attachment = None
+            if hasattr(chat_window, 'pending_image'):
+                chat_window.pending_image = None
+            # Update UI to reflect cleared attachment
+            attach_button = chat_window.query_one("#attach-image", Button)
+            attach_button.label = "📎"
+            indicator = chat_window.query_one("#image-attachment-indicator", Static)
+            indicator.add_class("hidden")
+            loguru_logger.debug("Cleared pending attachment/image after sending")
+        except Exception as e:
+            loguru_logger.debug(f"Could not clear pending attachment UI: {e}")
+    
+    # Log UI response time metrics
+    ui_response_time = time.time() - start_time
+    log_histogram("chat_ui_send_response_time", ui_response_time, labels={
+        "tab": prefix,
+        "provider": selected_provider or "none",
+        "streaming": str(should_stream),
+        "has_image": str(bool(pending_image)),
+        "has_character": str(bool(app.current_chat_active_character_data))
+    })
+    log_counter("chat_ui_message_sent", labels={
+        "tab": prefix,
+        "provider": selected_provider or "none"
+    })
 
 
-async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, action_widget: ChatMessage) -> None:
+async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, action_widget: Union[ChatMessage, ChatMessageEnhanced]) -> None:
     button_classes = button.classes
     message_text = action_widget.message_text  # This is the raw, unescaped text
     message_role = action_widget.role
@@ -536,14 +919,15 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
     if "edit-button" in button_classes:
         loguru_logger.info("Action: Edit clicked for %s message: '%s...'", message_role, message_text[:50])
         is_editing = getattr(action_widget, "_editing", False)
-        static_text_widget: Static = action_widget.query_one(".message-text", Static)
+        # Query for Markdown widget (used in both ChatMessage and ChatMessageEnhanced)
+        markdown_widget = action_widget.query_one(".message-text", Markdown)
 
         if not is_editing:  # Start editing
             current_text_for_editing = message_text  # Use the internally stored raw text
-            static_text_widget.display = False
+            markdown_widget.display = False
             editor = TextArea(text=current_text_for_editing, id="edit-area", classes="edit-area")
             editor.styles.width = "100%"
-            await action_widget.mount(editor, before=static_text_widget)
+            await action_widget.mount(editor, before=markdown_widget)
             editor.focus()
             action_widget._editing = True
             button.label = get_char(EMOJI_SAVE_EDIT, FALLBACK_SAVE_EDIT)
@@ -559,11 +943,11 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 # When updating the Static widget, explicitly pass the new_text
                 # as a plain rich.text.Text object. This tells Textual
                 # to render it as is, without trying to parse for markup.
-                static_text_widget.update(Text(new_text))
+                markdown_widget.update(new_text)
                 # --- DO NOT REMOVE ---
-                #static_text_widget.update(escape_markup(new_text))  # Update display with escaped text
+                #markdown_widget.update(escape_markup(new_text))  # Update display with escaped text
 
-                static_text_widget.display = True
+                markdown_widget.display = True
                 action_widget._editing = False
                 button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)  # Reset to Edit icon
                 loguru_logger.debug("Editing finished. New length: %d", len(new_text))
@@ -608,15 +992,15 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
 
             except QueryError:
                 loguru_logger.error("Edit TextArea not found when stopping edit. Restoring original.")
-                static_text_widget.update(Text(message_text))  # Restore original escaped text
-                static_text_widget.display = True
+                markdown_widget.update(message_text)  # Restore original text
+                markdown_widget.display = True
                 action_widget._editing = False
                 button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)
             except Exception as e_edit_stop:
                 loguru_logger.error(f"Error stopping edit: {e_edit_stop}", exc_info=True)
-                if 'static_text_widget' in locals() and static_text_widget.is_mounted:
-                    static_text_widget.update(Text(message_text))  # Restore with Text()
-                    static_text_widget.display = True
+                if 'markdown_widget' in locals() and markdown_widget.is_mounted:
+                    markdown_widget.update(message_text)  # Restore text
+                    markdown_widget.display = True
                 if hasattr(action_widget, '_editing'): action_widget._editing = False
                 if 'button' in locals() and button.is_mounted: button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)
 
@@ -628,28 +1012,326 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         button.label = get_char(EMOJI_COPIED, FALLBACK_COPIED) + "Copied"
         app.set_timer(1.5, lambda: setattr(button, "label", get_char(EMOJI_COPY, FALLBACK_COPY)))
 
+    elif "note-button" in button_classes:
+        logging.info("Action: Create Note clicked for %s message: '%s...'", message_role, message_text[:50])
+        
+        # Get conversation context
+        conversation_context = {
+            "conversation_id": getattr(app, "current_conversation_id", None),
+            "message_role": message_role,
+            "timestamp": action_widget.timestamp or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "message_id": action_widget.message_id_internal,
+            "current_provider": getattr(app, "current_provider", None),
+            "current_model": getattr(app, "current_model", None),
+            "api_key": getattr(app, "current_api_key", None)
+        }
+        
+        # Create callback to handle document generation
+        async def handle_document_generation(document_type: str, message_content: str):
+            """Handle document generation after modal selection."""
+            if document_type == "note":
+                # Original note creation functionality
+                timestamp_str = conversation_context["timestamp"]
+                note_title = f"Chat Note - {message_role} - {timestamp_str}"
+                
+                note_content = f"""From: {message_role}
+Date: {timestamp_str}
+Message ID: {conversation_context["message_id"] or 'N/A'}
+
+---
+
+{message_content}"""
+                
+                try:
+                    note_id = app.notes_service.add_note(
+                        user_id=app.notes_user_id,
+                        title=note_title,
+                        content=note_content
+                    )
+                    
+                    if note_id:
+                        app.notify("Note created from message", severity="success", timeout=3)
+                        
+                        # Expand notes section if collapsed
+                        try:
+                            notes_collapsible = app.query_one("#chat-notes-collapsible")
+                            if hasattr(notes_collapsible, 'collapsed'):
+                                notes_collapsible.collapsed = False
+                        except QueryError:
+                            pass
+                        
+                        loguru_logger.info(f"Created note '{note_title}' with ID: {note_id}")
+                    else:
+                        app.notify("Failed to create note", severity="error")
+                        
+                except Exception as e:
+                    loguru_logger.error(f"Error creating note from message: {e}", exc_info=True)
+                    app.notify(f"Failed to create note: {str(e)}", severity="error")
+            
+            else:
+                # Generate document using LLM
+                await generate_document_with_llm(app, document_type, message_content, conversation_context)
+        
+        # Show document generation modal and wait for result
+        # We need to run this in a worker since push_screen_wait requires it
+        async def show_document_modal():
+            modal = DocumentGenerationModal(
+                message_content=message_text,
+                conversation_context=conversation_context
+            )
+            
+            # Push modal and wait for result
+            result = await app.push_screen_wait(modal)
+            
+            # Handle the result if user selected an option
+            if result:
+                await handle_document_generation(result, message_text)
+        
+        # Run in worker
+        app.run_worker(show_document_modal())
+
+    elif "file-extract-button" in button_classes:
+        logging.info("Action: Extract Files clicked for %s message: '%s...'", message_role, message_text[:50])
+        
+        # Get extracted files from the widget
+        extracted_files = getattr(action_widget, '_extracted_files', None)
+        if not extracted_files:
+            app.notify("No extractable files found in this message", severity="warning")
+            return
+        
+        # Show extraction dialog
+        # We need to run this in a worker since push_screen_wait requires it
+        async def show_extraction_dialog():
+            dialog = FileExtractionDialog(extracted_files)
+            result = await app.push_screen_wait(dialog)
+            
+            if result and result.get('files'):
+                # Files were saved successfully
+                saved_count = len(result['files'])
+                loguru_logger.info(f"Saved {saved_count} files from message")
+        
+        # Run in worker
+        app.run_worker(show_extraction_dialog())
+    
     elif "speak-button" in button_classes:
         logging.info(f"Action: Speak clicked for {message_role} message: '{message_text[:50]}...'")
-        # Actual TTS would go here. For UI feedback:
+        
+        # Import TTS event
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent
+        
+        # Get message ID for tracking
+        message_id = getattr(action_widget, 'message_id_internal', None)
+        
+        # Post TTS request event
+        app.post_message(TTSRequestEvent(
+            text=message_text,
+            message_id=message_id
+        ))
+        
+        # Update UI to show speaking status
         try:
-            text_widget = action_widget.query_one(".message-text", Static)
-            original_display = text_widget.renderable  # Store to restore
-            text_widget.update(Text.from_markup(f"[italic]Speaking: {escape_markup(message_text)}[/]"))
-            # After TTS simulation/actual call:
-            # app.set_timer(3, lambda: text_widget.update(original_display)) # Example restore
+            text_widget = action_widget.query_one(".message-text", Markdown)
+            # Add a visual indicator that TTS is being generated
+            text_widget.add_class("tts-generating")
+            
+            # The TTSCompleteEvent handler will remove this class when done
         except QueryError:
             logging.error("Could not find .message-text Static for speak action.")
 
 
     elif "thumb-up-button" in button_classes:
         logging.info(f"Action: Thumb Up clicked for {message_role} message.")
-        button.label = "👍(OK)"
-        # Add DB interaction for feedback if needed
+        
+        # Import the dialog
+        from ...Widgets.feedback_dialog import FeedbackDialog
+        
+        # Get current feedback
+        current_feedback = getattr(action_widget, 'feedback', None)
+        existing_comment = ""
+        
+        # Extract existing comment if present
+        if current_feedback and current_feedback.startswith("1;"):
+            parts = current_feedback.split(";", 1)
+            if len(parts) > 1:
+                existing_comment = parts[1]
+        
+        # Define callback to handle dialog result
+        def on_feedback_ready(result):
+            if result is None:
+                # User cancelled
+                return
+            
+            feedback_type, comment = result
+            
+            # Build feedback string
+            if comment:
+                new_feedback = f"{feedback_type};{comment}"
+            else:
+                new_feedback = f"{feedback_type};"
+            
+            # Check if this is a toggle (same feedback without comment)
+            if current_feedback == "1;" and new_feedback == "1;":
+                new_feedback = None  # Clear feedback
+            
+            # Save feedback to DB if we have the necessary info
+            if db and action_widget.message_id_internal and action_widget.message_version_internal is not None:
+                try:
+                    success = db.update_message_feedback(
+                        action_widget.message_id_internal,
+                        new_feedback,
+                        action_widget.message_version_internal
+                    )
+                    
+                    if success:
+                        action_widget.message_version_internal += 1
+                        action_widget.feedback = new_feedback
+                        
+                        # Update button appearance
+                        if new_feedback and new_feedback.startswith("1;"):
+                            button.label = "👍✓"
+                            app.notify("Feedback saved: Thumbs up", severity="information", timeout=2)
+                        else:
+                            button.label = "👍"
+                            app.notify("Feedback cleared", severity="information", timeout=2)
+                        
+                        # Clear the other thumb button if it was selected
+                        try:
+                            other_button = action_widget.query_one("#thumb-down", Button)
+                            other_button.label = "👎"
+                        except QueryError:
+                            loguru_logger.debug("Thumb down button not found, likely already updated")
+                            
+                        loguru_logger.info(f"Message {action_widget.message_id_internal} feedback updated")
+                    else:
+                        loguru_logger.error(f"update_message_feedback returned False")
+                        app.notify("Failed to save feedback", severity="error")
+                        
+                except ConflictError as e:
+                    loguru_logger.error(f"Conflict updating feedback: {e}")
+                    app.notify("Feedback conflict - please reload chat", severity="error")
+                except Exception as e:
+                    loguru_logger.error(f"Error updating feedback: {e}")
+                    app.notify(f"Failed to save feedback: {e}", severity="error")
+            else:
+                # No DB - just update UI
+                if new_feedback:
+                    button.label = "👍✓"
+                    action_widget.feedback = new_feedback
+                else:
+                    button.label = "👍"
+                    action_widget.feedback = None
+                    
+                # Clear the other thumb
+                try:
+                    other_button = action_widget.query_one("#thumb-down", Button)
+                    other_button.label = "👎"
+                except QueryError:
+                    loguru_logger.debug("Thumb down button not found when updating thumb-up feedback (no DB)")
+        
+        # Show the dialog
+        dialog = FeedbackDialog(
+            feedback_type="1",
+            existing_comment=existing_comment,
+            callback=on_feedback_ready
+        )
+        app.push_screen(dialog)
 
     elif "thumb-down-button" in button_classes:
         logging.info(f"Action: Thumb Down clicked for {message_role} message.")
-        button.label = "👎(OK)"
-        # Add DB interaction for feedback if needed
+        
+        # Import the dialog
+        from ...Widgets.feedback_dialog import FeedbackDialog
+        
+        # Get current feedback
+        current_feedback = getattr(action_widget, 'feedback', None)
+        existing_comment = ""
+        
+        # Extract existing comment if present
+        if current_feedback and current_feedback.startswith("2;"):
+            parts = current_feedback.split(";", 1)
+            if len(parts) > 1:
+                existing_comment = parts[1]
+        
+        # Define callback to handle dialog result
+        def on_feedback_ready(result):
+            if result is None:
+                # User cancelled
+                return
+            
+            feedback_type, comment = result
+            
+            # Build feedback string
+            if comment:
+                new_feedback = f"{feedback_type};{comment}"
+            else:
+                new_feedback = f"{feedback_type};"
+            
+            # Check if this is a toggle (same feedback without comment)
+            if current_feedback == "2;" and new_feedback == "2;":
+                new_feedback = None  # Clear feedback
+            
+            # Save feedback to DB if we have the necessary info
+            if db and action_widget.message_id_internal and action_widget.message_version_internal is not None:
+                try:
+                    success = db.update_message_feedback(
+                        action_widget.message_id_internal,
+                        new_feedback,
+                        action_widget.message_version_internal
+                    )
+                    
+                    if success:
+                        action_widget.message_version_internal += 1
+                        action_widget.feedback = new_feedback
+                        
+                        # Update button appearance
+                        if new_feedback and new_feedback.startswith("2;"):
+                            button.label = "👎✓"
+                            app.notify("Feedback saved: Thumbs down", severity="information", timeout=2)
+                        else:
+                            button.label = "👎"
+                            app.notify("Feedback cleared", severity="information", timeout=2)
+                        
+                        # Clear the other thumb button if it was selected
+                        try:
+                            other_button = action_widget.query_one("#thumb-up", Button)
+                            other_button.label = "👍"
+                        except QueryError:
+                            loguru_logger.debug("Thumb up button not found when updating thumb-down feedback")
+                            
+                        loguru_logger.info(f"Message {action_widget.message_id_internal} feedback updated")
+                    else:
+                        loguru_logger.error(f"update_message_feedback returned False")
+                        app.notify("Failed to save feedback", severity="error")
+                        
+                except ConflictError as e:
+                    loguru_logger.error(f"Conflict updating feedback: {e}")
+                    app.notify("Feedback conflict - please reload chat", severity="error")
+                except Exception as e:
+                    loguru_logger.error(f"Error updating feedback: {e}")
+                    app.notify(f"Failed to save feedback: {e}", severity="error")
+            else:
+                # No DB - just update UI
+                if new_feedback:
+                    button.label = "👎✓"
+                    action_widget.feedback = new_feedback
+                else:
+                    button.label = "👎"
+                    action_widget.feedback = None
+                    
+                # Clear the other thumb
+                try:
+                    other_button = action_widget.query_one("#thumb-up", Button)
+                    other_button.label = "👍"
+                except QueryError:
+                    loguru_logger.debug("Thumb up button not found when updating thumb-down feedback (no DB)")
+        
+        # Show the dialog
+        dialog = FeedbackDialog(
+            feedback_type="2",
+            existing_comment=existing_comment,
+            callback=on_feedback_ready
+        )
+        app.push_screen(dialog)
 
     elif "delete-button" in button_classes:
         logging.info("Action: Delete clicked for %s message: '%s...'", message_role, message_text[:50])
@@ -700,8 +1382,12 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 widgets_to_remove_after_regen_source.append(msg_widget_iter)
             else:
                 # This message is *before* the one we're regenerating
-                if msg_widget_iter.role in ("User", "AI") and msg_widget_iter.generation_complete:
-                    role_for_api = "assistant" if msg_widget_iter.role == "AI" else "user"
+                if msg_widget_iter.generation_complete:
+                    # Determine if this is a user or assistant message
+                    # Check if role matches current character name (assistant) or is anything else (user)
+                    active_char_data_regen = app.current_chat_active_character_data
+                    char_name_regen = active_char_data_regen.get('name', 'AI') if active_char_data_regen else 'AI'
+                    role_for_api = "assistant" if msg_widget_iter.role == char_name_regen else "user"
                     history_for_regeneration.append({"role": role_for_api, "content": msg_widget_iter.message_text})
 
         if not history_for_regeneration:
@@ -790,6 +1476,16 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 f"Streaming for REGENERATION with {selected_provider_regen} set to {should_stream_regen} based on config.")
         else:
             loguru_logger.debug("No provider selected for REGENERATION, streaming defaults to False.")
+            
+        # Check streaming checkbox to override provider setting for regeneration
+        try:
+            streaming_checkbox_regen = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+            streaming_override_regen = streaming_checkbox_regen.value
+            if streaming_override_regen != should_stream_regen:
+                loguru_logger.info(f"Streaming override for REGENERATION: checkbox={streaming_override_regen}, provider default={should_stream_regen}")
+                should_stream_regen = streaming_override_regen
+        except QueryError:
+            loguru_logger.debug("Streaming checkbox not found for REGENERATION, using provider default")
         # --- End of Integration & Streaming Config for REGENERATION ---
 
         llm_max_tokens_value_regen = safe_int(llm_max_tokens_widget_regen.value, 1024, "llm_max_tokens")
@@ -847,10 +1543,25 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 role="System", classes="-error"))
             return
 
-        ai_placeholder_widget_regen = ChatMessage(
-            message=f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
-            role="AI", generation_complete=False
-        )
+        # Use the correct widget type based on which chat window is active
+        from tldw_chatbook.config import get_cli_setting
+        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+        
+        # Get AI display name from active character for regeneration
+        ai_display_name_regen = active_char_data_regen.get('name', 'AI') if active_char_data_regen else 'AI'
+        
+        if use_enhanced_chat:
+            from tldw_chatbook.Widgets.chat_message_enhanced import ChatMessageEnhanced
+            ai_placeholder_widget_regen = ChatMessageEnhanced(
+                message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
+                role=ai_display_name_regen, generation_complete=False
+            )
+        else:
+            ai_placeholder_widget_regen = ChatMessage(
+                message=f"{ai_display_name_regen} {get_char(EMOJI_THINKING, FALLBACK_THINKING)} (Regenerating...)",
+                role=ai_display_name_regen, generation_complete=False
+            )
+        
         await chat_container.mount(ai_placeholder_widget_regen)
         chat_container.scroll_end(animate=False)
         app.current_ai_message_widget = ai_placeholder_widget_regen
@@ -871,8 +1582,9 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             strip_thinking_tags=strip_thinking_tags_value_regen, # Pass for regeneration
             media_content={}, selected_parts=[], chatdict_entries=None, max_tokens=500, strategy="sorted_evenly"
         )
-        app.run_worker(worker_target_regen, name=f"API_Call_{prefix}_regenerate", group="api_calls", thread=True,
+        worker = app.run_worker(worker_target_regen, name=f"API_Call_{prefix}_regenerate", group="api_calls", thread=True,
                        description=f"Regenerating for {selected_provider_regen}")
+        app.set_current_chat_worker(worker)
 
     elif "continue-button" in button_classes and message_role == "AI":
         loguru_logger.info(
@@ -882,10 +1594,9 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         button_event = Button.Pressed(button)
         # Call the continue response handler
         await handle_continue_response_button_pressed(app, button_event, action_widget)
-
-
-async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    loguru_logger.info("New Chat button pressed.")
+async def handle_chat_new_temp_chat_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle New Temp Chat button - creates an ephemeral chat."""
+    loguru_logger.info("New Temp Chat button pressed.")
     try:
         chat_log_widget = app.query_one("#chat-log", VerticalScroll)
         await chat_log_widget.remove_children()
@@ -893,14 +1604,18 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
         loguru_logger.error("Failed to find #chat-log to clear.")
 
     app.current_chat_conversation_id = None
-    app.current_chat_is_ephemeral = True  # This triggers watcher to update UI elements
+    app.current_chat_is_ephemeral = True
     app.current_chat_active_character_data = None
+    
+    await chat_events_worldbooks.refresh_active_worldbooks(app)
+    await chat_events_dictionaries.refresh_active_dictionaries(app)
+    
     try:
         default_system_prompt = app.app_config.get("chat_defaults", {}).get("system_prompt", "You are a helpful AI assistant.")
         app.query_one("#chat-system-prompt", TextArea).text = default_system_prompt
-        loguru_logger.debug("Reset main system prompt to default on new chat.")
     except QueryError:
-        loguru_logger.error("Could not find #chat-system-prompt to reset on new chat.")
+        pass
+    
     try:
         app.query_one("#chat-character-name-edit", Input).value = ""
         app.query_one("#chat-character-description-edit", TextArea).text = ""
@@ -908,23 +1623,114 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
         app.query_one("#chat-character-scenario-edit", TextArea).text = ""
         app.query_one("#chat-character-system-prompt-edit", TextArea).text = ""
         app.query_one("#chat-character-first-message-edit", TextArea).text = ""
-        # Optionally clear the character search and list
-        # app.query_one("#chat-character-search-input", Input).value = ""
-        # await app.query_one("#chat-character-search-results-list", ListView).clear()
-        loguru_logger.debug("Cleared character editing fields on new chat.")
-    except QueryError as e:
-        loguru_logger.warning(f"Could not clear all character edit fields on new chat: {e}")
-
+    except QueryError:
+        pass
+    
     try:
-        # Watcher should handle most of this, but explicit clearing is safer
+        from .chat_token_events import update_chat_token_counter
+        await update_chat_token_counter(app)
+    except Exception:
+        pass
+    
+    try:
         app.query_one("#chat-conversation-title-input", Input).value = ""
         app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
         app.query_one("#chat-conversation-uuid-display", Input).value = "Ephemeral Chat"
         app.query_one(TitleBar).reset_title()
         app.query_one("#chat-input", TextArea).focus()
-    except QueryError as e:
-        loguru_logger.error(f"UI component not found during new chat setup: {e}")
+    except QueryError:
+        pass
+    
+    app.notify("Created new temporary chat", severity="information")
 
+
+
+
+async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Handle New Chat button - creates a new saved conversation."""
+    loguru_logger.info("New Chat button pressed.")
+    
+    # Clear chat log
+    try:
+        chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+        await chat_log_widget.remove_children()
+    except QueryError:
+        loguru_logger.error("Failed to find #chat-log to clear.")
+    
+    # Clear character data
+    app.current_chat_active_character_data = None
+    
+    # Clear world books and dictionaries
+    await chat_events_worldbooks.refresh_active_worldbooks(app)
+    await chat_events_dictionaries.refresh_active_dictionaries(app)
+    
+    # Reset system prompt
+    try:
+        default_system_prompt = app.app_config.get("chat_defaults", {}).get("system_prompt", "You are a helpful AI assistant.")
+        app.query_one("#chat-system-prompt", TextArea).text = default_system_prompt
+    except QueryError:
+        pass
+    
+    # Clear character fields
+    try:
+        app.query_one("#chat-character-name-edit", Input).value = ""
+        app.query_one("#chat-character-description-edit", TextArea).text = ""
+        app.query_one("#chat-character-personality-edit", TextArea).text = ""
+        app.query_one("#chat-character-scenario-edit", TextArea).text = ""
+        app.query_one("#chat-character-system-prompt-edit", TextArea).text = ""
+        app.query_one("#chat-character-first-message-edit", TextArea).text = ""
+    except QueryError:
+        pass
+    
+    # Update token counter
+    try:
+        from .chat_token_events import update_chat_token_counter
+        await update_chat_token_counter(app)
+    except Exception:
+        pass
+    
+    # Create new conversation in database
+    if not app.chachanotes_db:
+        app.notify("Database service not available.", severity="error")
+        app.current_chat_conversation_id = None
+        app.current_chat_is_ephemeral = True
+        return
+    
+    db = app.chachanotes_db
+    new_conversation_id = str(uuid.uuid4())
+    default_title = f"New Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}"  
+    
+    try:
+        character_id = ccl.DEFAULT_CHARACTER_ID
+        conv_data = {
+            'id': new_conversation_id,
+            'title': default_title,
+            'keywords': "",
+            'character_id': character_id
+        }
+        
+        # Add conversation to database
+        db.add_conversation(conv_data)        
+        app.current_chat_conversation_id = new_conversation_id
+        app.current_chat_is_ephemeral = False
+        
+        try:
+            app.query_one("#chat-conversation-title-input", Input).value = default_title
+            app.query_one("#chat-conversation-keywords-input", TextArea).text = ""
+            app.query_one("#chat-conversation-uuid-display", Input).value = new_conversation_id
+            app.query_one(TitleBar).update_title(default_title)
+            app.query_one("#chat-input", TextArea).focus()
+        except QueryError:
+            pass
+        
+        app.notify(f"Created new conversation: {default_title}", severity="information")
+        loguru_logger.info(f"Created new conversation with ID: {new_conversation_id}")
+        
+    except Exception as e:
+        loguru_logger.error(f"Failed to create new conversation: {e}")
+        app.notify("Failed to create new conversation", severity="error")
+        app.current_chat_conversation_id = None
+        app.current_chat_is_ephemeral = True
 
 async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     loguru_logger.info("Save Current Chat button pressed.")
@@ -964,7 +1770,8 @@ async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Bu
 
     ui_messages_to_save: List[Dict[str, Any]] = []
     for msg_widget in messages_in_log:
-        sender_for_db_initial_msg = "User" if msg_widget.role == "User" else char_name_for_sender
+        # Store the actual role/name displayed in the UI
+        sender_for_db_initial_msg = msg_widget.role
 
         if msg_widget.generation_complete :
             ui_messages_to_save.append({
@@ -980,7 +1787,8 @@ async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Bu
     if not final_title_for_db:
         # Use character's name for title generation if a specific character is active
         title_char_name_part = char_name_for_sender if character_id_for_saving != ccl.DEFAULT_CHARACTER_ID else "Assistant"
-        if ui_messages_to_save and ui_messages_to_save[0]['sender'] == "User":
+        # Check if first message is from a user (not the AI character)
+        if ui_messages_to_save and ui_messages_to_save[0]['sender'] != char_name_for_sender:
             content_preview = ui_messages_to_save[0]['content'][:30].strip()
             if content_preview:
                 final_title_for_db = f"Chat: {content_preview}..."
@@ -1021,6 +1829,110 @@ async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Bu
     except Exception as e_save_chat:
         loguru_logger.error(f"Exception while saving chat: {e_save_chat}", exc_info=True)
         app.notify(f"Error saving chat: {str(e_save_chat)[:100]}", severity="error")
+
+
+async def handle_chat_convert_to_note_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Convert the entire current conversation to a note."""
+    loguru_logger.info("Convert to note button pressed.")
+    
+    # Get chat container to query messages
+    try:
+        chat_container = app.query_one("#chat-scrollable-content", VerticalScroll)
+    except QueryError:
+        app.notify("Chat container not found.", severity="error")
+        return
+    
+    # Collect all messages from the UI
+    all_chat_messages = list(chat_container.query(ChatMessage))
+    all_enhanced_messages = list(chat_container.query(ChatMessageEnhanced))
+    all_ui_messages = sorted(
+        all_chat_messages + all_enhanced_messages,
+        key=lambda w: chat_container.children.index(w) if w in chat_container.children else float('inf')
+    )
+    
+    if not app.current_chat_conversation_id and not all_ui_messages:
+        app.notify("No conversation to convert to note.", severity="warning")
+        return
+    
+    if not app.notes_service:
+        loguru_logger.error("Notes service not available for creating note.")
+        app.notify("Database service not available.", severity="error")
+        return
+    
+    try:
+        # Get conversation title
+        conversation_title = "Untitled Chat"
+        if app.current_chat_conversation_id and not app.current_chat_is_ephemeral:
+            db = app.notes_service._get_db(app.notes_user_id)
+            conv_details = db.get_conversation_by_id(app.current_chat_conversation_id)
+            if conv_details:
+                conversation_title = conv_details.get('title', 'Untitled Chat')
+        
+        # Format note title
+        timestamp_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        note_title = f"Chat Conversation - {conversation_title} - {timestamp_str}"
+        
+        # Build note content from messages
+        note_content_parts = [
+            f"Conversation: {conversation_title}",
+            f"Date: {timestamp_str}",
+            f"Conversation ID: {app.current_chat_conversation_id or 'Ephemeral'}",
+            "",
+            "=" * 50,
+            ""
+        ]
+        
+        # Add each message to the note
+        for msg_widget in all_ui_messages:
+            # Skip incomplete messages
+            if hasattr(msg_widget, 'generation_complete') and not msg_widget.generation_complete:
+                continue
+                
+            msg_role = msg_widget.role
+            msg_content = msg_widget.message_text
+            
+            # Try to get timestamp if available
+            msg_timestamp = "Unknown time"
+            if hasattr(msg_widget, 'created_at') and msg_widget.created_at:
+                msg_timestamp = msg_widget.created_at
+            
+            note_content_parts.extend([
+                f"[{msg_timestamp}] {msg_role}:",
+                msg_content,
+                "",
+                "-" * 30,
+                ""
+            ])
+        
+        note_content = "\n".join(note_content_parts)
+        
+        # Create the note
+        notes_service = NotesInteropService(app.db)
+        note_id = notes_service.add_note(
+            user_id=app.client_id,
+            title=note_title,
+            content=note_content
+        )
+        
+        if note_id:
+            app.notify(f"Conversation converted to note: {note_title[:50]}...", severity="success", timeout=3)
+            
+            # Expand notes section if collapsed
+            try:
+                notes_collapsible = app.query_one("#chat-notes-collapsible")
+                if hasattr(notes_collapsible, 'collapsed'):
+                    notes_collapsible.collapsed = False
+            except QueryError:
+                pass
+            
+            loguru_logger.info(f"Created note '{note_title}' with ID: {note_id}")
+        else:
+            app.notify("Failed to create note from conversation", severity="error")
+            loguru_logger.error("Notes service returned None for note ID")
+            
+    except Exception as e:
+        loguru_logger.error(f"Error converting conversation to note: {e}", exc_info=True)
+        app.notify(f"Failed to convert conversation: {str(e)}", severity="error")
 
 
 async def handle_chat_save_details_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -1171,6 +2083,24 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
     try:
         search_bar = app.query_one("#chat-conversation-search-bar", Input)
         search_term = search_bar.value.strip()
+        
+        # Get keyword search term if it exists
+        keyword_search_term = ""
+        try:
+            keyword_search_bar = app.query_one("#chat-conversation-keyword-search-bar", Input)
+            keyword_search_term = keyword_search_bar.value.strip()
+        except QueryError:
+            # Keyword search bar doesn't exist yet, that's fine
+            pass
+            
+        # Get tag search term if it exists
+        tag_search_term = ""
+        try:
+            tag_search_bar = app.query_one("#chat-conversation-tags-search-bar", Input)
+            tag_search_term = tag_search_bar.value.strip()
+        except QueryError:
+            # Tag search bar doesn't exist yet, that's fine
+            pass
 
         include_char_chats_checkbox = app.query_one("#chat-conversation-search-include-character-checkbox", Checkbox)
         include_character_chats = include_char_chats_checkbox.value  # Currently unused in DB query, filtered client side
@@ -1192,45 +2122,116 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
         db = app.notes_service._get_db(app.notes_user_id)
         conversations: List[Dict[str, Any]] = []
 
-        # The DB query `search_conversations_by_title` uses character_id=None for "all characters"
-        # or a specific character_id. It doesn't have a separate flag for "regular chats only".
-        # The `include_character_chats` checkbox logic might need client-side filtering if
-        # "regular chats" mean `character_id IS NULL` specifically.
-
-        # Simplified logic: if a specific character is chosen, filter by it. Otherwise, search all.
-        # The `include_character_chats` primarily acts as a conceptual filter for now,
-        # unless `search_conversations_by_title` is enhanced.
-
+        # Determine the filtering logic based on checkbox states
+        # Logic:
+        # 1. If "Include Character Chats" is unchecked: Show only regular chats (character_id = DEFAULT_CHARACTER_ID or NULL)
+        # 2. If "Include Character Chats" is checked:
+        #    a. If "All Characters" is checked: Show all conversations regardless of character
+        #    b. If a specific character is selected: Show only that character's conversations
+        #    c. If no character is selected and "All Characters" is unchecked: Show all conversations
+        
+        filter_regular_chats_only = not include_character_chats
         effective_character_id_for_search = None
+        
         if include_character_chats:
+            # Character chats are included
             if not search_all_characters and selected_character_id_filter:
+                # A specific character is selected
                 effective_character_id_for_search = selected_character_id_filter
-            # if search_all_characters or selected_character_id_filter is None, effective_character_id_for_search remains None (search all)
-        else:  # Only "regular" (non-character) chats. This requires DB support or client filter.
-            loguru_logger.info(
-                "Searching for regular chats only (character_id is NULL). This may require DB method enhancement or client-side filter.")
-            # For now, let's assume search_conversations_by_title with character_id=ccl.DEFAULT_CHARACTER_ID
-            # or some other marker for "regular" if your DB is structured that way.
-            # Or if DEFAULT_CHARACTER_ID implies non-specific character chats
-            effective_character_id_for_search = ccl.DEFAULT_CHARACTER_ID  # Placeholder assumption
-            # A more robust way for "character_id IS NULL" would be a dedicated DB method or flag.
+                loguru_logger.debug(f"Filtering for specific character ID: {effective_character_id_for_search}")
+            else:
+                # Either "All Characters" is checked or no specific character selected
+                effective_character_id_for_search = None  # This will search all conversations
+                loguru_logger.debug("Searching all conversations (character chats included)")
+        else:
+            # Only regular (non-character) chats should be shown
+            # We'll need to filter client-side since the DB doesn't have a direct "regular chats only" query
+            effective_character_id_for_search = None  # Get all, then filter client-side
+            loguru_logger.debug("Will filter for regular chats only (client-side filtering)")
 
         loguru_logger.debug(
-            f"Searching conversations. Term: '{search_term}', CharID for DB: {effective_character_id_for_search}, IncludeCharFlag: {include_character_chats}")
-        conversations = db.search_conversations_by_title(
-            title_query=search_term,
-            character_id=effective_character_id_for_search,  # This will be None if searching all/all_chars checked
-            limit=100
-        )
+            f"Searching conversations. Term: '{search_term}', CharID for DB: {effective_character_id_for_search}, IncludeCharFlag: {include_character_chats}, FilterRegularOnly: {filter_regular_chats_only}")
+        
+        # Handle different search scenarios
+        if not search_term:
+            # Empty search term - show all conversations based on filters
+            if effective_character_id_for_search is not None and effective_character_id_for_search != ccl.DEFAULT_CHARACTER_ID:
+                # Specific character selected - show all conversations for that character
+                conversations = db.get_conversations_for_character(
+                    character_id=effective_character_id_for_search,
+                    limit=100
+                )
+            elif search_all_characters and include_character_chats:
+                # "All Characters" checked - get all conversations (both regular and character chats)
+                conversations = db.list_all_active_conversations(limit=100)
+            elif effective_character_id_for_search == ccl.DEFAULT_CHARACTER_ID:
+                # Regular chats only (non-character chats)
+                # Get all conversations and filter for those without a character
+                all_conversations = db.list_all_active_conversations(limit=100)
+                conversations = [conv for conv in all_conversations 
+                               if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
+            else:
+                # No specific filter - still show all conversations
+                conversations = db.list_all_active_conversations(limit=100)
+        else:
+            # Search term provided - use the search function
+            conversations = db.search_conversations_by_title(
+                title_query=search_term,
+                character_id=effective_character_id_for_search,  # This will be None if searching all/all_chars checked
+                limit=100
+            )
+        
+        # If keyword search is provided, further filter by content
+        if keyword_search_term and conversations:
+            # Get conversation IDs that match the keyword search
+            keyword_matches = db.search_conversations_by_content(keyword_search_term, limit=100)
+            keyword_conv_ids = {match['id'] for match in keyword_matches}
+            
+            # Filter conversations to only those that match keyword search
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations if conv['id'] in keyword_conv_ids]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                loguru_logger.debug(f"Keyword filter removed {filtered_count} conversations, keeping {len(conversations)} that match '{keyword_search_term}'")
+        
+        # If tag search is provided, filter by conversation keywords/tags
+        if tag_search_term and conversations:
+            # Parse comma-separated tags
+            search_tags = [tag.strip() for tag in tag_search_term.split(',') if tag.strip()]
+            
+            if search_tags:
+                # Get conversation IDs that have matching tags
+                matching_conv_ids = set()
+                
+                for tag in search_tags:
+                    # Search for keywords matching the tag
+                    keyword_results = db.search_keywords(tag, limit=10)
+                    
+                    # For each matching keyword, get conversations
+                    for keyword in keyword_results:
+                        keyword_id = keyword['id']
+                        tag_conversations = db.get_conversations_for_keyword(keyword_id, limit=100)
+                        
+                        # Add conversation IDs to our set
+                        for conv in tag_conversations:
+                            matching_conv_ids.add(conv['id'])
+                
+                # Filter conversations to only those that have matching tags
+                original_count = len(conversations)
+                conversations = [conv for conv in conversations if conv['id'] in matching_conv_ids]
+                filtered_count = original_count - len(conversations)
+                if filtered_count > 0:
+                    loguru_logger.debug(f"Tag filter removed {filtered_count} conversations, keeping {len(conversations)} that match tags: {search_tags}")
 
-        # If include_character_chats is False, and the DB query couldn't filter by "IS NULL"
-        # we might need to filter here:
-        if not include_character_chats and conversations:
-            # This assumes regular chats are those associated with DEFAULT_CHARACTER_ID
-            # or if your DB uses NULL for truly "no character" chats. Adjust as needed.
-            # conversations = [conv for conv in conversations if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
-            # For now, we assume the DB call with DEFAULT_CHARACTER_ID handled this.
-            pass
+        # If include_character_chats is False, we need to filter client-side for regular chats only
+        if filter_regular_chats_only and conversations:
+            # Regular chats are those with character_id = DEFAULT_CHARACTER_ID or NULL
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations 
+                           if conv.get('character_id') == ccl.DEFAULT_CHARACTER_ID or conv.get('character_id') is None]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                loguru_logger.debug(f"Filtered out {filtered_count} character conversations, keeping {len(conversations)} regular chats")
 
         if not conversations:
             await results_list_view.append(ListItem(Label("No conversations found.")))
@@ -1336,6 +2337,11 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
 
     app.current_chat_conversation_id = conversation_id
     app.current_chat_is_ephemeral = False
+    
+    # Refresh world books for the new conversation
+    await chat_events_worldbooks.refresh_active_worldbooks(app)
+    # Refresh dictionaries for the new conversation
+    await chat_events_dictionaries.refresh_active_dictionaries(app)
 
     try:
         character_id_from_conv = conv_metadata.get('character_id')
@@ -1387,6 +2393,9 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
         await chat_log_widget_disp.remove_children()
         app.current_ai_message_widget = None
 
+        # Check if we should use enhanced widgets
+        use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
+        
         for msg_data in db_messages:
             content_to_display = ccl.replace_placeholders(
                 msg_data.get('content', ''),
@@ -1394,16 +2403,32 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
                 current_user_name
             )
 
-            chat_msg_widget_for_display = ChatMessage(
-                message=content_to_display,
-                role=msg_data.get('sender', 'Unknown'),
-                generation_complete=True,
-                message_id=msg_data.get('id'),
-                message_version=msg_data.get('version'),
-                timestamp=msg_data.get('timestamp'),
-                image_data=msg_data.get('image_data'),
-                image_mime_type=msg_data.get('image_mime_type')
-            )
+            # Use ChatMessageEnhanced if there's image data OR if we're in enhanced mode
+            if msg_data.get('image_data') or use_enhanced_chat:
+                chat_msg_widget_for_display = ChatMessageEnhanced(
+                    message=content_to_display,
+                    role=msg_data.get('sender', 'Unknown'),
+                    generation_complete=True,
+                    message_id=msg_data.get('id'),
+                    message_version=msg_data.get('version'),
+                    timestamp=msg_data.get('timestamp'),
+                    image_data=msg_data.get('image_data'),
+                    image_mime_type=msg_data.get('image_mime_type'),
+                    feedback=msg_data.get('feedback')
+                )
+            else:
+                chat_msg_widget_for_display = ChatMessage(
+                    message=content_to_display,
+                    role=msg_data.get('sender', 'Unknown'),
+                    generation_complete=True,
+                    message_id=msg_data.get('id'),
+                    message_version=msg_data.get('version'),
+                    timestamp=msg_data.get('timestamp'),
+                    image_data=msg_data.get('image_data'),
+                    image_mime_type=msg_data.get('image_mime_type'),
+                    feedback=msg_data.get('feedback')
+                )
+            
             # Styling class already handled by ChatMessage constructor based on role "User" or other
             await chat_log_widget_disp.mount(chat_msg_widget_for_display)
 
@@ -1412,6 +2437,14 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
 
         app.query_one("#chat-input", TextArea).focus()
         app.notify(f"Chat '{conv_metadata.get('title', 'Untitled')}' loaded.", severity="information", timeout=3)
+        
+        # Update token counter after loading conversation
+        try:
+            from .chat_token_events import update_chat_token_counter
+            await update_chat_token_counter(app)
+        except Exception as e:
+            loguru_logger.debug(f"Could not update token counter: {e}")
+            
     except QueryError as qe_disp_main:
         loguru_logger.error(f"UI component missing during display_conversation for {conversation_id}: {qe_disp_main}")
         app.notify("Error updating UI for loaded chat.", severity="error")
@@ -1495,7 +2528,9 @@ async def load_branched_conversation_history_ui(app: 'TldwCli', target_conversat
             timestamp=msg_data.get('timestamp'),
             image_data=image_data_for_widget,
             image_mime_type=msg_data.get('image_mime_type'),
-            message_id=msg_data['id']
+            message_id=msg_data['id'],
+            message_version=msg_data.get('version'),
+            feedback=msg_data.get('feedback')
         )
         await chat_log_widget.mount(chat_message_widget)
 
@@ -2206,7 +3241,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
 
     continue_button_widget: Optional[Button] = None
     original_button_label: Optional[str] = None
-    static_text_widget: Optional[Static] = None
+    markdown_widget: Optional[Markdown] = None
     original_display_text_obj: Optional[Union[str, Text]] = None # renderable can be str or Text
 
     try:
@@ -2216,8 +3251,8 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         continue_button_widget.disabled = True
         continue_button_widget.label = get_char(EMOJI_THINKING, FALLBACK_THINKING) # "⏳" or similar
 
-        static_text_widget = message_widget.query_one(".message-text", Static)
-        original_display_text_obj = static_text_widget.renderable # Save the original renderable (Text object or str)
+        markdown_widget = message_widget.query_one(".message-text", Markdown)
+        original_display_text_obj = message_widget.message_text # Save the original text
     except QueryError as qe:
         loguru_logger.error(f"Error querying essential UI component for continuation: {qe}", exc_info=True)
         app.notify("Error initializing continuation: UI component missing.", severity="error")
@@ -2231,8 +3266,8 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         if continue_button_widget and original_button_label:
             continue_button_widget.disabled = False
             continue_button_widget.label = original_button_label
-        if static_text_widget and original_display_text_obj: # Restore text if changed
-             static_text_widget.update(original_display_text_obj)
+        if markdown_widget and original_display_text_obj: # Restore text if changed
+             markdown_widget.update(original_display_text_obj)
         return
 
     original_message_text = message_widget.message_text # Raw text content
@@ -2268,13 +3303,13 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         loguru_logger.error(f"Continue Response: Could not find UI elements for history: {e}", exc_info=True)
         app.notify("Error: Chat log or other UI element not found.", severity="error")
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
-        if static_text_widget: static_text_widget.update(original_display_text_obj)
+        if markdown_widget: markdown_widget.update(original_display_text_obj)
         return
     except Exception as e_hist:
         loguru_logger.error(f"Error building history for continuation: {e_hist}", exc_info=True)
         app.notify("Error preparing message history for continuation.", severity="error")
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
-        if static_text_widget: static_text_widget.update(original_display_text_obj)
+        if markdown_widget: markdown_widget.update(original_display_text_obj)
         return
 
     # --- 2. LLM Call Preparation ---
@@ -2286,9 +3321,9 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
             # Create a new Text object if the original was Text
             text_with_indicator = original_display_text_obj.copy()
             text_with_indicator.append(thinking_indicator_suffix)
-            static_text_widget.update(text_with_indicator)
+            markdown_widget.update(text_with_indicator.plain)
         else: # Assuming str
-            static_text_widget.update(original_message_text + thinking_indicator_suffix)
+            markdown_widget.update(original_message_text + thinking_indicator_suffix)
 
     except Exception as e_indicator: # Non-critical if this fails
         loguru_logger.warning(f"Could not update message with thinking indicator: {e_indicator}", exc_info=True)
@@ -2330,7 +3365,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     except QueryError as e:
         loguru_logger.error(f"Continue Response: Could not find UI settings widgets for '{prefix}': {e}", exc_info=True)
         app.notify("Error: Missing UI settings for continuation.", severity="error")
-        if static_text_widget: static_text_widget.update(original_display_text_obj) # Restore original text
+        if markdown_widget: markdown_widget.update(original_display_text_obj) # Restore original text
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
         return
 
@@ -2377,7 +3412,17 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     if selected_provider: # Log provider's normal streaming setting for info
         provider_settings_key = selected_provider.lower().replace(" ", "_")
         provider_specific_settings = app.app_config.get("api_settings", {}).get(provider_settings_key, {})
-        loguru_logger.debug(f"Provider {selected_provider} normally streams: {provider_specific_settings.get('streaming', False)}. Forcing stream for continuation.")
+        loguru_logger.debug(f"Provider {selected_provider} normally streams: {provider_specific_settings.get('streaming', False)}. Default stream for continuation.")
+    
+    # Check streaming checkbox to override even for continuation
+    try:
+        streaming_checkbox_cont = app.query_one("#chat-streaming-enabled-checkbox", Checkbox)
+        streaming_override_cont = streaming_checkbox_cont.value
+        if not streaming_override_cont:
+            loguru_logger.info(f"Streaming override for CONTINUATION: checkbox=False, overriding default continuation streaming")
+            should_stream = False
+    except QueryError:
+        loguru_logger.debug("Streaming checkbox not found for CONTINUATION, using default streaming=True")
 
     # API Key Fetching
     api_key_for_call = None
@@ -2393,7 +3438,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     if selected_provider in providers_requiring_key and not api_key_for_call:
         loguru_logger.error(f"API Key for '{selected_provider}' is missing for continuation.")
         app.notify(f"API Key for {selected_provider} is missing.", severity="error")
-        if static_text_widget: static_text_widget.update(original_display_text_obj)
+        if markdown_widget: markdown_widget.update(original_display_text_obj)
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
         return
 
@@ -2446,18 +3491,18 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
                 # Remove thinking indicator from display.
                 # current_full_text already holds original_message_text.
                 # Static widget is updated with Text object to prevent markup issues.
-                if static_text_widget: static_text_widget.update(Text(current_full_text))
+                if markdown_widget: markdown_widget.update(current_full_text)
 
             if isinstance(chunk_data, str):
                 current_full_text += chunk_data
-                if static_text_widget: static_text_widget.update(Text(current_full_text))
+                if markdown_widget: markdown_widget.update(current_full_text)
             elif isinstance(chunk_data, dict) and 'error' in chunk_data:
                 error_detail = chunk_data['error']
                 loguru_logger.error(f"Error chunk received from LLM during continuation: {error_detail}")
                 app.notify(f"LLM Error: {str(error_detail)[:100]}", severity="error", timeout=7)
                 # Restore original state on error
                 message_widget.message_text = original_message_text # Restore internal text
-                if static_text_widget: static_text_widget.update(original_display_text_obj)
+                if markdown_widget: markdown_widget.update(original_display_text_obj)
                 if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
                 for btn_id, was_disabled in original_button_states.items():
                     try: message_widget.query_one(f"#{btn_id}", Button).disabled = was_disabled
@@ -2473,7 +3518,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         loguru_logger.error(f"Error during LLM call for continuation: {e_llm}", exc_info=True)
         app.notify(f"LLM call failed: {str(e_llm)[:100]}", severity="error")
         message_widget.message_text = original_message_text # Restore internal text
-        if static_text_widget: static_text_widget.update(original_display_text_obj) # Restore display
+        if markdown_widget: markdown_widget.update(original_display_text_obj) # Restore display
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
         for btn_id, was_disabled in original_button_states.items():
             try: message_widget.query_one(f"#{btn_id}", Button).disabled = was_disabled
@@ -2725,13 +3770,14 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
         )
 
         # Run the LLM call in a worker
-        app.run_worker(
+        worker = app.run_worker(
             worker_target,
             name="respond_for_me_worker",
             group="llm_suggestions",
             thread=True,
             description="Generating suggestion for user response..."
         )
+        app.set_current_chat_worker(worker)
 
         # The response will be handled by a worker event (e.g., on_stream_done or a custom one).
         # So, remove direct processing of llm_response_text and UI population here.
@@ -2777,9 +3823,9 @@ async def handle_stop_chat_generation_pressed(app: 'TldwCli', event: Button.Pres
                 if app.current_ai_message_widget and app.current_ai_message_widget.is_mounted:
                     try:
                         # Update the placeholder message to indicate cancellation
-                        static_text_widget = app.current_ai_message_widget.query_one(".message-text", Static)
-                        cancelled_text = "[italic]Chat generation cancelled by user.[/]"
-                        static_text_widget.update(Text.from_markup(cancelled_text))
+                        markdown_widget = app.current_ai_message_widget.query_one(".message-text", Markdown)
+                        cancelled_text = "_Chat generation cancelled by user._"
+                        markdown_widget.update(cancelled_text)
 
                         app.current_ai_message_widget.message_text = "Chat generation cancelled by user." # Update raw text
                         app.current_ai_message_widget.role = "System" # Change role
@@ -2813,15 +3859,14 @@ async def handle_stop_chat_generation_pressed(app: 'TldwCli', event: Button.Pres
             loguru_logger.debug(f"current_chat_worker ({app.current_chat_worker.name}) is not running (state: {app.current_chat_worker.state}).")
 
 
-    # Attempt to disable the button immediately, regardless of worker state.
-    # The on_worker_state_changed handler will also try to disable it when the worker eventually stops.
+    # Update the send button to change from stop back to send state
     # This provides immediate visual feedback.
     try:
-        stop_button = app.query_one("#stop-chat-generation", Button) # MODIFIED ID HERE
-        stop_button.disabled = True
-        loguru_logger.debug("Attempted to disable '#stop-chat-generation' button from handler.")
+        send_button = app.query_one("#send-chat", Button)
+        send_button.label = get_char(EMOJI_SEND, FALLBACK_SEND)
+        loguru_logger.debug("Changed send button back to send state.")
     except QueryError:
-        loguru_logger.error("Could not find '#stop-chat-generation' button to disable it directly from handler.") # MODIFIED ID IN LOG
+        loguru_logger.error("Could not find '#send-chat' button to update its state.")
 
 
 async def populate_chat_conversation_character_filter_select(app: 'TldwCli') -> None:
@@ -2854,15 +3899,128 @@ async def populate_chat_conversation_character_filter_select(app: 'TldwCli') -> 
         logging.error(f"Unexpected error populating char filter select (Chat Tab): {e_unexp}", exc_info=True)
 
 
+async def generate_document_with_llm(app: 'TldwCli', document_type: str, 
+                                   message_content: str, conversation_context: Dict[str, Any]) -> None:
+    """
+    Generate a document using LLM based on the selected type.
+    
+    Args:
+        app: The main app instance
+        document_type: Type of document to generate (timeline, study_guide, briefing)
+        message_content: The specific message content
+        conversation_context: Additional context about the conversation
+    """
+    import asyncio
+    
+    try:
+        # Get provider info from context
+        provider = conversation_context.get("current_provider")
+        model = conversation_context.get("current_model")
+        api_key = conversation_context.get("api_key")
+        conversation_id = conversation_context.get("conversation_id")
+        
+        if not all([provider, model, api_key, conversation_id]):
+            app.notify("Missing required information for document generation", severity="error")
+            return
+        
+        # Show loading notification
+        app.notify(f"Generating {document_type.replace('_', ' ').title()}...", severity="information")
+        
+        # Initialize document generator
+        doc_generator = DocumentGenerator(
+            db_path=app.chachanotes_db_path,
+            client_id=app.client_id
+        )
+        
+        # Generate document based on type
+        if document_type == "timeline":
+            generated_content = doc_generator.generate_timeline(
+                conversation_id=conversation_id,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                specific_message=message_content,
+                stream=False
+            )
+        elif document_type == "study_guide":
+            generated_content = doc_generator.generate_study_guide(
+                conversation_id=conversation_id,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                specific_message=message_content,
+                stream=False
+            )
+        elif document_type == "briefing":
+            generated_content = doc_generator.generate_briefing(
+                conversation_id=conversation_id,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                specific_message=message_content,
+                stream=False
+            )
+        else:
+            app.notify(f"Unknown document type: {document_type}", severity="error")
+            return
+        
+        # Create note with generated content
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        # Try to get conversation name or use a default
+        conversation_name = getattr(app, 'current_conversation_name', None) or f"Chat-{conversation_id[:8]}"
+        
+        # Format title based on document type
+        if document_type == "timeline":
+            title = f"{conversation_name}-timeline-{timestamp}"
+        elif document_type == "study_guide":
+            title = f"{conversation_name}-study_guide-{timestamp}"
+        elif document_type == "briefing":
+            title = f"{conversation_name}-Briefing-Document-{timestamp}"
+        else:
+            title = f"{conversation_name}-{document_type}-{timestamp}"
+        
+        # Create note in database
+        note_id = doc_generator.create_note_with_metadata(
+            title=title,
+            content=generated_content,
+            document_type=document_type,
+            conversation_id=conversation_id
+        )
+        
+        # Copy to clipboard
+        if doc_generator.copy_to_clipboard(generated_content):
+            app.notify(f"{document_type.replace('_', ' ').title()} created and copied to clipboard", 
+                      severity="success", timeout=5)
+        else:
+            app.notify(f"{document_type.replace('_', ' ').title()} created (clipboard copy failed)", 
+                      severity="warning", timeout=5)
+        
+        # Expand notes section if collapsed
+        try:
+            notes_collapsible = app.query_one("#chat-notes-collapsible")
+            if hasattr(notes_collapsible, 'collapsed'):
+                notes_collapsible.collapsed = False
+        except QueryError:
+            pass
+        
+        loguru_logger.info(f"Generated {document_type} with note ID: {note_id}")
+        
+    except Exception as e:
+        loguru_logger.error(f"Error generating {document_type}: {e}", exc_info=True)
+        app.notify(f"Failed to generate {document_type}: {str(e)}", severity="error")
+
+
 # --- Button Handler Map ---
 # This maps button IDs to their async handler functions.
 CHAT_BUTTON_HANDLERS = {
     "send-chat": handle_chat_send_button_pressed,
     "respond-for-me-button": handle_respond_for_me_button_pressed,
     "stop-chat-generation": handle_stop_chat_generation_pressed,
+    "chat-new-temp-chat-button": handle_chat_new_temp_chat_button_pressed,
     "chat-new-conversation-button": handle_chat_new_conversation_button_pressed,
     "chat-save-current-chat-button": handle_chat_save_current_chat_button_pressed,
     "chat-save-conversation-details-button": handle_chat_save_details_button_pressed,
+    "chat-convert-to-note-button": handle_chat_convert_to_note_button_pressed,
     "chat-conversation-load-selected-button": handle_chat_load_selected_button_pressed,
     "chat-prompt-load-selected-button": handle_chat_view_selected_prompt_button_pressed,
     "chat-prompt-copy-system-button": handle_chat_copy_system_prompt_button_pressed,
@@ -2873,6 +4031,8 @@ CHAT_BUTTON_HANDLERS = {
     "toggle-chat-left-sidebar": handle_chat_tab_sidebar_toggle,
     "toggle-chat-right-sidebar": handle_chat_tab_sidebar_toggle,
     **chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS,
+    **chat_events_worldbooks.CHAT_WORLDBOOK_BUTTON_HANDLERS,
+    **chat_events_dictionaries.CHAT_DICTIONARY_BUTTON_HANDLERS,
 }
 
 #

@@ -42,7 +42,8 @@ from .Chat_Deps import ChatBadRequestError, ChatConfigurationError, ChatAPIError
     ChatProviderError, ChatRateLimitError, ChatAuthenticationError
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError, CharactersRAGDBError
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import chat_with_openai, chat_with_anthropic, chat_with_cohere, \
-    chat_with_groq, chat_with_openrouter, chat_with_deepseek, chat_with_mistral, chat_with_huggingface, chat_with_google
+    chat_with_groq, chat_with_openrouter, chat_with_deepseek, chat_with_mistral, chat_with_huggingface, chat_with_google, \
+    chat_with_moonshot
 from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_aphrodite, chat_with_local_llm, chat_with_ollama, \
     chat_with_kobold, chat_with_llama, chat_with_oobabooga, chat_with_tabbyapi, chat_with_vllm, chat_with_custom_openai, \
     chat_with_custom_openai_2, chat_with_mlx_lm
@@ -85,8 +86,10 @@ API_CALL_HANDLERS = {
     'openrouter': chat_with_openrouter,
     'deepseek': chat_with_deepseek,
     'mistral': chat_with_mistral,
+    'mistralai': chat_with_mistral,  # Handle both 'mistral' and 'MistralAI' API types
     'google': chat_with_google,
     'huggingface': chat_with_huggingface,
+    'moonshot': chat_with_moonshot,
     'llama_cpp': chat_with_llama,
     'koboldcpp': chat_with_kobold,
     'oobabooga': chat_with_oobabooga,
@@ -98,6 +101,12 @@ API_CALL_HANDLERS = {
     'custom-openai-api': chat_with_custom_openai,
     'custom-openai-api-2': chat_with_custom_openai_2,
     'mlx_lm': chat_with_mlx_lm,
+    # Map local_* provider names to their handler functions
+    'local_llamacpp': chat_with_llama,
+    'local_llamafile': chat_with_llama,
+    'local_ollama': chat_with_ollama,
+    'local_vllm': chat_with_vllm,
+    'local_mlx_lm': chat_with_mlx_lm,
 }
 """
 A dispatch table mapping API endpoint names (e.g., 'openai') to their
@@ -188,7 +197,7 @@ PROVIDER_PARAM_MAP = {
         'streaming': 'streaming',
         'topp': 'top_p',
         'topk': 'top_k',
-        'minp': 'minp',
+        'minp': 'min_p',  # OpenRouter expects min_p not minp
         'model':'model',
         'max_tokens': 'max_tokens',
         'seed': 'seed',
@@ -222,6 +231,21 @@ PROVIDER_PARAM_MAP = {
         'frequency_penalty': 'frequency_penalty',
     },
     'mistral': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt_arg',
+        'temperature': 'temp',
+        'system_message': 'system_message',
+        'streaming': 'streaming',
+        'topp': 'topp',
+        'tools': 'tools',
+        'tool_choice': 'tool_choice',
+        'model': 'model',
+        'max_tokens': 'max_tokens',
+        'seed': 'random_seed',  # Mistral uses random_seed
+        'topk': 'top_k',  # Mistral uses top_k
+    },
+    'mistralai': {  # Same mapping as 'mistral'
         'api_key': 'api_key',
         'messages_payload': 'input_data',
         'prompt': 'custom_prompt_arg',
@@ -484,6 +508,131 @@ PROVIDER_PARAM_MAP = {
         # api_url is a direct kwarg to chat_with_mlx_lm, not typically mapped from these generic chat_api_call args.
         # It's usually derived from config within the function itself or passed via UI directly to server start.
     },
+    # Local provider mappings (same as their non-local counterparts)
+    'local_llamacpp': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt',
+        'temperature': 'temperature',
+        'system_message': 'system_prompt',
+        'streaming': 'streaming',
+        'topp': 'top_p',
+        'topk': 'top_k',
+        'minp': 'min_p',
+        'model':'model',
+        'max_tokens': 'n_predict',
+        'seed': 'seed',
+        'stop': 'stop',
+        'response_format': 'response_format',
+        'logit_bias': 'logit_bias',
+        'n': 'n_probs',
+        'presence_penalty': 'presence_penalty',
+        'frequency_penalty': 'frequency_penalty',
+    },
+    'local_llamafile': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt',
+        'temperature': 'temperature',
+        'system_message': 'system_prompt',
+        'streaming': 'streaming',
+        'topp': 'top_p',
+        'topk': 'top_k',
+        'minp': 'min_p',
+        'model':'model',
+        'max_tokens': 'n_predict',
+        'seed': 'seed',
+        'stop': 'stop',
+        'response_format': 'response_format',
+        'logit_bias': 'logit_bias',
+        'n': 'n_probs',
+        'presence_penalty': 'presence_penalty',
+        'frequency_penalty': 'frequency_penalty',
+    },
+    'local_ollama': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt',
+        'temp': 'temperature',
+        'system_message': 'system_message',
+        'streaming': 'streaming',
+        'model': 'model',
+        'topp': 'top_p',
+        'topk': 'top_k',
+        'max_tokens': 'num_predict',
+        'seed': 'seed',
+        'stop': 'stop',
+        'response_format': 'format',
+        'presence_penalty': 'presence_penalty',
+        'frequency_penalty': 'frequency_penalty',
+    },
+    'local_vllm': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt_input',
+        'temp': 'temperature',
+        'system_message': 'system_prompt',
+        'streaming': 'streaming',
+        'model': 'model',
+        'topk': 'top_k',
+        'topp': 'top_p',
+        'minp': 'min_p',
+        'max_tokens': 'max_tokens',
+        'seed': 'seed',
+        'stop': 'stop',
+        'response_format': 'response_format',
+        'n': 'n',
+        'logit_bias': 'logit_bias',
+        'presence_penalty': 'presence_penalty',
+        'frequency_penalty': 'frequency_penalty',
+        'logprobs': 'logprobs',
+        'user_identifier': 'user_identifier',
+    },
+    'local_mlx_lm': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt_arg',
+        'temp': 'temp',
+        'system_message': 'system_message',
+        'streaming': 'streaming',
+        'model': 'model',
+        'max_tokens': 'max_tokens',
+        'topp': 'top_p',
+        'topk': 'top_k',
+        'minp': 'min_p',
+        'stop': 'stop',
+        'seed': 'seed',
+        'response_format': 'response_format',
+        'n': 'n',
+        'presence_penalty': 'presence_penalty',
+        'frequency_penalty': 'frequency_penalty',
+        'logit_bias': 'logit_bias',
+        'logprobs': 'logprobs',
+        'top_logprobs': 'top_logprobs',
+        'user_identifier': 'user_identifier',
+        'tools': 'tools',
+        'tool_choice': 'tool_choice',
+    },
+    'moonshot': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt_arg',
+        'temp': 'temp',
+        'system_message': 'system_message',
+        'streaming': 'streaming',
+        'maxp': 'maxp',
+        'model': 'model',
+        'tools': 'tools',
+        'tool_choice': 'tool_choice',
+        'presence_penalty': 'presence_penalty',
+        'frequency_penalty': 'frequency_penalty',
+        'max_tokens': 'max_tokens',
+        'seed': 'seed',
+        'stop': 'stop',
+        'response_format': 'response_format',
+        'n': 'n',
+        'user_identifier': 'user',
+    },
     # Add other providers here
 }
 """
@@ -625,6 +774,16 @@ def chat_api_call(
 
     if call_kwargs.get(params_map.get('api_key', 'api_key')) and isinstance(call_kwargs.get(params_map.get('api_key', 'api_key')), str) and len(call_kwargs.get(params_map.get('api_key', 'api_key'))) > 8:
          logger.info(f"Debug - Chat API Call - API Key: {call_kwargs[params_map.get('api_key', 'api_key')][:4]}...{call_kwargs[params_map.get('api_key', 'api_key')][-4:]}")
+
+    # Add provider_name to kwargs only for handlers that support it
+    # Some local providers use this for dynamic configuration loading
+    PROVIDERS_WITH_PROVIDER_NAME = {
+        'llama_cpp', 'vllm', 'ollama', 'mlx_lm', 'vllm_api', 'mlx',
+        'local_llamacpp', 'local_llamafile', 'local_vllm', 'local_ollama', 'local_mlx_lm'
+    }
+    
+    if endpoint_lower in PROVIDERS_WITH_PROVIDER_NAME:
+        call_kwargs['provider_name'] = endpoint_lower
 
     try:
         logger.debug(f"Calling handler {handler.__name__} with kwargs: { {k: (type(v) if k != params_map.get('api_key') else 'key_hidden') for k,v in call_kwargs.items()} }")
@@ -801,6 +960,10 @@ def chat(
 
     try:
         logging.info(f"Debug - Chat Function - Input Text: '{message}', Image provided: {'Yes' if current_image_input else 'No'}")
+        if current_image_input:
+            logging.info(f"DEBUG: current_image_input contents: {current_image_input.keys() if isinstance(current_image_input, dict) else type(current_image_input)}")
+            if isinstance(current_image_input, dict):
+                logging.info(f"DEBUG: has base64_data={bool(current_image_input.get('base64_data'))}, mime_type={current_image_input.get('mime_type')}")
         logging.info(f"Debug - Chat Function - History length: {len(history)}, Image History Mode: {image_history_mode}")
         logging.info(
             f"Debug - Chat Function - LLM Max Tokens: {llm_max_tokens}, LLM Seed: {llm_seed}, LLM Stop: {llm_stop}, LLM N: {llm_n}")
@@ -818,9 +981,13 @@ def chat(
         # Process message with Chat Dictionary (text only for now)
         processed_text_message = message
         if chatdict_entries and message:
+            dict_start_time = time.time()
             processed_text_message = process_user_input(
                 message, chatdict_entries, max_tokens=max_tokens, strategy=strategy
             )
+            dict_duration = time.time() - dict_start_time
+            log_histogram("chat_dictionary_processing_duration", dict_duration, labels={"api_endpoint": api_endpoint})
+            log_counter("chat_dictionary_applied", labels={"api_endpoint": api_endpoint})
 
         # --- Construct messages payload for the LLM API (OpenAI format) ---
         llm_messages_payload: List[Dict[str, Any]] = []
@@ -842,6 +1009,10 @@ def chat(
 
         # 2. Process History (now expecting list of OpenAI message dicts)
         last_user_image_url_from_history: Optional[str] = None
+        
+        history_start_time = time.time()
+        history_message_count = len(history)
+        history_image_count = 0
 
         for hist_msg_obj in history:
             role = hist_msg_obj.get("role")
@@ -856,6 +1027,7 @@ def chat(
                     if part.get("type") == "text":
                         processed_hist_content_parts.append(part)
                     elif part.get("type") == "image_url":
+                        history_image_count += 1
                         image_url_data = part.get("image_url", {}).get("url", "") # data URI
                         if image_history_mode == "send_all":
                             processed_hist_content_parts.append(part)
@@ -893,16 +1065,30 @@ def chat(
                     break
             if not appended_to_last: # No user message in history, or image already there
                  logging.debug(f"Could not append last_user_image_from_history, no suitable prior user message or already present. Image: {last_user_image_url_from_history[:60]}...")
+        
+        # Log history processing metrics
+        history_duration = time.time() - history_start_time
+        log_histogram("chat_history_processing_duration", history_duration, labels={"api_endpoint": api_endpoint})
+        log_histogram("chat_history_message_count", history_message_count, labels={"api_endpoint": api_endpoint})
+        log_histogram("chat_history_image_count", history_image_count, labels={
+            "api_endpoint": api_endpoint, 
+            "image_mode": image_history_mode
+        })
 
 
         # 3. Add RAG Content (prepended to current user's text)
         rag_text_prefix = ""
         if media_content and selected_parts:
+            rag_start_time = time.time()
             rag_text_prefix = "\n\n".join(
                 [f"{part.capitalize()}: {media_content.get(part, '')}" for part in selected_parts if media_content.get(part)]
             ).strip()
             if rag_text_prefix:
                 rag_text_prefix += "\n\n---\n\n"
+                rag_duration = time.time() - rag_start_time
+                log_histogram("chat_rag_processing_duration", rag_duration, labels={"api_endpoint": api_endpoint})
+                log_histogram("chat_rag_content_length", len(rag_text_prefix), labels={"api_endpoint": api_endpoint})
+                log_counter("chat_rag_content_added", labels={"api_endpoint": api_endpoint})
 
         # 4. Construct Current User Message (text + optional new image)
         current_user_content_parts: List[Dict[str, Any]] = []
@@ -921,6 +1107,7 @@ def chat(
             current_user_content_parts.append({"type": "text", "text": final_text_for_current_message})
 
         if current_image_input and current_image_input.get('base64_data') and current_image_input.get('mime_type'):
+            logging.info(f"DEBUG: Adding image to current_user_content_parts: mime_type={current_image_input['mime_type']}, base64_data_length={len(current_image_input['base64_data'])}")
             image_url = f"data:{current_image_input['mime_type']};base64,{current_image_input['base64_data']}"
             current_user_content_parts.append({"type": "image_url", "image_url": {"url": image_url}})
 
@@ -1064,9 +1251,11 @@ def chat(
                 else:
                     logging.warning("Post-gen replacement enabled but dict file not found/configured.")
             # For non-streaming, apply stripping logic if enabled
+            logging.info(f"Non-streaming response - strip_thinking_tags setting: {strip_thinking_tags}")
             if not streaming and isinstance(response, str) and strip_thinking_tags:
                 # Regex to find all <think>...</think> blocks, non-greedy
-                think_blocks = list(re.finditer(r"<think>.*?</think>", response, re.DOTALL))
+                # Match both <think> and <thinking> tags
+                think_blocks = list(re.finditer(r"<think(?:ing)?>.*?</think(?:ing)?>", response, re.DOTALL))
 
                 if len(think_blocks) > 1:
                     logging.debug(f"Processing thinking tags for non-streaming. Found {len(think_blocks)} blocks.")
@@ -1082,7 +1271,9 @@ def chat(
                     response = "".join(text_parts)
                     logging.debug(f"Response after stripping all but last think block: {response[:200]}...")
                 elif think_blocks: # Only one block, or stripping not needed / done
-                    logging.debug(f"Thinking tags: {len(think_blocks)} block(s) found, no stripping needed or already processed if only one.")
+                    logging.info(f"Thinking tags: {len(think_blocks)} block(s) found, no stripping needed or already processed if only one.")
+            elif not streaming and isinstance(response, str) and not strip_thinking_tags:
+                logging.info(f"Not stripping thinking tags from non-streaming response - setting is disabled")
 
             # For streaming=True, stripping logic should be applied by the receiver
             # of the stream (e.g., in app.py's on_stream_done event handler).
@@ -1093,6 +1284,90 @@ def chat(
         logging.error(f"Error in multimodal chat function: {str(e)}", exc_info=True)
         # Consider if the error format should change from just a string
         return f"An error occurred in the chat function: {str(e)}"
+
+
+def parse_tool_calls_from_response(response: Union[str, Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    """
+    Extract tool calls from LLM response, handling various provider formats.
+    
+    Args:
+        response: The LLM response, either as a string or dict
+        
+    Returns:
+        List of tool calls in OpenAI format, or None if no tool calls found
+        
+    Example tool call format:
+    [{
+        "id": "call_function_name_timestamp",
+        "type": "function",
+        "function": {
+            "name": "function_name",
+            "arguments": "json_string_of_arguments"
+        }
+    }]
+    """
+    # Handle string responses by attempting to parse as JSON
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except json.JSONDecodeError:
+            logging.debug("Response is not valid JSON, no tool calls to extract")
+            return None
+    
+    if not isinstance(response, dict):
+        return None
+    
+    # Check for tool calls in various locations
+    tool_calls = None
+    
+    # OpenAI format: response.message.tool_calls
+    if isinstance(response.get("message"), dict):
+        tool_calls = response["message"].get("tool_calls")
+    
+    # Alternative: tool_calls at root level
+    if not tool_calls:
+        tool_calls = response.get("tool_calls")
+    
+    # Legacy format: single function_call
+    if not tool_calls and "function_call" in response.get("message", {}):
+        func_call = response["message"]["function_call"]
+        tool_calls = [{
+            "id": f"call_{func_call.get('name', 'unknown')}_{int(time.time())}",
+            "type": "function",
+            "function": func_call
+        }]
+    
+    # Anthropic format: check for tool_use in stop_reason
+    if not tool_calls and response.get("stop_reason") == "tool_use":
+        # Tool calls might be in content blocks
+        content = response.get("content", [])
+        if isinstance(content, list):
+            tool_calls = []
+            for block in content:
+                if block.get("type") == "tool_use":
+                    tool_calls.append({
+                        "id": block.get("id", f"call_{int(time.time())}"),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name"),
+                            "arguments": json.dumps(block.get("input", {}))
+                        }
+                    })
+    
+    # Validate tool calls format
+    if tool_calls and isinstance(tool_calls, list):
+        valid_calls = []
+        for call in tool_calls:
+            if isinstance(call, dict) and "function" in call:
+                # Ensure required fields exist
+                if not call.get("id"):
+                    call["id"] = f"call_{int(time.time())}"
+                if not call.get("type"):
+                    call["type"] = "function"
+                valid_calls.append(call)
+        return valid_calls if valid_calls else None
+    
+    return None
 
 
 def save_chat_history_to_db_wrapper(
@@ -1710,591 +1985,14 @@ def update_chat_content(
 
 #######################################################################################################################
 #
-# Chat Dictionary Functions
-
-def parse_user_dict_markdown_file(file_path: str, base_directory: Optional[str] = None) -> Dict[str, str]:
-    """
-    Parses a user-defined dictionary from a markdown-like file.
-
-    The file format supports:
-    - Single-line entries: `key: value`
-    - Multi-line entries:
-      ```
-      key: |
-      This is a
-      multi-line value.
-      ---@@@---
-      ```
-    Keys and single-line values are stripped of leading/trailing whitespace.
-    Multi-line values preserve internal whitespace and newlines until the
-    terminator `---@@@---` is encountered on its own line (stripped).
-    Lines starting with a key pattern override previous multi-line contexts.
-
-    Args:
-        file_path: The path to the markdown dictionary file.
-        base_directory: Optional base directory to restrict file access to. If None, 
-                       uses the config directory or current working directory.
-
-    Returns:
-        A dictionary where keys are strings and values are the corresponding
-        content strings. Returns an empty dictionary if the file is not found
-        or an error occurs during parsing.
-    """
-    logger.debug(f"Parsing user dictionary file: {file_path}")
-    
-    # Validate the file path to prevent directory traversal
-    if base_directory is None:
-        # Default to a safe base directory - typically config or user data directory
-        base_directory = os.path.expanduser("~/.config/tldw_cli/")
-    
-    try:
-        validated_path = validate_path(file_path, base_directory)
-        logger.debug(f"Validated file path: {validated_path}")
-    except ValueError as e:
-        logger.error(f"Invalid file path '{file_path}': {e}")
-        return {}
-    
-    replacement_dict: Dict[str, str] = {}
-    current_key: Optional[str] = None
-    current_value_lines: List[str] = []
-
-    new_key_pattern = re.compile(r'^\s*([^:\n]+?)\s*:(.*)$')
-    termination_pattern = re.compile(r'^\s*---@@@---\s*$')
-
-    try:
-        with open(validated_path, 'r', encoding='utf-8') as file:
-            for line_number, line_content_original in enumerate(file, 1):
-                line_for_logic = line_content_original.strip()  # Use for terminator/blank checks
-
-                if termination_pattern.match(line_for_logic):
-                    if current_key:
-                        replacement_dict[current_key] = '\n'.join(current_value_lines).strip()  # Final strip after join
-                        logger.trace(f"L{line_number}: Terminated multi-line for '{current_key}'.")
-                        current_key, current_value_lines = None, []
-                    continue
-
-                new_key_match = new_key_pattern.match(line_content_original)  # Match on original line
-
-                if new_key_match:
-                    if current_key:  # Finalize previous multi-line key if one was active
-                        replacement_dict[current_key] = '\n'.join(current_value_lines).strip()
-                        logger.trace(f"L{line_number}: New key, finalized old '{current_key}'.")
-
-                    potential_new_key = new_key_match.group(1).strip()
-                    value_part_after_colon = new_key_match.group(2).strip()  # Strip this part
-
-                    if value_part_after_colon == '|':
-                        current_key = potential_new_key
-                        current_value_lines = []
-                        logger.trace(f"L{line_number}: Starting multi-line for '{current_key}'.")
-                    else:
-                        replacement_dict[potential_new_key] = value_part_after_colon
-                        logger.trace(f"L{line_number}: Parsed single-line key '{potential_new_key}'.")
-                        current_key, current_value_lines = None, []  # Reset
-                    continue
-
-                if current_key:
-                    # For multi-line content, append the line with only its trailing newline removed.
-                    # Leading/internal whitespace should be preserved until the final .strip() after .join().
-                    current_value_lines.append(line_content_original.rstrip('\n\r'))
-
-            if current_key:  # Finalize any pending multi-line value at EOF
-                replacement_dict[current_key] = '\n'.join(current_value_lines).strip()
-                logger.debug(f"Finalizing last multi-line key '{current_key}' at EOF.")
-
-    except FileNotFoundError:  # ...
-        logger.error(f"Chat dictionary file not found: {file_path}")
-        return {}
-    except Exception as e:  # ...
-        logger.error(f"Error parsing chat dictionary file {file_path}: {e}", exc_info=True)
-        return {}
-
-    logger.debug(f"Finished parsing chat dictionary. Keys: {list(replacement_dict.keys())}")
-    return replacement_dict
-
-
-class ChatDictionary:
-    def __init__(self, key: str, content: str, probability: int = 100, group: Optional[str] = None,
-                 timed_effects: Optional[Dict[str, int]] = None, max_replacements: int = 1):
-        self.raw_key = key # Store the original key string
-        self.content = content
-        self.is_regex = False
-        self.key_pattern_str = "" # Store pattern string for regex for debugging
-        self.key_flags = 0      # Store flags for regex for debugging
-        self.key = self._compile_key_internal(key) # key will store re.Pattern or str
-
-        self.probability = probability
-        self.group = group
-        self.timed_effects = timed_effects or {"sticky": 0, "cooldown": 0, "delay": 0}
-        self.last_triggered: Optional[datetime] = None
-        self.max_replacements = max_replacements
-
-    def _compile_key_internal(self, key_str: str) -> Union[re.Pattern, str]:
-        self.is_regex = False # Reset for this compilation
-        self.key_flags = 0
-        pattern_to_compile = key_str
-
-        # Check for /pattern/flags format
-        # Regex to capture pattern and flags: r^/(.+)/([ismx箋]*)$
-        # Using string methods for simplicity here:
-        if key_str.startswith("/") and len(key_str) > 1:
-            last_slash_idx = key_str.rfind("/")
-            if last_slash_idx > 0: # Found a second slash, potential flags
-                pattern_to_compile = key_str[1:last_slash_idx]
-                flag_chars = key_str[last_slash_idx+1:]
-                if 'i' in flag_chars: self.key_flags |= re.IGNORECASE
-                if 'm' in flag_chars: self.key_flags |= re.MULTILINE
-                if 's' in flag_chars: self.key_flags |= re.DOTALL
-                # Add other common flags if needed (e.g., 'x' for VERBOSE, 'u' for UNICODE automatically on in Py3)
-                self.is_regex = True
-            elif key_str.endswith("/") and len(key_str) > 2: # Only /pattern/, no flags after last /
-                pattern_to_compile = key_str[1:-1]
-                self.is_regex = True
-            # else: it's like "/foo" or just "/" which are not valid regex delimiters here
-
-        self.key_pattern_str = pattern_to_compile # Store for debugging
-
-        if self.is_regex:
-            try:
-                # If pattern_to_compile is empty after stripping slashes (e.g. "//i"), it's an error
-                if not pattern_to_compile:
-                    logging.warning(f"Empty regex pattern from raw key '{self.raw_key}'. Treating as literal.")
-                    self.is_regex = False
-                    return self.raw_key
-                return re.compile(pattern_to_compile, self.key_flags)
-            except re.error as e:
-                logging.warning(
-                    f"Invalid regex '{pattern_to_compile}' with flags '{self.key_flags}' (from raw key '{self.raw_key}'): {e}. "
-                    f"Treating as literal string."
-                )
-                self.is_regex = False # Fallback
-                return self.raw_key # Return the original key string on error
-        else: # Not a /regex/ or /regex/flags pattern, treat as plain string
-            return key_str # Return the original string
-
-    def matches(self, text: str) -> bool:
-        if self.is_regex and isinstance(self.key, re.Pattern):
-            return bool(self.key.search(text))
-        elif not self.is_regex and isinstance(self.key, str):
-            # For plain string, if you want case-insensitivity by default:
-            # return self.key.lower() in text.lower()
-            return self.key in text # Current: case-sensitive plain match
-        return False
-
-
-def apply_strategy(entries: List[ChatDictionary], strategy: str = "sorted_evenly") -> List[ChatDictionary]:
-    """
-    Sorts chat dictionary entries based on a given strategy.
-
-    Strategies:
-    - "sorted_evenly": Sorts entries alphabetically by their raw key.
-    - "character_lore_first": Sorts "character" group entries first, then others, then by key.
-    - "global_lore_first": Sorts "global" group entries first, then others, then by key.
-
-    Args:
-        entries: A list of `ChatDictionary` objects.
-        strategy: The sorting strategy name. Defaults to "sorted_evenly".
-
-    Returns:
-        A new list of sorted `ChatDictionary` objects.
-    """
-    logging.debug(f"Applying strategy: {strategy}")
-    if strategy == "sorted_evenly":
-        return sorted(entries, key=lambda e: str(e.raw_key)) # Ensure raw_key is string for sort
-    elif strategy == "character_lore_first":
-        return sorted(entries, key=lambda e: (e.group != "character", str(e.raw_key)))
-    elif strategy == "global_lore_first":
-        return sorted(entries, key=lambda e: (e.group != "global", str(e.raw_key)))
-    return entries # Fallback if strategy not recognized
-
-
-def filter_by_probability(entries: List[ChatDictionary]) -> List[ChatDictionary]:
-    """
-    Filters a list of ChatDictionary entries based on their probability.
-
-    Each entry has a `probability` attribute (0-100). This function
-    includes an entry if a random number between 1 and 100 is less than
-    or equal to its probability.
-
-    Args:
-        entries: A list of `ChatDictionary` objects.
-
-    Returns:
-        A new list containing only the entries that passed the probability check.
-    """
-    return [entry for entry in entries if random.randint(1, 100) <= entry.probability]
-
-
-# Group Scoring - Situation where multiple entries are triggered in different groups in a single message
-def group_scoring(entries: List[ChatDictionary]) -> List[ChatDictionary]:
-    """
-    Selects entries based on group scoring rules.
-
-    - Entries without a group (group is None) are all included if matched.
-    - For entries within the same named group, only the "best" entry (currently
-      defined as the one with the longest raw key string) is selected from that group.
-
-    Args:
-        entries: A list of `ChatDictionary` objects that have already matched.
-
-    Returns:
-        A new list of selected `ChatDictionary` objects after group scoring.
-    """
-    logging.debug(f"Group scoring for {len(entries)} entries")
-    if not entries: return []
-
-    grouped_entries: Dict[Optional[str], List[ChatDictionary]] = {}
-    for entry in entries:
-        grouped_entries.setdefault(entry.group, []).append(entry)
-
-    selected_entries: List[ChatDictionary] = []
-    for group_name, group_entries_list in grouped_entries.items():
-        if not group_entries_list: continue
-
-        if group_name is None:  # For the default group (None)
-            # Add all entries instead of just the "best" one.
-            # This allows multiple ungrouped keywords to be processed if they all match.
-            selected_entries.extend(group_entries_list)
-        else:
-            # For named groups, keep the original behavior of selecting the best.
-            best_entry_in_group = max(group_entries_list, key=lambda e: len(str(e.raw_key)) if e.raw_key else 0)
-            selected_entries.append(best_entry_in_group)
-
-    logging.debug(f"Selected {len(selected_entries)} entries after group scoring.")
-    # Ensure the order is somewhat predictable if multiple entries come from the None group
-    # The apply_strategy step later will sort them.
-    return selected_entries
-
-
-def apply_timed_effects(entry: ChatDictionary, current_time: datetime) -> bool:
-    """
-    Applies timed effects (delay, cooldown) to a ChatDictionary entry.
-
-    - Delay: If `entry.timed_effects["delay"]` is positive, the entry is
-      invalid if the time since `last_triggered` (or from epoch if never triggered)
-      is less than the delay.
-    - Cooldown: If `entry.timed_effects["cooldown"]` is positive, the entry is
-      invalid if it was `last_triggered` and the time since then is less than
-      the cooldown.
-
-    If the entry is considered valid after checks, its `last_triggered` time is
-    updated to `current_time`.
-
-    Args:
-        entry: The `ChatDictionary` entry to check.
-        current_time: The current `datetime` object.
-
-    Returns:
-        True if the entry is valid after timed effect checks, False otherwise.
-    """
-    logging.debug(f"Applying timed effects for entry: {entry.raw_key}") # Use raw_key for logging
-    if entry.timed_effects["delay"] > 0:
-        # If never triggered, assume it's valid for delay unless delay is from program start
-        # For simplicity, if last_triggered is None, it passes delay check.
-        # A more complex interpretation might involve first_seen time.
-        # Current logic: delay is from last trigger. If never triggered, passes delay.
-        if entry.last_triggered is not None and \
-           current_time - entry.last_triggered < timedelta(seconds=entry.timed_effects["delay"]):
-            logging.debug(f"Entry {entry.raw_key} delayed.")
-            return False
-    if entry.timed_effects["cooldown"] > 0:
-        if entry.last_triggered and \
-           current_time - entry.last_triggered < timedelta(seconds=entry.timed_effects["cooldown"]):
-            logging.debug(f"Entry {entry.raw_key} on cooldown.")
-            return False
-
-    # If checks pass, update last_triggered (conceptually, this happens if it *would* be used)
-    # The actual update of last_triggered for active use is often done after selection.
-    # Here, we return true, and `process_user_input` will update `last_triggered` for used entries.
-    # For this function's purpose (filtering), we don't update here but assume it would be if selected.
-    return True
-
-
-def calculate_token_usage(entries: List[ChatDictionary]) -> int:
-    """
-    Calculates the approximate total token usage for a list of ChatDictionary entries.
-
-    Token usage for each entry is estimated by splitting its `content` by spaces.
-
-    Args:
-        entries: A list of `ChatDictionary` objects.
-
-    Returns:
-        The total approximate token count for all entries' content.
-    """
-    logging.debug(f"Calculating token usage for {len(entries)} entries")
-    return sum(len(entry.content.split()) for entry in entries)
-
-
-def enforce_token_budget(entries: List[ChatDictionary], max_tokens: int) -> List[ChatDictionary]:
-    """
-    Filters a list of ChatDictionary entries to fit within a maximum token budget.
-
-    Entries are added to the returned list one by one, accumulating their
-    token count, until the `max_tokens` budget is reached. Entries are processed
-    in their given order.
-
-    Args:
-        entries: A list of `ChatDictionary` objects, typically already sorted by priority/strategy.
-        max_tokens: The maximum allowed total tokens for the content of selected entries.
-
-    Returns:
-        A new list of `ChatDictionary` objects whose combined content token count
-        does not exceed `max_tokens`.
-    """
-    total_tokens = 0
-    valid_entries = []
-    for entry in entries:
-        tokens = len(entry.content.split())
-        if total_tokens + tokens <= max_tokens:
-            valid_entries.append(entry)
-            total_tokens += tokens
-        else:
-            logging.debug(f"Token budget exceeded with entry {entry.raw_key}. Total tokens: {total_tokens + tokens}, Max: {max_tokens}")
-            break # Stop adding entries once budget is full
-    return valid_entries
-
-
-def match_whole_words(entries: List[ChatDictionary], text: str) -> List[ChatDictionary]:
-    """
-    Filters entries by matching their keys against text, ensuring whole word matches for string keys.
-
-    - If an entry's key is a compiled regex, `re.search()` is used.
-    - If an entry's key is a plain string, it's matched as a whole word
-      (using `\\b` word boundaries) case-insensitively.
-
-    Args:
-        entries: A list of `ChatDictionary` objects.
-        text: The input text to match against.
-
-    Returns:
-        A new list of `ChatDictionary` objects that matched the text.
-    """
-    matched_entries = []
-    for entry in entries:
-        if isinstance(entry.key, re.Pattern): # Compiled regex
-            if entry.key.search(text):
-                matched_entries.append(entry)
-                logging.debug(f"Chat Dictionary: Matched regex entry: {entry.key.pattern}")
-        elif isinstance(entry.key, str): # Plain string key
-            # Ensure whole word match for plain strings, case-insensitive
-            if re.search(rf'\b{re.escape(entry.key)}\b', text, re.IGNORECASE):
-                matched_entries.append(entry)
-                logging.debug(f"Chat Dictionary: Matched string entry: {entry.key}")
-    return matched_entries
-
-class TokenBudgetExceededWarning(Warning):
-    """Custom warning for token budget issues"""
-    pass
-
-
-def alert_token_budget_exceeded(entries: List[ChatDictionary], max_tokens: int):
-    """
-    Checks if the token usage of selected entries exceeds the budget and issues a warning.
-
-    Args:
-        entries: A list of `ChatDictionary` objects selected for use.
-        max_tokens: The maximum allowed token budget.
-    """
-    token_usage = calculate_token_usage(entries)
-    logging.debug(f"Token usage: {token_usage}, Max tokens: {max_tokens}")
-    if token_usage > max_tokens:
-        warning_msg = f"Alert: Token budget exceeded for chat dictionary! Used: {token_usage}, Allowed: {max_tokens}"
-        warnings.warn(TokenBudgetExceededWarning(warning_msg))
-        logging.warning(warning_msg)
-
-def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
-    """
-    Replaces the first occurrence of an entry's key in text with its content.
-
-    - If `entry.key` is a regex pattern, `re.subn()` with `count=1` is used.
-    - If `entry.key` is a string, a case-insensitive whole-word regex is
-      constructed and used with `re.subn()` with `count=1`.
-
-    Args:
-        text: The input text where replacement should occur.
-        entry: The `ChatDictionary` entry providing the key and content.
-
-    Returns:
-        A tuple containing:
-        - `str`: The text after the first replacement (or original text if no match).
-        - `int`: The number of replacements made (0 or 1).
-    """
-    logging.debug(f"Applying replacement for entry: {entry.raw_key} with content: {entry.content[:50]}... in text: {text[:50]}...")
-    if isinstance(entry.key, re.Pattern):
-        replaced_text, replaced_count = entry.key.subn(entry.content, text, count=1)
-    else: # Plain string key
-        pattern = re.compile(rf'\b{re.escape(str(entry.key))}\b', re.IGNORECASE) # Ensure entry.key is str
-        replaced_text, replaced_count = pattern.subn(entry.content, text, count=1)
-    return replaced_text, replaced_count
-
-
-def process_user_input(
-    user_input: str,
-    entries: List[ChatDictionary],
-    max_tokens: int = 5000,
-    strategy: str = "sorted_evenly"
-) -> str:
-    """
-    Processes user input by applying a series of chat dictionary transformations.
-
-    The pipeline includes:
-    1. Matching entries against the input text (regex and whole-word string matching).
-    2. Applying group scoring to select among matched entries from the same group.
-    3. Filtering entries by probability.
-    4. Applying timed effects (delay, cooldown).
-    5. Enforcing a token budget for the content of selected entries.
-    6. Alerting if the token budget is exceeded by the (potentially filtered) entries.
-    7. Sorting the final set of entries based on the chosen strategy.
-    8. Applying replacements: each selected entry replaces its key in the user input
-       (respecting `entry.max_replacements`).
-
-    If any step in the pipeline encounters a significant error, it may log the error
-    and continue with a potentially reduced set of entries or, in critical cases,
-    return the original `user_input`.
-
-    Args:
-        user_input: The text input from the user.
-        entries: A list of `ChatDictionary` objects to apply.
-        max_tokens: The maximum token budget for the combined content of applied entries.
-                    Defaults to 5000.
-        strategy: The strategy for sorting entries before replacement.
-                  Defaults to "sorted_evenly".
-
-    Returns:
-        The processed user input string after all applicable transformations.
-        Returns the original input if critical errors occur.
-    """
-    current_time = datetime.now()
-    original_input_for_fallback = user_input # Save for critical error case
-    temp_user_input = user_input
-
-    try:
-        # 1. Match entries (uses refined match_whole_words for strings)
-        logging.debug(f"Chat Dictionary: Initial matching for: {user_input[:100]}")
-        # The original `entry.matches()` is a simple check. `match_whole_words` is more robust.
-        # The original `process_user_input` had `entry.matches(user_input)` then later `match_whole_words`.
-        # Consolidating to `match_whole_words` as the primary matching mechanism.
-        try:
-            # Ensure entries are ChatDictionary instances
-            valid_initial_entries = [e for e in entries if isinstance(e, ChatDictionary)]
-            if len(valid_initial_entries) != len(entries):
-                logging.warning("Some provided entries were not ChatDictionary instances and were skipped.")
-
-            matched_entries = match_whole_words(valid_initial_entries, user_input)
-        except re.error as e:
-            log_counter("chat_dict_regex_error", labels={"key": "compilation_phase"}) # Generic key
-            logging.error(f"Invalid regex pattern during initial matching. Error: {str(e)}")
-            matched_entries = []
-        except Exception as e_match:
-            log_counter("chat_dict_match_error")
-            logging.error(f"Error during initial matching: {str(e_match)}", exc_info=True)
-            matched_entries = []
-
-
-        logging.debug(f"Matched entries after initial filtering: {[e.raw_key for e in matched_entries]}")
-
-        # 2. Apply group scoring
-        try:
-            logging.debug(f"Chat Dictionary: Applying group scoring for {len(matched_entries)} entries")
-            matched_entries = group_scoring(matched_entries)
-        except Exception as e_gs: # More specific exception if defined (ChatProcessingError)
-            log_counter("chat_dict_group_scoring_error")
-            logging.error(f"Error in group scoring: {str(e)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 3. Apply probability filter
-        try:
-            logging.debug(f"Chat Dictionary: Filtering by probability for {len(matched_entries)} entries")
-            matched_entries = filter_by_probability(matched_entries)
-        except Exception as ChatProcessingError:
-            log_counter("chat_dict_probability_error")
-            logging.error(f"Error in probability filtering: {str(e)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 4. Apply timed effects (filter out those not ready)
-        # And update last_triggered for those that *will* be used
-        active_timed_entries = []
-        try:
-            logging.debug("Chat Dictionary: Applying timed effects")
-            for entry in matched_entries:
-                if apply_timed_effects(entry, current_time): # Checks if eligible
-                    active_timed_entries.append(entry)
-            matched_entries = active_timed_entries
-        except Exception as e_time:
-            log_counter("chat_dict_timed_effects_error")
-            logging.error(f"Error applying timed effects: {str(e)}")
-            matched_entries = []  # Fallback to empty list
-
-        # 5. Enforce token budget
-        try:
-            logging.debug(f"Chat Dictionary: Enforcing token budget for {len(matched_entries)} entries")
-            matched_entries = enforce_token_budget(matched_entries, max_tokens)
-        except TokenBudgetExceededWarning as e:
-            log_counter("chat_dict_token_limit")
-            logging.warning(str(e))
-            matched_entries = []  # Fallback to empty list
-        except Exception as ChatProcessingError:
-            log_counter("chat_dict_token_budget_error")
-            logging.error(f"Error enforcing token budget: {str(e)}")
-            matched_entries = []  # Fallback to empty list
-
-        # Alert if token budget exceeded
-        try:
-            alert_token_budget_exceeded(matched_entries, max_tokens)
-        except Exception as ChatProcessingError:
-            log_counter("chat_dict_token_alert_error")
-            logging.error(f"Error in token budget alert: {str(e)}")
-
-        # Apply replacement strategy
-        try:
-            logging.debug("Chat Dictionary: Applying replacement strategy")
-            matched_entries = apply_strategy(matched_entries, strategy)
-        except Exception as ChatProcessingError:
-            log_counter("chat_dict_strategy_error")
-            logging.error(f"Error applying strategy: {str(e)}")
-            matched_entries = []  # Fallback to empty list
-
-        # Generate output with single replacement per match
-        for entry in matched_entries:
-            try:
-                logging.debug("Chat Dictionary: Applying replacements")
-                # Use a copy of max_replacements for this run if needed, or modify original for state
-                replacements_done_for_this_entry = 0
-                # Original code had `entry.max_replacements > 0` check outside loop.
-                # If multiple replacements are allowed by one entry definition:
-                current_max_replacements = entry.max_replacements # Use current value
-                while current_max_replacements > 0:
-                    temp_user_input, replaced_count = apply_replacement_once(temp_user_input, entry)
-                    if replaced_count > 0:
-                        replacements_done_for_this_entry += 1
-                        current_max_replacements -= 1
-                        # Update last_triggered for entries that actually made a replacement
-                        entry.last_triggered = current_time
-                    else:
-                        break # No more matches for this key
-                if replacements_done_for_this_entry > 0:
-                     logging.debug(f"Replaced {replacements_done_for_this_entry} occurrences of '{entry.raw_key}'")
-
-            except Exception as e_replace:
-                log_counter("chat_dict_replacement_error", labels={"key": entry.raw_key})
-                logging.error(f"Error applying replacement for entry {entry.raw_key}: {str(e_replace)}", exc_info=True)
-                continue
-
-    except Exception as e_crit: # Catch-all for ChatProcessingError or other unexpected issues
-        log_counter("chat_dict_processing_error")
-        logging.error(f"Critical error in process_user_input: {str(e_crit)}", exc_info=True)
-        return original_input_for_fallback # Return original input on critical failure
-
-    return temp_user_input
-
-# Example Usage:
-# 1. Load entries from a Markdown file
-# entries = parse_user_dict_markdown_file('chat_dict.md')
-# 2. Process user input with the entries
-# processed_input = process_user_input(user_input, entries)
-# print(processed_input)
-
+# Chat Dictionary Functions - Moved to Character_Chat/Chat_Dictionary_Lib.py
+# Import the functions for backward compatibility
+from ..Character_Chat.Chat_Dictionary_Lib import (
+    ChatDictionary,
+    parse_user_dict_markdown_file,
+    process_user_input,
+    TokenBudgetExceededWarning
+)
 
 #
 # End of Chat Dictionary functions

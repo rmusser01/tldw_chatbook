@@ -35,6 +35,7 @@ class RichLogHandler(logging.Handler):
         )
         self.setFormatter(self.formatter)
         self._queue_processor_task = None
+        self._closed = False
 
     def start_processor(self, app: App):  # Keep 'app' param for context if needed elsewhere, but don't use for run_task
         """Starts the log queue processing task using the widget's run_task."""
@@ -42,6 +43,11 @@ class RichLogHandler(logging.Handler):
             try:
                 # Get the currently running event loop
                 loop = asyncio.get_running_loop()
+                # Check if the loop is closed before creating task
+                if loop.is_closed():
+                    logging.warning("Cannot start RichLog processor: event loop is closed")
+                    return
+                    
                 # Create the task using the standard asyncio function
                 self._queue_processor_task = loop.create_task(
                     self._process_log_queue(),
@@ -56,6 +62,7 @@ class RichLogHandler(logging.Handler):
 
     async def stop_processor(self):
         """Signals the queue processor task to stop and waits for it."""
+        self._closed = True
         # This cancellation logic works for tasks created with asyncio.create_task
         if self._queue_processor_task and not self._queue_processor_task.done():
             logging.debug("Attempting to stop RichLog queue processor task...")
@@ -70,6 +77,11 @@ class RichLogHandler(logging.Handler):
                 logging.error(f"Error occurred while awaiting cancelled log processor task: {e}", exc_info=True)
             finally:
                 self._queue_processor_task = None  # Ensure it's cleared
+                
+    def close(self):
+        """Close the handler and mark it as closed."""
+        self._closed = True
+        super().close()
 
     async def _process_log_queue(self):
         """Coroutine to process logs from the queue and write to the widget."""
@@ -81,46 +93,66 @@ class RichLogHandler(logging.Handler):
                 self.log_queue.task_done()
             except asyncio.CancelledError:
                 logging.debug("RichLog queue processor task received cancellation.")
-                # Process any remaining items? Might be risky if app is shutting down.
-                # while not self.log_queue.empty():
-                #    try: message = self.log_queue.get_nowait(); # process...
-                #    except asyncio.QueueEmpty: break
+                # Process any remaining items in the queue before exiting
+                try:
+                    while not self.log_queue.empty():
+                        try:
+                            message = self.log_queue.get_nowait()
+                            if self.rich_log_widget.is_mounted and self.rich_log_widget.app:
+                                self.rich_log_widget.write(message)
+                            self.log_queue.task_done()
+                        except asyncio.QueueEmpty:
+                            break
+                except Exception:
+                    pass  # Ignore errors during cleanup
                 break  # Exit the loop on cancellation
+            except RuntimeError as e:
+                if "Event loop is closed" in str(e):
+                    # Event loop was closed, exit gracefully
+                    logging.debug("RichLog processor exiting due to closed event loop")
+                    break
+                else:
+                    print(f"!!! RUNTIME ERROR in RichLog processor: {e}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+                    await asyncio.sleep(1)
             except Exception as e:
                 print(f"!!! CRITICAL ERROR in RichLog processor: {e}", file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
                 # Avoid continuous loop on error, maybe sleep?
-                await asyncio.sleep(1)
+                try:
+                    await asyncio.sleep(1)
+                except Exception:
+                    # If we can't even sleep, the loop is probably closed
+                    break
 
     def emit(self, record: logging.LogRecord):
         """Format the record and put it onto the async queue."""
         try:
+            # Check if the processor task is still running
+            if self._queue_processor_task and self._queue_processor_task.done():
+                # Task is done, don't try to emit
+                return
+                
             message = self.format(record)
             # Use call_soon_threadsafe if emit might be called from non-asyncio threads (workers)
             # For workers started with thread=True, this is necessary.
             try:
-                # Check if the widget is mounted and has an app with an event loop
-                if (hasattr(self.rich_log_widget, 'is_mounted') and 
-                    self.rich_log_widget.is_mounted and 
-                    hasattr(self.rich_log_widget, 'app') and 
-                    self.rich_log_widget.app and
-                    hasattr(self.rich_log_widget.app, '_loop') and
-                    self.rich_log_widget.app._loop):
-                    self.rich_log_widget.app._loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
-                else:
-                    # During startup/shutdown, try to queue the message anyway
-                    try:
-                        # If we have an event loop running, use it
-                        loop = asyncio.get_running_loop()
-                        loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
-                    except RuntimeError:
-                        # No event loop running, fallback to direct logging for warnings and above
-                        if record.levelno >= logging.WARNING: 
-                            print(f"LOG_FALLBACK: {message}", file=sys.stderr)
+                # Try to get the current event loop
+                loop = asyncio.get_running_loop()
+                # Check if the loop is closed before trying to use it
+                if not loop.is_closed():
+                    # Use call_soon_threadsafe to add to queue from any thread
+                    loop.call_soon_threadsafe(self.log_queue.put_nowait, message)
+                elif record.levelno >= logging.WARNING:
+                    print(f"LOG_FALLBACK (loop closed): {message}", file=sys.stderr)
+            except RuntimeError:
+                # No event loop running, fallback to direct logging for warnings and above
+                if record.levelno >= logging.WARNING: 
+                    print(f"LOG_FALLBACK: {message}", file=sys.stderr)
             except Exception as e:
                 # Don't re-raise to avoid breaking the logging system
                 if record.levelno >= logging.WARNING:
-                    print(f"LOG_FALLBACK: {message}", file=sys.stderr)
+                    print(f"LOG_FALLBACK: {message} (Error: {e})", file=sys.stderr)
         except Exception:
             # Last resort - print to stderr to avoid losing critical messages
             print(f"!!!!!!!! ERROR within RichLogHandler.emit !!!!!!!!!!", file=sys.stderr)

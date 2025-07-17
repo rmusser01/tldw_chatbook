@@ -1,0 +1,66 @@
+{
+  "name": "academic_paper",
+  "description": "Optimized for academic papers with sections, citations, and structured content",
+  "base_method": "semantic",
+  "pipeline": [
+    {
+      "stage": "preprocess",
+      "operations": [
+        {
+          "type": "normalize_whitespace",
+          "params": {}
+        },
+        {
+          "type": "extract_metadata",
+          "params": {
+            "patterns": ["abstract", "keywords"]
+          }
+        },
+        {
+          "type": "section_detection",
+          "params": {
+            "headers": [
+              "Abstract", "Introduction", "Background", "Related Work",
+              "Methods", "Methodology", "Materials and Methods",
+              "Results", "Discussion", "Conclusion", "References",
+              "Appendix", "Supplementary"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "stage": "chunk",
+      "method": "semantic",
+      "options": {
+        "max_size": 800,
+        "overlap": 100,
+        "semantic_similarity_threshold": 0.7,
+        "unit": "words"
+      }
+    },
+    {
+      "stage": "postprocess",
+      "operations": [
+        {
+          "type": "add_context",
+          "params": {
+            "context_size": 2
+          }
+        },
+        {
+          "type": "filter_empty",
+          "params": {
+            "min_length": 50
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "suitable_for": ["research_papers", "scientific_articles", "academic_texts"],
+    "preserves_sections": true,
+    "citation_aware": true,
+    "recommended_models": ["gpt-4", "claude-3"]
+  }
+}

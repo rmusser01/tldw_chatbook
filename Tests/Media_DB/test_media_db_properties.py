@@ -76,8 +76,8 @@ def db_instance(db_factory: Callable[[], MediaDatabase]) -> MediaDatabase:
 
 # --- Hypothesis Strategies ---
 
-# Strategy for generating text that is guaranteed to have non-whitespace content.
-st_required_text = st.text(min_size=1, max_size=50).map(lambda s: s.strip()).filter(lambda s: len(s) > 0)
+# Strategy for generating text that is guaranteed to have non-whitespace content and no null bytes.
+st_required_text = st.text(min_size=1, max_size=50).map(lambda s: s.strip().replace('\x00', '')).filter(lambda s: len(s) > 0)
 
 # Strategy for a single, clean keyword.
 st_keyword_text = st.text(
@@ -99,9 +99,14 @@ st_keywords_list = st.lists(
 @st.composite
 def st_media_data(draw):
     """Generates a dictionary of plausible data for a new media item."""
+    # Generate content that excludes null bytes (\x00) which break SQLite FTS5
+    content = draw(st.text(min_size=10, max_size=500))
+    # Remove any null bytes that might have been generated
+    content = content.replace('\x00', '')
+    
     return {
         "title": draw(st_required_text),
-        "content": draw(st.text(min_size=10, max_size=500)),
+        "content": content,
         "media_type": draw(st.sampled_from(['article', 'video', 'obsidian_note', 'pdf'])),
         "author": draw(st.one_of(st.none(), st.text(min_size=3, max_size=30))),
         "keywords": draw(st_keywords_list)
@@ -136,7 +141,7 @@ class TestMediaItemProperties:
         assert retrieved['version'] == 1
         assert not retrieved['deleted']
 
-        linked_keywords = {kw.lower().strip() for kw in fetch_keywords_for_media(media_id, db_instance)}
+        linked_keywords = {kw.lower().strip() for kw in fetch_keywords_for_media(db_instance, media_id)}
         expected_keywords = {kw.lower().strip() for kw in media_data['keywords']}
         assert linked_keywords == expected_keywords
 

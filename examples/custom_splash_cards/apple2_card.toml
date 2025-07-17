@@ -1,0 +1,44 @@
+# Apple II Green Screen splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "typewriter"
+style = "green on black"
+
+# Typewriter effect parameters
+typing_speed = 0.04
+phosphor_persistence = 0.8
+green_tint = "#00FF00"
+
+content = """
+]CATALOG
+
+DISK VOLUME 254
+
+ A 002 HELLO
+*B 034 TLDW.SYSTEM
+*B 127 TLDW.MAIN
+ T 003 README.TXT
+ B 045 GRAPHICS.LIB
+
+]RUN TLDW.MAIN
+
+      ___________________________
+     |  WELCOME TO TLDW CLI 1.0  |
+     |    THINK DIFFERENT™       |
+     |___________________________|
+
+LOADING...
+"""
+
+# Progress messages
+progress_messages = [
+    "DEGAUSSING MONITOR...",
+    "PARKING DISK HEADS...",
+    "SPINNING UP 5.25\" FLOPPY...",
+    "INITIALIZING 1MHz PROCESSOR...",
+    "GENERATING RAINBOW LOGO..."
+]
+
+# Additional styling
+css_classes = ["apple2-phosphor", "green-screen"]

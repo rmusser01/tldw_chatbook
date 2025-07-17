@@ -4,6 +4,7 @@
 # Imports
 import logging
 import json # Added for SSE JSON parsing
+import time
 from typing import TYPE_CHECKING, Generator, Any, Union
 #
 # 3rd-Party Imports
@@ -12,7 +13,7 @@ from rich.text import Text
 from rich.markup import escape as escape_markup
 from textual.message import Message
 from textual.worker import Worker, WorkerState
-from textual.widgets import Static, TextArea, Label, Button  # Added TextArea
+from textual.widgets import Static, TextArea, Label, Button, Markdown  # Added TextArea
 from textual.containers import VerticalScroll  # Added VerticalScroll
 from textual.css.query import QueryError  # Added QueryError
 #
@@ -20,9 +21,12 @@ from textual.css.query import QueryError  # Added QueryError
 from ..Widgets.chat_message import ChatMessage
 from ..Utils.Emoji_Handling import get_char, EMOJI_THINKING, FALLBACK_THINKING
 # Import the actual chat function if it's to be called from chat_wrapper_function
-from ..Chat.Chat_Functions import chat as core_chat_function
+from ..Chat.Chat_Functions import chat as core_chat_function, parse_tool_calls_from_response
 from ..Character_Chat import Character_Chat_Lib as ccl # For saving AI messages
 from ..DB.ChaChaNotes_DB import CharactersRAGDBError, InputError  # For specific error handling
+from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Tools import get_tool_executor
+from ..Widgets.tool_message_widgets import ToolExecutionWidget
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -36,10 +40,11 @@ class StreamingChunk(Message):
 
 class StreamDone(Message):
     """Custom message to signal the end of a stream."""
-    def __init__(self, full_text: str, error: Union[str, None] = None) -> None: # Added Optional error
+    def __init__(self, full_text: str, error: Union[str, None] = None, response_data: Union[dict, None] = None) -> None:
         super().__init__()
         self.full_text = full_text
         self.error = error # Store error
+        self.response_data = response_data  # Store the raw response data for tool parsing
 #
 ########################################################################################################################
 #
@@ -56,22 +61,15 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
     worker_name = event.worker.name or "Unknown Worker"
     worker_state = event.state  # Get state from event
     logger.debug(f"Worker '{worker_name}' state changed to {worker_state}")
+    
+    # Track worker state changes
+    log_counter("chat_worker_state_change", labels={
+        "worker_name": worker_name,
+        "state": str(worker_state.name)
+    })
 
-    stop_button_id_selector = "#stop-chat-generation"
-    if worker_name.startswith("API_Call_chat"): # Only for main chat workers
-        if worker_state == WorkerState.RUNNING:
-            try:
-                app.query_one(stop_button_id_selector, Button).disabled = False
-                logger.info(f"Button '{stop_button_id_selector}' ENABLED.")
-            except QueryError:
-                logger.error(f"Could not find button '{stop_button_id_selector}' to enable it.")
-            return # Don't process RUNNING state further
-        elif worker_state in [WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED]:
-            try:
-                app.query_one(stop_button_id_selector, Button).disabled = True
-                logger.info(f"Button '{stop_button_id_selector}' DISABLED.")
-            except QueryError:
-                logger.error(f"Could not find button '{stop_button_id_selector}' to disable it.")
+    # Button state is now handled in app.py's on_worker_state_changed method
+    # The send button toggles between send/stop states based on worker state
 
     if worker_name == "respond_for_me_worker":
         logger.info(f"Handling state change for 'respond_for_me_worker'. State: {worker_state}")
@@ -138,30 +136,68 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
 
         ai_message_widget = app.current_ai_message_widget
 
-        if ai_message_widget is None or not ai_message_widget.is_mounted:
-            logger.warning(
-                f"Worker '{worker_name}' finished, but its AI placeholder widget is missing or not mounted. "
-                f"Current placeholder ref ID: {getattr(app.current_ai_message_widget, 'id', 'N/A') if app.current_ai_message_widget else 'N/A'}"
-            )
-            # ... (rest of your existing fallback error reporting) ...
-            try:
-                chat_container_fallback: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
-                error_msg_text = Text.from_markup(
-                    f"[bold red]Error:[/]\nAI response for worker '{worker_name}' received, but its display widget was missing.")
-                # Ensure ChatMessage is imported and use it:
-                # from ..Widgets.chat_message import ChatMessage
-                # await chat_container_fallback.mount(ChatMessage(str(error_msg_text), role="System", classes="-error"))
-                app.notify(
-                    f"Error: AI response for worker '{worker_name}' received, but its display widget was missing.",
-                    severity="error", timeout=3)
-            except QueryError:
-                logger.error(f"Fallback: Could not find chat container #{prefix}-log.")
-            app.current_ai_message_widget = None
-            return
-
         try:
-            chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
-            static_text_widget_in_ai_msg = ai_message_widget.query_one(".message-text", Static)
+            # Check if tabs are enabled and get the active session
+            from ..config import get_cli_setting
+            if prefix == "chat" and get_cli_setting("chat_defaults", "enable_tabs", False):
+                # Try to get the tab ID from the stored context
+                tab_id = getattr(app, '_current_chat_tab_id', None)
+                if tab_id:
+                    try:
+                        chat_container: VerticalScroll = app.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
+                    except Exception as e:
+                        logger.error(f"Error getting chat container for tab {tab_id}: {e}")
+                        # Try to get the active tab's chat log
+                        try:
+                            chat_window = app.query_one("#chat-window")
+                            if hasattr(chat_window, 'tab_container') and chat_window.tab_container:
+                                active_session = chat_window.tab_container.get_active_session()
+                                if active_session and active_session.session_data:
+                                    tab_id = active_session.session_data.tab_id
+                                    chat_container: VerticalScroll = app.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
+                                else:
+                                    logger.error("No active chat session found")
+                                    return
+                            else:
+                                # Fallback to non-tabbed mode
+                                chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
+                        except Exception as e2:
+                            logger.error(f"Error getting chat container with tabs: {e2}")
+                            return
+                else:
+                    # No stored tab ID, try to get from active session
+                    try:
+                        chat_window = app.query_one("#chat-window")
+                        if hasattr(chat_window, 'tab_container') and chat_window.tab_container:
+                            active_session = chat_window.tab_container.get_active_session()
+                            if active_session and active_session.session_data:
+                                tab_id = active_session.session_data.tab_id
+                                chat_container: VerticalScroll = app.query_one(f"#{prefix}-log-{tab_id}", VerticalScroll)
+                            else:
+                                logger.error("No active chat session found")
+                                return
+                        else:
+                            # Fallback to non-tabbed mode
+                            chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
+                    except Exception as e:
+                        logger.error(f"Error getting chat container with tabs: {e}")
+                        return
+            else:
+                # Non-chat or tabs disabled
+                chat_container: VerticalScroll = app.query_one(f"#{prefix}-log", VerticalScroll)
+            
+            # Check if widget exists before using it
+            if ai_message_widget is None or not ai_message_widget.is_mounted:
+                # This can happen if the widget was already processed or removed
+                # Log as debug instead of warning since this is expected in some cases
+                logger.debug(
+                    f"Worker '{worker_name}' state changed to {worker_state}, but AI placeholder widget is not available. "
+                    f"This is expected if the message was already processed."
+                )
+                return
+                
+            # Query for the markdown widget used in both ChatMessage and ChatMessageEnhanced
+            markdown_widget_in_ai_msg = ai_message_widget.query_one(".message-text", Markdown)
 
             if worker_state is WorkerState.SUCCESS:
                 result = event.worker.result
@@ -190,9 +226,11 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 if current_message_text_strip.startswith(current_thinking_text_pattern) or \
                         current_message_text_strip.endswith(current_thinking_fallback_pattern) or \
                         current_message_text_strip == current_thinking_fallback_pattern:
-                    logger.debug(f"Clearing thinking placeholder: '{current_message_text_strip}'")
-                    ai_message_widget.message_text = ""
-                    static_text_widget_in_ai_msg.update("")
+                    logger.debug(f"Found thinking placeholder: '{current_message_text_strip}' - not clearing to prevent flicker")
+                    # DON'T clear it here - let the first chunk replace it directly
+                    # This prevents the blank state that causes flickering
+                    # ai_message_widget.message_text = ""
+                    # markdown_widget_in_ai_msg.update("")
                 else:
                     logger.debug(
                         f"Thinking placeholder not found or already cleared. Current text: '{current_message_text_strip}'")
@@ -216,7 +254,31 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
 
                     if isinstance(worker_result_content, dict) and 'choices' in worker_result_content:
                         try:
-                            original_text_for_storage = worker_result_content['choices'][0]['message']['content']
+                            # Extract main content
+                            message_content = worker_result_content['choices'][0]['message']['content']
+                            
+                            # Check for DeepSeek reasoning_content field
+                            reasoning_content = None
+                            logger.info(f"DeepSeek response structure: {json.dumps(worker_result_content['choices'][0], indent=2)[:500]}...")
+                            if 'reasoning_content' in worker_result_content['choices'][0]['message']:
+                                reasoning_content = worker_result_content['choices'][0]['message']['reasoning_content']
+                                logger.info(f"Found reasoning_content in message: {reasoning_content[:200]}...")
+                            elif 'reasoning_content' in worker_result_content['choices'][0]:
+                                reasoning_content = worker_result_content['choices'][0]['reasoning_content']
+                                logger.info(f"Found reasoning_content in choice: {reasoning_content[:200]}...")
+                            
+                            # Combine content with reasoning if present and strip_thinking_tags is False
+                            if reasoning_content and hasattr(app, 'app_config'):
+                                strip_tags_setting = app.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                                if not strip_tags_setting:
+                                    # Include reasoning content wrapped in thinking tags
+                                    original_text_for_storage = f"<thinking>\n{reasoning_content}\n</thinking>\n\n{message_content}"
+                                else:
+                                    # Just use the main content
+                                    original_text_for_storage = message_content
+                            else:
+                                original_text_for_storage = message_content
+                                
                             final_display_text_obj = Text(original_text_for_storage)  # Use Text() for plain text
                         except (KeyError, IndexError, TypeError) as e_parse:
                             logger.error(
@@ -246,12 +308,74 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                             f"[bold red]{escape_markup(original_text_for_storage)}[/]")
 
                     # Ensure thinking placeholder is cleared before updating with actual content
-                    if static_text_widget_in_ai_msg.renderable == f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}":
-                        static_text_widget_in_ai_msg.update("")  # Clear if it's still the placeholder
+                    # Check if markdown still contains thinking placeholder
+                    current_markdown_text = getattr(markdown_widget_in_ai_msg, 'markup', '')
+                    if f"AI {get_char(EMOJI_THINKING, FALLBACK_THINKING)}" in current_markdown_text:
+                        markdown_widget_in_ai_msg.update("")  # Clear if it's still the placeholder
 
                     ai_message_widget.message_text = original_text_for_storage
-                    static_text_widget_in_ai_msg.update(final_display_text_obj)
+                    markdown_widget_in_ai_msg.update(original_text_for_storage)
                     ai_message_widget.mark_generation_complete()
+
+                    # Check for tool calls in non-streaming response
+                    tool_calls = None
+                    if isinstance(worker_result_content, dict):
+                        logger.debug(f"Checking for tool calls in non-streaming response")
+                        tool_calls = parse_tool_calls_from_response(worker_result_content)
+                        if tool_calls:
+                            logger.info(f"Detected {len(tool_calls)} tool call(s) in non-streaming response")
+                            
+                            # Get the chat container from the AI widget's parent
+                            chat_container = ai_message_widget.parent
+                            if chat_container:
+                                # Create and mount tool execution widget
+                                tool_widget = ToolExecutionWidget(tool_calls)
+                                await chat_container.mount(tool_widget)
+                                chat_container.scroll_end(animate=False)
+                                
+                                # Execute tools asynchronously
+                                executor = get_tool_executor()
+                                try:
+                                    results = await executor.execute_tool_calls(tool_calls)
+                                    logger.info(f"Tool execution completed with {len(results)} result(s)")
+                                    
+                                    # Update widget with results
+                                    tool_widget.update_results(results)
+                                    
+                                    # Save tool messages to database if applicable
+                                    if app.chachanotes_db and app.current_chat_conversation_id and not app.current_chat_is_ephemeral:
+                                        try:
+                                            # Save tool call message
+                                            tool_call_msg = f"Tool Calls:\n{json.dumps(tool_calls, indent=2)}"
+                                            tool_call_db_id = ccl.add_message_to_conversation(
+                                                app.chachanotes_db,
+                                                app.current_chat_conversation_id,
+                                                "tool",  # This will map to role='tool'
+                                                tool_call_msg
+                                            )
+                                            logger.debug(f"Saved tool call message to DB with ID: {tool_call_db_id}")
+                                            
+                                            # Save tool results message
+                                            tool_results_msg = f"Tool Results:\n{json.dumps(results, indent=2)}"
+                                            tool_result_db_id = ccl.add_message_to_conversation(
+                                                app.chachanotes_db,
+                                                app.current_chat_conversation_id,
+                                                "tool",
+                                                tool_results_msg
+                                            )
+                                            logger.debug(f"Saved tool results message to DB with ID: {tool_result_db_id}")
+                                        except Exception as e:
+                                            logger.error(f"Error saving tool messages to DB: {e}", exc_info=True)
+                                    
+                                    # Import and use the streaming continue function
+                                    from ..Event_Handlers.Chat_Events.chat_streaming_events import _continue_conversation_with_tools
+                                    await _continue_conversation_with_tools(app, results, tool_calls)
+                                    
+                                except Exception as e:
+                                    logger.error(f"Error executing tools: {e}", exc_info=True)
+                                    app.notify(f"Tool execution error: {str(e)}", severity="error")
+                            else:
+                                logger.warning("Could not find chat container for mounting tool widgets")
 
                     is_error_message = original_text_for_storage.startswith(
                         ("[AI: Error", "[Error:", "[bold red]Error"))
@@ -295,14 +419,14 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 except QueryError:
                     logger.warning("Could not update AI message header label for worker error state.")
 
-                static_text_widget_in_ai_msg.update(Text.from_markup(f"[bold red]{escaped_error_for_display}[/]"))
+                markdown_widget_in_ai_msg.update(f"**Error:** {event.worker.error}")
                 ai_message_widget.mark_generation_complete()
 
                 if app.current_chat_is_streaming:  # Should be false if non-streaming worker failed
                     logger.info(
                         f"Worker '{worker_name}' failed during what was thought to be a stream. Posting StreamDone with error.")
                     # This ensures the StreamDone handler in app.py correctly finalizes UI and state
-                    app.post_message(StreamDone(full_text=ai_message_widget.message_text, error=str(error_from_worker)))
+                    app.post_message(StreamDone(full_text=ai_message_widget.message_text, error=str(error_from_worker), response_data=None))
                     # DO NOT set app.current_ai_message_widget = None here for streaming errors.
                 else:
                     logger.info(f"Worker '{worker_name}' failed (non-streaming). Clearing current_ai_message_widget.")
@@ -321,16 +445,8 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     except Exception as e_final_focus:
                         logger.error(f"Error focusing input after API call processing: {e_final_focus}", exc_info=True)
 
-            # Re-enable Send button and disable Stop button after any API_Call_ worker is done (SUCCESS or ERROR)
-            # This is crucial for non-streaming where StreamDone doesn't naturally occur.
-            try:
-                if worker_name.startswith("API_Call_chat"):
-                    app.query_one("#send-chat", Button).disabled = False
-                    app.query_one("#stop-chat-generation", Button).disabled = True
-                # Add for CCP tab if applicable
-            except QueryError:
-                logger.debug(
-                    f"Could not find send/stop buttons for '{prefix}' to re-enable/disable after worker '{worker_name}'.")
+            # Button state is now handled in app.py's on_worker_state_changed method
+            # The send button toggles between send/stop states based on worker state
 
         except QueryError as qe_outer:
             logger.error(
@@ -347,10 +463,10 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                 f"Unexpected outer error in handle_api_call_worker_state_changed for worker '{worker_name}': {exc_outer}")
             if ai_message_widget and ai_message_widget.is_mounted:
                 try:
-                    static_widget_unexp_err = ai_message_widget.query_one(".message-text", Static)
+                    markdown_widget_unexp_err = ai_message_widget.query_one(".message-text", Markdown)
                     error_update_text_unexp = Text.from_markup(
                         f"[bold red]Internal error handling AI response:[/]\n{escape_markup(str(exc_outer))}")
-                    static_widget_unexp_err.update(error_update_text_unexp)
+                    markdown_widget_unexp_err.update(f"**Internal error handling AI response:**\n{str(exc_outer)}")
                     ai_message_widget.role = "System"
                     try:
                         header_label = ai_message_widget.query_one(".message-header", Label)
@@ -382,6 +498,19 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
     If core_chat_function returns a direct result (non-streaming), this function returns it as is.
     """
     logger = getattr(app_instance, 'loguru_logger', logging)
+    start_time = time.time()
+    
+    # Extract relevant parameters for metrics
+    api_endpoint = kwargs.get('api_endpoint', 'unknown')
+    streaming = kwargs.get('streaming', False)
+    model = kwargs.get('model', 'unknown')
+    
+    # Log worker execution start
+    log_counter("chat_worker_execution_start", labels={
+        "provider": api_endpoint,
+        "streaming": str(streaming),
+        "model": model
+    })
     api_endpoint = kwargs.get('api_endpoint')
     model_name = kwargs.get('model')
     # streaming_requested flag from kwargs is implicitly handled by core_chat_function's return type.
@@ -395,7 +524,17 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
         if isinstance(result, Generator):  # Streaming case
             logger.info(f"Core chat function returned a generator for '{api_endpoint}' (model '{model_name}', strip_tags={strip_thinking_tags}). Processing stream in worker.")
             accumulated_full_text = ""
+            accumulated_reasoning_text = ""  # Separate accumulator for reasoning content
+            accumulated_tool_calls = []  # Accumulator for tool calls in streaming
             error_message_if_any = None
+            chunk_count = 0
+            stream_start_time = time.time()
+            
+            log_counter("chat_worker_streaming_started", labels={
+                "provider": api_endpoint,
+                "model": model_name
+            })
+            
             try:
                 for chunk_raw in result:
                     # Check for worker cancellation at the beginning of each iteration
@@ -409,7 +548,7 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                         cancellation_message = "Streaming cancelled by user."
                         # If accumulated_full_text is meaningful, you could prepend/append the cancellation reason.
                         # For now, we assume the UI will primarily use the 'error' field from StreamDone.
-                        app_instance.post_message(StreamDone(full_text=accumulated_full_text, error=cancellation_message))
+                        app_instance.post_message(StreamDone(full_text=accumulated_full_text, error=cancellation_message, response_data=None))
                         return "STREAMING_HANDLED_BY_EVENTS" # Exit the worker function
 
                     # Process each raw chunk from the generator (expected to be SSE lines)
@@ -427,16 +566,32 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                         try:
                             json_data = json.loads(json_str)
                             actual_text_chunk = ""
+                            reasoning_chunk = ""
                             # Standard OpenAI SSE structure, adapt if providers differ or if pre-parsed objects are yielded
                             choices = json_data.get("choices")
                             if choices and isinstance(choices, list) and len(choices) > 0:
                                 delta = choices[0].get("delta", {})
                                 if "content" in delta and delta["content"] is not None:
                                     actual_text_chunk = delta["content"]
+                                # Check for DeepSeek reasoning content in delta
+                                if "reasoning_content" in delta and delta["reasoning_content"] is not None:
+                                    reasoning_chunk = delta["reasoning_content"]
+                                    logger.debug(f"Found reasoning_content in streaming delta: {reasoning_chunk[:100]}...")
+                                    # Accumulate reasoning content separately
+                                    accumulated_reasoning_text += reasoning_chunk
+                                
+                                # Check for tool calls in the delta or choice
+                                if "tool_calls" in delta:
+                                    logger.debug(f"Found tool_calls in streaming delta: {delta['tool_calls']}")
+                                    accumulated_tool_calls.extend(delta["tool_calls"])
+                                elif "tool_calls" in choices[0]:
+                                    logger.debug(f"Found tool_calls in streaming choice: {choices[0]['tool_calls']}")
+                                    accumulated_tool_calls = choices[0]["tool_calls"]  # Replace, don't extend
 
                             if actual_text_chunk:
                                 app_instance.post_message(StreamingChunk(actual_text_chunk))
                                 accumulated_full_text += actual_text_chunk
+                                chunk_count += 1
                             # else:
                             #     logger.trace(f"SSE Stream: No text content in data chunk: {json_str[:100]}")
 
@@ -461,14 +616,68 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                     f"Error during stream processing loop for '{api_endpoint}', model '{model_name}': {e_stream_loop}")
                 error_message_if_any = f"Error during streaming: {str(e_stream_loop)}"
             finally:
+                stream_duration = time.time() - stream_start_time
                 logger.info(f"SSE Stream: Loop finished for '{api_endpoint}', model '{model_name}'. Posting StreamDone. Total length: {len(accumulated_full_text)}. Error: {error_message_if_any}")
-                app_instance.post_message(StreamDone(full_text=accumulated_full_text, error=error_message_if_any))
+                
+                # Log streaming metrics
+                log_histogram("chat_worker_streaming_duration", stream_duration, labels={
+                    "provider": api_endpoint,
+                    "model": model_name,
+                    "success": str(error_message_if_any is None)
+                })
+                log_histogram("chat_worker_streaming_chunks", chunk_count, labels={
+                    "provider": api_endpoint,
+                    "model": model_name
+                })
+                log_histogram("chat_worker_streaming_response_length", len(accumulated_full_text), labels={
+                    "provider": api_endpoint,
+                    "model": model_name
+                })
+                if chunk_count > 0:
+                    log_histogram("chat_worker_streaming_chunk_rate", chunk_count / stream_duration, labels={
+                        "provider": api_endpoint,
+                        "model": model_name
+                    })
+                
+                # Combine reasoning and regular content if needed
+                final_text = accumulated_full_text
+                if accumulated_reasoning_text and hasattr(app_instance, 'app_config'):
+                    strip_tags_setting = app_instance.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+                    if not strip_tags_setting:
+                        # Prepend all accumulated reasoning wrapped in a single pair of thinking tags
+                        final_text = f"<thinking>\n{accumulated_reasoning_text}\n</thinking>\n\n{accumulated_full_text}"
+                        logger.info(f"Combined reasoning content with main content (reasoning length: {len(accumulated_reasoning_text)})")
+                
+                # Create a response data structure if we have tool calls
+                response_data = None
+                if accumulated_tool_calls:
+                    response_data = {
+                        "choices": [{
+                            "message": {
+                                "content": accumulated_full_text,
+                                "tool_calls": accumulated_tool_calls
+                            }
+                        }]
+                    }
+                    logger.info(f"Created response_data with {len(accumulated_tool_calls)} tool calls for StreamDone")
+                
+                app_instance.post_message(StreamDone(full_text=final_text, error=error_message_if_any, response_data=response_data))
 
             return "STREAMING_HANDLED_BY_EVENTS"  # Signal that streaming was handled via events
 
         else:  # Non-streaming case
             logger.debug(
                 f"chat_wrapper_function for '{api_endpoint}' (model '{model_name}', strip_tags={strip_thinking_tags}) is returning a direct result (type: {type(result)}).")
+            
+            # Log non-streaming metrics
+            worker_duration = time.time() - start_time
+            log_histogram("chat_worker_execution_duration", worker_duration, labels={
+                "provider": api_endpoint,
+                "model": model_name,
+                "streaming": "false",
+                "success": "true"
+            })
+            
             return result  # Return the complete response directly
 
     except Exception as e:
@@ -476,8 +685,23 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
         # or other unexpected errors within this wrapper function itself (outside the stream loop).
         logger.exception(
             f"Error in chat_wrapper_function for '{api_endpoint}', model '{model_name}' (potentially pre-stream or non-stream path): {e}")
+        
+        # Log error metrics
+        worker_duration = time.time() - start_time
+        log_counter("chat_worker_error", labels={
+            "provider": api_endpoint,
+            "model": model_name,
+            "error_type": type(e).__name__
+        })
+        log_histogram("chat_worker_execution_duration", worker_duration, labels={
+            "provider": api_endpoint,
+            "model": model_name,
+            "streaming": str(streaming),
+            "success": "false"
+        })
+        
         # To ensure consistent error handling through StreamDone for the UI:
-        app_instance.post_message(StreamDone(full_text="", error=f"Chat wrapper error: {str(e)}"))
+        app_instance.post_message(StreamDone(full_text="", error=f"Chat wrapper error: {str(e)}", response_data=None))
         return "STREAMING_HANDLED_BY_EVENTS" # Signal that this path also used an event to report error
         # Alternative for WorkerState.ERROR: raise e
 

@@ -1,0 +1,184 @@
+# Example Custom Pipeline Configurations
+# Copy this file and modify for your own custom pipelines
+
+# Example 1: Domain-Specific Pipeline for Medical Documents
+[pipelines.medical_search]
+name = "Medical Document Search"
+description = "Specialized pipeline for medical and healthcare documentation"
+type = "custom"
+base_pipeline = "semantic"
+enabled = true
+tags = ["medical", "healthcare", "specialized"]
+
+[pipelines.medical_search.parameters]
+chunk_size = 600  # Larger chunks for medical context
+chunk_overlap = 150
+include_citations = true  # Important for medical references
+score_threshold = 0.7  # Higher threshold for accuracy
+
+[pipelines.medical_search.middleware]
+before = ["medical_term_expansion", "abbreviation_resolver"]
+after = ["citation_validator", "medical_entity_highlighter"]
+
+# Example 2: Legal Document Search
+[pipelines.legal_search]
+name = "Legal Document Search"
+description = "Optimized for legal documents, contracts, and regulations"
+type = "custom"
+base_pipeline = "hybrid"
+enabled = true
+tags = ["legal", "contracts", "compliance"]
+
+[pipelines.legal_search.parameters]
+chunk_size = 800  # Larger chunks to preserve legal context
+chunk_type = "paragraphs"  # Preserve paragraph structure
+bm25_weight = 0.6  # Favor exact term matching
+vector_weight = 0.4
+preserve_formatting = true
+include_line_numbers = true  # For legal citations
+
+# Example 3: Real-time Customer Support
+[pipelines.support_search]
+name = "Customer Support Search"
+description = "Fast search for customer support knowledge base"
+type = "custom"
+base_pipeline = "plain"
+profile = "fast_search"
+enabled = true
+tags = ["support", "realtime", "customer-service"]
+
+[pipelines.support_search.parameters]
+top_k = 3  # Fewer but most relevant results
+max_context_length = 2000  # Shorter for quick responses
+enable_rerank = false  # Skip for speed
+cache_ttl = 7200  # Cache for 2 hours
+
+[pipelines.support_search.middleware]
+before = ["query_spell_check", "common_issues_detector"]
+after = ["solution_formatter"]
+
+# Example 4: Multi-language Pipeline
+[pipelines.multilingual]
+name = "Multi-language Search"
+description = "Handles queries and documents in multiple languages"
+type = "composite"
+enabled = true
+tags = ["multilingual", "international"]
+
+[pipelines.multilingual.strategy]
+type = "language_detection"
+rules = [
+    { condition = "language:en", pipeline = "semantic" },
+    { condition = "language:es", pipeline = "spanish_semantic" },
+    { condition = "language:fr", pipeline = "french_semantic" },
+    { default = true, pipeline = "multilingual_base" }
+]
+
+# Example 5: Development Documentation
+[pipelines.dev_docs]
+name = "Developer Documentation Search"
+description = "Optimized for API docs, code examples, and technical guides"
+type = "custom"
+base_pipeline = "technical_docs"
+enabled = true
+tags = ["development", "api", "documentation"]
+
+[pipelines.dev_docs.parameters]
+chunk_size = 400
+preserve_code_blocks = true
+syntax_highlighting = true
+include_line_numbers = true
+
+[pipelines.dev_docs.middleware]
+before = ["code_language_detector", "api_version_filter"]
+after = ["code_formatter", "link_resolver"]
+
+# Example 6: Time-Sensitive News Search
+[pipelines.news_search]
+name = "News and Updates Search"
+description = "Prioritizes recent content and breaking news"
+type = "custom"
+base_pipeline = "hybrid"
+enabled = true
+tags = ["news", "time-sensitive", "updates"]
+
+[pipelines.news_search.parameters]
+boost_recent = true
+recency_weight = 0.3  # 30% weight to recency
+recency_days = 7  # Boost content from last 7 days
+
+[pipelines.news_search.middleware]
+before = ["date_extractor", "trending_detector"]
+after = ["timestamp_formatter", "source_validator"]
+
+# Custom Middleware Definitions
+[middleware.medical_term_expansion]
+name = "Medical Term Expansion"
+type = "before_search"
+enabled = true
+description = "Expands medical abbreviations and adds synonyms"
+
+[middleware.medical_term_expansion.config]
+abbreviation_db = "medical_abbrev.db"
+synonym_db = "medical_synonyms.db"
+include_drug_names = true
+include_icd_codes = true
+
+[middleware.query_spell_check]
+name = "Query Spell Checker"
+type = "before_search"
+enabled = true
+description = "Corrects common spelling mistakes in queries"
+
+[middleware.query_spell_check.config]
+language = "en"
+custom_dictionary = "support_terms.txt"
+autocorrect_threshold = 0.8
+
+[middleware.solution_formatter]
+name = "Solution Formatter"
+type = "after_search"
+enabled = true
+description = "Formats results as step-by-step solutions"
+
+[middleware.solution_formatter.config]
+format = "numbered_steps"
+include_screenshots = true
+max_steps = 10
+
+[middleware.code_formatter]
+name = "Code Syntax Highlighter"
+type = "after_search"
+enabled = true
+description = "Adds syntax highlighting to code snippets"
+
+[middleware.code_formatter.config]
+theme = "monokai"
+line_numbers = true
+language_detection = true
+
+# Pipeline Templates
+[templates.industry_specific]
+name = "Industry-Specific Template"
+description = "Template for creating industry-specific search pipelines"
+base_pipeline = "semantic"
+
+[templates.industry_specific.parameters]
+chunk_size = 500
+include_metadata = true
+enable_rerank = true
+
+[templates.industry_specific.customizable]
+fields = ["industry_terms", "regulatory_requirements", "compliance_checks"]
+
+[templates.language_specific]
+name = "Language-Specific Template"
+description = "Template for single-language optimized pipelines"
+base_pipeline = "semantic"
+
+[templates.language_specific.parameters]
+chunk_size = 400
+chunk_overlap = 100
+
+[templates.language_specific.customizable]
+fields = ["language_code", "tokenizer", "stopwords", "stemmer"]

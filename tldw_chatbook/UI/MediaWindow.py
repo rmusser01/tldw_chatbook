@@ -11,12 +11,14 @@ from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.reactive import reactive
-from textual.widgets import Static, Button, Label, Input, ListView, TextArea, Markdown
+from textual.widgets import Static, Button, Label, Input, ListView, TextArea, Markdown, Checkbox
 #
 # Local Imports
 from ..Utils.text import slugify
 from ..Event_Handlers import media_events
+from ..Event_Handlers.media_events import MediaDeleteConfirmationEvent, MediaUndeleteEvent, MediaMetadataUpdateEvent
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
+from ..Widgets.media_details_widget import MediaDetailsWidget
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -40,9 +42,18 @@ class MediaWindow(Container):
     A fully self-contained component for the Media Tab, featuring a collapsible
     sidebar and a two-pane browser for media types.
     """
+    
+    # CSS to ensure views are hidden by default
+    DEFAULT_CSS = """
+    .media-view-area {
+        display: none;
+    }
+    """
+    
     # --- STATE LIVES HERE NOW ---
     media_sidebar_collapsed: reactive[bool] = reactive(False)
     media_active_view: reactive[Optional[str]] = reactive(None)
+    show_deleted_items: reactive[bool] = reactive(False)
 
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
@@ -98,10 +109,11 @@ class MediaWindow(Container):
                         else:
                             self.log.warning(f"Could not find nav button {nav_button_id} in MediaWindow or App to update display name for slug '{type_slug}'.")
 
-                # Perform search for the newly activated view
+                # Perform search for the newly activated view (skip special windows)
                 # Ensure the app's media_current_page is reset for a new view activation if that's desired behavior
                 # self.app_instance.media_current_page = 1 # Already done in handle_nav_button_press
-                self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, "")
+                if type_slug not in ["collections-tags", "multi-item-review"]:
+                    self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, "", "")
             else:
                 self.log.info("MediaWindow.watch_media_active_view: new_view is None, all .media-view-area views remain hidden.")
 
@@ -110,6 +122,31 @@ class MediaWindow(Container):
         except Exception as e:
             self.log.error(f"MediaWindow.watch_media_active_view: Unexpected error - {e}", exc_info=True)
 
+    def watch_show_deleted_items(self, old_value: bool, new_value: bool) -> None:
+        """React to show deleted items checkbox changes."""
+        self.log.debug(f"MediaWindow.watch_show_deleted_items: old={old_value}, new={new_value}")
+        # Refresh the current view's search when checkbox state changes
+        if self.media_active_view:
+            type_slug = self.media_active_view.replace("media-view-", "")
+            # Skip special windows that don't have standard search functionality
+            if type_slug not in ["collections-tags", "multi-item-review"]:
+                # Get current search term and keyword filter
+                search_term = ""
+                keyword_filter = ""
+                try:
+                    search_input = self.query_one(f"#media-search-input-{type_slug}", Input)
+                    search_term = search_input.value
+                    keyword_input = self.query_one(f"#media-keyword-filter-{type_slug}", Input)
+                    keyword_filter = keyword_input.value
+                except QueryError:
+                    pass
+                self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, search_term, keyword_filter)
+
+    @on(Checkbox.Changed, ".show-deleted-checkbox")
+    def handle_show_deleted_checkbox(self, event: Checkbox.Changed) -> None:
+        """Handle checkbox changes for showing deleted items."""
+        self.show_deleted_items = event.value
+        self.log.info(f"Show deleted items checkbox changed to: {event.value}")
 
     @on(Button.Pressed, "#media-sidebar-toggle-button")
     def handle_sidebar_toggle(self) -> None:
@@ -181,18 +218,23 @@ class MediaWindow(Container):
 
                 # Add Analysis Review button explicitly
                 yield Button("Analysis Review", id="media-nav-analysis-review", classes="media-nav-button")
+                
+                # Add Collections/Tags and Multi-Item Review buttons
+                yield Button("Collections/Tags", id="media-nav-collections-tags", classes="media-nav-button")
+                yield Button("Multi-Item Review", id="media-nav-multi-item-review", classes="media-nav-button")
 
         # Main Content Pane
         with Container(classes="media-content-pane", id="media-content-pane"):
             yield Button(
                 get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
                 id="media-sidebar-toggle-button",
-                classes="sidebar-toggle"
+                classes="sidebar-toggle",
+                tooltip="Toggle sidebar"
             )
 
             # Create views for "All Media" AND each specific media type using a loop
             # This includes "All Media" in the loop if it's in self.media_types_from_db
-            all_view_types = self.media_types_from_db + ["analysis-review"]
+            all_view_types = self.media_types_from_db + ["analysis-review", "collections-tags", "multi-item-review"]
             # Ensure unique slugs, especially if "Analysis Review" might be in media_types_from_db
             processed_slugs = set()
 
@@ -203,39 +245,81 @@ class MediaWindow(Container):
                 processed_slugs.add(type_slug)
 
                 view_id = f"media-view-{type_slug}"
-                # Each media view is a Horizontal container for left (list) and right (details) panes
-                with Horizontal(id=view_id, classes="media-view-area"):
-                    # --- LEFT PANE (for list and controls) ---
-                    with Container(classes="media-content-left-pane"):
-                        yield Label(f"{media_type_display_name} Management", classes="pane-title")
-                        yield Input(placeholder=f"Search in {media_type_display_name}...",
-                                    id=f"media-search-input-{type_slug}",
-                                    classes="sidebar-input media-search-input")
-                        # This ListView is the .media-items-list
-                        yield ListView(id=f"media-list-view-{type_slug}", classes="media-items-list")
-                        # Pagination bar
-                        with Horizontal(classes="media-pagination-bar"):
-                            yield Button("Previous", id=f"media-prev-page-button-{type_slug}", disabled=True)
-                            yield Label("Page 1 / 1", id=f"media-page-label-{type_slug}", classes="media-page-label")
-                            yield Button("Next", id=f"media-next-page-button-{type_slug}", disabled=True)
+                
+                # Special handling for Collections/Tags and Multi-Item Review
+                if type_slug == "collections-tags":
+                    # Import the custom window class (we'll create this next)
+                    from ..Widgets.collections_tag_window import CollectionsTagWindow
+                    yield CollectionsTagWindow(
+                        self.app_instance,
+                        id=view_id,
+                        classes="media-view-area"
+                    )
+                elif type_slug == "multi-item-review":
+                    # Import the custom window class (we'll create this next)
+                    from ..Widgets.multi_item_review_window import MultiItemReviewWindow
+                    yield MultiItemReviewWindow(
+                        self.app_instance,
+                        id=view_id,
+                        classes="media-view-area"
+                    )
+                else:
+                    # Standard media view layout
+                    # Each media view is a Horizontal container for left (list) and right (details) panes
+                    with Horizontal(id=view_id, classes="media-view-area"):
+                        # --- LEFT PANE (for list and controls) ---
+                        with Container(classes="media-content-left-pane"):
+                            yield Label(f"{media_type_display_name} Management", classes="pane-title")
+                            yield Input(placeholder=f"Search in {media_type_display_name}...",
+                                        id=f"media-search-input-{type_slug}",
+                                        classes="sidebar-input media-search-input")
+                            # Add keyword filter input
+                            yield Label("Filter by keywords:", classes="keyword-filter-label")
+                            yield Input(placeholder="Enter keywords separated by commas",
+                                        id=f"media-keyword-filter-{type_slug}",
+                                        classes="keyword-filter-input")
+                            # Add checkbox for showing deleted items
+                            yield Checkbox("Show deleted items", 
+                                          id=f"show-deleted-checkbox-{type_slug}",
+                                          classes="show-deleted-checkbox",
+                                          value=False)
+                            # This ListView is the .media-items-list
+                            yield ListView(id=f"media-list-view-{type_slug}", classes="media-items-list")
+                            # Pagination bar
+                            with Horizontal(classes="media-pagination-bar"):
+                                yield Button("Previous", id=f"media-prev-page-button-{type_slug}", disabled=True)
+                                yield Label("Page 1 / 1", id=f"media-page-label-{type_slug}", classes="media-page-label")
+                                yield Button("Next", id=f"media-next-page-button-{type_slug}", disabled=True)
 
-                    # --- RIGHT PANE (standardized to TextArea for better height control) ---
-                    # This VerticalScroll is the .media-content-right-pane
-                    with VerticalScroll(classes="media-content-right-pane"):
-                        text_area_widget = TextArea(
-                            "Select an item from the list to see its details.",
-                            id=f"media-details-display-{type_slug}",
-                            classes="media-details-theme",
-                            read_only=True
-                        )
-                        # Force the TextArea widget to expand to fill available space
-                        text_area_widget.styles.height = "1fr"
-                        yield text_area_widget
+                        # --- RIGHT PANE (using MediaDetailsWidget for editing capability) ---
+                        # This VerticalScroll is the .media-content-right-pane
+                        with VerticalScroll(classes="media-content-right-pane"):
+                            details_widget = MediaDetailsWidget(
+                                self.app_instance,
+                                type_slug,
+                                id=f"media-details-widget-{type_slug}",
+                                classes="media-details-theme"
+                            )
+                            # Force the widget to expand to fill available space
+                            details_widget.styles.height = "1fr"
+                            yield details_widget
 
-            # Hide all views by default; watcher will manage visibility
-            # This loop is crucial for the initial state.
-            for view_area in self.query(".media-view-area"):
-                view_area.styles.display = "none"
+            # All views are already hidden by default during creation; watcher will manage visibility
+
+    @on(MediaMetadataUpdateEvent)
+    async def handle_media_metadata_update(self, event: MediaMetadataUpdateEvent) -> None:
+        """Handle media metadata update event."""
+        await media_events.handle_media_metadata_update(self.app_instance, event)
+
+    @on(MediaDeleteConfirmationEvent)
+    async def handle_media_delete_confirmation(self, event: MediaDeleteConfirmationEvent) -> None:
+        """Handle media delete confirmation event."""
+        await media_events.handle_media_delete_confirmation(self.app_instance, event)
+
+    @on(MediaUndeleteEvent)
+    async def handle_media_undelete(self, event: MediaUndeleteEvent) -> None:
+        """Handle media undelete event."""
+        await media_events.handle_media_undelete(self.app_instance, event)
 
 #
 # End of MediaWindow.py

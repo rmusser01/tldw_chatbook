@@ -1,68 +1,30 @@
-# chat_rag_events.py
-# Description: Event handlers for RAG functionality in the chat window
+# chat_rag_events_simplified.py
+# Description: Simplified event handlers for RAG functionality using pipeline system
 #
 # Imports
 from typing import TYPE_CHECKING, Dict, Any, List, Optional, Tuple
 import asyncio
 from loguru import logger
-from pathlib import Path
-import uuid
 import os
-#
+
 # Local Imports
-from ...DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError
-from ...DB.ChaChaNotes_DB import CharactersRAGDB
-from ...Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
-# Try to import the new modular integration
-USE_MODULAR_RAG = os.environ.get('USE_MODULAR_RAG', 'false').lower() in ('true', '1', 'yes')
-if USE_MODULAR_RAG:
-    try:
-        from .chat_rag_integration import (
-            perform_modular_rag_search,
-            perform_modular_rag_pipeline,
-            index_documents_modular
-        )
-        MODULAR_RAG_AVAILABLE = True
-        logger.info("Using new modular RAG implementation")
-    except ImportError as e:
-        logger.warning(f"Modular RAG integration not available: {e}")
-        MODULAR_RAG_AVAILABLE = False
-else:
-    MODULAR_RAG_AVAILABLE = False
-
-# Conditional imports for RAG services
-try:
-    from ...RAG_Search.Services.embeddings_service import EmbeddingsService
-    from ...RAG_Search.Services.chunking_service import ChunkingService
-    from ...RAG_Search.Services.cache_service import get_cache_service
-    RAG_SERVICES_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"RAG services not available: {e}")
-    RAG_SERVICES_AVAILABLE = False
-    
-    # Create placeholder classes
-    class EmbeddingsService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("EmbeddingsService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
-    
-    class ChunkingService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("ChunkingService not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
-    
-    def get_cache_service(*args, **kwargs):
-        raise ImportError("Cache service not available. Please install RAG dependencies: pip install tldw_chatbook[embeddings_rag]")
+from ...RAG_Search.pipeline_builder_simple import execute_pipeline, BUILTIN_PIPELINES
+from ...RAG_Search.pipeline_loader import get_pipeline_loader
 
 if TYPE_CHECKING:
     from ...app import TldwCli
 
 # Configure logger with context
-logger = logger.bind(module="chat_rag_events")
+logger = logger.bind(module="chat_rag_events_simplified")
 
 # Check if RAG dependencies are available
-RAG_AVAILABLE = DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) and RAG_SERVICES_AVAILABLE
-RERANK_AVAILABLE = DEPENDENCIES_AVAILABLE.get('flashrank', False)
-COHERE_AVAILABLE = DEPENDENCIES_AVAILABLE.get('cohere', False)
+try:
+    from ...RAG_Search.simplified import RAGService, create_config_for_collection
+    RAG_SERVICES_AVAILABLE = True
+except ImportError:
+    logger.warning("RAG services not available")
+    RAG_SERVICES_AVAILABLE = False
+
 
 async def perform_plain_rag_search(
     app: "TldwCli",
@@ -71,632 +33,96 @@ async def perform_plain_rag_search(
     top_k: int = 5,
     max_context_length: int = 10000,
     enable_rerank: bool = True,
-    reranker_model: str = "flashrank"
+    reranker_model: str = "flashrank",
+    keyword_filter_list: Optional[List[str]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
-    Perform a plain RAG search using BM25 (FTS5) search across selected sources.
-    
-    Args:
-        app: The TldwCli app instance
-        query: The search query
-        sources: Dict of source types to search (media, conversations, notes)
-        top_k: Number of top results to return
-        max_context_length: Maximum total character count for context
-        enable_rerank: Whether to apply re-ranking
-        reranker_model: Which re-ranker to use
-        
-    Returns:
-        Tuple of (results list, formatted context string)
+    Perform a plain RAG search using the pipeline system.
     """
-    # Use modular implementation if available and enabled
-    if MODULAR_RAG_AVAILABLE:
-        logger.info(f"Using modular RAG search for query: '{query}'")
-        return await perform_modular_rag_search(
-            app, query, sources, top_k, max_context_length, 
-            enable_rerank, reranker_model
-        )
-    
     logger.info(f"Performing plain RAG search for query: '{query}'")
     
-    # Check cache first if available
-    if RAG_AVAILABLE:
-        try:
-            cache_service = get_cache_service()
-            cache_params = {
-                'sources': sources,
-                'top_k': top_k,
-                'max_context_length': max_context_length,
-                'enable_rerank': enable_rerank,
-                'reranker_model': reranker_model
-            }
-            cached_result = cache_service.get_query_result(query, cache_params)
-            if cached_result:
-                logger.info("Returning cached RAG search result")
-                return cached_result
-        except Exception as e:
-            logger.debug(f"Cache service not available or error: {e}")
+    # Build pipeline configuration
+    config = BUILTIN_PIPELINES['plain'].copy()
+    config['parameters'] = {
+        'top_k': top_k,
+        'max_context_length': max_context_length,
+        'keyword_filter': keyword_filter_list
+    }
     
-    all_results = []
+    # Adjust reranking step if needed
+    if not enable_rerank:
+        # Remove rerank step
+        config['steps'] = [s for s in config['steps'] if s.get('function') != 'rerank_results']
+    elif reranker_model != 'flashrank':
+        # Update reranker model
+        for step in config['steps']:
+            if step.get('function') == 'rerank_results':
+                step.setdefault('config', {})['model'] = reranker_model
     
-    # Search Media Items
-    if sources.get('media', False) and app.media_db:
-        logger.debug("Searching media items...")
-        try:
-            media_results = await asyncio.to_thread(
-                app.media_db.search_media_db,
-                search_query=query,
-                search_fields=['title', 'content'],
-                page=1,
-                results_per_page=top_k * 2,  # Get more results for re-ranking
-                include_trash=False
-            )
-            # Extract just the results list
-            if isinstance(media_results, tuple):
-                media_items = media_results[0]
-            else:
-                media_items = media_results
-                
-            for item in media_items:
-                all_results.append({
-                    'source': 'media',
-                    'id': item.get('id'),
-                    'title': item.get('title', 'Untitled'),
-                    'content': item.get('content', ''),
-                    'score': 1.0,  # Default score for BM25 results
-                    'metadata': {
-                        'type': item.get('type', 'unknown'),
-                        'author': item.get('author', 'Unknown'),
-                        'ingestion_date': item.get('ingestion_date', '')
-                    }
-                })
-        except DatabaseError as e:
-            logger.error(f"Error searching media DB: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error searching media: {e}", exc_info=True)
-    
-    # Search Conversations
-    if sources.get('conversations', False) and app.chachanotes_db:
-        logger.debug("Searching conversations...")
-        try:
-            conv_results = await asyncio.to_thread(
-                app.chachanotes_db.search_conversations_by_content,
-                search_query=query,
-                limit=top_k * 2
-            )
-            for conv in conv_results:
-                # Get messages for context
-                messages = await asyncio.to_thread(
-                    app.chachanotes_db.get_messages_for_conversation,
-                    conversation_id=conv['id'],
-                    limit=5  # Get last 5 messages for context
-                )
-                
-                # Combine messages into content
-                content_parts = []
-                for msg in messages:
-                    content_parts.append(f"{msg['sender']}: {msg['content']}")
-                
-                all_results.append({
-                    'source': 'conversation',
-                    'id': conv['id'],
-                    'title': conv.get('title', 'Untitled Conversation'),
-                    'content': "\n".join(content_parts),
-                    'score': 1.0,
-                    'metadata': {
-                        'character_id': conv.get('character_id'),
-                        'created_at': conv.get('created_at'),
-                        'updated_at': conv.get('updated_at')
-                    }
-                })
-        except Exception as e:
-            logger.error(f"Error searching conversations: {e}", exc_info=True)
-    
-    # Search Notes
-    if sources.get('notes', False) and app.notes_service:
-        logger.debug("Searching notes...")
-        try:
-            note_results = await asyncio.to_thread(
-                app.notes_service.search_notes,
-                user_id=app.notes_user_id,
-                search_term=query,
-                limit=top_k * 2
-            )
-            for note in note_results:
-                all_results.append({
-                    'source': 'note',
-                    'id': note['id'],
-                    'title': note.get('title', 'Untitled Note'),
-                    'content': note.get('content', ''),
-                    'score': 1.0,
-                    'metadata': {
-                        'created_at': note.get('created_at'),
-                        'updated_at': note.get('updated_at'),
-                        'tags': note.get('tags', [])
-                    }
-                })
-        except Exception as e:
-            logger.error(f"Error searching notes: {e}", exc_info=True)
-    
-    # Apply re-ranking if enabled and available
-    if enable_rerank:
-        if reranker_model == "flashrank" and RERANK_AVAILABLE:
-            logger.debug("Applying FlashRank re-ranking...")
-            try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
-                
-                # Prepare documents for re-ranking
-                passages = []
-                for result in all_results:
-                    # Combine title and content for re-ranking
-                    text = f"{result['title']}\n{result['content'][:1000]}"  # Limit content for re-ranking
-                    passages.append({"text": text})
-                
-                if passages:
-                    rerank_req = RerankRequest(query=query, passages=passages)
-                    ranked_results = ranker.rerank(rerank_req)
-                    
-                    # Update scores based on re-ranking
-                    for i, ranked in enumerate(ranked_results):
-                        if i < len(all_results):
-                            all_results[ranked['index']]['score'] = ranked['score']
-                    
-                    # Sort by score
-                    all_results.sort(key=lambda x: x['score'], reverse=True)
-            except Exception as e:
-                logger.error(f"Error during FlashRank re-ranking: {e}", exc_info=True)
-                
-        elif reranker_model == "cohere" and COHERE_AVAILABLE:
-            logger.debug("Applying Cohere re-ranking...")
-            try:
-                import cohere
-                import os
-                
-                # Get API key from environment or config
-                api_key = os.environ.get('COHERE_API_KEY')
-                if not api_key and hasattr(app, 'config'):
-                    api_key = app.config.get('llm_settings', {}).get('cohere_api_key')
-                
-                if not api_key:
-                    logger.warning("Cohere API key not found. Skipping re-ranking.")
-                else:
-                    co = cohere.Client(api_key)
-                    
-                    # Prepare documents for re-ranking
-                    documents = []
-                    for i, result in enumerate(all_results):
-                        # Combine title and content for re-ranking
-                        text = f"{result['title']}\n{result['content'][:1000]}"
-                        documents.append(text)
-                    
-                    if documents:
-                        # Cohere rerank API
-                        response = co.rerank(
-                            query=query,
-                            documents=documents,
-                            top_n=min(len(documents), top_k * 2),  # Get more results than needed
-                            model='rerank-english-v2.0'  # Or 'rerank-multilingual-v2.0'
-                        )
-                        
-                        # Create a new list with re-ranked results
-                        reranked_results = []
-                        for hit in response:
-                            idx = hit.index
-                            if idx < len(all_results):
-                                result = all_results[idx].copy()
-                                result['score'] = hit.relevance_score
-                                reranked_results.append(result)
-                        
-                        # Replace with reranked results
-                        all_results = reranked_results
-                        
-            except Exception as e:
-                logger.error(f"Error during Cohere re-ranking: {e}", exc_info=True)
-    
-    # Limit to top_k results
-    all_results = all_results[:top_k]
-    
-    # Build context string with character limit
-    context_parts = []
-    total_chars = 0
-    
-    for i, result in enumerate(all_results):
-        # Format result
-        result_text = f"[{result['source'].upper()} - {result['title']}]\n"
-        
-        # Add content with character limit check
-        remaining_chars = max_context_length - total_chars - len(result_text)
-        if remaining_chars <= 0:
-            break
-            
-        content_preview = result['content'][:remaining_chars]
-        result_text += content_preview
-        
-        if len(result['content']) > remaining_chars:
-            result_text += "...\n"
-        else:
-            result_text += "\n"
-        
-        context_parts.append(result_text)
-        total_chars += len(result_text)
-        
-        if total_chars >= max_context_length:
-            break
-    
-    context_string = "\n---\n".join(context_parts)
-    
-    logger.info(f"Plain RAG search completed. Found {len(all_results)} results, "
-                f"context length: {len(context_string)} chars")
-    
-    # Cache the results if available
-    if RAG_AVAILABLE:
-        try:
-            cache_service.cache_query_result(query, cache_params, all_results, context_string)
-        except Exception as e:
-            logger.debug(f"Failed to cache results: {e}")
-    
-    return all_results, context_string
+    # Execute pipeline
+    return await execute_pipeline(config, app, query, sources, top_k=top_k)
 
 
 async def perform_full_rag_pipeline(
     app: "TldwCli",
     query: str,
     sources: Dict[str, bool],
-    top_k: int = 5,
+    top_k: int = 10,
     max_context_length: int = 10000,
     chunk_size: int = 400,
     chunk_overlap: int = 100,
+    chunk_type: str = "words",
     include_metadata: bool = True,
     enable_rerank: bool = True,
-    reranker_model: str = "flashrank"
+    reranker_model: str = "flashrank",
+    keyword_filter_list: Optional[List[str]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
-    Perform full RAG pipeline with embeddings, vector search, and re-ranking.
-    
-    Uses ChromaDB for vector storage and sentence-transformers for embeddings.
+    Perform a full semantic RAG pipeline using the pipeline system.
     """
-    # Use modular implementation if available and enabled
-    if MODULAR_RAG_AVAILABLE:
-        logger.info(f"Using modular RAG pipeline for query: '{query}'")
-        # The modular pipeline returns a dict, so we need to adapt it
-        result = await perform_modular_rag_pipeline(
-            app, query, sources, 
-            top_k=top_k,
-            max_context_length=max_context_length,
-            enable_rerank=enable_rerank,
-            reranker_model=reranker_model
-        )
-        # Extract results and context from the dict response
-        return result.get('sources', []), result.get('context', '')
+    logger.info(f"Performing semantic RAG search for query: '{query}'")
     
-    logger.info(f"Performing full RAG pipeline for query: '{query}'")
+    # Build pipeline configuration
+    config = BUILTIN_PIPELINES['semantic'].copy()
+    config['parameters'] = {
+        'top_k': top_k,
+        'max_context_length': max_context_length,
+        'chunk_size': chunk_size,
+        'chunk_overlap': chunk_overlap,
+        'chunk_type': chunk_type,
+        'include_metadata': include_metadata,
+        'include_citations': include_metadata
+    }
     
-    # Check if embeddings are available
-    if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-        logger.warning("Embeddings dependencies not available. Falling back to plain RAG.")
-        return await perform_plain_rag_search(
-            app, query, sources, top_k, max_context_length, 
-            enable_rerank=True, reranker_model="flashrank"
-        )
+    # Adjust reranking step if needed
+    if not enable_rerank:
+        config['steps'] = [s for s in config['steps'] if s.get('function') != 'rerank_results']
+    elif reranker_model != 'flashrank':
+        for step in config['steps']:
+            if step.get('function') == 'rerank_results':
+                step.setdefault('config', {})['model'] = reranker_model
     
-    # Initialize services
-    embeddings_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
-    embeddings_service = EmbeddingsService(embeddings_dir)
-    chunking_service = ChunkingService()
-    
-    # Create query embedding
-    query_embeddings = embeddings_service.create_embeddings([query])
-    if not query_embeddings:
-        logger.error("Failed to create query embeddings. Falling back to plain RAG.")
-        return await perform_plain_rag_search(
-            app, query, sources, top_k, max_context_length, 
-            enable_rerank=True, reranker_model="flashrank"
-        )
-    
-    all_results = []
-    
-    # Search each enabled source
-    if sources.get('media', False):
-        media_results = await _search_media_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(media_results)
-    
-    if sources.get('conversations', False):
-        conv_results = await _search_conversations_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(conv_results)
-    
-    if sources.get('notes', False):
-        notes_results = await _search_notes_with_embeddings(
-            app, embeddings_service, query_embeddings[0], top_k * 2
-        )
-        all_results.extend(notes_results)
-    
-    # Sort by similarity score
-    all_results.sort(key=lambda x: x.get('score', 0), reverse=True)
-    
-    # Apply re-ranking if enabled and available
-    if enable_rerank and len(all_results) > 0:
-        if reranker_model == "flashrank" and RERANK_AVAILABLE:
-            try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
-                
-                passages = []
-                for result in all_results:
-                    text = f"{result['title']}\n{result['content'][:1000]}"
-                    passages.append({"text": text})
-                
-                if passages:
-                    rerank_req = RerankRequest(query=query, passages=passages)
-                    ranked_results = ranker.rerank(rerank_req)
-                    
-                    # Update scores based on re-ranking
-                    for i, ranked in enumerate(ranked_results):
-                        if i < len(all_results):
-                            all_results[ranked['index']]['score'] = ranked['score']
-                    
-                    # Re-sort by new scores
-                    all_results.sort(key=lambda x: x['score'], reverse=True)
-            except Exception as e:
-                logger.error(f"Error during FlashRank re-ranking: {e}")
-                
-        elif reranker_model == "cohere" and COHERE_AVAILABLE:
-            try:
-                import cohere
-                import os
-                
-                # Get API key from environment or config
-                api_key = os.environ.get('COHERE_API_KEY')
-                if not api_key and hasattr(app, 'config'):
-                    api_key = app.config.get('llm_settings', {}).get('cohere_api_key')
-                
-                if not api_key:
-                    logger.warning("Cohere API key not found. Skipping re-ranking.")
-                else:
-                    co = cohere.Client(api_key)
-                    
-                    # Prepare documents for re-ranking
-                    documents = []
-                    for i, result in enumerate(all_results):
-                        text = f"{result['title']}\n{result['content'][:1000]}"
-                        documents.append(text)
-                    
-                    if documents:
-                        # Cohere rerank API
-                        response = co.rerank(
-                            query=query,
-                            documents=documents,
-                            top_n=min(len(documents), top_k * 2),
-                            model='rerank-english-v2.0'
-                        )
-                        
-                        # Create a new list with re-ranked results
-                        reranked_results = []
-                        for hit in response:
-                            idx = hit.index
-                            if idx < len(all_results):
-                                result = all_results[idx].copy()
-                                result['score'] = hit.relevance_score
-                                reranked_results.append(result)
-                        
-                        # Replace with reranked results
-                        all_results = reranked_results
-                        
-            except Exception as e:
-                logger.error(f"Error during Cohere re-ranking: {e}")
-    
-    # Limit to top_k results
-    all_results = all_results[:top_k]
-    
-    # Build context string
-    context_parts = []
-    total_chars = 0
-    
-    for result in all_results:
-        # Format result with metadata if requested
-        if include_metadata:
-            result_text = f"[{result['source'].upper()} - {result['title']}]\n"
-            result_text += f"Score: {result['score']:.3f}\n"
-            if result.get('metadata'):
-                for key, value in result['metadata'].items():
-                    if key not in ['embedding', 'chunk_id']:
-                        result_text += f"{key}: {value}\n"
-            result_text += "\n"
-        else:
-            result_text = f"[{result['source'].upper()} - {result['title']}]\n"
-        
-        # Add content
-        remaining_chars = max_context_length - total_chars - len(result_text)
-        if remaining_chars <= 0:
-            break
-        
-        content_preview = result['content'][:remaining_chars]
-        result_text += content_preview
-        
-        if len(result['content']) > remaining_chars:
-            result_text += "...\n"
-        else:
-            result_text += "\n"
-        
-        context_parts.append(result_text)
-        total_chars += len(result_text)
-        
-        if total_chars >= max_context_length:
-            break
-    
-    context_string = "\n---\n".join(context_parts)
-    
-    logger.info(f"Full RAG pipeline completed. Found {len(all_results)} results, "
-                f"context length: {len(context_string)} chars")
-    
-    return all_results, context_string
-
-
-async def _search_media_with_embeddings(
-    app: "TldwCli",
-    embeddings_service: EmbeddingsService,
-    query_embedding: List[float],
-    n_results: int
-) -> List[Dict[str, Any]]:
-    """Search media items using embeddings"""
-    results = []
-    
-    try:
-        # Search in ChromaDB media collection
-        collection_results = embeddings_service.search_collection(
-            collection_name="media_chunks",
-            query_embeddings=[query_embedding],
-            n_results=n_results
-        )
-        
-        if collection_results and collection_results.get('documents'):
-            for i, doc in enumerate(collection_results['documents'][0]):
-                metadata = collection_results['metadatas'][0][i]
-                distance = collection_results['distances'][0][i]
-                
-                # Convert distance to similarity score (0-1)
-                score = 1 / (1 + distance)
-                
-                results.append({
-                    'source': 'media',
-                    'id': metadata.get('media_id'),
-                    'title': metadata.get('title', 'Untitled'),
-                    'content': doc,
-                    'score': score,
-                    'metadata': {
-                        'type': metadata.get('type', 'unknown'),
-                        'author': metadata.get('author', 'Unknown'),
-                        'chunk_index': metadata.get('chunk_index', 0)
-                    }
-                })
-    except Exception as e:
-        logger.error(f"Error searching media with embeddings: {e}")
-    
-    return results
-
-
-async def _search_conversations_with_embeddings(
-    app: "TldwCli",
-    embeddings_service: EmbeddingsService,
-    query_embedding: List[float],
-    n_results: int
-) -> List[Dict[str, Any]]:
-    """Search conversations using embeddings"""
-    results = []
-    
-    try:
-        # Search in ChromaDB conversations collection
-        collection_results = embeddings_service.search_collection(
-            collection_name="conversation_chunks",
-            query_embeddings=[query_embedding],
-            n_results=n_results
-        )
-        
-        if collection_results and collection_results.get('documents'):
-            for i, doc in enumerate(collection_results['documents'][0]):
-                metadata = collection_results['metadatas'][0][i]
-                distance = collection_results['distances'][0][i]
-                
-                # Convert distance to similarity score
-                score = 1 / (1 + distance)
-                
-                results.append({
-                    'source': 'conversation',
-                    'id': metadata.get('conversation_id'),
-                    'title': metadata.get('title', 'Untitled Conversation'),
-                    'content': doc,
-                    'score': score,
-                    'metadata': {
-                        'character_id': metadata.get('character_id'),
-                        'chunk_index': metadata.get('chunk_index', 0)
-                    }
-                })
-    except Exception as e:
-        logger.error(f"Error searching conversations with embeddings: {e}")
-    
-    return results
-
-
-async def _search_notes_with_embeddings(
-    app: "TldwCli",
-    embeddings_service: EmbeddingsService,
-    query_embedding: List[float],
-    n_results: int
-) -> List[Dict[str, Any]]:
-    """Search notes using embeddings"""
-    results = []
-    
-    try:
-        # Search in ChromaDB notes collection
-        collection_results = embeddings_service.search_collection(
-            collection_name="notes_chunks",
-            query_embeddings=[query_embedding],
-            n_results=n_results
-        )
-        
-        if collection_results and collection_results.get('documents'):
-            for i, doc in enumerate(collection_results['documents'][0]):
-                metadata = collection_results['metadatas'][0][i]
-                distance = collection_results['distances'][0][i]
-                
-                # Convert distance to similarity score
-                score = 1 / (1 + distance)
-                
-                results.append({
-                    'source': 'note',
-                    'id': metadata.get('note_id'),
-                    'title': metadata.get('title', 'Untitled Note'),
-                    'content': doc,
-                    'score': score,
-                    'metadata': {
-                        'tags': metadata.get('tags', []),
-                        'chunk_index': metadata.get('chunk_index', 0)
-                    }
-                })
-    except Exception as e:
-        logger.error(f"Error searching notes with embeddings: {e}")
-    
-    return results
+    # Execute pipeline
+    return await execute_pipeline(config, app, query, sources, top_k=top_k)
 
 
 async def perform_hybrid_rag_search(
     app: "TldwCli",
     query: str,
     sources: Dict[str, bool],
-    top_k: int = 5,
+    top_k: int = 10,
     max_context_length: int = 10000,
     enable_rerank: bool = True,
     reranker_model: str = "flashrank",
     chunk_size: int = 400,
     chunk_overlap: int = 100,
+    chunk_type: str = "words",
     bm25_weight: float = 0.5,
-    vector_weight: float = 0.5
+    vector_weight: float = 0.5,
+    keyword_filter_list: Optional[List[str]] = None
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
-    Perform hybrid RAG search combining BM25 and vector search results.
-    
-    This approach combines the strengths of:
-    - BM25/FTS5: Good for exact keyword matches and rare terms
-    - Vector search: Good for semantic similarity and understanding
-    
-    Args:
-        app: The TldwCli app instance
-        query: The search query
-        sources: Dict of source types to search
-        top_k: Number of top results to return
-        max_context_length: Maximum total character count for context
-        enable_rerank: Whether to apply re-ranking
-        reranker_model: Which re-ranker to use
-        chunk_size: Size of chunks for vector search
-        chunk_overlap: Overlap between chunks
-        bm25_weight: Weight for BM25 scores (0-1)
-        vector_weight: Weight for vector search scores (0-1)
-        
-    Returns:
-        Tuple of (results list, formatted context string)
+    Perform a hybrid RAG search using the pipeline system.
     """
     logger.info(f"Performing hybrid RAG search for query: '{query}'")
     
@@ -706,179 +132,128 @@ async def perform_hybrid_rag_search(
         bm25_weight = bm25_weight / total_weight
         vector_weight = vector_weight / total_weight
     else:
-        bm25_weight = vector_weight = 0.5
+        bm25_weight = 0.5
+        vector_weight = 0.5
     
-    # Get BM25 results
-    logger.debug("Getting BM25 results...")
-    bm25_results, _ = await perform_plain_rag_search(
-        app, query, sources, top_k * 3, max_context_length,
-        enable_rerank=False  # We'll re-rank the combined results
-    )
+    # Build pipeline configuration
+    config = BUILTIN_PIPELINES['hybrid'].copy()
     
-    # Get vector search results if available
-    vector_results = []
-    if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-        logger.debug("Getting vector search results...")
-        vector_results, _ = await perform_full_rag_pipeline(
-            app, query, sources, top_k * 3, max_context_length,
-            chunk_size, chunk_overlap, include_metadata=True,
-            enable_rerank=False  # We'll re-rank the combined results
-        )
-    else:
-        logger.warning("Embeddings not available, using BM25 only")
-        vector_weight = 0
-        bm25_weight = 1.0
+    # Update weights based on sources and user preferences
+    # FTS5 gets 3/4 of bm25_weight (split among media, conv, notes)
+    # Semantic gets vector_weight
+    fts_weight_per_source = bm25_weight / 3
+    weights = [fts_weight_per_source, fts_weight_per_source, fts_weight_per_source, vector_weight]
     
-    # Combine and deduplicate results
-    combined_results = {}
+    # Update config
+    config['parameters'] = {
+        'top_k': top_k,
+        'max_context_length': max_context_length,
+        'chunk_size': chunk_size,
+        'chunk_overlap': chunk_overlap,
+        'chunk_type': chunk_type,
+        'keyword_filter': keyword_filter_list
+    }
     
-    # Add BM25 results with weighted scores
-    for result in bm25_results:
-        key = (result['source'], result['id'], result.get('metadata', {}).get('chunk_index', 0))
-        if key not in combined_results:
-            result_copy = result.copy()
-            result_copy['bm25_score'] = result['score']
-            result_copy['vector_score'] = 0
-            result_copy['score'] = result['score'] * bm25_weight
-            combined_results[key] = result_copy
-        else:
-            combined_results[key]['bm25_score'] = result['score']
-            combined_results[key]['score'] += result['score'] * bm25_weight
+    # Update weights in parallel step
+    for step in config['steps']:
+        if step.get('type') == 'parallel':
+            step['config']['weights'] = weights
     
-    # Add vector results with weighted scores
-    for result in vector_results:
-        key = (result['source'], result['id'], result.get('metadata', {}).get('chunk_index', 0))
-        if key not in combined_results:
-            result_copy = result.copy()
-            result_copy['bm25_score'] = 0
-            result_copy['vector_score'] = result['score']
-            result_copy['score'] = result['score'] * vector_weight
-            combined_results[key] = result_copy
-        else:
-            combined_results[key]['vector_score'] = result['score']
-            # Re-calculate combined score
-            combined_results[key]['score'] = (
-                combined_results[key]['bm25_score'] * bm25_weight +
-                result['score'] * vector_weight
+    # Adjust reranking step if needed
+    if not enable_rerank:
+        config['steps'] = [s for s in config['steps'] if s.get('function') != 'rerank_results']
+    elif reranker_model != 'flashrank':
+        for step in config['steps']:
+            if step.get('function') == 'rerank_results':
+                step.setdefault('config', {})['model'] = reranker_model
+    
+    # Execute pipeline
+    return await execute_pipeline(config, app, query, sources, top_k=top_k)
+
+
+async def perform_search_with_pipeline(
+    app: "TldwCli",
+    query: str,
+    sources: Dict[str, bool],
+    pipeline_id: str,
+    **kwargs
+) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Perform a search using a specific pipeline ID.
+    
+    This allows using custom pipelines defined in TOML files.
+    """
+    logger.info(f"Performing search with pipeline '{pipeline_id}' for query: '{query}'")
+    
+    # Get pipeline configuration (from built-ins or TOML)
+    from ...RAG_Search.pipeline_builder_simple import get_pipeline
+    config = get_pipeline(pipeline_id)
+    
+    if not config:
+        logger.error(f"Pipeline '{pipeline_id}' not found")
+        return [], f"Pipeline '{pipeline_id}' not found"
+    
+    # Make a copy to avoid modifying the original
+    config = config.copy()
+    
+    # Merge any pipeline-specific parameters with runtime parameters
+    pipeline_params = config.get('parameters', {})
+    merged_params = {**pipeline_params, **kwargs}
+    
+    # Execute pipeline with merged parameters
+    return await execute_pipeline(config, app, query, sources, **merged_params)
+
+
+# Helper function to format results (kept for compatibility)
+def format_results_for_llm(
+    results: List[Dict[str, Any]], 
+    max_chars: int = 10000
+) -> str:
+    """Format search results as context for LLM."""
+    from ...RAG_Search.pipeline_functions_simple import format_as_context
+    from ...RAG_Search.pipeline_types import SearchResult
+    
+    # Convert dicts back to SearchResult objects
+    search_results = []
+    for r in results:
+        search_results.append(SearchResult(
+            source=r['source'],
+            id=r['id'],
+            title=r['title'],
+            content=r['content'],
+            score=r.get('score', 1.0),
+            metadata=r.get('metadata', {})
+        ))
+    
+    return format_as_context(search_results, max_chars)
+
+
+# Initialize/get RAG service (kept for compatibility)
+async def get_or_initialize_rag_service(app: "TldwCli") -> Optional[Any]:
+    """Get or initialize the RAG service."""
+    if not RAG_SERVICES_AVAILABLE:
+        return None
+    
+    if hasattr(app, '_rag_service') and app._rag_service:
+        return app._rag_service
+    
+    try:
+        # Initialize RAG service
+        collections = {}
+        if app.media_db:
+            collections['media'] = create_config_for_collection(
+                'media',
+                app.media_db,
+                metadata_columns=['title', 'author', 'type']
             )
-    
-    # Convert back to list and sort by combined score
-    all_results = list(combined_results.values())
-    all_results.sort(key=lambda x: x['score'], reverse=True)
-    
-    # Apply re-ranking if enabled
-    if enable_rerank and len(all_results) > 0:
-        if reranker_model == "flashrank" and RERANK_AVAILABLE:
-            logger.debug("Applying FlashRank re-ranking to hybrid results...")
-            try:
-                from flashrank import Ranker, RerankRequest
-                ranker = Ranker()
-                
-                passages = []
-                for result in all_results:
-                    text = f"{result['title']}\n{result['content'][:1000]}"
-                    passages.append({"text": text})
-                
-                if passages:
-                    rerank_req = RerankRequest(query=query, passages=passages)
-                    ranked_results = ranker.rerank(rerank_req)
-                    
-                    # Update scores based on re-ranking
-                    for i, ranked in enumerate(ranked_results):
-                        if i < len(all_results):
-                            all_results[ranked['index']]['rerank_score'] = ranked['score']
-                            all_results[ranked['index']]['score'] = ranked['score']
-                    
-                    # Re-sort by new scores
-                    all_results.sort(key=lambda x: x['score'], reverse=True)
-            except Exception as e:
-                logger.error(f"Error during FlashRank re-ranking: {e}")
-                
-        elif reranker_model == "cohere" and COHERE_AVAILABLE:
-            logger.debug("Applying Cohere re-ranking to hybrid results...")
-            try:
-                import cohere
-                import os
-                
-                api_key = os.environ.get('COHERE_API_KEY')
-                if not api_key and hasattr(app, 'config'):
-                    api_key = app.config.get('llm_settings', {}).get('cohere_api_key')
-                
-                if not api_key:
-                    logger.warning("Cohere API key not found. Skipping re-ranking.")
-                else:
-                    co = cohere.Client(api_key)
-                    
-                    documents = []
-                    for result in all_results:
-                        text = f"{result['title']}\n{result['content'][:1000]}"
-                        documents.append(text)
-                    
-                    if documents:
-                        response = co.rerank(
-                            query=query,
-                            documents=documents,
-                            top_n=min(len(documents), top_k * 2),
-                            model='rerank-english-v2.0'
-                        )
-                        
-                        reranked_results = []
-                        for hit in response:
-                            idx = hit.index
-                            if idx < len(all_results):
-                                result = all_results[idx].copy()
-                                result['rerank_score'] = hit.relevance_score
-                                result['score'] = hit.relevance_score
-                                reranked_results.append(result)
-                        
-                        all_results = reranked_results
-                        
-            except Exception as e:
-                logger.error(f"Error during Cohere re-ranking: {e}")
-    
-    # Limit to top_k results
-    all_results = all_results[:top_k]
-    
-    # Build context string with scores for debugging
-    context_parts = []
-    total_chars = 0
-    
-    for i, result in enumerate(all_results):
-        # Format result with hybrid scores
-        result_text = f"[{result['source'].upper()} - {result['title']}]\n"
-        if logger.level <= 10:  # DEBUG level
-            result_text += f"Scores - BM25: {result.get('bm25_score', 0):.3f}, "
-            result_text += f"Vector: {result.get('vector_score', 0):.3f}, "
-            result_text += f"Combined: {result['score']:.3f}"
-            if 'rerank_score' in result:
-                result_text += f", Rerank: {result['rerank_score']:.3f}"
-            result_text += "\n"
         
-        # Add content with character limit check
-        remaining_chars = max_context_length - total_chars - len(result_text)
-        if remaining_chars <= 0:
-            break
-            
-        content_preview = result['content'][:remaining_chars]
-        result_text += content_preview
+        rag_service = RAGService(collections)
+        app._rag_service = rag_service
+        return rag_service
         
-        if len(result['content']) > remaining_chars:
-            result_text += "...\n"
-        else:
-            result_text += "\n"
-        
-        context_parts.append(result_text)
-        total_chars += len(result_text)
-        
-        if total_chars >= max_context_length:
-            break
-    
-    context_string = "\n---\n".join(context_parts)
-    
-    logger.info(f"Hybrid RAG search completed. Found {len(all_results)} results, "
-                f"context length: {len(context_string)} chars")
-    
-    return all_results, context_string
+    except Exception as e:
+        logger.error(f"Failed to initialize RAG service: {e}")
+        return None
 
 
 async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optional[str]:
@@ -887,17 +262,30 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
     
     Returns the context string to be prepended to the user message, or None if RAG is disabled.
     """
+    from textual.css.query import NoMatches
+    
     # Check if RAG is enabled
     try:
         rag_enabled = app.query_one("#chat-rag-enable-checkbox").value
         plain_rag_enabled = app.query_one("#chat-rag-plain-enable-checkbox").value
-    except:
+    except NoMatches:
         logger.debug("RAG checkboxes not found, RAG disabled")
         return None
     
     if not rag_enabled and not plain_rag_enabled:
         logger.debug("RAG is disabled")
         return None
+    
+    # Get search mode from the new dropdown (if it exists)
+    search_mode = None
+    try:
+        search_mode_widget = app.query_one("#chat-rag-search-mode")
+        search_mode = search_mode_widget.value
+        logger.info(f"RAG search mode from dropdown: {search_mode}")
+    except NoMatches:
+        # Fallback to checkbox-based detection for backward compatibility
+        logger.debug("Search mode dropdown not found, using checkbox-based detection")
+        search_mode = "plain" if plain_rag_enabled else "semantic"
     
     # Get RAG settings
     try:
@@ -907,6 +295,13 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
             'notes': app.query_one("#chat-rag-search-notes-checkbox").value
         }
         
+        # Get keyword filter
+        keyword_filter = app.query_one("#chat-rag-keyword-filter").value.strip()
+        keyword_filter_list = [kw.strip() for kw in keyword_filter.split(',') if kw.strip()] if keyword_filter else []
+        
+        if keyword_filter_list:
+            logger.info(f"Applying keyword filter: {keyword_filter_list}")
+        
         top_k = int(app.query_one("#chat-rag-top-k").value or "5")
         max_context_length = int(app.query_one("#chat-rag-max-context-length").value or "10000")
         
@@ -915,6 +310,7 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         
         chunk_size = int(app.query_one("#chat-rag-chunk-size").value or "400")
         chunk_overlap = int(app.query_one("#chat-rag-chunk-overlap").value or "100")
+        chunk_type = app.query_one("#chat-rag-chunk-type").value or "words"
         include_metadata = app.query_one("#chat-rag-include-metadata-checkbox").value
         
     except Exception as e:
@@ -927,35 +323,73 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         app.notify("Please select at least one RAG source", severity="warning")
         return None
     
-    # Perform RAG search
+    # Initialize RAG service if needed for semantic search
+    if search_mode == "semantic":
+        rag_service = await get_or_initialize_rag_service(app)
+        if not rag_service:
+            logger.warning("RAG service not available, falling back to plain search")
+            search_mode = "plain"
+    
+    # Perform the search
     try:
-        if plain_rag_enabled:
-            logger.info("Performing plain RAG search")
+        logger.info(f"Performing {search_mode} RAG search for: '{user_message}'")
+        
+        if search_mode == "plain":
             results, context = await perform_plain_rag_search(
-                app, user_message, sources, top_k, max_context_length,
-                enable_rerank, reranker_model
+                app, user_message, sources,
+                top_k=top_k,
+                max_context_length=max_context_length,
+                enable_rerank=enable_rerank,
+                reranker_model=reranker_model,
+                keyword_filter_list=keyword_filter_list
+            )
+        elif search_mode == "semantic" or search_mode == "full":
+            results, context = await perform_full_rag_pipeline(
+                app, user_message, sources,
+                top_k=top_k,
+                max_context_length=max_context_length,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                chunk_type=chunk_type,
+                include_metadata=include_metadata,
+                enable_rerank=enable_rerank,
+                reranker_model=reranker_model,
+                keyword_filter_list=keyword_filter_list
+            )
+        elif search_mode == "hybrid":
+            results, context = await perform_hybrid_rag_search(
+                app, user_message, sources,
+                top_k=top_k,
+                max_context_length=max_context_length,
+                enable_rerank=enable_rerank,
+                reranker_model=reranker_model,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                chunk_type=chunk_type,
+                keyword_filter_list=keyword_filter_list
             )
         else:
-            logger.info("Performing full RAG pipeline")
-            results, context = await perform_full_rag_pipeline(
-                app, user_message, sources, top_k, max_context_length,
-                chunk_size, chunk_overlap, include_metadata
+            # Custom pipeline
+            results, context = await perform_search_with_pipeline(
+                app, user_message, sources, search_mode,
+                top_k=top_k,
+                max_context_length=max_context_length,
+                enable_rerank=enable_rerank,
+                reranker_model=reranker_model,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                chunk_type=chunk_type,
+                keyword_filter_list=keyword_filter_list
             )
         
-        if context:
-            # Format context for inclusion in chat
-            rag_context = (
-                "### Context from RAG Search:\n"
-                f"{context}\n"
-                "### End of Context\n\n"
-                "Based on the above context, please answer the following question:\n"
-            )
-            return rag_context
+        if context and context.strip():
+            logger.info(f"RAG context generated: {len(context)} characters")
+            return context
         else:
-            logger.warning("No relevant context found")
+            logger.warning("No relevant RAG context found")
             return None
             
     except Exception as e:
-        logger.error(f"Error performing RAG search: {e}", exc_info=True)
-        app.notify(f"RAG search error: {str(e)}", severity="error")
+        logger.error(f"RAG search failed: {e}")
+        app.notify(f"RAG search failed: {str(e)}", severity="error")
         return None

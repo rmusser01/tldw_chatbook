@@ -1,0 +1,53 @@
+# Zombie Apocalypse System splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "glitch_reveal"
+style = "green on black"
+
+# Glitch reveal effect parameters
+infection_spread = 0.95
+brain_hunger = 1.0
+shambling_speed = 0.3
+
+content = """
+┌───────────── OUTBREAK SYSTEM STATUS ─────────────┐
+│                                                  │
+│  ☣️  INFECTION LEVEL: CRITICAL ☣️                 │
+│                                                  │
+│  Zombie Processes Detected:                      │
+│  ├─ chrome.exe (143 instances) STATUS: UNDEAD   │
+│  ├─ slack.app (consuming all RAM) STATUS: ZOMBIE│
+│  ├─ node_modules/ (size: ∞) STATUS: INFECTED    │
+│  └─ legacy_code.js STATUS: BRAIN_EATING         │
+│                                                  │
+│  System Resources:                               │
+│  CPU:  ████████████████████ 100% (GROANING)    │
+│  RAM:  ████████████░░░░░░░░  67% (DEVOURED)    │
+│  DISK: ██████████████████░░  89% (ROTTING)     │
+│  BRAINS: ░░░░░░░░░░░░░░░░░░   0% (CONSUMED)    │
+│                                                  │
+│  Survivor Protocols:                             │
+│  [✓] Kill -9 all zombie processes              │
+│  [✗] Find cure for infection                   │
+│  [✓] Barricade ports 80, 443, 22               │
+│  [?] Hope for system reboot                     │
+│                                                  │
+│  WARNING: Do not feed after midnight            │
+│  ERROR: BRAAAAAAAINS required to continue       │
+│                                                  │
+│  TLDW: They're Loading... Don't Wait           │
+└──────────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Spawning zombie child processes...",
+    "Infecting healthy memory blocks...",
+    "Shambling through system directories...",
+    "Moaning in binary: 01000010 01010010 01000001 01001001 01001110 01010011...",
+    "Spreading the digital infection..."
+]
+
+# Additional styling
+css_classes = ["zombie-decay", "apocalypse-theme"]

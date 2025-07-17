@@ -37,6 +37,7 @@ changes in the `sync_log` and in individual records.
 import sqlite3
 import json
 import uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 import threading
@@ -44,6 +45,7 @@ import logging
 from typing import List, Dict, Optional, Any, Union, Set
 
 from loguru import logger
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
 #
@@ -126,7 +128,7 @@ class CharactersRAGDB:
         is_memory_db (bool): True if the database is in-memory.
         db_path_str (str): String representation of the database path for SQLite connection.
     """
-    _CURRENT_SCHEMA_VERSION = 5 # Incremented schema version for sync support
+    _CURRENT_SCHEMA_VERSION = 10 # Incremented schema version to fix world books FTS triggers
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
 
     _FULL_SCHEMA_SQL_V4 = """
@@ -881,7 +883,7 @@ UPDATE db_schema_version
 
     _MIGRATE_V4_TO_V5_SQL = """
 /*───────────────────────────────────────────────────────────────
-  Migration from V4 to V5: Add sync support columns
+  Migration from V4 to V5: Add sync support columns and tables
 ───────────────────────────────────────────────────────────────*/
 -- Add sync-related columns to notes table (without UNIQUE constraint)
 ALTER TABLE notes ADD COLUMN file_path_on_disk TEXT;
@@ -898,9 +900,51 @@ ALTER TABLE notes ADD COLUMN file_extension TEXT DEFAULT '.md';
 CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path_on_disk) WHERE file_path_on_disk IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notes_sync_root ON notes(sync_root_folder) WHERE sync_root_folder IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notes_is_synced ON notes(is_externally_synced) WHERE is_externally_synced = 1;
+CREATE INDEX IF NOT EXISTS idx_notes_sync_excluded ON notes(sync_excluded);
 
 -- Create a unique index instead of UNIQUE constraint
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_file_path_unique ON notes(file_path_on_disk) WHERE file_path_on_disk IS NOT NULL;
+
+-- Create sync_sessions table to track sync operations
+CREATE TABLE IF NOT EXISTS sync_sessions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT UNIQUE NOT NULL,  -- UUID for the sync session
+  sync_root_folder TEXT NOT NULL,
+  sync_direction TEXT NOT NULL CHECK(sync_direction IN ('disk_to_db', 'db_to_disk', 'bidirectional')),
+  conflict_resolution TEXT NOT NULL CHECK(conflict_resolution IN ('ask', 'disk_wins', 'db_wins', 'newer_wins')),
+  started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME,
+  status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed', 'cancelled')),
+  total_files INTEGER DEFAULT 0,
+  processed_files INTEGER DEFAULT 0,
+  conflicts_found INTEGER DEFAULT 0,
+  errors_count INTEGER DEFAULT 0,
+  client_id TEXT NOT NULL,
+  summary TEXT  -- JSON summary of the sync operation
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_sessions_status ON sync_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sync_sessions_started ON sync_sessions(started_at);
+
+-- Create sync_conflicts table to track unresolved conflicts
+CREATE TABLE IF NOT EXISTS sync_conflicts(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES sync_sessions(session_id),
+  note_id TEXT REFERENCES notes(id),
+  file_path TEXT NOT NULL,
+  conflict_type TEXT NOT NULL CHECK(conflict_type IN ('both_changed', 'deleted_on_disk', 'deleted_in_db')),
+  db_content_hash TEXT,
+  disk_content_hash TEXT,
+  db_modified_time DATETIME,
+  disk_modified_time REAL,
+  resolution TEXT CHECK(resolution IN ('use_db', 'use_disk', 'merge', 'skip', NULL)),
+  resolved_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_session ON sync_conflicts(session_id);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_note ON sync_conflicts(note_id);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_resolution ON sync_conflicts(resolution);
 
 -- Update schema version
 UPDATE db_schema_version
@@ -909,7 +953,457 @@ UPDATE db_schema_version
    AND version = 4;
 """
 
-    def __init__(self, db_path: Union[str, Path], client_id: str):
+    _MIGRATE_V5_TO_V6_SQL = """
+/*───────────────────────────────────────────────────────────────
+  Migration from V5 to V6: Add message feedback support
+───────────────────────────────────────────────────────────────*/
+-- Add feedback column to messages table
+ALTER TABLE messages ADD COLUMN feedback TEXT;
+
+-- Create index for feedback queries
+CREATE INDEX IF NOT EXISTS idx_messages_feedback ON messages(feedback) WHERE feedback IS NOT NULL;
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 6
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 5;
+"""
+
+    _MIGRATE_V6_TO_V7_SQL = """
+/*───────────────────────────────────────────────────────────────
+  Migration from V6 to V7: Add role field for OpenAI-compatible message types
+───────────────────────────────────────────────────────────────*/
+-- Add role column to messages table
+ALTER TABLE messages ADD COLUMN role TEXT DEFAULT 'assistant';
+
+-- Create index for role-based queries
+CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+
+-- Migrate existing data from sender to role with proper mapping
+UPDATE messages
+SET role = CASE
+    WHEN LOWER(sender) = 'user' THEN 'user'
+    WHEN LOWER(sender) = 'system' THEN 'system'
+    WHEN LOWER(sender) IN ('assistant', 'ai', 'bot') THEN 'assistant'
+    WHEN LOWER(sender) = 'tool' THEN 'tool'
+    ELSE 'assistant'  -- Default for character names and other senders
+END
+WHERE role = 'assistant';  -- Only update default values
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 7
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 6;
+"""
+
+    _MIGRATE_V7_TO_V8_SQL = """
+/*───────────────────────────────────────────────────────────────
+  Migration from V7 to V8: Add chat dictionary support
+───────────────────────────────────────────────────────────────*/
+
+-- Create chat dictionaries table
+CREATE TABLE IF NOT EXISTS chat_dictionaries(
+  id              INTEGER  PRIMARY KEY AUTOINCREMENT,
+  name            TEXT     UNIQUE NOT NULL,
+  description     TEXT,
+  file_path       TEXT,
+  content         TEXT,
+  entries_json    TEXT,     -- JSON array of ChatDictionary objects
+  strategy        TEXT     DEFAULT 'sorted_evenly',
+  max_tokens      INTEGER  DEFAULT 1000,
+  enabled         BOOLEAN  NOT NULL DEFAULT 1,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_modified   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted         BOOLEAN  NOT NULL DEFAULT 0,
+  client_id       TEXT     NOT NULL DEFAULT 'unknown',
+  version         INTEGER  NOT NULL DEFAULT 1
+);
+
+-- Create FTS5 virtual table for chat dictionaries
+CREATE VIRTUAL TABLE IF NOT EXISTS chat_dictionaries_fts
+USING fts5(
+  name, description, content,
+  content='chat_dictionaries',
+  content_rowid='id'
+);
+
+-- Create triggers for FTS5 maintenance
+CREATE TRIGGER chat_dictionaries_ai
+AFTER INSERT ON chat_dictionaries BEGIN
+  INSERT INTO chat_dictionaries_fts(rowid, name, description, content)
+  VALUES(NEW.id, NEW.name, NEW.description, NEW.content);
+END;
+
+CREATE TRIGGER chat_dictionaries_au
+AFTER UPDATE ON chat_dictionaries BEGIN
+  UPDATE chat_dictionaries_fts 
+  SET name = NEW.name, description = NEW.description, content = NEW.content
+  WHERE rowid = NEW.id;
+END;
+
+CREATE TRIGGER chat_dictionaries_ad
+AFTER DELETE ON chat_dictionaries BEGIN
+  DELETE FROM chat_dictionaries_fts WHERE rowid = OLD.id;
+END;
+
+-- Create conversation_dictionaries junction table
+CREATE TABLE IF NOT EXISTS conversation_dictionaries(
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+  dictionary_id   INTEGER NOT NULL REFERENCES chat_dictionaries(id),
+  priority        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, dictionary_id)
+);
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_chat_dictionaries_name ON chat_dictionaries(name);
+CREATE INDEX IF NOT EXISTS idx_chat_dictionaries_enabled ON chat_dictionaries(enabled);
+CREATE INDEX IF NOT EXISTS idx_chat_dictionaries_deleted ON chat_dictionaries(deleted);
+CREATE INDEX IF NOT EXISTS idx_conversation_dictionaries_conv ON conversation_dictionaries(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_dictionaries_dict ON conversation_dictionaries(dictionary_id);
+
+-- Sync triggers for chat_dictionaries
+CREATE TRIGGER chat_dictionaries_sync_create
+AFTER INSERT ON chat_dictionaries BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('chat_dictionaries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'file_path', NEW.file_path, 'strategy', NEW.strategy, 'max_tokens', NEW.max_tokens,
+                     'enabled', NEW.enabled, 'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+CREATE TRIGGER chat_dictionaries_sync_update
+AFTER UPDATE ON chat_dictionaries
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.name IS NOT NEW.name OR
+     OLD.description IS NOT NEW.description OR
+     OLD.file_path IS NOT NEW.file_path OR
+     OLD.content IS NOT NEW.content OR
+     OLD.entries_json IS NOT NEW.entries_json OR
+     OLD.strategy IS NOT NEW.strategy OR
+     OLD.max_tokens IS NOT NEW.max_tokens OR
+     OLD.enabled IS NOT NEW.enabled OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('chat_dictionaries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'file_path', NEW.file_path, 'strategy', NEW.strategy, 'max_tokens', NEW.max_tokens,
+                     'enabled', NEW.enabled, 'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+CREATE TRIGGER chat_dictionaries_sync_delete
+AFTER UPDATE ON chat_dictionaries
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('chat_dictionaries', CAST(NEW.id AS TEXT), 'delete', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'deleted', NEW.deleted, 'last_modified', NEW.last_modified,
+                     'version', NEW.version, 'client_id', NEW.client_id));
+END;
+
+CREATE TRIGGER chat_dictionaries_sync_undelete
+AFTER UPDATE ON chat_dictionaries
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('chat_dictionaries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'file_path', NEW.file_path, 'strategy', NEW.strategy, 'max_tokens', NEW.max_tokens,
+                     'enabled', NEW.enabled, 'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+-- Update last_modified trigger
+CREATE TRIGGER chat_dictionaries_update_timestamp
+AFTER UPDATE ON chat_dictionaries
+BEGIN
+  UPDATE chat_dictionaries SET last_modified = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 8
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 7;
+"""
+
+    _MIGRATE_V8_TO_V9_SQL = """
+-- Migration from V8 to V9: Add world books/lorebooks support
+
+-- Create world_books table
+CREATE TABLE IF NOT EXISTS world_books(
+  id              INTEGER  PRIMARY KEY AUTOINCREMENT,
+  name            TEXT     UNIQUE NOT NULL,
+  description     TEXT,
+  scan_depth      INTEGER  DEFAULT 3,
+  token_budget    INTEGER  DEFAULT 500,
+  recursive_scanning BOOLEAN DEFAULT 0,
+  enabled         BOOLEAN  NOT NULL DEFAULT 1,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_modified   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted         BOOLEAN  NOT NULL DEFAULT 0,
+  client_id       TEXT     NOT NULL DEFAULT 'unknown',
+  version         INTEGER  NOT NULL DEFAULT 1
+);
+
+-- Create world_book_entries table
+CREATE TABLE IF NOT EXISTS world_book_entries(
+  id              INTEGER  PRIMARY KEY AUTOINCREMENT,
+  world_book_id   INTEGER  NOT NULL REFERENCES world_books(id) ON DELETE CASCADE,
+  keys            TEXT     NOT NULL, -- JSON array of keywords
+  content         TEXT     NOT NULL,
+  enabled         BOOLEAN  DEFAULT 1,
+  position        TEXT     DEFAULT 'before_char', -- before_char, after_char, at_start, at_end
+  insertion_order INTEGER  DEFAULT 0,
+  selective       BOOLEAN  DEFAULT 0,
+  secondary_keys  TEXT,    -- JSON array of secondary keywords
+  case_sensitive  BOOLEAN  DEFAULT 0,
+  extensions      TEXT,    -- JSON for future extensibility
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_modified   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create conversation_world_books junction table
+CREATE TABLE IF NOT EXISTS conversation_world_books(
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  world_book_id   INTEGER NOT NULL REFERENCES world_books(id) ON DELETE CASCADE,
+  priority        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, world_book_id)
+);
+
+-- Create FTS5 virtual table for world books
+CREATE VIRTUAL TABLE IF NOT EXISTS world_books_fts
+USING fts5(
+  name, description,
+  content='world_books',
+  content_rowid='id'
+);
+
+-- Create FTS5 virtual table for world book entries
+CREATE VIRTUAL TABLE IF NOT EXISTS world_book_entries_fts
+USING fts5(
+  keys, content,
+  content='world_book_entries',
+  content_rowid='id'
+);
+
+-- Create triggers for world_books FTS5 maintenance
+CREATE TRIGGER world_books_ai
+AFTER INSERT ON world_books BEGIN
+  INSERT INTO world_books_fts(rowid, name, description)
+  VALUES(NEW.id, NEW.name, NEW.description);
+END;
+
+CREATE TRIGGER world_books_au
+AFTER UPDATE ON world_books BEGIN
+  INSERT INTO world_books_fts(world_books_fts, rowid, name, description)
+  VALUES('delete', OLD.id, OLD.name, OLD.description);
+  
+  INSERT INTO world_books_fts(rowid, name, description)
+  SELECT NEW.id, NEW.name, NEW.description
+  WHERE NEW.deleted = 0;
+END;
+
+CREATE TRIGGER world_books_ad
+AFTER DELETE ON world_books BEGIN
+  DELETE FROM world_books_fts WHERE rowid = OLD.id;
+END;
+
+-- Note: Soft deletion is handled by world_books_au trigger
+
+-- Create triggers for world_book_entries FTS5 maintenance
+CREATE TRIGGER world_book_entries_ai
+AFTER INSERT ON world_book_entries BEGIN
+  INSERT INTO world_book_entries_fts(rowid, keys, content)
+  VALUES(NEW.id, NEW.keys, NEW.content);
+END;
+
+CREATE TRIGGER world_book_entries_au
+AFTER UPDATE ON world_book_entries BEGIN
+  INSERT INTO world_book_entries_fts(world_book_entries_fts, rowid, keys, content)
+  VALUES('delete', OLD.id, OLD.keys, OLD.content);
+  
+  INSERT INTO world_book_entries_fts(rowid, keys, content)
+  VALUES(NEW.id, NEW.keys, NEW.content);
+END;
+
+CREATE TRIGGER world_book_entries_ad
+AFTER DELETE ON world_book_entries BEGIN
+  DELETE FROM world_book_entries_fts WHERE rowid = OLD.id;
+END;
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_world_books_name ON world_books(name);
+CREATE INDEX IF NOT EXISTS idx_world_books_enabled ON world_books(enabled);
+CREATE INDEX IF NOT EXISTS idx_world_books_deleted ON world_books(deleted);
+CREATE INDEX IF NOT EXISTS idx_world_book_entries_book ON world_book_entries(world_book_id);
+CREATE INDEX IF NOT EXISTS idx_world_book_entries_enabled ON world_book_entries(enabled);
+CREATE INDEX IF NOT EXISTS idx_world_book_entries_position ON world_book_entries(position);
+CREATE INDEX IF NOT EXISTS idx_conversation_world_books_conv ON conversation_world_books(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_world_books_book ON conversation_world_books(world_book_id);
+
+-- Sync triggers for world_books
+CREATE TRIGGER world_books_sync_create
+AFTER INSERT ON world_books BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_books', CAST(NEW.id AS TEXT), 'create', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'scan_depth', NEW.scan_depth, 'token_budget', NEW.token_budget,
+                     'recursive_scanning', NEW.recursive_scanning, 'enabled', NEW.enabled,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+CREATE TRIGGER world_books_sync_update
+AFTER UPDATE ON world_books
+WHEN OLD.deleted = NEW.deleted AND (
+     OLD.name IS NOT NEW.name OR
+     OLD.description IS NOT NEW.description OR
+     OLD.scan_depth IS NOT NEW.scan_depth OR
+     OLD.token_budget IS NOT NEW.token_budget OR
+     OLD.recursive_scanning IS NOT NEW.recursive_scanning OR
+     OLD.enabled IS NOT NEW.enabled OR
+     OLD.last_modified IS NOT NEW.last_modified OR
+     OLD.version IS NOT NEW.version)
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_books', CAST(NEW.id AS TEXT), 'update', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'scan_depth', NEW.scan_depth, 'token_budget', NEW.token_budget,
+                     'recursive_scanning', NEW.recursive_scanning, 'enabled', NEW.enabled,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+CREATE TRIGGER world_books_sync_delete
+AFTER UPDATE ON world_books
+WHEN OLD.deleted = 0 AND NEW.deleted = 1
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_books', CAST(NEW.id AS TEXT), 'delete', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'deleted', NEW.deleted, 'last_modified', NEW.last_modified,
+                     'version', NEW.version, 'client_id', NEW.client_id));
+END;
+
+CREATE TRIGGER world_books_sync_undelete
+AFTER UPDATE ON world_books
+WHEN OLD.deleted = 1 AND NEW.deleted = 0
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_books', CAST(NEW.id AS TEXT), 'update', NEW.last_modified, NEW.client_id, NEW.version,
+         json_object('id', NEW.id, 'name', NEW.name, 'description', NEW.description,
+                     'scan_depth', NEW.scan_depth, 'token_budget', NEW.token_budget,
+                     'recursive_scanning', NEW.recursive_scanning, 'enabled', NEW.enabled,
+                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified,
+                     'deleted', NEW.deleted, 'client_id', NEW.client_id, 'version', NEW.version));
+END;
+
+-- Sync triggers for world_book_entries
+CREATE TRIGGER world_book_entries_sync_create
+AFTER INSERT ON world_book_entries BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified, 
+         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
+         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
+                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
+                     'insertion_order', NEW.insertion_order, 'selective', NEW.selective,
+                     'secondary_keys', NEW.secondary_keys, 'case_sensitive', NEW.case_sensitive,
+                     'extensions', NEW.extensions, 'created_at', NEW.created_at,
+                     'last_modified', NEW.last_modified));
+END;
+
+CREATE TRIGGER world_book_entries_sync_update
+AFTER UPDATE ON world_book_entries
+WHEN OLD.keys IS NOT NEW.keys OR
+     OLD.content IS NOT NEW.content OR
+     OLD.enabled IS NOT NEW.enabled OR
+     OLD.position IS NOT NEW.position OR
+     OLD.insertion_order IS NOT NEW.insertion_order OR
+     OLD.selective IS NOT NEW.selective OR
+     OLD.secondary_keys IS NOT NEW.secondary_keys OR
+     OLD.case_sensitive IS NOT NEW.case_sensitive OR
+     OLD.extensions IS NOT NEW.extensions
+BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified,
+         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
+         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
+                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
+                     'insertion_order', NEW.insertion_order, 'selective', NEW.selective,
+                     'secondary_keys', NEW.secondary_keys, 'case_sensitive', NEW.case_sensitive,
+                     'extensions', NEW.extensions, 'created_at', NEW.created_at,
+                     'last_modified', NEW.last_modified));
+END;
+
+CREATE TRIGGER world_book_entries_sync_delete
+AFTER DELETE ON world_book_entries BEGIN
+  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
+  VALUES('world_book_entries', CAST(OLD.id AS TEXT), 'delete', datetime('now'),
+         (SELECT client_id FROM world_books WHERE id = OLD.world_book_id), 1,
+         json_object('id', OLD.id, 'world_book_id', OLD.world_book_id));
+END;
+
+-- Update last_modified triggers
+-- NOTE: This trigger is intentionally removed because last_modified is already
+-- set in the UPDATE statement from the application code, and having this trigger
+-- would cause an infinite loop of UPDATE operations
+
+-- NOTE: This trigger is intentionally removed because last_modified is already
+-- set in the UPDATE statement from the application code, and having this trigger
+-- would cause an infinite loop of UPDATE operations
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 9
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 8;
+"""
+
+    _MIGRATE_V9_TO_V10_SQL = """
+-- Migration from V9 to V10: Fix world books FTS triggers to prevent corruption
+
+-- Drop the problematic triggers
+DROP TRIGGER IF EXISTS world_books_au;
+DROP TRIGGER IF EXISTS world_book_entries_au;
+DROP TRIGGER IF EXISTS world_books_soft_delete_fts;
+
+-- Recreate world_books_au trigger using DELETE + INSERT pattern
+CREATE TRIGGER world_books_au
+AFTER UPDATE ON world_books BEGIN
+  INSERT INTO world_books_fts(world_books_fts, rowid, name, description)
+  VALUES('delete', OLD.id, OLD.name, OLD.description);
+  
+  INSERT INTO world_books_fts(rowid, name, description)
+  SELECT NEW.id, NEW.name, NEW.description
+  WHERE NEW.deleted = 0;
+END;
+
+-- Recreate world_book_entries_au trigger using DELETE + INSERT pattern
+CREATE TRIGGER world_book_entries_au
+AFTER UPDATE ON world_book_entries BEGIN
+  INSERT INTO world_book_entries_fts(world_book_entries_fts, rowid, keys, content)
+  VALUES('delete', OLD.id, OLD.keys, OLD.content);
+  
+  INSERT INTO world_book_entries_fts(rowid, keys, content)
+  VALUES(NEW.id, NEW.keys, NEW.content);
+END;
+
+-- Note: FTS rebuild removed - will be handled if needed
+
+-- Update schema version
+UPDATE db_schema_version
+   SET version = 10
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 9;
+"""
+
+    def __init__(self, db_path: Union[str, Path], client_id: str, 
+                 check_integrity_on_startup: bool = False):
         """
         Initializes the CharactersRAGDB instance.
 
@@ -921,6 +1415,7 @@ UPDATE db_schema_version
                      or ":memory:" for an in-memory database.
             client_id: A unique identifier for this client instance. Used for
                        tracking changes in the sync log and records. Must not be empty.
+            check_integrity_on_startup: Whether to run integrity check on startup.
 
         Raises:
             ValueError: If `client_id` is empty or None.
@@ -951,6 +1446,16 @@ UPDATE db_schema_version
         self._local = threading.local()
         try:
             self._initialize_schema()
+            
+            # Run integrity check if requested and not in-memory
+            if check_integrity_on_startup and not self.is_memory_db:
+                logger.info(f"Running startup integrity check for CharactersRAGDB")
+                if not self.check_integrity():
+                    logger.warning(f"Database integrity check failed for {self.db_path_str}. "
+                                  "Consider running repairs or restoring from backup.")
+                    # Note: We don't raise an exception here to allow the app to continue
+                    # with potentially degraded functionality.
+            
             logger.debug(f"CharactersRAGDB initialization completed successfully for {self.db_path_str}")
         except (CharactersRAGDBError, sqlite3.Error) as e:
             logger.critical(f"FATAL: DB Initialization failed for {self.db_path_str}: {e}", exc_info=True)
@@ -1128,6 +1633,30 @@ UPDATE db_schema_version
                     logger.warning(f"Error closing backup database connection: {e}")
             # Source connection (src_conn) is managed by the thread-local mechanism
             # and should not be closed here to allow continued use of the DB instance.
+    
+    def check_integrity(self) -> bool:
+        """
+        Check the integrity of the database.
+        
+        Returns:
+            bool: True if integrity check passes, False otherwise
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()
+            
+            is_ok = result and result[0] == "ok"
+            if is_ok:
+                logger.info(f"Database integrity check passed: {self.db_path_str}")
+            else:
+                logger.error(f"Database integrity check failed: {self.db_path_str}")
+            
+            return is_ok
+        except Exception as e:
+            logger.error(f"Failed to check database integrity: {e}")
+            return False
 
     # --- Query Execution ---
     def execute_query(self, query: str, params: Optional[Union[tuple, Dict[str, Any]]] = None, *, commit: bool = False,
@@ -1152,6 +1681,9 @@ UPDATE db_schema_version
             ConflictError: If an SQLite IntegrityError due to a "unique constraint failed" occurs.
             CharactersRAGDBError: For other SQLite errors or general query execution failures.
         """
+        start_time = time.time()
+        operation_type = "script" if script else "query"
+        
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
@@ -1166,8 +1698,32 @@ UPDATE db_schema_version
             if commit and not conn.in_transaction:  # Only commit if not already in a transaction handled by the context manager
                 conn.commit()
                 logger.debug("Committed directly by execute_query.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_query_duration", duration, labels={
+                "operation": operation_type,
+                "success": "true"
+            })
+            log_counter("chachanotes_db_query_count", labels={
+                "operation": operation_type,
+                "status": "success"
+            })
+            
             return cursor
         except sqlite3.IntegrityError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_query_duration", duration, labels={
+                "operation": operation_type,
+                "success": "false"
+            })
+            log_counter("chachanotes_db_query_count", labels={
+                "operation": operation_type,
+                "status": "error",
+                "error_type": "integrity_error"
+            })
+            
             logger.warning(f"Integrity constraint violation: {query[:300]}... Error: {e}")
             # Distinguish unique constraint from other integrity errors if possible
             if "unique constraint failed" in str(e).lower():
@@ -1175,6 +1731,18 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(
                 f"Database constraint violation: {e}") from e  # Broader for other integrity issues
         except sqlite3.Error as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_query_duration", duration, labels={
+                "operation": operation_type,
+                "success": "false"
+            })
+            log_counter("chachanotes_db_query_count", labels={
+                "operation": operation_type,
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Query execution failed: {query[:300]}... Error: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Query execution failed: {e}") from e
 
@@ -1332,6 +1900,181 @@ UPDATE db_schema_version
             logger.error(f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}", exc_info=True)
             raise SchemaError(f"Unexpected error migrating from V4 to V5 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v5_to_v6(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 5 to version 6.
+
+        This migration adds a feedback column to the messages table to support
+        thumbs up/down feedback with extensible string format.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 6 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V5 to V6 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V5_TO_V6_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V5→V6] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 6:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V5→V6] Migration version check failed. Expected 6, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V5→V6] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V5→V6] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V5 to V6 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V5 to V6 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v6_to_v7(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 6 to version 7.
+
+        This migration adds a role column to the messages table to support
+        OpenAI-compatible message types (user, assistant, system, tool).
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 7 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V6 to V7 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V6_TO_V7_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V6→V7] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 7:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V6→V7] Migration version check failed. Expected 7, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V6→V7] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V6→V7] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V6 to V7 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V6 to V7 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v8_to_v9(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 8 to version 9.
+
+        This migration adds world books/lorebooks support with tables for world books,
+        entries, and conversation associations.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 9 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V8 to V9 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V8_TO_V9_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V8→V9] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 9:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V8→V9] Migration version check failed. Expected 9, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V8→V9] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V8→V9] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V8 to V9 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V8→V9] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V8 to V9 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v9_to_v10(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 9 to version 10.
+
+        This migration fixes world books FTS triggers to prevent database corruption
+        by replacing UPDATE operations with DELETE + INSERT pattern.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 10 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V9 to V10 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V9_TO_V10_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V9→V10] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 10:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V9→V10] Migration version check failed. Expected 10, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V9→V10] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V9→V10] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V9 to V10 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V9 to V10 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
+        """
+        Migrates the database schema from version 7 to version 8.
+
+        This migration adds chat dictionary support with tables for dictionaries,
+        entries, and conversation associations.
+
+        Args:
+            conn: The active sqlite3.Connection. The operations are performed
+                  within the transaction context managed by the caller.
+
+        Raises:
+            SchemaError: If the migration fails or the version is not correctly
+                         updated to 8 in db_schema_version.
+        """
+        logger.info(f"Migrating schema from V7 to V8 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            # Execute the migration script
+            conn.executescript(self._MIGRATE_V7_TO_V8_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V7→V8] Migration script executed.")
+            
+            # Verify the migration was successful
+            final_version = self._get_db_version(conn)
+            if final_version != 8:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V7→V8] Migration version check failed. Expected 8, got: {final_version}")
+            
+            logger.info(f"[{self._SCHEMA_NAME} V7→V8] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.error(f"[{self._SCHEMA_NAME} V7→V8] Migration failed: {e}", exc_info=True)
+            raise SchemaError(f"Migration from V7 to V8 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.error(f"[{self._SCHEMA_NAME} V7→V8] Unexpected error during migration: {e}", exc_info=True)
+            raise SchemaError(f"Unexpected error migrating from V7 to V8 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _initialize_schema(self):
         """
         Initializes or migrates the database schema to `_CURRENT_SCHEMA_VERSION`.
@@ -1373,8 +2116,69 @@ UPDATE db_schema_version
                     current_db_version = self._get_db_version(conn) # Refresh version
                     if current_db_version == 4 and target_version > 4:
                         self._migrate_from_v4_to_v5(conn)
-                elif current_db_version == 4 and target_version == 5:
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 5 and target_version > 5:
+                        self._migrate_from_v5_to_v6(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 6 and target_version > 6:
+                        self._migrate_from_v6_to_v7(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 7 and target_version > 7:
+                        self._migrate_from_v7_to_v8(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 8 and target_version > 8:
+                        self._migrate_from_v8_to_v9(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 9 and target_version > 9:
+                        self._migrate_from_v9_to_v10(conn)
+                elif current_db_version == 4 and target_version >= 5:
                     self._migrate_from_v4_to_v5(conn)
+                    current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 5 and target_version > 5:
+                        self._migrate_from_v5_to_v6(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 6 and target_version > 6:
+                        self._migrate_from_v6_to_v7(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 7 and target_version > 7:
+                        self._migrate_from_v7_to_v8(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 8 and target_version > 8:
+                        self._migrate_from_v8_to_v9(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 9 and target_version > 9:
+                        self._migrate_from_v9_to_v10(conn)
+                elif current_db_version == 5 and target_version >= 6:
+                    self._migrate_from_v5_to_v6(conn)
+                    current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 6 and target_version > 6:
+                        self._migrate_from_v6_to_v7(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 7 and target_version > 7:
+                        self._migrate_from_v7_to_v8(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 8 and target_version > 8:
+                        self._migrate_from_v8_to_v9(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 9 and target_version > 9:
+                        self._migrate_from_v9_to_v10(conn)
+                elif current_db_version == 6 and target_version >= 7:
+                    self._migrate_from_v6_to_v7(conn)
+                    current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 7 and target_version > 7:
+                        self._migrate_from_v7_to_v8(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 8 and target_version > 8:
+                        self._migrate_from_v8_to_v9(conn)
+                        current_db_version = self._get_db_version(conn) # Refresh version
+                    if current_db_version == 9 and target_version > 9:
+                        self._migrate_from_v9_to_v10(conn)
+                elif current_db_version == 7 and target_version == 8:
+                    self._migrate_from_v7_to_v8(conn)
+                elif current_db_version == 8 and target_version == 9:
+                    self._migrate_from_v8_to_v9(conn)
+                elif current_db_version == 9 and target_version == 10:
+                    self._migrate_from_v9_to_v10(conn)
                 elif current_initial_version < target_version: # An older schema exists
                     # For versions older than 4, we don't have a migration path
                     raise SchemaError(
@@ -1605,19 +2409,57 @@ UPDATE db_schema_version
             card_data.get('creator'), card_data.get('character_version'), extensions_json,
             now, now, self.client_id, # created_at, last_modified, client_id
         )
+        
+        start_time = time.time()
         try:
             with self.transaction() as conn:
                 cursor = conn.execute(query, params)  # execute_query not needed due to conn from context
                 char_id = cursor.lastrowid
                 logger.info(f"Added character card '{card_data['name']}' with ID: {char_id}.")
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("chachanotes_db_operation_duration", duration, labels={
+                    "operation": "add_character_card",
+                    "status": "success"
+                })
+                log_counter("chachanotes_db_operation_count", labels={
+                    "operation": "add_character_card",
+                    "status": "success"
+                })
+                
                 return char_id
         except sqlite3.IntegrityError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_operation_duration", duration, labels={
+                "operation": "add_character_card",
+                "status": "error"
+            })
+            log_counter("chachanotes_db_operation_count", labels={
+                "operation": "add_character_card",
+                "status": "error",
+                "error_type": "integrity_error"
+            })
+            
             if "UNIQUE constraint failed: character_cards.name" in str(e):
                 logger.warning(f"Character card with name '{card_data['name']}' already exists.")
                 raise ConflictError(f"Character card with name '{card_data['name']}' already exists.",
                                     entity="character_cards", entity_id=card_data['name']) from e
             raise CharactersRAGDBError(f"Database integrity error adding character card: {e}") from e
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_operation_duration", duration, labels={
+                "operation": "add_character_card",
+                "status": "error"
+            })
+            log_counter("chachanotes_db_operation_count", labels={
+                "operation": "add_character_card",
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Database error adding character card '{card_data.get('name')}': {e}")
             raise
         return None # Should not be reached
@@ -1640,12 +2482,39 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during fetching.
         """
+        start_time = time.time()
         query = "SELECT * FROM character_cards WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (character_id,))
             row = cursor.fetchone()
-            return self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            result = self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "true" if result else "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "success",
+                "found": "true" if result else "false"
+            })
+            
+            return result
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Database error fetching character card ID {character_id}: {e}")
             raise
 
@@ -1667,12 +2536,39 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during fetching.
         """
+        start_time = time.time()
         query = "SELECT * FROM character_cards WHERE name = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (name,))
             row = cursor.fetchone()
-            return self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            result = self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "get_by_name",
+                "found": "true" if result else "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "get_by_name",
+                "status": "success",
+                "found": "true" if result else "false"
+            })
+            
+            return result
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "get_by_name",
+                "found": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "get_by_name",
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Database error fetching character card by name '{name}': {e}")
             raise
 
@@ -1694,12 +2590,39 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during listing.
         """
+        start_time = time.time()
         query = "SELECT * FROM character_cards WHERE deleted = 0 ORDER BY name LIMIT ? OFFSET ?"
         try:
             cursor = self.execute_query(query, (limit, offset))
             rows = cursor.fetchall()
-            return [self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS) for row in rows if row]
+            results = [self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS) for row in rows if row]
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "list",
+                "found": "true" if results else "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "list",
+                "status": "success",
+                "result_count": str(len(results))
+            })
+            
+            return results
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "list",
+                "found": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "list",
+                "status": "error",
+                "error_type": "database_error"
+            })
+            
             logger.error(f"Database error listing character cards: {e}")
             raise
 
@@ -1740,6 +2663,7 @@ UPDATE db_schema_version
                            'name' violates its unique constraint.
             CharactersRAGDBError: For other database-related errors.
         """
+        start_time = time.time()
         logger.debug(
             f"Starting update_character_card for ID {character_id}, expected_version {expected_version} (SINGLE UPDATE STRATEGY)")
 
@@ -1747,6 +2671,11 @@ UPDATE db_schema_version
         # No version check, no transaction, no version bump.
         if not card_data:
             logger.info(f"No data provided in card_data for character card update ID {character_id}. No-op.")
+            # Log metrics for no-op
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "update",
+                "status": "no_op"
+            })
             return True
 
         now = self._get_current_utc_timestamp_iso()
@@ -1838,20 +2767,63 @@ UPDATE db_schema_version
                 log_msg_fields_updated = f"Fields from payload processed: {fields_updated_log if fields_updated_log else 'None'}."
                 logger.info(
                     f"Updated character card ID {character_id} (SINGLE UPDATE) from client-expected version {expected_version} to final DB version {next_version_val}. {log_msg_fields_updated}")
+                
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                    "operation": "update",
+                    "fields_updated": str(len(fields_updated_log))
+                })
+                log_counter("chachanotes_db_character_card_operation_count", labels={
+                    "operation": "update",
+                    "status": "success",
+                    "fields_updated": str(len(fields_updated_log))
+                })
+                
                 return True
 
         except sqlite3.IntegrityError as e: # Catch unique constraint violation for name
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "update",
+                "fields_updated": "0"
+            })
+            
             if "UNIQUE constraint failed: character_cards.name" in str(e):
                 updated_name = card_data.get("name", "[name not in update_data]")
                 logger.warning(f"Update for character card ID {character_id} failed: name '{updated_name}' already exists.")
+                log_counter("chachanotes_db_character_card_operation_count", labels={
+                    "operation": "update",
+                    "status": "error",
+                    "error_type": "unique_constraint"
+                })
                 raise ConflictError(f"Cannot update character card ID {character_id}: name '{updated_name}' already exists.",
                                     entity="character_cards", entity_id=updated_name) from e # Use name as entity_id for this specific conflict
+            
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "update",
+                "status": "error",
+                "error_type": "integrity_error"
+            })
             logger.critical(f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Database integrity error during single update: {e}") from e
         except sqlite3.DatabaseError as e:
             logger.critical(f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}", exc_info=True)
             raise CharactersRAGDBError(f"Database error during single update: {e}") from e
         except ConflictError:  # Re-raise ConflictErrors from _get_current_db_version or manual checks
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "update",
+                "fields_updated": "0"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "update",
+                "status": "error",
+                "error_type": "version_conflict"
+            })
+            
             logger.warning(f"ConflictError during update_character_card for ID {character_id}.",
                            exc_info=False)  # exc_info=True if needed
             raise
@@ -1891,6 +2863,7 @@ UPDATE db_schema_version
                            or if a concurrent modification prevents the update.
             CharactersRAGDBError: For other database-related errors.
         """
+        start_time = time.time()
         now = self._get_current_utc_timestamp_iso()
         next_version_val = expected_version + 1
 
@@ -1943,14 +2916,81 @@ UPDATE db_schema_version
 
                 logger.info(
                     f"Soft-deleted character card ID {character_id} (was version {expected_version}), new version {next_version_val}.")
+                # Log success metrics
+                duration = time.time() - start_time
+                log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                    "operation": "soft_delete",
+                    "idempotent": "false"
+                })
+                log_counter("chachanotes_db_character_card_operation_count", labels={
+                    "operation": "soft_delete",
+                    "status": "success",
+                    "concurrent": "false"
+                })
                 return True
         except ConflictError:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "idempotent": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "error",
+                "error_type": "version_conflict"
+            })
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error from conn.execute
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_character_card_operation_duration", duration, labels={
+                "operation": "soft_delete",
+                "idempotent": "false"
+            })
+            log_counter("chachanotes_db_character_card_operation_count", labels={
+                "operation": "soft_delete",
+                "status": "error",
+                "error_type": "database_error"
+            })
             logger.error(
                 f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}",
                 exc_info=True)
             raise
+
+    def delete_character_card(self, character_id: int) -> bool:
+        """
+        Soft-deletes a character card with version checking.
+        
+        This method retrieves the current version of the character and performs
+        a soft delete. It's a convenience wrapper around soft_delete_character_card.
+        
+        Args:
+            character_id: The ID of the character card to delete.
+            
+        Returns:
+            True if the deletion was successful, False otherwise.
+            
+        Raises:
+            CharactersRAGDBError: For database-related errors.
+        """
+        try:
+            # Get current character to find its version
+            character = self.get_character_card_by_id(character_id)
+            if not character:
+                logger.warning(f"Character card ID {character_id} not found for deletion.")
+                return False
+                
+            # Use the current version for optimistic locking
+            current_version = character.get('version', 1)
+            return self.soft_delete_character_card(character_id, current_version)
+            
+        except ConflictError as e:
+            logger.error(f"Conflict error deleting character card ID {character_id}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error deleting character card ID {character_id}: {e}", exc_info=True)
+            raise CharactersRAGDBError(f"Error deleting character card: {e}") from e
 
     def search_character_cards(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -2019,6 +3059,7 @@ UPDATE db_schema_version
             ConflictError: If a conversation with the provided 'id' already exists.
             CharactersRAGDBError: For other database-related errors.
         """
+        start_time = time.time()
         conv_id = conv_data.get('id') or self._generate_uuid()
         root_id = conv_data.get('root_id') or conv_id  # If root_id not given, this is a new root.
 
@@ -2046,13 +3087,54 @@ UPDATE db_schema_version
             with self.transaction() as conn:
                 conn.execute(query, params)
             logger.info(f"Added conversation ID: {conv_id}.")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "add",
+                "has_title": "true" if conv_data.get('title') else "false"
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "add",
+                "status": "success",
+                "is_forked": "true" if conv_data.get('forked_from_message_id') else "false"
+            })
+            
             return conv_id
         except sqlite3.IntegrityError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "add",
+                "has_title": "false"
+            })
+            
             if "UNIQUE constraint failed: conversations.id" in str(e):
-                 raise ConflictError(f"Conversation with ID '{conv_id}' already exists.", entity="conversations", entity_id=conv_id) from e
+                log_counter("chachanotes_db_conversation_operation_count", labels={
+                    "operation": "add",
+                    "status": "error",
+                    "error_type": "unique_constraint"
+                })
+                raise ConflictError(f"Conversation with ID '{conv_id}' already exists.", entity="conversations", entity_id=conv_id) from e
             # Could also be FK violation for character_id, etc.
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "add",
+                "status": "error",
+                "error_type": "integrity_error"
+            })
             raise CharactersRAGDBError(f"Database integrity error adding conversation: {e}") from e
         except CharactersRAGDBError as e:
+            # Log error metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "add",
+                "has_title": "false"
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "add",
+                "status": "error",
+                "error_type": "database_error"
+            })
             logger.error(f"Database error adding conversation: {e}")
             raise
         return None # Should not be reached
@@ -2077,6 +3159,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database query errors.
         """
+        start_time = time.time()
         logger.debug(f"Listing all active conversations: limit={limit}, offset={offset}")
         query = """
                 SELECT id, \
@@ -2097,6 +3180,19 @@ UPDATE db_schema_version
             cursor = self.execute_query(query, (limit, offset))
             conversations = [dict(row) for row in cursor.fetchall()]
             logger.info(f"Found {len(conversations)} active conversations (limit {limit}, offset {offset}).")
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "list_active",
+                "result_count": str(len(conversations))
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "list_active",
+                "status": "success",
+                "result_count": str(len(conversations))
+            })
+            
             return conversations
         except CharactersRAGDBError as e:
             logger.error(f"Database error listing all active conversations: {e}", exc_info=True)
@@ -2121,11 +3217,26 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors during fetching.
         """
+        start_time = time.time()
         query = "SELECT * FROM conversations WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (conversation_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            result = dict(row) if row else None
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "get_by_id",
+                "found": "true" if result else "false"
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "get_by_id",
+                "status": "success",
+                "found": "true" if result else "false"
+            })
+            
+            return result
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching conversation ID {conversation_id}: {e}")
             raise
@@ -2148,10 +3259,25 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
+        start_time = time.time()
         query = "SELECT * FROM conversations WHERE character_id = ? AND deleted = 0 ORDER BY last_modified DESC LIMIT ? OFFSET ?"
         try:
             cursor = self.execute_query(query, (character_id, limit, offset))
-            return [dict(row) for row in cursor.fetchall()]
+            results = [dict(row) for row in cursor.fetchall()]
+            
+            # Log metrics
+            duration = time.time() - start_time
+            log_histogram("chachanotes_db_conversation_operation_duration", duration, labels={
+                "operation": "get_for_character",
+                "result_count": str(len(results))
+            })
+            log_counter("chachanotes_db_conversation_operation_count", labels={
+                "operation": "get_for_character",
+                "status": "success",
+                "result_count": str(len(results))
+            })
+            
+            return results
         except CharactersRAGDBError as e:
             logger.error(f"Database error fetching conversations for character ID {character_id}: {e}")
             raise
@@ -2507,7 +3633,8 @@ UPDATE db_schema_version
                       Required: 'conversation_id', 'sender'. At least one of 'content' or 'image_data'.
                       Optional: 'id', 'parent_message_id', 'content' (str),
                                 'image_data' (bytes), 'image_mime_type' (str, required if image_data present),
-                                'timestamp', 'ranking', 'client_id'.
+                                'timestamp', 'ranking', 'client_id', 'role' (str).
+                      If 'role' is not provided, it will be auto-determined from 'sender'.
 
         Returns:
             The string UUID of the newly added message.
@@ -2537,17 +3664,33 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
         timestamp = msg_data.get('timestamp') or now
 
+        # Determine role from sender or use provided role
+        role = msg_data.get('role')
+        if not role:
+            # Auto-determine role from sender
+            sender_lower = msg_data['sender'].lower()
+            if sender_lower == 'user':
+                role = 'user'
+            elif sender_lower == 'system':
+                role = 'system'
+            elif sender_lower in ('assistant', 'ai', 'bot'):
+                role = 'assistant'
+            elif sender_lower == 'tool':
+                role = 'tool'
+            else:
+                role = 'assistant'  # Default for character names
+
         query = """
                 INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
                                       image_data, image_mime_type,
-                                      timestamp, ranking, last_modified, client_id, version, deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+                                      timestamp, ranking, last_modified, client_id, version, deleted, role)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
                 """
         params = (
             msg_id, msg_data['conversation_id'], msg_data.get('parent_message_id'),
             msg_data['sender'], msg_data.get('content', ''),  # Default to empty string if no text content
             msg_data.get('image_data'), msg_data.get('image_mime_type'),
-            timestamp, msg_data.get('ranking'), now, client_id
+            timestamp, msg_data.get('ranking'), now, client_id, role
         )
         try:
             with self.transaction():
@@ -2587,7 +3730,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted FROM messages WHERE id = ? AND deleted = 0"
+        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback FROM messages WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (message_id,))
             row = cursor.fetchone()
@@ -2610,7 +3753,7 @@ UPDATE db_schema_version
         query = f"""
             SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
-                   m.last_modified, m.version, m.client_id, m.deleted 
+                   m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role 
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ? 
@@ -2651,7 +3794,7 @@ UPDATE db_schema_version
             WITH ranked_messages AS (
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                        m.image_data, m.image_mime_type, m.timestamp, m.ranking, 
-                       m.last_modified, m.version, m.client_id, m.deleted,
+                       m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                        ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
                 FROM messages m
                 JOIN conversations c ON m.conversation_id = c.id
@@ -2726,7 +3869,7 @@ UPDATE db_schema_version
         fields_to_update_sql = []
         params_for_set_clause = []
 
-        allowed_to_update = ['content', 'ranking', 'parent_message_id', 'image_data', 'image_mime_type']
+        allowed_to_update = ['content', 'ranking', 'parent_message_id', 'image_data', 'image_mime_type', 'feedback']
 
         # Special handling for clearing image
         if 'image_data' in update_data and update_data['image_data'] is None:
@@ -2877,6 +4020,38 @@ UPDATE db_schema_version
             logger.error(f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}",
                          exc_info=True)
             raise
+
+    def update_message_feedback(self, message_id: str, feedback: str, expected_version: int) -> bool:
+        """
+        Updates the feedback for a message using optimistic locking.
+
+        This is a specialized method for updating only the feedback field of a message.
+        Uses a string-based format for extensibility: "1;" for thumbs up, "2;" for thumbs down.
+        Future versions may extend this to include comments like "1;Great response!".
+
+        Args:
+            message_id: The UUID of the message to update.
+            feedback: The feedback string. Must match pattern "^[12];.*$" or be None to clear.
+            expected_version: The client's expected version of the record.
+
+        Returns:
+            True if the update was successful.
+
+        Raises:
+            InputError: If feedback format is invalid.
+            ConflictError: If the message is not found, is soft-deleted, or if version mismatch.
+            CharactersRAGDBError: For database errors.
+        """
+        import re
+        
+        # Validate feedback format
+        if feedback is not None:
+            if not re.match(r'^[12];', feedback):
+                raise InputError(f"Invalid feedback format: '{feedback}'. Must start with '1;' or '2;'")
+        
+        # Use the existing update_message method with feedback in update_data
+        update_data = {'feedback': feedback}
+        return self.update_message(message_id, update_data, expected_version)
 
     def search_messages_by_content(self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -3993,6 +5168,27 @@ UPDATE db_schema_version
         except CharactersRAGDBError as e:
             logger.error(f"Error fetching latest sync log change_id: {e}")
             raise
+    
+    def close(self) -> None:
+        """Alias for close_connection() to maintain consistency with BaseDB."""
+        self.close_connection()
+    
+    def vacuum(self) -> None:
+        """Vacuum the database to reclaim unused space and optimize performance."""
+        if self.is_memory_db:
+            logger.debug("Skipping vacuum for in-memory database")
+            return
+            
+        try:
+            conn = self.get_connection()
+            # Vacuum must be run outside of a transaction
+            conn.isolation_level = None
+            conn.execute("VACUUM")
+            conn.isolation_level = ""  # Restore default
+            logger.info(f"Successfully vacuumed database: {self.db_path_str}")
+        except Exception as e:
+            logger.error(f"Failed to vacuum database: {e}")
+            raise CharactersRAGDBError(f"Vacuum failed: {e}") from e
 
 
 # --- Transaction Context Manager Class (Helper for `with db.transaction():`) ---

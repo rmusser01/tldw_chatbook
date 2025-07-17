@@ -1,0 +1,52 @@
+# Baking Algorithm splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "pulse"
+style = "rgb(255,220,180) on rgb(60,40,30)"
+
+# Pulse effect parameters
+dough_rise = true
+gluten_development = 0.85
+crust_browning = 0.7
+
+content = """
+┌──────────────── BAKERY.AI v3.14159 ────────────────┐
+│                                                     │
+│     🥖 SOURDOUGH STARTER PROCESS 🥖                 │
+│                                                     │
+│  while (dough.hydration < 0.75) {                  │
+│      dough.add(water, flour);                      │
+│      dough.autolyse(30.minutes);                   │
+│  }                                                  │
+│                                                     │
+│  for (let fold = 0; fold < 6; fold++) {           │
+│      dough.stretch_and_fold();                     │
+│      await sleep(30.minutes);                      │
+│  }                                                  │
+│                                                     │
+│  ┌─────────────────────────────────────┐          │
+│  │ FERMENTATION: ████████████░░░░ 72%  │          │
+│  │ GLUTEN:       ██████████████░░ 85%  │          │
+│  │ PROOF:        ████████░░░░░░░░ 45%  │          │
+│  │ OVEN SPRING:  ░░░░░░░░░░░░░░░░  0%  │          │
+│  └─────────────────────────────────────┘          │
+│                                                     │
+│  Temperature: 475°F | Steam: ON | Stone: HOT       │
+│  Crust Status: GOLDEN | Crumb: OPEN               │
+│                                                     │
+│         TLDW: Too Long; Didn't Wheat              │
+└─────────────────────────────────────────────────────┘
+"""
+
+# Progress messages
+progress_messages = [
+    "Feeding sourdough starter culture...",
+    "Developing gluten network...",
+    "Calculating optimal bulk fermentation...",
+    "Scoring with Lame.exe...",
+    "Achieving oven spring exception..."
+]
+
+# Additional styling
+css_classes = ["artisan-bread", "golden-crust"]

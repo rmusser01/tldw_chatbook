@@ -106,20 +106,9 @@ def get_user_data_dir() -> Path:
     Returns:
         Path to the user data directory
     """
-    # Try to use XDG_DATA_HOME on Linux/Mac
-    if os.name != 'nt':  # Unix-like systems
-        xdg_data_home = os.environ.get('XDG_DATA_HOME')
-        if xdg_data_home:
-            data_dir = Path(xdg_data_home) / 'tldw_cli'
-        else:
-            data_dir = Path.home() / '.local' / 'share' / 'tldw_cli'
-    else:  # Windows
-        data_dir = Path(os.environ.get('APPDATA', Path.home())) / 'tldw_cli'
-    
-    # Create directory if it doesn't exist
-    data_dir.mkdir(parents=True, exist_ok=True)
-    
-    return data_dir
+    # Import here to avoid circular imports
+    from ..config import get_user_data_dir as get_user_data_dir_from_config
+    return get_user_data_dir_from_config()
 
 
 # --- Example Usage within Utils.py (for testing) ---

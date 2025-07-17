@@ -1,0 +1,45 @@
+# DAW Loading splash card
+# Place this file in ~/.config/tldw_cli/splash_cards/
+
+type = "animated"
+effect = "loading_bar"
+style = "cyan on rgb(20,20,30)"
+
+# Loading bar effect parameters
+tracks_loading = 16
+plugins_count = 47
+sample_rate = 48000
+
+content = """
+╔═══════════════════════════════════════════════════╗
+║           LOGIC PRO XI - LOADING PROJECT          ║
+╠═══════════════════════════════════════════════════╣
+║                                                   ║
+║  Track 01: Drums       [████████████] 100%       ║
+║  Track 02: Bass        [████████░░░░]  75%       ║
+║  Track 03: Lead Synth  [██████░░░░░░]  50%       ║
+║  Track 04: Vocals      [████░░░░░░░░]  25%       ║
+║  Track 05: FX Bus      [██░░░░░░░░░░]  10%       ║
+║                                                   ║
+║  Loading Plugins:                                 ║
+║  ├─ Compressor VST     ✓                         ║
+║  ├─ EQ Eight          ✓                         ║
+║  ├─ Reverb Space      ⟳ Loading...              ║
+║  └─ Auto-Tune Pro     ⏳ Waiting...              ║
+║                                                   ║
+║  Sample Rate: 48kHz | Buffer: 256 | CPU: 42%    ║
+║                                                   ║
+╚═══════════════════════════════════════════════════╝
+"""
+
+# Progress messages
+progress_messages = [
+    "Loading 2GB sample library...",
+    "Initializing ASIO drivers...",
+    "Scanning for VST plugins...",
+    "Building waveform cache...",
+    "Preparing automation lanes..."
+]
+
+# Additional styling
+css_classes = ["daw-interface", "pro-audio"]

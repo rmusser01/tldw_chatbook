@@ -1,0 +1,61 @@
+/* ========================================
+ * LAYOUT: Containers
+ * ======================================== 
+ * Section containers, subsections, and content areas
+ * ======================================== */
+
+/* TabbedContent height fixes */
+#config-tabs {
+    height: 100%;
+    width: 100%;
+}
+
+#config-tabs TabPane {
+    height: 100%;
+    width: 100%;
+    padding: 1;
+}
+
+/* Container for the HorizontalScroll, this takes the original #tabs styling for docking */
+#tabs-outer-container {
+    dock: top;
+    height: 3; /* Or your desired tab bar height */
+    background: $background; /* Or your tab bar background */
+    padding: 0 1; /* Padding for the overall bar */
+    width: 100%;
+}
+
+/* The HorizontalScroll itself, which will contain the buttons */
+#tabs {
+    width: 100%;
+    height: 100%; /* Fill the outer container's height */
+    overflow-x: auto !important; /* Ensure horizontal scrolling is enabled */
+    /* overflow-y: hidden; /* Usually not needed for a single row of tabs */
+}
+
+#tabs Button {
+    width: auto;         /* Let button width be determined by content + padding */
+    min-width: 10;       /* Minimum width to prevent squishing too much */
+    height: 100%;        /* Fill the height of the scrollable area */
+    border: none; /* Your existing style */
+    background: $panel;  /* Your existing style */
+    color: $text-muted;  /* Your existing style */
+    padding: 0 2;        /* Add horizontal padding to buttons */
+    margin: 0 1 0 0;     /* Small right margin between buttons */
+}
+
+#tabs Button:last-of-type { /* No margin for the last button */
+    margin-right: 0;
+}
+
+#tabs Button:hover {
+    background: $panel-lighten-1; /* Your existing style */
+    color: $text;                 /* Your existing style */
+}
+
+#tabs Button.-active {
+    background: $accent;          /* Your existing style */
+    color: $text;                 /* Your existing style */
+    text-style: bold;             /* Your existing style */
+    /* border: none; /* Already set */
+}
