@@ -8,8 +8,16 @@ import os
 from typing import Optional, Dict, Any, Union, BinaryIO
 from pathlib import Path
 import tempfile
-import numpy as np
 from loguru import logger
+
+# Optional numpy import
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
+    logger.warning("numpy not available. Some audio processing features will be limited.")
 
 # Third-party imports
 try:
@@ -79,7 +87,7 @@ class AudioService:
             raise ValueError(f"Unsupported target format: {target_format}")
         
         # Handle numpy array input (raw PCM)
-        if isinstance(audio_data, np.ndarray):
+        if NUMPY_AVAILABLE and isinstance(audio_data, np.ndarray):
             if source_format is None:
                 source_format = "pcm"
             if sample_rate is None:
@@ -109,8 +117,11 @@ class AudioService:
                     "Please install pydub or soundfile for audio conversion."
                 )
     
-    def _numpy_to_bytes(self, audio_array: np.ndarray) -> bytes:
+    def _numpy_to_bytes(self, audio_array: 'np.ndarray') -> bytes:
         """Convert numpy array to bytes (16-bit PCM)"""
+        if not NUMPY_AVAILABLE:
+            raise RuntimeError("numpy is required for array conversion but is not installed")
+        
         # Ensure array is in the correct format
         if audio_array.dtype != np.int16:
             # Assume float32 in range [-1, 1]
@@ -205,6 +216,8 @@ class AudioService:
         try:
             # Read audio data
             if source_format == "pcm":
+                if not NUMPY_AVAILABLE:
+                    raise RuntimeError("numpy is required for PCM conversion but is not installed")
                 # Convert PCM bytes to numpy array
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
                 audio_float = audio_array.astype(np.float32) / 32767.0
