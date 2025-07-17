@@ -2919,6 +2919,10 @@ class IngestWindow(Container):
             diarize = self.query_one("#local-diarize-audio", Checkbox).value
             timestamps = self.query_one("#local-timestamps-audio", Checkbox).value
             
+            # Get time range options
+            start_time = self.query_one("#local-start-time-audio", Input).value.strip()
+            end_time = self.query_one("#local-end-time-audio", Input).value.strip()
+            
             # Get processing options
             perform_analysis = self.query_one("#local-perform-analysis-audio", Checkbox).value
             custom_prompt = self.query_one("#local-custom-prompt-audio", TextArea).text.strip()
@@ -3013,6 +3017,8 @@ class IngestWindow(Container):
                 diarize=diarize,
                 vad_use=vad_filter,
                 timestamp_option=timestamps,
+                start_time=start_time if start_time else None,
+                end_time=end_time if end_time else None,
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,

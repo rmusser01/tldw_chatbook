@@ -301,6 +301,8 @@ class LocalVideoProcessor:
         self,
         inputs: List[str],
         download_video_flag: bool = False,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -309,12 +311,14 @@ class LocalVideoProcessor:
         Args:
             inputs: List of video URLs or local file paths
             download_video_flag: If True, keep video file; if False, extract audio only
+            start_time: Optional start time for video extraction (HH:MM:SS or seconds)
+            end_time: Optional end time for video extraction (HH:MM:SS or seconds)
             **kwargs: Additional arguments passed to audio processing
             
         Returns:
             Dict with processing results
         """
-        start_time = time.time()
+        processing_start_time = time.time()
         total_inputs = len(inputs)
         log_counter("video_processing_batch_start", labels={
             "total_inputs": str(total_inputs),
@@ -331,6 +335,8 @@ class LocalVideoProcessor:
                         input_item=input_item,
                         temp_dir=temp_dir,
                         download_video_flag=download_video_flag,
+                        start_time=start_time,
+                        end_time=end_time,
                         **kwargs
                     )
                     results.append(result)
@@ -351,7 +357,7 @@ class LocalVideoProcessor:
         errors_count = sum(1 for r in results if r.get("status") == "Error")
         
         # Log batch completion metrics
-        duration = time.time() - start_time
+        duration = time.time() - processing_start_time
         log_histogram("video_processing_batch_duration", duration, labels={
             "total_inputs": str(total_inputs),
             "success_count": str(processed_count)
@@ -480,7 +486,12 @@ class LocalVideoProcessor:
             else:
                 # Extract audio from video
                 logger.info(f"Extracting audio from video: {processing_path}")
-                audio_path = self._extract_audio_from_video(processing_path, temp_dir)
+                audio_path = self._extract_audio_from_video(
+                    processing_path, 
+                    temp_dir,
+                    kwargs.get('start_time'),
+                    kwargs.get('end_time')
+                )
             
             # Process audio using audio processor
             logger.info(f"Starting audio processing for extracted audio: {audio_path}")
@@ -597,9 +608,11 @@ class LocalVideoProcessor:
         
         return result
     
-    def _extract_audio_from_video(self, video_path: str, output_dir: str) -> str:
+    def _extract_audio_from_video(self, video_path: str, output_dir: str, 
+                                  start_time: Optional[str] = None, 
+                                  end_time: Optional[str] = None) -> str:
         """Extract audio track from video file."""
-        start_time = time.time()
+        extraction_start_time = time.time()
         log_counter("video_processing_audio_extraction_attempt")
         
         # Find ffmpeg
@@ -607,19 +620,39 @@ class LocalVideoProcessor:
         
         # Output path
         base_name = Path(video_path).stem
-        audio_path = os.path.join(output_dir, f"{base_name}_audio.mp3")
+        if start_time or end_time:
+            suffix = f"_trim_{start_time or '0'}_{end_time or 'end'}".replace(':', '-')
+            audio_path = os.path.join(output_dir, f"{base_name}_audio{suffix}.mp3")
+        else:
+            audio_path = os.path.join(output_dir, f"{base_name}_audio.mp3")
         
         # Extract audio as MP3
-        command = [
-            ffmpeg_cmd,
-            '-i', video_path,
+        command = [ffmpeg_cmd]
+        
+        # Add start time if specified (before input file for faster seeking)
+        if start_time:
+            command.extend(['-ss', start_time])
+        
+        command.extend(['-i', video_path])
+        
+        # Add duration if end time is specified
+        if end_time:
+            if start_time:
+                # Use -to for absolute end time when start time is also specified
+                command.extend(['-to', end_time])
+            else:
+                # Use -t for duration from beginning
+                command.extend(['-t', end_time])
+        
+        # Audio extraction options
+        command.extend([
             '-vn',  # No video
             '-acodec', 'libmp3lame',
             '-ab', '192k',  # Audio bitrate
             '-ar', '44100',  # Sample rate
             '-y',  # Overwrite
             audio_path
-        ]
+        ])
         
         try:
             result = subprocess.run(

@@ -124,6 +124,15 @@ class IngestLocalAudioWindow(Vertical):
                 id="local-timestamps-audio"
             )
             
+            # Time range options
+            with Horizontal(classes="ingest-form-row"):
+                with Vertical(classes="ingest-form-col"):
+                    yield Label("Start Time (HH:MM:SS or seconds):")
+                    yield Input(id="local-start-time-audio", placeholder="Optional")
+                with Vertical(classes="ingest-form-col"):
+                    yield Label("End Time (HH:MM:SS or seconds):")
+                    yield Input(id="local-end-time-audio", placeholder="Optional")
+            
             # --- Analysis Options ---
             yield Label("Custom Prompt (for analysis):")
             yield TextArea(id="local-custom-prompt-audio", classes="ingest-textarea-medium")

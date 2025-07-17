@@ -4029,6 +4029,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # --- Chat Tab Media Search Input ---
         # elif input_id == "chat-media-search-input" and current_active_tab == TAB_CHAT:
         #     await handle_chat_media_search_input_changed(self, event.input)
+        # --- Media Tab Search Inputs ---
+        elif input_id and input_id.startswith("media-search-input-") and current_active_tab == TAB_MEDIA:
+            await media_events.handle_media_search_input_changed(self, input_id, event.value)
+        elif input_id and input_id.startswith("media-keyword-filter-") and current_active_tab == TAB_MEDIA:
+            # Handle keyword filter changes with debouncing
+            await media_events.handle_media_search_input_changed(self, input_id.replace("media-keyword-filter-", "media-search-input-"), event.value)
         # Add more specific input handlers if needed, e.g., for title inputs if they need live validation/reaction
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:

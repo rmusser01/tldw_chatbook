@@ -1395,7 +1395,9 @@ class TranscriptionService:
                         'fp32': mx.float32,
                         'fp16': mx.float16,
                         'bf16': mx.bfloat16,
-                        'bfloat16': mx.bfloat16
+                        'bfloat16': mx.bfloat16,
+                        'float32': mx.float32,
+                        'float16': mx.float16
                     }
                     dtype = dtype_map.get(precision, mx.bfloat16)
                     
@@ -1419,7 +1421,10 @@ class TranscriptionService:
         try:
             # Report progress
             if progress_callback:
-                progress_callback(0, "Starting transcription with Parakeet MLX...", None)
+                try:
+                    progress_callback(0, "Starting transcription with Parakeet MLX...", None)
+                except Exception as e:
+                    logger.warning(f"Progress callback error (ignored): {e}")
             
             logger.info(f"Starting Parakeet MLX transcription")
             logger.info(f"  Audio file: {audio_path}")
@@ -1428,6 +1433,7 @@ class TranscriptionService:
             
             # Check audio duration if soundfile is available
             audio_duration = None
+            audio_sample_rate = None
             chunk_duration = kwargs.get('chunk_duration', self._parakeet_mlx_config['chunk_duration'])
             overlap_duration = kwargs.get('overlap_duration', self._parakeet_mlx_config['overlap_duration'])
             auto_chunk_threshold = kwargs.get('auto_chunk_threshold', self._parakeet_mlx_config['auto_chunk_threshold'])
@@ -1437,12 +1443,14 @@ class TranscriptionService:
                     import soundfile as sf
                     audio_info = sf.info(audio_path)
                     audio_duration = audio_info.duration
+                    audio_sample_rate = audio_info.samplerate
                     try:
                         logger.info(f"  Audio duration: {audio_duration:.2f} seconds")
                     except (TypeError, ValueError):
                         logger.info(f"  Audio duration: {audio_duration} seconds")
+                    logger.info(f"  Sample rate: {audio_sample_rate} Hz")
                 except Exception as e:
-                    logger.warning(f"Could not get audio duration: {e}")
+                    logger.warning(f"Could not get audio info: {e}")
             
             transcribe_audio_start = time.time()
             
@@ -1506,15 +1514,19 @@ class TranscriptionService:
                     }
                     segments.append(segment_dict)
             else:
-                # No sentence-level timing, create single segment
-                segments = [{
-                    "start": 0.0,
-                    "end": 0.0,
-                    "text": text,
-                    "Time_Start": 0.0,
-                    "Time_End": 0.0,
-                    "Text": text
-                }]
+                # No sentence-level timing, create single segment only if there's text
+                if text:
+                    segments = [{
+                        "start": 0.0,
+                        "end": 0.0,
+                        "text": text,
+                        "Time_Start": 0.0,
+                        "Time_End": 0.0,
+                        "Text": text
+                    }]
+                else:
+                    # Empty audio/text should have no segments
+                    segments = []
             
             # Create response
             total_time = time.time() - transcribe_start
@@ -1549,8 +1561,18 @@ class TranscriptionService:
                 "provider": "parakeet-mlx",
                 "model": model,
                 "precision": precision,
-                "attention_type": attention_type
+                "attention_type": attention_type,
+                "chunk_size": chunk_duration,
+                "overlap": overlap_duration
             }
+            
+            # Add sample rate info if available
+            if audio_sample_rate and audio_sample_rate != 16000:
+                result_dict["sample_rate"] = f'{audio_sample_rate} -> 16000'
+            elif audio_sample_rate:
+                result_dict["sample_rate"] = str(audio_sample_rate)
+            else:
+                result_dict["sample_rate"] = '16000'
             
             # Add duration if available
             if hasattr(result, 'duration'):
@@ -1558,15 +1580,18 @@ class TranscriptionService:
             
             # Final progress update
             if progress_callback:
-                progress_callback(
-                    100,
-                    f"Transcription complete: {len(segments)} segments, {len(text) if text else 0} characters",
-                    {
-                        "total_segments": len(segments),
-                        "total_chars": len(text) if text else 0,
-                        "model": model
-                    }
-                )
+                try:
+                    progress_callback(
+                        100,
+                        f"Transcription complete: {len(segments)} segments, {len(text) if text else 0} characters",
+                        {
+                            "total_segments": len(segments),
+                            "total_chars": len(text) if text else 0,
+                            "model": model
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Progress callback error (ignored): {e}")
             
             return result_dict
             
@@ -1769,7 +1794,9 @@ class TranscriptionService:
                         'fp32': mx.float32,
                         'fp16': mx.float16,
                         'bf16': mx.bfloat16,
-                        'bfloat16': mx.bfloat16
+                        'bfloat16': mx.bfloat16,
+                        'float32': mx.float32,
+                        'float16': mx.float16
                     }
                     dtype = dtype_map.get(precision, mx.bfloat16)
                     

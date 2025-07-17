@@ -149,6 +149,13 @@ class IngestTldwApiAudioWindow(Vertical):
             yield Checkbox("Enable Speaker Diarization", False, id="tldw-api-audio-diarize-audio")
             yield Checkbox("Include Timestamps in Transcription", True, id="tldw-api-audio-timestamp-audio")
             yield Checkbox("Enable VAD (Voice Activity Detection)", False, id="tldw-api-audio-vad-audio")
+            with Horizontal(classes="ingest-form-row"):
+                with Vertical(classes="ingest-form-col"):
+                    yield Label("Start Time (HH:MM:SS or secs):")
+                    yield Input(id="tldw-api-audio-start-time-audio", placeholder="Optional")
+                with Vertical(classes="ingest-form-col"):
+                    yield Label("End Time (HH:MM:SS or secs):")
+                    yield Input(id="tldw-api-audio-end-time-audio", placeholder="Optional")
             
             yield Static("Local Database Options", classes="sidebar-title")
             yield Checkbox("Overwrite if media exists in local DB", False, id="tldw-api-overwrite-db-audio")

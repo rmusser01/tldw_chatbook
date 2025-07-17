@@ -227,10 +227,11 @@ class TestMLXParakeetUnit:
             )
             
             # Model should be reloaded
-            mock_pretrained.assert_called_once_with(
-                'mlx-community/parakeet-tdt-1.1b',
-                dtype='float16'
-            )
+            args, kwargs = mock_pretrained.call_args
+            assert args[0] == 'mlx-community/parakeet-tdt-1.1b'
+            # Default precision is bf16, so check for bfloat16
+            assert hasattr(kwargs['dtype'], '__module__')
+            assert 'bfloat16' in str(kwargs['dtype'])
     
     def test_precision_options(self, transcription_service, mock_parakeet_model, sample_audio_file):
         """Test different precision options."""
@@ -248,10 +249,12 @@ class TestMLXParakeetUnit:
                 precision='float32'
             )
             
-            mock_pretrained.assert_called_with(
-                'mlx-community/parakeet-tdt-0.6b-v2',
-                dtype='float32'
-            )
+            # Check that it was called with the correct model
+            args, kwargs = mock_pretrained.call_args
+            assert args[0] == 'mlx-community/parakeet-tdt-0.6b-v2'
+            # Check that dtype is an mlx dtype object (not string)
+            assert hasattr(kwargs['dtype'], '__module__')
+            assert 'float32' in str(kwargs['dtype'])
             
             # Reset and test with bfloat16 precision
             mock_pretrained.reset_mock()
@@ -261,10 +264,11 @@ class TestMLXParakeetUnit:
                 precision='bfloat16'
             )
             
-            mock_pretrained.assert_called_with(
-                'mlx-community/parakeet-tdt-0.6b-v2',
-                dtype='bfloat16'
-            )
+            # Check the second call
+            args, kwargs = mock_pretrained.call_args
+            assert args[0] == 'mlx-community/parakeet-tdt-0.6b-v2'
+            assert hasattr(kwargs['dtype'], '__module__')
+            assert 'bfloat16' in str(kwargs['dtype'])
     
     def test_attention_type_configuration(self, transcription_service, mock_parakeet_model, sample_audio_file):
         """Test different attention type configurations."""
@@ -300,7 +304,7 @@ class TestMLXParakeetUnit:
             mock_sf.info.return_value = MockAudioInfo(duration=duration)
             
             # Mock multiple transcriptions for chunks
-            mock_model.transcribe_audio.side_effect = [
+            mock_model.transcribe.side_effect = [
                 f'Chunk {i} transcription.' for i in range(10)
             ]
             
@@ -353,7 +357,7 @@ class TestMLXParakeetUnit:
             mock_sf.info.return_value = MockAudioInfo(duration=2.0)
             
             # Mock multiple chunk transcriptions
-            mock_model.transcribe_audio.side_effect = ['First part.', 'Second part.']
+            mock_model.transcribe.side_effect = ['First part.', 'Second part.']
             
             result = transcription_service._transcribe_with_parakeet_mlx(
                 audio_path=sample_audio_file,
@@ -422,7 +426,7 @@ class TestMLXParakeetUnit:
     def test_error_handling_transcription(self, transcription_service, mock_parakeet_model, sample_audio_file):
         """Test error handling during transcription."""
         mock_pretrained, mock_model = mock_parakeet_model
-        mock_model.transcribe_audio.side_effect = Exception("Transcription failed")
+        mock_model.transcribe.side_effect = Exception("Transcription failed")
         
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf, \
              patch('tldw_chatbook.Local_Ingestion.transcription_service.time.time', return_value=1000.0):

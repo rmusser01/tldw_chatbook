@@ -8,6 +8,7 @@ Adapted from server implementation for local use.
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import time
 import uuid
@@ -128,7 +129,9 @@ class LocalAudioProcessor:
         except Exception as e:
             raise AudioDownloadError(f"Unexpected error: {str(e)}") from e
     
-    def download_youtube_audio(self, url: str, output_dir: str) -> Optional[str]:
+    def download_youtube_audio(self, url: str, output_dir: str, 
+                              start_time: Optional[str] = None, 
+                              end_time: Optional[str] = None) -> Optional[str]:
         """
         Download audio from YouTube using yt-dlp.
         
@@ -153,6 +156,22 @@ class LocalAudioProcessor:
                 'audio_format': 'mp3',
                 'audio_quality': 192,
             }
+            
+            # Add time range options if specified
+            if start_time or end_time:
+                # yt-dlp uses postprocessor args for time ranges
+                postprocessor_args = []
+                if start_time:
+                    postprocessor_args.extend(['-ss', start_time])
+                if end_time:
+                    if start_time:
+                        postprocessor_args.extend(['-to', end_time])
+                    else:
+                        postprocessor_args.extend(['-t', end_time])
+                
+                ydl_opts['postprocessor_args'] = {
+                    'ffmpeg': postprocessor_args
+                }
             
             # Add ffmpeg location if specified in config
             ffmpeg_path = get_cli_setting('media_processing.ffmpeg_path')
@@ -193,6 +212,8 @@ class LocalAudioProcessor:
         diarize: bool = False,
         vad_use: bool = False,
         timestamp_option: bool = True,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
         perform_analysis: bool = True,
         api_name: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -237,6 +258,8 @@ class LocalAudioProcessor:
                         diarize=diarize,
                         vad_use=vad_use,
                         timestamp_option=timestamp_option,
+                        start_time=start_time,
+                        end_time=end_time,
                         perform_analysis=perform_analysis,
                         api_name=api_name,
                         api_key=api_key,
@@ -307,7 +330,12 @@ class LocalAudioProcessor:
             if is_url:
                 # Download the file
                 if 'youtube.com' in input_item or 'youtu.be' in input_item:
-                    audio_path = self.download_youtube_audio(input_item, processing_dir)
+                    audio_path = self.download_youtube_audio(
+                        input_item, 
+                        processing_dir,
+                        kwargs.get("start_time"),
+                        kwargs.get("end_time")
+                    )
                 else:
                     audio_path = self.download_audio_file(
                         input_item, processing_dir, 
@@ -320,6 +348,21 @@ class LocalAudioProcessor:
                 if not os.path.exists(input_item):
                     raise FileNotFoundError(f"File not found: {input_item}")
                 audio_path = input_item
+            
+            # Extract time range if specified
+            # Note: For YouTube URLs, we should skip this as yt-dlp already handles it
+            start_time = kwargs.get("start_time")
+            end_time = kwargs.get("end_time")
+            youtube_url = is_url and ('youtube.com' in input_item or 'youtu.be' in input_item)
+            
+            if (start_time or end_time) and not youtube_url:
+                logger.info(f"Extracting time range: start={start_time}, end={end_time}")
+                audio_path = self._extract_time_range(
+                    audio_path, 
+                    processing_dir,
+                    start_time,
+                    end_time
+                )
             
             # Update metadata
             if not result["metadata"]["title"]:
@@ -573,6 +616,81 @@ class LocalAudioProcessor:
         
         # Generate unique filename
         return f"audio_{uuid.uuid4().hex[:8]}.mp3"
+    
+    def _extract_time_range(self, audio_path: str, output_dir: str, 
+                           start_time: Optional[str] = None, 
+                           end_time: Optional[str] = None) -> str:
+        """
+        Extract a time range from an audio file using ffmpeg.
+        
+        Args:
+            audio_path: Path to input audio file
+            output_dir: Directory to save the extracted audio
+            start_time: Start time in format HH:MM:SS or seconds
+            end_time: End time in format HH:MM:SS or seconds
+            
+        Returns:
+            Path to the extracted audio file
+        """
+        # Find ffmpeg
+        import shutil
+        ffmpeg_cmd = shutil.which('ffmpeg')
+        if not ffmpeg_cmd:
+            # Try common locations
+            for cmd in ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg']:
+                if os.path.exists(cmd):
+                    ffmpeg_cmd = cmd
+                    break
+        
+        if not ffmpeg_cmd:
+            logger.warning("ffmpeg not found, skipping time range extraction")
+            return audio_path
+        
+        # Generate output filename
+        base_name = Path(audio_path).stem
+        suffix = f"_trim_{start_time or '0'}_{end_time or 'end'}".replace(':', '-')
+        output_path = os.path.join(output_dir, f"{base_name}{suffix}.mp3")
+        
+        # Build ffmpeg command
+        command = [ffmpeg_cmd, '-i', audio_path]
+        
+        # Add start time if specified
+        if start_time:
+            command.extend(['-ss', start_time])
+        
+        # Add duration if end time is specified
+        if end_time:
+            if start_time:
+                # Calculate duration from start to end
+                # This is a simplified approach - ideally we'd parse the times properly
+                command.extend(['-to', end_time])
+            else:
+                command.extend(['-t', end_time])
+        
+        # Output options
+        command.extend([
+            '-acodec', 'libmp3lame',
+            '-ab', '192k',
+            '-ar', '44100',
+            '-y',  # Overwrite
+            output_path
+        ])
+        
+        try:
+            logger.debug(f"Running ffmpeg command: {' '.join(command)}")
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            logger.info(f"Extracted time range to: {output_path}")
+            return output_path
+            
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to extract time range: {e.stderr}")
+            logger.warning("Continuing with full audio file")
+            return audio_path
 
 
 # Convenience function for backwards compatibility

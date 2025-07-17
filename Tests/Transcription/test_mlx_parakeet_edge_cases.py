@@ -107,6 +107,8 @@ class TestMLXParakeetEdgeCases:
                 result_obj = MagicMock()
                 result_obj.text = 'Concurrent test'
                 model.transcribe.return_value = result_obj
+                # Also set the model name for cache comparison
+                model._model_name = 'mlx-community/parakeet-tdt-0.6b-v2'
                 return model
             
             mock_pretrained.side_effect = slow_model_load
@@ -127,7 +129,8 @@ class TestMLXParakeetEdgeCases:
                         )
                         results.append(result)
                     except Exception as e:
-                        errors.append(e)
+                        import traceback
+                        errors.append((e, traceback.format_exc()))
                 
                 threads = [threading.Thread(target=load_and_transcribe) for _ in range(3)]
                 for t in threads:
@@ -137,7 +140,10 @@ class TestMLXParakeetEdgeCases:
                 
                 # All should succeed
                 if errors:
-                    print(f"Errors encountered: {[str(e) for e in errors]}")
+                    print(f"Errors encountered:")
+                    for e, tb in errors:
+                        print(f"Error: {str(e)}")
+                        print(f"Traceback:\n{tb}")
                 assert len(results) == 3
                 assert len(errors) == 0
                 # Model should be loaded multiple times due to race condition
@@ -168,7 +174,7 @@ class TestMLXParakeetEdgeCases:
                 with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
                     audio_data = np.zeros(sample_rate, dtype=np.float32)  # 1 second
                     mock_sf.read.return_value = (audio_data, sample_rate)
-                    mock_sf.info.return_value = MockAudioInfo(duration=1.0)
+                    mock_sf.info.return_value = MockAudioInfo(duration=1.0, samplerate=sample_rate)
                     
                     result = mock_service._transcribe_with_parakeet_mlx(
                         audio_path=f"audio_{sample_rate}.wav",
@@ -215,7 +221,7 @@ class TestMLXParakeetEdgeCases:
                 
                 # Mock multiple chunk transcriptions
                 chunk_count = (3600 + 29) // 30  # 30-second chunks
-                mock_model.transcribe_audio.side_effect = [f'Chunk {i}' for i in range(chunk_count)]
+                mock_model.transcribe.side_effect = [f'Chunk {i}' for i in range(chunk_count)]
                 
                 result = mock_service._transcribe_with_parakeet_mlx(
                     audio_path="long.wav",
@@ -239,7 +245,7 @@ class TestMLXParakeetEdgeCases:
                     raise MemoryError("Insufficient memory for transcription")
                 return f"Transcription {call_count}"
             
-            mock_model.transcribe_audio.side_effect = transcribe_with_memory_pressure
+            mock_model.transcribe.side_effect = transcribe_with_memory_pressure
             mock_pretrained.return_value = mock_model
             
             with patch('tldw_chatbook.Local_Ingestion.transcription_service.sf') as mock_sf:
@@ -390,7 +396,7 @@ class TestMLXParakeetEdgeCases:
                         if (duration - chunk_size) % (chunk_size - effective_overlap) > 0:
                             expected_chunks += 1
                     
-                    mock_model.transcribe_audio.side_effect = [
+                    mock_model.transcribe.side_effect = [
                         f'Chunk {i}' for i in range(expected_chunks + 5)  # Extra for safety
                     ]
                     
@@ -451,7 +457,7 @@ class TestMLXParakeetEdgeCases:
                 mock_sf.read.return_value = (np.zeros(16000 * 60), 16000)  # 60 seconds
                 
                 # First chunk succeeds, second fails
-                mock_model.transcribe_audio.side_effect = [
+                mock_model.transcribe.side_effect = [
                     'Chunk 1',
                     Exception("Transcription error in chunk 2")
                 ]

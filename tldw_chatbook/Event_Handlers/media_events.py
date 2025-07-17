@@ -86,7 +86,7 @@ async def handle_media_nav_button_pressed(app: 'TldwCli', event: Button.Pressed)
             logger.info(f"Activated special window: {type_slug}")
         else:
             # Regular media types use the search and display function
-            await perform_media_search_and_display(app, type_slug, search_term="")
+            await perform_media_search_and_display(app, type_slug, search_term="", keyword_filter="")
 
     except Exception as e:
         logger.error(f"Error in handle_media_nav_button_pressed for '{button_id}': {e}", exc_info=True)
@@ -102,9 +102,18 @@ async def handle_media_search_button_pressed(app: 'TldwCli', event: Button.Press
         search_input_id = f"media-search-input-{type_slug}"
         search_input_widget = app.query_one(f"#{search_input_id}", Input)
         search_term = search_input_widget.value.strip()
-        logger.info(f"Media search triggered for type '{type_slug}' with term: '{search_term}'")
+        
+        # Get keyword filter
+        keyword_filter_id = f"media-keyword-filter-{type_slug}"
+        try:
+            keyword_input_widget = app.query_one(f"#{keyword_filter_id}", Input)
+            keyword_filter = keyword_input_widget.value.strip()
+        except QueryError:
+            keyword_filter = ""
+            
+        logger.info(f"Media search triggered for type '{type_slug}' with term: '{search_term}' and keywords: '{keyword_filter}'")
         app.media_current_page = 1 # Reset to page 1 for new search
-        await perform_media_search_and_display(app, type_slug, search_term)
+        await perform_media_search_and_display(app, type_slug, search_term, keyword_filter)
     except QueryError as e:
         logger.error(f"UI component not found for media search button '{button_id}': {e}", exc_info=True)
         app.notify("Search UI error.", severity="error")
@@ -122,9 +131,27 @@ async def handle_media_search_input_changed(app: 'TldwCli', input_id: str, value
         app._media_search_timers[type_slug].stop()
 
     async def debounced_search():
-        logger.info(f"Debounced media search executing for type '{type_slug}', term: '{value.strip()}'")
+        # Get search term from the search input
+        search_term = ""
+        search_input_id = f"media-search-input-{type_slug}"
+        try:
+            search_input_widget = app.query_one(f"#{search_input_id}", Input)
+            search_term = search_input_widget.value.strip()
+        except QueryError:
+            pass
+        
+        # Get keyword filter
+        keyword_filter = ""
+        keyword_filter_id = f"media-keyword-filter-{type_slug}"
+        try:
+            keyword_input_widget = app.query_one(f"#{keyword_filter_id}", Input)
+            keyword_filter = keyword_input_widget.value.strip()
+        except QueryError:
+            pass
+            
+        logger.info(f"Debounced media search executing for type '{type_slug}', term: '{search_term}', keywords: '{keyword_filter}'")
         app.media_current_page = 1
-        await perform_media_search_and_display(app, type_slug, value.strip())
+        await perform_media_search_and_display(app, type_slug, search_term, keyword_filter)
 
     app._media_search_timers[type_slug] = app.set_timer(0.6, debounced_search)
 
@@ -261,10 +288,16 @@ async def handle_media_page_change_button_pressed(app: 'TldwCli', event: Button.
 
     type_slug = app.current_media_type_filter_slug # Relies on app state being correct
     search_term = ""
+    keyword_filter = ""
     try:
         # Construct search input ID based on current type_slug
         search_input_widget = app.query_one(f"#media-search-input-{type_slug}", Input)
         search_term = search_input_widget.value
+        
+        # Get keyword filter
+        keyword_filter_id = f"media-keyword-filter-{type_slug}"
+        keyword_input_widget = app.query_one(f"#{keyword_filter_id}", Input)
+        keyword_filter = keyword_input_widget.value
     except QueryError:
         logger.warning(f"Search input not found for type_slug '{type_slug}' during pagination.")
     except Exception as e:
@@ -272,10 +305,10 @@ async def handle_media_page_change_button_pressed(app: 'TldwCli', event: Button.
 
 
     logger.info(f"Changing to page {app.media_current_page} for type '{type_slug}'")
-    await perform_media_search_and_display(app, type_slug, search_term)
+    await perform_media_search_and_display(app, type_slug, search_term, keyword_filter)
 
 
-async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, search_term: str = "") -> None:
+async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, search_term: str = "", keyword_filter: str = "") -> None:
     """Performs search in media DB and populates the ListView with rich, informative items."""
     logger = app.loguru_logger
     
@@ -312,6 +345,11 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
 
         query_arg = search_term if search_term else None
         fields_arg = ['title', 'content', 'author', 'url', 'type', 'analysis_content'] # Ensure analysis_content is searched
+        
+        # Parse keywords from filter
+        keywords_list = None
+        if keyword_filter:
+            keywords_list = [k.strip() for k in keyword_filter.split(',') if k.strip()]
 
         # Check if we should show deleted items
         show_deleted = False
@@ -327,6 +365,7 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
             search_query=query_arg,
             media_types=media_types_filter,
             search_fields=fields_arg,
+            must_have_keywords=keywords_list,
             sort_by="last_modified_desc",
             page=app.media_current_page, # Use app.media_current_page directly
             results_per_page=RESULTS_PER_PAGE,
@@ -501,7 +540,17 @@ async def handle_media_metadata_update(app: 'TldwCli', event: MediaMetadataUpdat
                     logger.warning(f"Could not find MediaDetailsWidget for type_slug: {event.type_slug}")
                 
                 # Also refresh the list view to reflect any title changes
-                await perform_media_search_and_display(app, event.type_slug, "")
+                # Get current search term and keyword filter
+                search_term = ""
+                keyword_filter = ""
+                try:
+                    search_input = app.query_one(f"#media-search-input-{event.type_slug}", Input)
+                    search_term = search_input.value
+                    keyword_input = app.query_one(f"#media-keyword-filter-{event.type_slug}", Input)
+                    keyword_filter = keyword_input.value
+                except QueryError:
+                    pass
+                await perform_media_search_and_display(app, event.type_slug, search_term, keyword_filter)
             else:
                 logger.error(f"Could not fetch updated media data for ID {event.media_id}")
                 app.notify("Error refreshing media data", severity="error")
@@ -583,7 +632,17 @@ async def handle_media_delete_confirmation(app: 'TldwCli', event: MediaDeleteCon
                 if success:
                     self.app.notify(f"'{self.media_title}' has been deleted", severity="information")
                     # Refresh the current view
-                    await perform_media_search_and_display(self.app, self.type_slug, "")
+                    # Get current search term and keyword filter
+                    search_term = ""
+                    keyword_filter = ""
+                    try:
+                        search_input = self.app.query_one(f"#media-search-input-{self.type_slug}", Input)
+                        search_term = search_input.value
+                        keyword_input = self.app.query_one(f"#media-keyword-filter-{self.type_slug}", Input)
+                        keyword_filter = keyword_input.value
+                    except QueryError:
+                        pass
+                    await perform_media_search_and_display(self.app, self.type_slug, search_term, keyword_filter)
                     # Update the details widget if the deleted item was selected
                     if self.app.current_loaded_media_item and self.app.current_loaded_media_item.get('id') == self.media_id:
                         updated_media = self.app.media_db.get_media_by_id(self.media_id)
@@ -630,7 +689,17 @@ async def handle_media_undelete(app: 'TldwCli', event: MediaUndeleteEvent) -> No
             app.notify(f"'{media_item.get('title', 'Untitled')}' has been restored", severity="information")
             
             # Refresh the current view
-            await perform_media_search_and_display(app, event.type_slug, "")
+            # Get current search term and keyword filter
+            search_term = ""
+            keyword_filter = ""
+            try:
+                search_input = app.query_one(f"#media-search-input-{event.type_slug}", Input)
+                search_term = search_input.value
+                keyword_input = app.query_one(f"#media-keyword-filter-{event.type_slug}", Input)
+                keyword_filter = keyword_input.value
+            except QueryError:
+                pass
+            await perform_media_search_and_display(app, event.type_slug, search_term, keyword_filter)
             
             # Update the details widget
             updated_media = app.media_db.get_media_by_id(event.media_id)

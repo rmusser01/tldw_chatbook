@@ -113,7 +113,7 @@ class MediaWindow(Container):
                 # Ensure the app's media_current_page is reset for a new view activation if that's desired behavior
                 # self.app_instance.media_current_page = 1 # Already done in handle_nav_button_press
                 if type_slug not in ["collections-tags", "multi-item-review"]:
-                    self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, "")
+                    self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, "", "")
             else:
                 self.log.info("MediaWindow.watch_media_active_view: new_view is None, all .media-view-area views remain hidden.")
 
@@ -130,7 +130,17 @@ class MediaWindow(Container):
             type_slug = self.media_active_view.replace("media-view-", "")
             # Skip special windows that don't have standard search functionality
             if type_slug not in ["collections-tags", "multi-item-review"]:
-                self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, "")
+                # Get current search term and keyword filter
+                search_term = ""
+                keyword_filter = ""
+                try:
+                    search_input = self.query_one(f"#media-search-input-{type_slug}", Input)
+                    search_term = search_input.value
+                    keyword_input = self.query_one(f"#media-keyword-filter-{type_slug}", Input)
+                    keyword_filter = keyword_input.value
+                except QueryError:
+                    pass
+                self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, search_term, keyword_filter)
 
     @on(Checkbox.Changed, ".show-deleted-checkbox")
     def handle_show_deleted_checkbox(self, event: Checkbox.Changed) -> None:
@@ -263,6 +273,11 @@ class MediaWindow(Container):
                             yield Input(placeholder=f"Search in {media_type_display_name}...",
                                         id=f"media-search-input-{type_slug}",
                                         classes="sidebar-input media-search-input")
+                            # Add keyword filter input
+                            yield Label("Filter by keywords:", classes="keyword-filter-label")
+                            yield Input(placeholder="Enter keywords separated by commas",
+                                        id=f"media-keyword-filter-{type_slug}",
+                                        classes="keyword-filter-input")
                             # Add checkbox for showing deleted items
                             yield Checkbox("Show deleted items", 
                                           id=f"show-deleted-checkbox-{type_slug}",

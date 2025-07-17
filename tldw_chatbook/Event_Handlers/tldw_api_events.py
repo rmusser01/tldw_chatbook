@@ -209,6 +209,10 @@ def _collect_video_specific_data(app: 'TldwCli', common_data: Dict[str, Any], me
         transcription_model = app.query_one(f"#tldw-api-transcription-model-{media_type}", Select).value
         if transcription_model == Select.BLANK:
             transcription_model = None
+        
+        # Get start and end time fields
+        start_time = app.query_one(f"#tldw-api-video-start-time-{media_type}", Input).value or None
+        end_time = app.query_one(f"#tldw-api-video-end-time-{media_type}", Input).value or None
 
         return ProcessVideoRequest(
             urls=common_data.get("urls"),
@@ -224,7 +228,9 @@ def _collect_video_specific_data(app: 'TldwCli', common_data: Dict[str, Any], me
             title=common_data.get("title"),
             author=common_data.get("author"),
             diarize=diarize,
-            transcription_model=transcription_model
+            transcription_model=transcription_model,
+            start_time=start_time,
+            end_time=end_time
         )
     except QueryError as e:
         logger.error(f"Video-specific UI field not found: {e}")
@@ -237,6 +243,10 @@ def _collect_audio_specific_data(app: 'TldwCli', common_data: Dict[str, Any], me
         transcription_model = app.query_one(f"#tldw-api-transcription-model-{media_type}", Select).value
         if transcription_model == Select.BLANK:
             transcription_model = None
+        
+        # Get start and end time fields
+        start_time = app.query_one(f"#tldw-api-audio-start-time-{media_type}", Input).value or None
+        end_time = app.query_one(f"#tldw-api-audio-end-time-{media_type}", Input).value or None
 
         return ProcessAudioRequest(
             urls=common_data.get("urls"),
@@ -252,7 +262,9 @@ def _collect_audio_specific_data(app: 'TldwCli', common_data: Dict[str, Any], me
             title=common_data.get("title"),
             author=common_data.get("author"),
             diarize=diarize,
-            transcription_model=transcription_model
+            transcription_model=transcription_model,
+            start_time=start_time,
+            end_time=end_time
         )
     except QueryError as e:
         logger.error(f"Audio-specific UI field not found: {e}")

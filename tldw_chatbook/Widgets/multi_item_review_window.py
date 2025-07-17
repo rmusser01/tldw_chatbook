@@ -139,7 +139,7 @@ class MultiItemReviewWindow(Container):
             # Perform search
             results, total = self.app_instance.media_db.search_media_db(
                 search_query=search_input if search_input else None,
-                keywords=tags,
+                must_have_keywords=tags,
                 search_fields=['title', 'content', 'author'],
                 sort_by="ingestion_date_desc",
                 page=1,
