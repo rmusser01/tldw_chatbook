@@ -85,7 +85,7 @@ async def chunk_documents_batch(rag_service, documents: List[Dict[str, Any]],
 async def generate_embeddings_batch(rag_service, chunk_texts: List[str], 
                                    batch_size: int = 32,
                                    show_progress: bool = True,
-                                   retry_failed: bool = True) -> Tuple[np.ndarray, List[int]]:
+                                   retry_failed: bool = True) -> Tuple[Union['np.ndarray', List[List[float]]], List[int]]:
     """
     Phase 2: Generate embeddings for all chunks in batches with partial failure recovery.
     
@@ -156,7 +156,7 @@ async def generate_embeddings_batch(rag_service, chunk_texts: List[str],
 
 
 async def store_documents_batch(rag_service, documents: List[Dict[str, Any]], 
-                               doc_chunk_info: List[Dict], all_embeddings: Union[np.ndarray, List[List[float]]],
+                               doc_chunk_info: List[Dict], all_embeddings: Union['np.ndarray', List[List[float]]],
                                batch_start_time: float,
                                failed_embedding_indices: Optional[List[int]] = None) -> List[IndexingResult]:
     """

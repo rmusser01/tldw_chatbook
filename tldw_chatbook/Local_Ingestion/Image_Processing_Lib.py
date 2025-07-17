@@ -199,7 +199,7 @@ def extract_visual_features(image_path: Union[str, Path]) -> Dict[str, Any]:
                 features['has_visual_features'] = True
                 
         # Advanced features with OpenCV (if available)
-        if CV2_AVAILABLE:
+        if CV2_AVAILABLE and NUMPY_AVAILABLE:
             img_cv = cv2.imread(str(image_path))
             if img_cv is not None:
                 # Detect edges
@@ -211,6 +211,25 @@ def extract_visual_features(image_path: Union[str, Path]) -> Dict[str, Any]:
                 orb = cv2.ORB_create(nfeatures=100)
                 keypoints = orb.detect(gray, None)
                 features['num_keypoints'] = len(keypoints)
+        elif CV2_AVAILABLE and not NUMPY_AVAILABLE:
+            # OpenCV is available but numpy is not - use alternative approach
+            img_cv = cv2.imread(str(image_path))
+            if img_cv is not None:
+                try:
+                    # Detect edges
+                    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+                    edges = cv2.Canny(gray, 100, 200)
+                    # Count non-zero pixels without numpy
+                    edge_count = sum(1 for row in edges for pixel in row if pixel > 0)
+                    total_pixels = edges.shape[0] * edges.shape[1]
+                    features['edge_density'] = edge_count / total_pixels if total_pixels > 0 else 0
+                    
+                    # Detect keypoints (corners, blobs, etc.)
+                    orb = cv2.ORB_create(nfeatures=100)
+                    keypoints = orb.detect(gray, None)
+                    features['num_keypoints'] = len(keypoints)
+                except Exception as e:
+                    logger.warning(f"Could not extract OpenCV features without numpy: {e}")
         
     except Exception as e:
         logger.error(f"Error extracting visual features: {e}")

@@ -31,6 +31,14 @@ from ..config import load_settings
 from ..Metrics.metrics_logger import log_counter, log_histogram, timeit
 from .simplified.data_models import IndexingResult
 
+# Import log_gauge if available
+try:
+    from ..Metrics.metrics_logger import log_gauge
+except ImportError:
+    # Fallback if log_gauge is not available
+    def log_gauge(name: str, value: float, labels: Optional[Dict[str, str]] = None):
+        pass
+
 
 @dataclass
 class ProcessingConfig:
@@ -280,7 +288,7 @@ class EmbeddingBatchProcessor:
     async def generate_embeddings_batch(self,
                                       texts: List[str],
                                       embedding_service,
-                                      batch_size: Optional[int] = None) -> Tuple[np.ndarray, List[int]]:
+                                      batch_size: Optional[int] = None) -> Tuple[Union['np.ndarray', List[List[float]]], List[int]]:
         """
         Generate embeddings in optimized batches.
         
@@ -293,7 +301,10 @@ class EmbeddingBatchProcessor:
             Tuple of (embeddings array, list of failed indices)
         """
         if not texts:
-            return np.array([]), []
+            if NUMPY_AVAILABLE:
+                return np.array([]), []
+            else:
+                return [], []
         
         batch_size = batch_size or self.config.batch_size
         total = len(texts)
@@ -336,11 +347,18 @@ class EmbeddingBatchProcessor:
                     all_embeddings.extend(embeddings)
                     failed_indices.extend(batch_failed)
         
-        # Convert to numpy array
+        # Convert to numpy array if available, otherwise keep as list
         if all_embeddings:
-            embeddings_array = np.vstack(all_embeddings)
+            if NUMPY_AVAILABLE:
+                embeddings_array = np.vstack(all_embeddings)
+            else:
+                # Without numpy, just return the list of embeddings
+                embeddings_array = all_embeddings
         else:
-            embeddings_array = np.array([])
+            if NUMPY_AVAILABLE:
+                embeddings_array = np.array([])
+            else:
+                embeddings_array = []
         
         # Log final statistics
         if progress:
@@ -357,7 +375,7 @@ class EmbeddingBatchProcessor:
                                      embedding_service,
                                      batch_texts: List[str],
                                      start_idx: int,
-                                     progress: Optional[ProgressTracker]) -> Tuple[List[np.ndarray], List[int]]:
+                                     progress: Optional[ProgressTracker]) -> Tuple[List[Union['np.ndarray', List[float]]], List[int]]:
         """Process a single batch of embeddings."""
         embeddings = []
         failed_indices = []
