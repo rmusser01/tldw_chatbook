@@ -19,6 +19,8 @@ from tldw_chatbook.Constants import TAB_CHAT, TAB_CCP
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
 from tldw_chatbook.Chat.Chat_Functions import parse_tool_calls_from_response
+from tldw_chatbook.Tools import get_tool_executor
+from tldw_chatbook.Widgets.tool_message_widgets import ToolExecutionWidget
 #
 ########################################################################################################################
 #
@@ -155,11 +157,61 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                 tool_calls = parse_tool_calls_from_response(event.response_data)
                 if tool_calls:
                     logger.info(f"Detected {len(tool_calls)} tool call(s) in streaming response")
-                    # TODO: Handle tool calls here
-                    # For now, just append a notice to the message
-                    tool_notice = f"\n\n[Tool Calls Detected: {len(tool_calls)} function(s) to execute]"
-                    ai_widget.message_text += tool_notice
-                    markdown_widget.update(ai_widget.message_text)
+                    
+                    # Get the chat container from the AI widget's parent
+                    chat_container = ai_widget.parent
+                    if chat_container:
+                        # Create and mount tool execution widget
+                        tool_widget = ToolExecutionWidget(tool_calls)
+                        await chat_container.mount(tool_widget)
+                        chat_container.scroll_end(animate=False)
+                        
+                        # Execute tools asynchronously
+                        executor = get_tool_executor()
+                        try:
+                            results = await executor.execute_tool_calls(tool_calls)
+                            logger.info(f"Tool execution completed with {len(results)} result(s)")
+                            
+                            # Update widget with results
+                            tool_widget.update_results(results)
+                            
+                            # Save tool messages to database if applicable
+                            if self.chachanotes_db and self.current_chat_conversation_id and not self.current_chat_is_ephemeral:
+                                try:
+                                    # Save tool call message
+                                    tool_call_msg = f"Tool Calls:\n{json.dumps(tool_calls, indent=2)}"
+                                    tool_call_db_id = ccl.add_message_to_conversation(
+                                        self.chachanotes_db,
+                                        self.current_chat_conversation_id,
+                                        "tool",  # This will map to role='tool'
+                                        tool_call_msg
+                                    )
+                                    logger.debug(f"Saved tool call message to DB with ID: {tool_call_db_id}")
+                                    
+                                    # Save tool results message
+                                    tool_results_msg = f"Tool Results:\n{json.dumps(results, indent=2)}"
+                                    tool_result_db_id = ccl.add_message_to_conversation(
+                                        self.chachanotes_db,
+                                        self.current_chat_conversation_id,
+                                        "tool",
+                                        tool_results_msg
+                                    )
+                                    logger.debug(f"Saved tool results message to DB with ID: {tool_result_db_id}")
+                                except Exception as e:
+                                    logger.error(f"Error saving tool messages to DB: {e}", exc_info=True)
+                            
+                            # Continue conversation with tool results
+                            await self._continue_conversation_with_tools(results, tool_calls)
+                            
+                        except Exception as e:
+                            logger.error(f"Error executing tools: {e}", exc_info=True)
+                            self.notify(f"Tool execution error: {str(e)}", severity="error")
+                    else:
+                        logger.warning("Could not find chat container for mounting tool widgets")
+                        # Fallback: just append a notice
+                        tool_notice = f"\n\n[Tool Calls Detected: {len(tool_calls)} function(s) to execute]"
+                        ai_widget.message_text += tool_notice
+                        markdown_widget.update(ai_widget.message_text)
 
             # Determine sender name for DB (already set on widget by handle_api_call_worker_state_changed)
             # This is just to ensure the correct name is used for DB saving if needed.
@@ -248,6 +300,70 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                              exc_info=True)
         else:
             logger.debug(f"No specific input to focus for tab {self.current_tab} in on_stream_done.")
+
+async def _continue_conversation_with_tools(self, tool_results, tool_calls):
+    """
+    Continue the conversation by sending tool results back to the LLM.
+    
+    Args:
+        tool_results: List of tool execution results
+        tool_calls: Original tool calls that were executed
+    """
+    logger = getattr(self, 'loguru_logger', logging)
+    
+    try:
+        # Format tool results for the conversation
+        tool_results_text = []
+        for i, result in enumerate(tool_results):
+            tool_call_id = result.get('tool_call_id', f'call_{i}')
+            if 'error' in result:
+                tool_results_text.append(f"Tool call {tool_call_id} failed: {result['error']}")
+            else:
+                tool_result_data = result.get('result', {})
+                tool_results_text.append(f"Tool call {tool_call_id} result: {json.dumps(tool_result_data, indent=2)}")
+        
+        # Join all tool results
+        formatted_results = "\n\n".join(tool_results_text)
+        
+        # Create a new user message with the tool results
+        tool_response_message = f"[Tool Results]\n{formatted_results}\n\n[Continue with the original request using these tool results]"
+        
+        # Find the chat input widget
+        try:
+            if self.current_tab == TAB_CHAT:
+                input_widget = self.query_one("#chat-input", TextArea)
+            elif self.current_tab == TAB_CCP:
+                input_widget = self.query_one("#ccp-chat-input", TextArea)
+            else:
+                logger.warning(f"Unknown tab {self.current_tab}, cannot continue conversation")
+                return
+            
+            # Set the input with the tool results
+            input_widget.text = tool_response_message
+            
+            # Trigger send button programmatically
+            try:
+                if self.current_tab == TAB_CHAT:
+                    send_button = self.query_one("#chat-send-button")
+                elif self.current_tab == TAB_CCP:
+                    send_button = self.query_one("#ccp-send-button")
+                
+                # Post a button pressed event
+                from textual.events import Click
+                await send_button.post_message(Click(send_button, 0, 0, 0, 0, 0, False, False, False))
+                logger.info("Triggered conversation continuation with tool results")
+                
+            except QueryError:
+                logger.error("Could not find send button to continue conversation")
+                self.notify("Could not automatically continue conversation with tool results", severity="warning")
+                
+        except QueryError as e:
+            logger.error(f"Could not find chat input to continue conversation: {e}")
+            self.notify("Could not continue conversation with tool results", severity="warning")
+            
+    except Exception as e:
+        logger.error(f"Error continuing conversation with tool results: {e}", exc_info=True)
+        self.notify(f"Error continuing conversation: {str(e)}", severity="error")
 
 #
 # End of Event Handlers for Streaming Events

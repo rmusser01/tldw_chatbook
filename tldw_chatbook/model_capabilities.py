@@ -30,6 +30,8 @@ DEFAULT_MODEL_PATTERNS = {
         {"pattern": r"^gpt-4.*vision", "vision": True},
         {"pattern": r"^gpt-4[o0](?:-mini)?", "vision": True},  # gpt-4o, gpt-40, gpt-4o-mini
         {"pattern": r"^gpt-4.*turbo", "vision": True},
+        {"pattern": r"^gpt-4\.1", "vision": True},  # gpt-4.1 series
+        {"pattern": r"^o[34](?:-mini)?", "vision": True},  # o3, o4, o3-mini, o4-mini series
         {"pattern": r"^dall-e", "vision": True, "image_generation": True}
     ],
     "Anthropic": [
@@ -46,8 +48,11 @@ DEFAULT_MODEL_PATTERNS = {
         # OpenRouter uses provider/model format
         {"pattern": r"openai/gpt-4.*vision", "vision": True},
         {"pattern": r"openai/gpt-4[o0]", "vision": True},
+        {"pattern": r"openai/gpt-4\.1", "vision": True},
+        {"pattern": r"openai/o[34](?:-mini)?", "vision": True},
         {"pattern": r"anthropic/claude-3", "vision": True},
-        {"pattern": r"google/gemini.*vision", "vision": True}
+        {"pattern": r"google/gemini.*vision", "vision": True},
+        {"pattern": r"google/gemini-[0-9.]+-(pro|flash)", "vision": True}
     ]
 }
 
@@ -59,6 +64,12 @@ DEFAULT_MODEL_CAPABILITIES = {
     "gpt-4-turbo-2024-04-09": {"vision": True, "max_images": 10},
     "gpt-4o": {"vision": True, "max_images": 10},
     "gpt-4o-mini": {"vision": True, "max_images": 10},
+    "gpt-4.1-2025-04-14": {"vision": True, "max_images": 10},
+    "o4-mini-2025-04-16": {"vision": True, "max_images": 10},
+    "o3-2025-04-16": {"vision": True, "max_images": 10},
+    "o3-mini-2025-01-31": {"vision": True, "max_images": 10},
+    "gpt-4.1-mini-2025-04-14": {"vision": True, "max_images": 10},
+    "gpt-4.1-nano-2025-04-14": {"vision": True, "max_images": 10},
 
     # Anthropic
     "claude-3-opus-20240229": {"vision": True, "max_images": 5},

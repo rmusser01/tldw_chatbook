@@ -490,6 +490,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                 # Try new attachment system first
                 if hasattr(chat_window, 'pending_attachment') and chat_window.pending_attachment:
                     pending_attachment = chat_window.pending_attachment
+                    loguru_logger.info(f"DEBUG: Retrieved pending_attachment from chat window - file_type: {pending_attachment.get('file_type')}, insert_mode: {pending_attachment.get('insert_mode')}")
                     # For backward compatibility, if it's an image, also set pending_image
                     if pending_attachment.get('file_type') == 'image':
                         pending_image = {
@@ -497,6 +498,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                             'mime_type': pending_attachment['mime_type'],
                             'path': pending_attachment.get('path')
                         }
+                        loguru_logger.info(f"DEBUG: Also set pending_image for backward compatibility")
                     loguru_logger.debug(f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})")
                 # Fall back to old pending_image system
                 elif hasattr(chat_window, 'get_pending_image'):
@@ -769,17 +771,23 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # Prepare media content if attachment is present
     media_content_for_api = {}
     
+    # Debug log attachment status
+    loguru_logger.info(f"DEBUG: Before processing - pending_attachment exists: {bool(pending_attachment)}, pending_image exists: {bool(pending_image)}")
+    if pending_attachment:
+        loguru_logger.info(f"DEBUG: pending_attachment details - insert_mode: {pending_attachment.get('insert_mode')}, file_type: {pending_attachment.get('file_type')}")
+    
     # Handle new unified attachment system
     if pending_attachment and pending_attachment.get('insert_mode') == 'attachment':
         file_type = pending_attachment.get('file_type', 'unknown')
         
         # For images, check if model supports vision
-        if file_type == 'image' and is_vision_capable(selected_provider, selected_model):
+        vision_capable = is_vision_capable(selected_provider, selected_model)
+        loguru_logger.info(f"DEBUG: Vision capability check - provider: {selected_provider}, model: {selected_model}, is_vision_capable: {vision_capable}")
+        if file_type == 'image' and vision_capable:
             try:
                 import base64
                 media_content_for_api = {
-                    "type": "image",
-                    "data": base64.b64encode(pending_attachment['data']).decode(),
+                    "base64_data": base64.b64encode(pending_attachment['data']).decode(),
                     "mime_type": pending_attachment['mime_type']
                 }
                 loguru_logger.info(f"Including image attachment in API call (type: {pending_attachment['mime_type']}, size: {len(pending_attachment['data'])} bytes)")
@@ -796,8 +804,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         try:
             import base64
             media_content_for_api = {
-                "type": "image",
-                "data": base64.b64encode(pending_image['data']).decode(),
+                "base64_data": base64.b64encode(pending_image['data']).decode(),
                 "mime_type": pending_image['mime_type']
             }
             loguru_logger.info(f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
@@ -823,6 +830,12 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     # Set current_chat_is_streaming before running the worker using thread-safe method
     app.set_current_chat_is_streaming(should_stream)
     loguru_logger.info(f"Set app.current_chat_is_streaming to: {should_stream}")
+    
+    # Debug log the media content
+    if media_content_for_api:
+        loguru_logger.info(f"DEBUG: Passing media_content_for_api to chat_wrapper: mime_type={media_content_for_api.get('mime_type')}, has_base64_data={bool(media_content_for_api.get('base64_data'))}")
+    else:
+        loguru_logger.info("DEBUG: No media_content_for_api being passed to chat_wrapper")
 
     worker_target = lambda: app.chat_wrapper(
         message=message_text_with_world_info, # Current user utterance with RAG context and world info

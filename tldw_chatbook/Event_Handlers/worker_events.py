@@ -21,10 +21,12 @@ from textual.css.query import QueryError  # Added QueryError
 from ..Widgets.chat_message import ChatMessage
 from ..Utils.Emoji_Handling import get_char, EMOJI_THINKING, FALLBACK_THINKING
 # Import the actual chat function if it's to be called from chat_wrapper_function
-from ..Chat.Chat_Functions import chat as core_chat_function
+from ..Chat.Chat_Functions import chat as core_chat_function, parse_tool_calls_from_response
 from ..Character_Chat import Character_Chat_Lib as ccl # For saving AI messages
 from ..DB.ChaChaNotes_DB import CharactersRAGDBError, InputError  # For specific error handling
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Tools import get_tool_executor
+from ..Widgets.tool_message_widgets import ToolExecutionWidget
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -38,10 +40,11 @@ class StreamingChunk(Message):
 
 class StreamDone(Message):
     """Custom message to signal the end of a stream."""
-    def __init__(self, full_text: str, error: Union[str, None] = None) -> None: # Added Optional error
+    def __init__(self, full_text: str, error: Union[str, None] = None, response_data: Union[dict, None] = None) -> None:
         super().__init__()
         self.full_text = full_text
         self.error = error # Store error
+        self.response_data = response_data  # Store the raw response data for tool parsing
 #
 ########################################################################################################################
 #
@@ -314,6 +317,66 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     markdown_widget_in_ai_msg.update(original_text_for_storage)
                     ai_message_widget.mark_generation_complete()
 
+                    # Check for tool calls in non-streaming response
+                    tool_calls = None
+                    if isinstance(worker_result_content, dict):
+                        logger.debug(f"Checking for tool calls in non-streaming response")
+                        tool_calls = parse_tool_calls_from_response(worker_result_content)
+                        if tool_calls:
+                            logger.info(f"Detected {len(tool_calls)} tool call(s) in non-streaming response")
+                            
+                            # Get the chat container from the AI widget's parent
+                            chat_container = ai_message_widget.parent
+                            if chat_container:
+                                # Create and mount tool execution widget
+                                tool_widget = ToolExecutionWidget(tool_calls)
+                                await chat_container.mount(tool_widget)
+                                chat_container.scroll_end(animate=False)
+                                
+                                # Execute tools asynchronously
+                                executor = get_tool_executor()
+                                try:
+                                    results = await executor.execute_tool_calls(tool_calls)
+                                    logger.info(f"Tool execution completed with {len(results)} result(s)")
+                                    
+                                    # Update widget with results
+                                    tool_widget.update_results(results)
+                                    
+                                    # Save tool messages to database if applicable
+                                    if app.chachanotes_db and app.current_chat_conversation_id and not app.current_chat_is_ephemeral:
+                                        try:
+                                            # Save tool call message
+                                            tool_call_msg = f"Tool Calls:\n{json.dumps(tool_calls, indent=2)}"
+                                            tool_call_db_id = ccl.add_message_to_conversation(
+                                                app.chachanotes_db,
+                                                app.current_chat_conversation_id,
+                                                "tool",  # This will map to role='tool'
+                                                tool_call_msg
+                                            )
+                                            logger.debug(f"Saved tool call message to DB with ID: {tool_call_db_id}")
+                                            
+                                            # Save tool results message
+                                            tool_results_msg = f"Tool Results:\n{json.dumps(results, indent=2)}"
+                                            tool_result_db_id = ccl.add_message_to_conversation(
+                                                app.chachanotes_db,
+                                                app.current_chat_conversation_id,
+                                                "tool",
+                                                tool_results_msg
+                                            )
+                                            logger.debug(f"Saved tool results message to DB with ID: {tool_result_db_id}")
+                                        except Exception as e:
+                                            logger.error(f"Error saving tool messages to DB: {e}", exc_info=True)
+                                    
+                                    # Import and use the streaming continue function
+                                    from ..Event_Handlers.Chat_Events.chat_streaming_events import _continue_conversation_with_tools
+                                    await _continue_conversation_with_tools(app, results, tool_calls)
+                                    
+                                except Exception as e:
+                                    logger.error(f"Error executing tools: {e}", exc_info=True)
+                                    app.notify(f"Tool execution error: {str(e)}", severity="error")
+                            else:
+                                logger.warning("Could not find chat container for mounting tool widgets")
+
                     is_error_message = original_text_for_storage.startswith(
                         ("[AI: Error", "[Error:", "[bold red]Error"))
                     if app.chachanotes_db and app.current_chat_conversation_id and \
@@ -363,7 +426,7 @@ async def handle_api_call_worker_state_changed(app: 'TldwCli', event: Worker.Sta
                     logger.info(
                         f"Worker '{worker_name}' failed during what was thought to be a stream. Posting StreamDone with error.")
                     # This ensures the StreamDone handler in app.py correctly finalizes UI and state
-                    app.post_message(StreamDone(full_text=ai_message_widget.message_text, error=str(error_from_worker)))
+                    app.post_message(StreamDone(full_text=ai_message_widget.message_text, error=str(error_from_worker), response_data=None))
                     # DO NOT set app.current_ai_message_widget = None here for streaming errors.
                 else:
                     logger.info(f"Worker '{worker_name}' failed (non-streaming). Clearing current_ai_message_widget.")
@@ -462,6 +525,7 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
             logger.info(f"Core chat function returned a generator for '{api_endpoint}' (model '{model_name}', strip_tags={strip_thinking_tags}). Processing stream in worker.")
             accumulated_full_text = ""
             accumulated_reasoning_text = ""  # Separate accumulator for reasoning content
+            accumulated_tool_calls = []  # Accumulator for tool calls in streaming
             error_message_if_any = None
             chunk_count = 0
             stream_start_time = time.time()
@@ -484,7 +548,7 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                         cancellation_message = "Streaming cancelled by user."
                         # If accumulated_full_text is meaningful, you could prepend/append the cancellation reason.
                         # For now, we assume the UI will primarily use the 'error' field from StreamDone.
-                        app_instance.post_message(StreamDone(full_text=accumulated_full_text, error=cancellation_message))
+                        app_instance.post_message(StreamDone(full_text=accumulated_full_text, error=cancellation_message, response_data=None))
                         return "STREAMING_HANDLED_BY_EVENTS" # Exit the worker function
 
                     # Process each raw chunk from the generator (expected to be SSE lines)
@@ -515,6 +579,14 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                                     logger.debug(f"Found reasoning_content in streaming delta: {reasoning_chunk[:100]}...")
                                     # Accumulate reasoning content separately
                                     accumulated_reasoning_text += reasoning_chunk
+                                
+                                # Check for tool calls in the delta or choice
+                                if "tool_calls" in delta:
+                                    logger.debug(f"Found tool_calls in streaming delta: {delta['tool_calls']}")
+                                    accumulated_tool_calls.extend(delta["tool_calls"])
+                                elif "tool_calls" in choices[0]:
+                                    logger.debug(f"Found tool_calls in streaming choice: {choices[0]['tool_calls']}")
+                                    accumulated_tool_calls = choices[0]["tool_calls"]  # Replace, don't extend
 
                             if actual_text_chunk:
                                 app_instance.post_message(StreamingChunk(actual_text_chunk))
@@ -576,7 +648,20 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                         final_text = f"<thinking>\n{accumulated_reasoning_text}\n</thinking>\n\n{accumulated_full_text}"
                         logger.info(f"Combined reasoning content with main content (reasoning length: {len(accumulated_reasoning_text)})")
                 
-                app_instance.post_message(StreamDone(full_text=final_text, error=error_message_if_any))
+                # Create a response data structure if we have tool calls
+                response_data = None
+                if accumulated_tool_calls:
+                    response_data = {
+                        "choices": [{
+                            "message": {
+                                "content": accumulated_full_text,
+                                "tool_calls": accumulated_tool_calls
+                            }
+                        }]
+                    }
+                    logger.info(f"Created response_data with {len(accumulated_tool_calls)} tool calls for StreamDone")
+                
+                app_instance.post_message(StreamDone(full_text=final_text, error=error_message_if_any, response_data=response_data))
 
             return "STREAMING_HANDLED_BY_EVENTS"  # Signal that streaming was handled via events
 
@@ -616,7 +701,7 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
         })
         
         # To ensure consistent error handling through StreamDone for the UI:
-        app_instance.post_message(StreamDone(full_text="", error=f"Chat wrapper error: {str(e)}"))
+        app_instance.post_message(StreamDone(full_text="", error=f"Chat wrapper error: {str(e)}", response_data=None))
         return "STREAMING_HANDLED_BY_EVENTS" # Signal that this path also used an event to report error
         # Alternative for WorkerState.ERROR: raise e
 

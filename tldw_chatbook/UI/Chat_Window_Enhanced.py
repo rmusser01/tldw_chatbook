@@ -216,6 +216,7 @@ class ChatWindowEnhanced(Container):
     async def handle_clear_image_button(self, app_instance, event):
         """Clear attached image."""
         self.pending_image = None
+        self.pending_attachment = None
         
         # Update attach button if it exists
         try:
@@ -321,6 +322,7 @@ class ChatWindowEnhanced(Container):
                     'file_type': processed_file.file_type,
                     'insert_mode': processed_file.insert_mode
                 }
+                logger.info(f"DEBUG: Set pending_attachment - file_type: {processed_file.file_type}, mime_type: {processed_file.attachment_mime_type}, data_size: {len(processed_file.attachment_data) if processed_file.attachment_data else 0}")
                 
                 # For backward compatibility, also set pending_image if it's an image
                 if processed_file.file_type == "image":

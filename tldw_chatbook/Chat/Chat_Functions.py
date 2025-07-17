@@ -938,6 +938,10 @@ def chat(
 
     try:
         logging.info(f"Debug - Chat Function - Input Text: '{message}', Image provided: {'Yes' if current_image_input else 'No'}")
+        if current_image_input:
+            logging.info(f"DEBUG: current_image_input contents: {current_image_input.keys() if isinstance(current_image_input, dict) else type(current_image_input)}")
+            if isinstance(current_image_input, dict):
+                logging.info(f"DEBUG: has base64_data={bool(current_image_input.get('base64_data'))}, mime_type={current_image_input.get('mime_type')}")
         logging.info(f"Debug - Chat Function - History length: {len(history)}, Image History Mode: {image_history_mode}")
         logging.info(
             f"Debug - Chat Function - LLM Max Tokens: {llm_max_tokens}, LLM Seed: {llm_seed}, LLM Stop: {llm_stop}, LLM N: {llm_n}")
@@ -1081,6 +1085,7 @@ def chat(
             current_user_content_parts.append({"type": "text", "text": final_text_for_current_message})
 
         if current_image_input and current_image_input.get('base64_data') and current_image_input.get('mime_type'):
+            logging.info(f"DEBUG: Adding image to current_user_content_parts: mime_type={current_image_input['mime_type']}, base64_data_length={len(current_image_input['base64_data'])}")
             image_url = f"data:{current_image_input['mime_type']};base64,{current_image_input['base64_data']}"
             current_user_content_parts.append({"type": "image_url", "image_url": {"url": image_url}})
 
