@@ -12,7 +12,14 @@ from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 import json
 from loguru import logger
-import numpy as np
+
+# Optional numpy import
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
 
 from ..Chat.Chat_Functions import chat_api_call
 from ..config import load_settings

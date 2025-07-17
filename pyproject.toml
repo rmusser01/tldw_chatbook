@@ -55,6 +55,7 @@ dependencies = [
     "keyring",
     "markdownify",
     "aiofiles",
+    "textual-image",
 ]
 
 # --- Optional Dependencies ---

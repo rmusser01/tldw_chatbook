@@ -21,9 +21,15 @@ import hashlib
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union, Tuple
 from pathlib import Path
-import numpy as np
 
 # Import External Libs
+# Optional numpy import
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
 try:
     from PIL import Image, ImageFilter, ImageEnhance
     import pillow_heif  # For HEIF/HEIC support

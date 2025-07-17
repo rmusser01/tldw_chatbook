@@ -19,7 +19,15 @@ from loguru import logger
 #
 # External imports
 import requests
-import numpy as np
+
+# Optional numpy import
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
+    logger.warning("numpy not available. Some audio processing features will be limited.")
 #
 # Local imports
 from ..config import get_media_ingestion_defaults, get_cli_setting

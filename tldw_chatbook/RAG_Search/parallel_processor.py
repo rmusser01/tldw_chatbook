@@ -18,7 +18,14 @@ import signal
 import sys
 from functools import partial
 from loguru import logger
-import numpy as np
+
+# Optional numpy import
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
 
 from ..config import load_settings
 from ..Metrics.metrics_logger import log_counter, log_histogram, timeit

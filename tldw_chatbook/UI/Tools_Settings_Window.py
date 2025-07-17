@@ -402,6 +402,14 @@ class ToolsSettingsWindow(Container):
                 id="general-splash-enabled",
                 classes="settings-checkbox"
             )
+            
+            yield Label("Splash Screen Duration (seconds):", classes="settings-label")
+            yield Input(
+                value=str(splash_screen_config.get("duration", 1.5)),
+                id="general-splash-duration",
+                classes="settings-input",
+                placeholder="1.5"
+            )
             yield Static("Shows an animated splash screen with app information when starting tldw-cli", classes="help-text")
             
             # Chat Defaults Section
@@ -663,6 +671,13 @@ class ToolsSettingsWindow(Container):
                 "Enable Splash Screen on Startup",
                 value=get_cli_setting("splash_screen", "enabled", True),
                 id="config-general-splash-enabled"
+            ),
+            
+            Label("Splash Screen Duration (seconds):", classes="form-label"),
+            Input(
+                value=str(get_cli_setting("splash_screen", "duration", 1.5)),
+                placeholder="1.5",
+                id="config-general-splash-duration"
             ),
             Static("Shows an animated splash screen with app information when starting tldw-cli", classes="help-text"),
             
@@ -2225,6 +2240,12 @@ Thank you for using tldw-chatbook! 🎉
             splash_enabled = self.query_one("#general-splash-enabled", Checkbox).value
             if save_setting_to_cli_config("splash_screen", "enabled", splash_enabled):
                 saved_count += 1
+            try:
+                splash_duration = float(self.query_one("#general-splash-duration", Input).value)
+                if save_setting_to_cli_config("splash_screen", "duration", splash_duration):
+                    saved_count += 1
+            except ValueError:
+                self.app_instance.notify("Invalid splash screen duration value", severity="warning")
             
             # Chat Defaults
             if save_setting_to_cli_config("chat_defaults", "provider", self.query_one("#general-chat-provider", Select).value):
@@ -2308,6 +2329,7 @@ Thank you for using tldw-chatbook! 🎉
             self.query_one("#general-username", Input).value = "default_user"
             self.query_one("#general-log-level", Select).value = "INFO"
             self.query_one("#general-splash-enabled", Checkbox).value = True  # Default is enabled
+            self.query_one("#general-splash-duration", Input).value = "1.5"  # Default duration
             
             # Reset Chat Defaults
             providers = list(self.config_data.get("providers", {}).keys())
@@ -2505,9 +2527,15 @@ Thank you for using tldw-chatbook! 🎉
             save_setting_to_cli_config("general", "log_level", self.query_one("#config-general-log-level", Input).value)
             save_setting_to_cli_config("general", "users_name", self.query_one("#config-general-users-name", Input).value)
             
-            # Save splash screen setting
+            # Save splash screen settings
             splash_enabled = self.query_one("#config-general-splash-enabled", Checkbox).value
             save_setting_to_cli_config("splash_screen", "enabled", splash_enabled)
+            
+            try:
+                splash_duration = float(self.query_one("#config-general-splash-duration", Input).value)
+                save_setting_to_cli_config("splash_screen", "duration", splash_duration)
+            except ValueError:
+                self.app_instance.notify("Invalid splash screen duration value", severity="warning")
             
             self.app_instance.notify("General configuration saved!")
         except Exception as e:
@@ -2522,6 +2550,7 @@ Thank you for using tldw-chatbook! 🎉
             self.query_one("#config-general-log-level", Input).value = "INFO"
             self.query_one("#config-general-users-name", Input).value = "default_user"
             self.query_one("#config-general-splash-enabled", Checkbox).value = True  # Default is enabled
+            self.query_one("#config-general-splash-duration", Input).value = "1.5"  # Default duration
             self.app_instance.notify("General configuration reset to defaults!")
         except Exception as e:
             self.app_instance.notify(f"Error resetting general config: {e}", severity="error")

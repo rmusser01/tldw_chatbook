@@ -19,7 +19,14 @@ from loguru import logger
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
 os.environ['TQDM_DISABLE'] = '1'
 
-import numpy as np
+# Optional numpy import
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
+    logger.warning("numpy not available. Some audio processing features will be limited. Install with: pip install numpy")
 
 # Local imports  
 from ..config import get_cli_setting
@@ -1830,7 +1837,7 @@ class ParakeetMLXStreamingTranscriber:
         self.sample_rate = 16000  # Parakeet expects 16kHz
         self.context_window = 3.0  # seconds of context to keep
         
-    def add_audio(self, audio_chunk: np.ndarray, sample_rate: int = 16000):
+    def add_audio(self, audio_chunk: Union['np.ndarray', List[float]], sample_rate: int = 16000):
         """
         Add audio chunk to the buffer and transcribe.
         
@@ -1841,13 +1848,26 @@ class ParakeetMLXStreamingTranscriber:
         Returns:
             Dict with transcription results or None
         """
+        # Convert to list if numpy array
+        if NUMPY_AVAILABLE and isinstance(audio_chunk, np.ndarray):
+            audio_chunk = audio_chunk.tolist()
+        
         # Resample if needed
         if sample_rate != self.sample_rate:
             # Simple resampling - for production use a proper resampling library
             factor = self.sample_rate / sample_rate
-            indices = np.arange(0, len(audio_chunk), 1/factor).astype(int)
-            indices = indices[indices < len(audio_chunk)]
-            audio_chunk = audio_chunk[indices]
+            if NUMPY_AVAILABLE:
+                indices = np.arange(0, len(audio_chunk), 1/factor).astype(int)
+                indices = indices[indices < len(audio_chunk)]
+                audio_chunk = [audio_chunk[i] for i in indices]
+            else:
+                # Python-only resampling
+                resampled = []
+                for i in range(int(len(audio_chunk) * self.sample_rate / sample_rate)):
+                    src_idx = int(i * sample_rate / self.sample_rate)
+                    if src_idx < len(audio_chunk):
+                        resampled.append(audio_chunk[src_idx])
+                audio_chunk = resampled
         
         # Add to buffer
         self.audio_buffer.extend(audio_chunk)
@@ -1861,8 +1881,12 @@ class ParakeetMLXStreamingTranscriber:
         min_samples = int(0.5 * self.sample_rate)
         if len(self.audio_buffer) >= min_samples:
             try:
-                # Convert buffer to numpy array
-                audio_array = np.array(self.audio_buffer, dtype=np.float32)
+                # Convert buffer to appropriate format
+                if NUMPY_AVAILABLE:
+                    audio_array = np.array(self.audio_buffer, dtype=np.float32)
+                else:
+                    # Convert to float list
+                    audio_array = [float(x) for x in self.audio_buffer]
                 
                 # Transcribe using the model's streaming capability
                 # According to the documentation, parakeet-mlx uses transcribe_stream context manager
@@ -1890,7 +1914,12 @@ class ParakeetMLXStreamingTranscriber:
         """
         if len(self.audio_buffer) > 0:
             try:
-                audio_array = np.array(self.audio_buffer, dtype=np.float32)
+                # Convert buffer to appropriate format
+                if NUMPY_AVAILABLE:
+                    audio_array = np.array(self.audio_buffer, dtype=np.float32)
+                else:
+                    # Convert to float list
+                    audio_array = [float(x) for x in self.audio_buffer]
                 result = self.model.transcribe(audio_array)
                 
                 text = result.text if hasattr(result, 'text') else str(result)

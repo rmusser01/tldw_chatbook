@@ -4,8 +4,16 @@
 # Imports
 import os
 from typing import AsyncGenerator, Optional, Dict, Any
-import numpy as np
 from loguru import logger
+
+# Optional numpy import
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
+    logger.warning("numpy not available. Kokoro TTS backend will not function.")
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
@@ -36,6 +44,11 @@ class KokoroTTSBackend(LocalTTSBackend):
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
+        
+        # Check numpy availability
+        if not NUMPY_AVAILABLE:
+            raise ImportError("numpy is required for Kokoro TTS backend but is not installed. "
+                            "Install it with: pip install numpy")
         
         # Configuration
         self.use_onnx = self.config.get("KOKORO_USE_ONNX", True)

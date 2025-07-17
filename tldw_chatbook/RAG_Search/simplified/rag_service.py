@@ -11,9 +11,16 @@ from pathlib import Path
 from loguru import logger
 from dataclasses import dataclass
 import time
-import numpy as np
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+
+# Optional numpy import
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
 import psutil
 
 from .embeddings_wrapper import EmbeddingsServiceWrapper
