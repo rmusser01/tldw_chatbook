@@ -21,6 +21,7 @@ from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, ConflictError
 from .Notes_Library import NotesInteropService
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.atomic_file_ops import atomic_write_text
 #
 ########################################################################################################################
 #
@@ -536,7 +537,7 @@ class NotesSyncEngine:
                 if rel_path not in disk_files:
                     # Note in DB but no file -> Create file
                     file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.write_text(db_note['content'], encoding='utf-8')
+                    atomic_write_text(file_path, db_note['content'], encoding='utf-8')
                     
                     # Update sync metadata
                     new_file_info = self._get_file_info(file_path, root_path)
@@ -570,11 +571,11 @@ class NotesSyncEngine:
                             
                             # Resolve based on strategy
                             if conflict_resolution == ConflictResolution.DB_WINS:
-                                file_path.write_text(db_note['content'], encoding='utf-8')
+                                atomic_write_text(file_path, db_note['content'], encoding='utf-8')
                                 progress.updated_files.append(file_path)
                         else:
                             # Only DB changed
-                            file_path.write_text(db_note['content'], encoding='utf-8')
+                            atomic_write_text(file_path, db_note['content'], encoding='utf-8')
                             progress.updated_files.append(file_path)
                             
                             # Update sync metadata
@@ -641,7 +642,7 @@ class NotesSyncEngine:
                         # Recreate file
                         file_path = root_path / rel_path
                         file_path.parent.mkdir(parents=True, exist_ok=True)
-                        file_path.write_text(db_note['content'], encoding='utf-8')
+                        atomic_write_text(file_path, db_note['content'], encoding='utf-8')
                         progress.created_files.append(file_path)
                         
                 elif disk_file and db_note:
@@ -655,7 +656,7 @@ class NotesSyncEngine:
                     
                     if db_changed and not disk_changed:
                         # Only DB changed -> Update disk
-                        disk_file.absolute_path.write_text(db_note['content'], encoding='utf-8')
+                        atomic_write_text(disk_file.absolute_path, db_note['content'], encoding='utf-8')
                         new_file_info = self._get_file_info(disk_file.absolute_path, root_path)
                         if new_file_info:
                             self._update_note_sync_metadata(
@@ -707,7 +708,7 @@ class NotesSyncEngine:
                             
                             if db_modified > disk_modified:
                                 # DB is newer
-                                disk_file.absolute_path.write_text(db_note['content'], encoding='utf-8')
+                                atomic_write_text(disk_file.absolute_path, db_note['content'], encoding='utf-8')
                                 progress.updated_files.append(disk_file.absolute_path)
                             else:
                                 # Disk is newer

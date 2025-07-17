@@ -354,8 +354,9 @@ class _HuggingFaceEmbedder:
             # Use to_empty() to move from meta device, then load state dict
             self._model = self._model.to_empty(device=self._device)
             # Now reload the model properly
-            from transformers import AutoModel
-            state_dict = AutoModel.from_pretrained(
+            # Import locally to avoid scope issues
+            from transformers import AutoModel as LocalAutoModel
+            state_dict = LocalAutoModel.from_pretrained(
                 cfg.model_name_or_path,
                 trust_remote_code=cfg.trust_remote_code,
                 cache_dir=cache_dir,

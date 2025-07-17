@@ -21,6 +21,7 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, SchemaError as ChaChaSchemaError, ConflictError as ChaChaConflictError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, DatabaseError as MediaDBError, SchemaError as MediaSchemaError, ConflictError as MediaConflictError
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase, DatabaseError as PromptsDBError, SchemaError as PromptsSchemaError, ConflictError as PromptsConflictError
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 #
 #######################################################################################################################
 #
@@ -1291,6 +1292,10 @@ prompts_db_path = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
 # Path to the Media V2 database.
 media_db_path = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
 USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
+
+# Database integrity checking
+check_integrity_on_startup = false  # Enable/disable automatic integrity checks on startup
+integrity_check_timeout = 30  # Maximum seconds to wait for integrity check
 
 [media_cleanup]
 # Media cleanup settings for automatic hard deletion of soft-deleted items
@@ -2634,8 +2639,8 @@ def disable_config_encryption(password: str) -> bool:
             del decrypted_config["encryption"]
         
         # Save the decrypted config
-        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-            toml.dump(decrypted_config, f)
+        config_str = toml.dumps(decrypted_config)
+        atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
         
         # Clear password
         clear_encryption_password()
@@ -2693,8 +2698,8 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
         encrypted_config = encrypt_api_keys_in_config(decrypted_config, new_password)
         
         # Save the re-encrypted config
-        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-            toml.dump(encrypted_config, f)
+        config_str = toml.dumps(encrypted_config)
+        atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
         
         # Set the new password for the current session
         set_encryption_password(new_password)

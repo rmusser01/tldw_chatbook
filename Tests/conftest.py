@@ -14,11 +14,31 @@ from unittest.mock import MagicMock, AsyncMock
 import sqlite3
 import os
 import sys
+import gc
+import warnings
 
 # Add project root to Python path for consistent imports
 PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Protect against stdout/stderr being closed during testing
+# This can happen with certain test runners or when tests manipulate file descriptors
+if hasattr(sys.stdout, 'fileno'):
+    try:
+        sys.stdout.fileno()
+    except (ValueError, OSError):
+        # stdout is closed or invalid, replace with a safe alternative
+        import io
+        sys.stdout = io.StringIO()
+
+if hasattr(sys.stderr, 'fileno'):
+    try:
+        sys.stderr.fileno()
+    except (ValueError, OSError):
+        # stderr is closed or invalid, replace with a safe alternative
+        import io
+        sys.stderr = io.StringIO()
 
 
 # ========== Path and File System Fixtures ==========
@@ -94,6 +114,40 @@ def restore_sys_path():
     original_path = sys.path.copy()
     yield
     sys.path[:] = original_path
+
+
+@pytest.fixture(autouse=True)
+def cleanup_loguru_handlers():
+    """Automatically cleanup loguru handlers after each test to prevent file descriptor leaks."""
+    from loguru import logger
+    # Store the initial handler IDs
+    initial_handlers = list(logger._core.handlers.keys())
+    
+    yield
+    
+    # Remove any handlers added during the test
+    current_handlers = list(logger._core.handlers.keys())
+    for handler_id in current_handlers:
+        if handler_id not in initial_handlers:
+            try:
+                logger.remove(handler_id)
+            except (ValueError, KeyError):
+                # Handler might already be removed
+                pass
+
+
+@pytest.fixture(autouse=True)
+def cleanup_file_descriptors():
+    """Force garbage collection and close any leaked file descriptors after each test."""
+    yield
+    
+    # Force garbage collection to cleanup any unclosed files
+    gc.collect()
+    
+    # Suppress ResourceWarnings during test cleanup
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceWarning)
+        gc.collect()
 
 
 # ========== Async Cleanup Fixtures ==========

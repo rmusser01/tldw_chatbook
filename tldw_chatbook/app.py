@@ -1241,7 +1241,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Initialize media database - for parallel execution."""
         try:
             media_db_path = get_media_db_path()
-            self.media_db = MediaDatabase(db_path=media_db_path, client_id=CLI_APP_CLIENT_ID)
+            # Get integrity check configuration
+            check_integrity = self.app_config.get('database', {}).get('check_integrity_on_startup', False)
+            self.media_db = MediaDatabase(
+                db_path=media_db_path, 
+                client_id=CLI_APP_CLIENT_ID,
+                check_integrity_on_startup=check_integrity
+            )
             logger.info(f"Media_DB_v2 initialized successfully for client '{CLI_APP_CLIENT_ID}' at {media_db_path}")
             
             # Pre-fetch media types for UI

@@ -19,6 +19,15 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from hypothesis import given, strategies as st
 import time
 
+# Import optional dependency checker
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+# Skip all tests in this module if embeddings dependencies are not available
+pytestmark = pytest.mark.skipif(
+    not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False),
+    reason="Embeddings tests require dependencies: pip install tldw_chatbook[embeddings_rag]"
+)
+
 # Import embeddings wrapper
 try:
     from tldw_chatbook.RAG_Search.simplified.embeddings_wrapper import (

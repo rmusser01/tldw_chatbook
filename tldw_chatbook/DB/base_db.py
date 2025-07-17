@@ -31,13 +31,15 @@ class BaseDB(ABC):
     - Automatic directory creation
     """
     
-    def __init__(self, db_path: Union[str, Path], client_id: str = "default"):
+    def __init__(self, db_path: Union[str, Path], client_id: str = "default", 
+                 check_integrity_on_startup: bool = False):
         """
         Initialize the base database with standardized path handling.
         
         Args:
             db_path: Path to the SQLite database file or ':memory:'
             client_id: Client identifier for multi-client support
+            check_integrity_on_startup: Whether to run integrity check on startup
         """
         # Standardized path handling
         if isinstance(db_path, Path):
@@ -66,6 +68,16 @@ class BaseDB(ABC):
         
         # Initialize schema (implemented by subclasses)
         self._initialize_schema()
+        
+        # Run integrity check if requested
+        if check_integrity_on_startup and not self.is_memory_db:
+            logger.info(f"Running startup integrity check for {self.__class__.__name__}")
+            if not self.check_integrity():
+                logger.warning(f"Database integrity check failed for {self.db_path_str}. "
+                              "Consider running repairs or restoring from backup.")
+                # Note: We don't raise an exception here to allow the app to continue
+                # with potentially degraded functionality. Subclasses can override
+                # this behavior if they need stricter integrity enforcement.
         
         logger.info(f"{self.__class__.__name__} initialized with path: {self.db_path_str} [Client: {self.client_id}]")
     

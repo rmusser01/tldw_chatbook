@@ -15,6 +15,9 @@ from unittest.mock import MagicMock, Mock
 from dataclasses import dataclass
 import numpy as np
 
+# Import optional dependency checker
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
 
 # === Directory Fixtures ===
 

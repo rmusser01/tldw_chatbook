@@ -35,6 +35,7 @@ except ImportError:
 
 from .task_loader import TaskConfig
 from .llm_interface import LLMInterface, EvalProviderError, EvalAPIError, EvalAuthenticationError, EvalRateLimitError
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 class EvalError(Exception):
     """Base exception for evaluation errors."""
@@ -1445,6 +1446,7 @@ class EvalRunner:
                            progress_callback: callable = None) -> List[EvalSampleResult]:
         """Run evaluation on the task dataset."""
         logger.info(f"Starting evaluation: {self.task_config.name}")
+        eval_run_start = time.time()
         
         # Load dataset samples
         samples = DatasetLoader.load_dataset_samples(self.task_config, max_samples=max_samples)

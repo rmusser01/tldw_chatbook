@@ -12,6 +12,15 @@ import time
 from loguru import logger
 from unittest.mock import patch, MagicMock
 
+# Import optional dependency checker
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+# Skip all tests in this module if embeddings dependencies are not available
+pytestmark = pytest.mark.skipif(
+    not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False),
+    reason="RAG tests require embeddings dependencies: pip install tldw_chatbook[embeddings_rag]"
+)
+
 # Import RAG service components
 from tldw_chatbook.RAG_Search.simplified.rag_service import (
     RAGService,
