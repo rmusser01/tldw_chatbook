@@ -125,6 +125,40 @@ class ToolsSettingsWindow(Container):
     
     .config-editor {
         height: 100%;
+    }
+    
+    /* Tool Settings Styles */
+    .tool-item {
+        layout: horizontal;
+        align: left middle;
+        margin-bottom: 1;
+        padding: 0.5 1;
+        background: $panel;
+        border-radius: 4;
+    }
+    
+    .tool-switch {
+        margin-right: 1;
+    }
+    
+    .tool-info {
+        width: 1fr;
+    }
+    
+    .tool-name {
+        text-style: bold;
+        margin-bottom: 0;
+    }
+    
+    .tool-description {
+        color: $text-muted;
+        text-style: italic;
+    }
+    
+    .tool-stats {
+        padding: 1;
+        background: $panel;
+        border-radius: 4;
         width: 100%;
         min-height: 30;
     }
@@ -1832,6 +1866,106 @@ class ToolsSettingsWindow(Container):
             classes="section-description"
         )
 
+    def _compose_tool_settings(self) -> ComposeResult:
+        """Compose the Tool Settings UI."""
+        yield Static("Tool Settings", classes="section-title")
+        yield Static("Configure which tools are available for LLM function calling", classes="section-description")
+        
+        with Container(classes="settings-container"):
+            # Get tool configuration from config
+            tools_config = self.config_data.get("tools", {})
+            
+            # Get available tools from the tool executor
+            from ..Tools import get_tool_executor
+            executor = get_tool_executor()
+            available_tools = executor.get_available_tools()
+            
+            yield Label("Available Tools", classes="settings-label")
+            yield Static("Enable or disable tools for LLM interactions:", classes="section-description")
+            
+            # Create a switch for each available tool
+            for tool_info in available_tools:
+                tool_name = tool_info['function']['name']
+                tool_description = tool_info['function']['description']
+                
+                # Check if tool is enabled (default to True if not specified)
+                is_enabled = tools_config.get(f"{tool_name}_enabled", True)
+                
+                with Horizontal(classes="tool-item"):
+                    yield Switch(
+                        value=is_enabled,
+                        id=f"tool-switch-{tool_name}",
+                        classes="tool-switch"
+                    )
+                    with Container(classes="tool-info"):
+                        yield Label(f"{tool_name}", classes="tool-name")
+                        yield Static(tool_description, classes="tool-description")
+            
+            # Tool-specific settings section
+            with Collapsible(title="Tool Configuration", collapsed=True):
+                yield Label("Timeout Settings", classes="settings-label")
+                
+                # Tool execution timeout
+                timeout = tools_config.get("timeout_seconds", 30)
+                yield Label("Tool Execution Timeout (seconds):", classes="form-label")
+                yield Input(
+                    value=str(timeout),
+                    id="tool-timeout-input",
+                    type="integer",
+                    placeholder="30"
+                )
+                
+                # Max concurrent executions
+                max_workers = tools_config.get("max_workers", 4)
+                yield Label("Max Concurrent Tool Executions:", classes="form-label")
+                yield Input(
+                    value=str(max_workers),
+                    id="tool-max-workers-input",
+                    type="integer",
+                    placeholder="4"
+                )
+                
+                # Cache settings
+                yield Label("Cache Settings", classes="settings-label")
+                yield Checkbox(
+                    "Enable tool result caching",
+                    value=tools_config.get("cache_enabled", False),
+                    id="tool-cache-enabled"
+                )
+                
+                cache_max_size = tools_config.get("cache_max_size", 100)
+                yield Label("Cache Max Size (entries):", classes="form-label")
+                yield Input(
+                    value=str(cache_max_size),
+                    id="tool-cache-max-size-input",
+                    type="integer",
+                    placeholder="100"
+                )
+                
+                cache_ttl = tools_config.get("cache_default_ttl", 3600)
+                yield Label("Cache Default TTL (seconds):", classes="form-label")
+                yield Input(
+                    value=str(cache_ttl),
+                    id="tool-cache-ttl-input",
+                    type="integer",
+                    placeholder="3600"
+                )
+                
+                yield Checkbox(
+                    "Persist cache to disk",
+                    value=tools_config.get("cache_persist", True),
+                    id="tool-cache-persist"
+                )
+            
+            # Save and reset buttons
+            with Horizontal(classes="button-row"):
+                yield Button("Save Tool Settings", id="save-tool-settings", variant="primary")
+                yield Button("Reset Tool Settings", id="reset-tool-settings", variant="warning")
+            
+            # Tool usage statistics
+            with Collapsible(title="Tool Usage Statistics", collapsed=True):
+                yield Static("Tool execution history and statistics will be displayed here.", classes="tool-stats")
+
     def _compose_about(self) -> ComposeResult:
         """Compose the About section."""
         yield Static("About tldw-chatbook", classes="section-title")
@@ -1882,6 +2016,7 @@ Thank you for using tldw-chatbook! 🎉
             yield Button("Configuration File Settings", id="ts-nav-config-file-settings", classes="ts-nav-button")
             yield Button("Database Tools", id="ts-nav-db-tools", classes="ts-nav-button")
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
+            yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
 
         with ContentSwitcher(id="tools-settings-content-pane", classes="tools-content-pane", initial="ts-view-general-settings"):
@@ -1903,6 +2038,11 @@ Thank you for using tldw-chatbook! 🎉
             yield Container(
                 *self._compose_appearance_settings(),
                 id="ts-view-appearance",
+                classes="ts-view-area",
+            )
+            yield Container(
+                *self._compose_tool_settings(),
+                id="ts-view-tool-settings",
                 classes="ts-view-area",
             )
             yield Container(
@@ -1933,6 +2073,8 @@ Thank you for using tldw-chatbook! 🎉
             await self._show_view("ts-view-db-tools")
         elif button_id == "ts-nav-appearance":
             await self._show_view("ts-view-appearance")
+        elif button_id == "ts-nav-tool-settings":
+            await self._show_view("ts-view-tool-settings")
         elif button_id == "ts-nav-about":
             await self._show_view("ts-view-about")
             
@@ -1941,6 +2083,12 @@ Thank you for using tldw-chatbook! 🎉
             await self._save_general_settings()
         elif button_id == "reset-general-settings":
             await self._reset_general_settings()
+            
+        # Tool Settings handlers
+        elif button_id == "save-tool-settings":
+            await self._save_tool_settings()
+        elif button_id == "reset-tool-settings":
+            await self._reset_tool_settings()
             
         # Raw TOML editor handlers
         elif button_id == "save-config-button":
@@ -2172,6 +2320,124 @@ Thank you for using tldw-chatbook! 🎉
             
         except Exception as e:
             self.app_instance.notify(f"Error resetting General Settings: {e}", severity="error")
+
+    async def _save_tool_settings(self) -> None:
+        """Save Tool Settings to the configuration file."""
+        try:
+            saved_count = 0
+            tools_config = {}
+            
+            # Get available tools
+            from ..Tools import get_tool_executor
+            executor = get_tool_executor()
+            available_tools = executor.get_available_tools()
+            
+            # Save enabled/disabled state for each tool
+            for tool_info in available_tools:
+                tool_name = tool_info['function']['name']
+                switch_id = f"tool-switch-{tool_name}"
+                try:
+                    switch = self.query_one(f"#{switch_id}", Switch)
+                    tools_config[f"{tool_name}_enabled"] = switch.value
+                    saved_count += 1
+                except Exception:
+                    pass
+            
+            # Save timeout settings
+            try:
+                timeout = int(self.query_one("#tool-timeout-input", Input).value)
+                tools_config["timeout_seconds"] = timeout
+                saved_count += 1
+            except Exception:
+                pass
+            
+            # Save max workers
+            try:
+                max_workers = int(self.query_one("#tool-max-workers-input", Input).value)
+                tools_config["max_workers"] = max_workers
+                saved_count += 1
+            except Exception:
+                pass
+            
+            # Save cache settings
+            try:
+                cache_enabled = self.query_one("#tool-cache-enabled", Checkbox).value
+                tools_config["cache_enabled"] = cache_enabled
+                saved_count += 1
+            except Exception:
+                pass
+            
+            try:
+                cache_max_size = int(self.query_one("#tool-cache-max-size-input", Input).value)
+                tools_config["cache_max_size"] = cache_max_size
+                saved_count += 1
+            except Exception:
+                pass
+            
+            try:
+                cache_ttl = int(self.query_one("#tool-cache-ttl-input", Input).value)
+                tools_config["cache_default_ttl"] = cache_ttl
+                saved_count += 1
+            except Exception:
+                pass
+            
+            try:
+                cache_persist = self.query_one("#tool-cache-persist", Checkbox).value
+                tools_config["cache_persist"] = cache_persist
+                saved_count += 1
+            except Exception:
+                pass
+            
+            # Save the entire tools section
+            if save_setting_to_cli_config("tools", None, tools_config):
+                self.app_instance.notify(f"Tool Settings saved! ({saved_count} settings)", severity="information")
+                
+                # Update the config data
+                self.config_data = load_cli_config_and_ensure_existence()
+                
+                # Reload the tool executor with new settings
+                from ..Tools import reload_tool_executor
+                reload_tool_executor()
+                
+                self.app_instance.notify("Tool executor reloaded with new settings", severity="information")
+            else:
+                self.app_instance.notify("Failed to save Tool Settings", severity="error")
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error saving Tool Settings: {e}", severity="error")
+    
+    async def _reset_tool_settings(self) -> None:
+        """Reset Tool Settings to default values."""
+        try:
+            # Get available tools
+            from ..Tools import get_tool_executor
+            executor = get_tool_executor()
+            available_tools = executor.get_available_tools()
+            
+            # Reset all tool switches to enabled (default)
+            for tool_info in available_tools:
+                tool_name = tool_info['function']['name']
+                switch_id = f"tool-switch-{tool_name}"
+                try:
+                    switch = self.query_one(f"#{switch_id}", Switch)
+                    switch.value = True  # Default is enabled
+                except Exception:
+                    pass
+            
+            # Reset timeout settings
+            self.query_one("#tool-timeout-input", Input).value = "30"
+            self.query_one("#tool-max-workers-input", Input).value = "4"
+            
+            # Reset cache settings
+            self.query_one("#tool-cache-enabled", Checkbox).value = False
+            self.query_one("#tool-cache-max-size-input", Input).value = "100"
+            self.query_one("#tool-cache-ttl-input", Input).value = "3600"
+            self.query_one("#tool-cache-persist", Checkbox).value = True
+            
+            self.app_instance.notify("Tool Settings reset to defaults!")
+            
+        except Exception as e:
+            self.app_instance.notify(f"Error resetting Tool Settings: {e}", severity="error")
 
     async def _save_raw_toml_config(self) -> None:
         """Save raw TOML configuration."""
@@ -2848,7 +3114,8 @@ Thank you for using tldw-chatbook! 🎉
                 "ts-view-general-settings",
                 "ts-view-config-file-settings", 
                 "ts-view-db-tools",
-                "ts-view-appearance"
+                "ts-view-appearance",
+                "ts-view-tool-settings"
             ]
             
             # Hide all views by removing active class
@@ -2871,7 +3138,8 @@ Thank you for using tldw-chatbook! 🎉
             "ts-view-general-settings": "ts-nav-general-settings",
             "ts-view-config-file-settings": "ts-nav-config-file-settings",
             "ts-view-db-tools": "ts-nav-db-tools",
-            "ts-view-appearance": "ts-nav-appearance"
+            "ts-view-appearance": "ts-nav-appearance",
+            "ts-view-tool-settings": "ts-nav-tool-settings"
         }
         
         for v_id, btn_id in nav_buttons.items():
