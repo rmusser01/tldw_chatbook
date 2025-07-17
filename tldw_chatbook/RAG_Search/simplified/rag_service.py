@@ -860,7 +860,7 @@ class RAGService:
     
     async def _store_chunks(self,
                           ids: List[str],
-                          embeddings: np.ndarray,
+                          embeddings: Union['np.ndarray', List[List[float]]],
                           documents: List[str],
                           metadata: List[dict]) -> None:
         """Store chunks in vector database asynchronously."""
