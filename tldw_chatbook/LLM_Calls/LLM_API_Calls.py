@@ -15,6 +15,7 @@
 # 6. chat_with_openrouter(api_key, input_data, custom_prompt_arg, system_prompt=None, streaming=None)
 # 7. chat_with_huggingface(api_key, input_data, custom_prompt_arg, system_prompt=None, streaming=None)
 # 8. chat_with_deepseek(api_key, input_data, custom_prompt_arg, system_prompt=None, streaming=None)
+# 9. chat_with_moonshot(api_key, input_data, custom_prompt_arg, system_prompt=None, streaming=None)
 #
 #
 ####################
@@ -53,6 +54,7 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 # - chat_with_huggingface
 # - chat_with_mistral
 # - chat_with_openrouter
+# - chat_with_moonshot
 #
 #######################################################################################################################
 # Function Definitions
@@ -2322,6 +2324,348 @@ def chat_with_openrouter(
             "error_type": "unexpected_error"
         })
         raise ChatProviderError(provider="openrouter", message=f"Unexpected error: {e}")
+
+
+def chat_with_moonshot(
+        input_data: List[Dict[str, Any]],  # Mapped from 'messages_payload'
+        model: Optional[str] = None,  # Mapped from 'model'
+        api_key: Optional[str] = None,  # Mapped from 'api_key'
+        system_message: Optional[str] = None,  # Mapped from 'system_message'
+        temp: Optional[float] = None,  # Mapped from 'temp' (temperature)
+        maxp: Optional[float] = None,  # Mapped from 'maxp' (top_p)
+        streaming: Optional[bool] = False,  # Mapped from 'streaming'
+        # Moonshot/OpenAI compatible parameters
+        frequency_penalty: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        n: Optional[int] = None,  # Number of completions
+        presence_penalty: Optional[float] = None,
+        response_format: Optional[Dict[str, str]] = None,  # e.g., {"type": "json_object"}
+        seed: Optional[int] = None,
+        stop: Optional[Union[str, List[str]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        user: Optional[str] = None,  # User identifier
+        custom_prompt_arg: Optional[str] = None  # Legacy
+):
+    """
+    Sends a chat completion request to the Moonshot AI API.
+    
+    Moonshot AI provides an OpenAI-compatible API endpoint, supporting models:
+    - kimi-latest: Latest Kimi model
+    - kimi-thinking-preview: Kimi model with thinking capabilities
+    - kimi-k2-0711-preview: Kimi K2 preview model
+    - moonshot-v1-auto: Automatic model selection
+    - moonshot-v1-8k: 8K context window
+    - moonshot-v1-32k: 32K context window  
+    - moonshot-v1-128k: 128K context window
+    - moonshot-v1-8k-vision-preview: 8K context with vision support
+    - moonshot-v1-32k-vision-preview: 32K context with vision support
+    - moonshot-v1-128k-vision-preview: 128K context with vision support
+    
+    Args:
+        input_data: List of message objects (OpenAI format).
+        model: ID of the model to use (moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k).
+        api_key: Moonshot API key.
+        system_message: Optional system message to prepend.
+        temp: Sampling temperature (0-1).
+        maxp: Top-p (nucleus) sampling parameter.
+        streaming: Whether to stream the response.
+        frequency_penalty: Penalizes new tokens based on their existing frequency.
+        max_tokens: Maximum number of tokens to generate.
+        n: How many chat completion choices to generate (Note: n>1 only works with temp>0.3).
+        presence_penalty: Penalizes new tokens based on whether they appear in the text so far.
+        response_format: An object specifying the format that the model must output.
+        seed: If specified, the system will make a best effort to sample deterministically.
+        stop: Up to 4 sequences where the API will stop generating further tokens.
+        tools: A list of tools the model may call.
+        tool_choice: Controls which (if any) function is called by the model (Note: "required" not supported).
+        user: A unique identifier representing your end-user.
+        custom_prompt_arg: Legacy, largely ignored.
+    """
+    loaded_config_data = load_settings()
+    moonshot_config = loaded_config_data.get('moonshot_api', {})
+    
+    final_api_key = api_key or moonshot_config.get('api_key')
+    if not final_api_key:
+        logger.error("Moonshot: API key is missing.")
+        raise ChatConfigurationError(provider="moonshot", message="Moonshot API Key is required but not found.")
+    
+    log_key_display = f"{final_api_key[:5]}...{final_api_key[-5:]}" if final_api_key and len(final_api_key) > 9 else "Key Provided"
+    logger.debug(f"Moonshot: Using API Key: {log_key_display}")
+    
+    # Resolve parameters: User-provided > Function arg default > Config default > Hardcoded default
+    final_model = model if model is not None else moonshot_config.get('model', 'moonshot-v1-8k')
+    final_temp = temp if temp is not None else float(moonshot_config.get('temperature', 0.7))
+    final_top_p = maxp if maxp is not None else float(moonshot_config.get('top_p', 0.95))
+    
+    # Validate temperature for n>1 as per Moonshot documentation
+    final_n = n if n is not None else 1
+    if final_n > 1 and final_temp < 0.3:
+        logger.warning(f"Moonshot: n={final_n} requested but temperature={final_temp} < 0.3. Setting n=1.")
+        final_n = 1
+    
+    final_streaming_cfg = moonshot_config.get('streaming', False)
+    final_streaming = streaming if streaming is not None else \
+        (str(final_streaming_cfg).lower() == 'true' if isinstance(final_streaming_cfg, str) else bool(final_streaming_cfg))
+    
+    final_max_tokens = max_tokens if max_tokens is not None else _safe_cast(moonshot_config.get('max_tokens'), int)
+    
+    if custom_prompt_arg:
+        logger.warning(
+            "Moonshot: 'custom_prompt_arg' was provided but is generally ignored if 'input_data' and 'system_message' are used correctly.")
+    
+    # Construct messages for Moonshot API (OpenAI format)
+    api_messages = []
+    has_system_message_in_input = any(msg.get("role") == "system" for msg in input_data)
+    if system_message and not has_system_message_in_input:
+        api_messages.append({"role": "system", "content": system_message})
+    
+    # Process messages to ensure proper format
+    is_vision_model = "vision" in final_model.lower()
+    
+    for msg in input_data:
+        role = msg.get("role")
+        content = msg.get("content")
+        
+        # Handle different content formats
+        if isinstance(content, list):
+            if is_vision_model:
+                # For vision models, convert to Moonshot's expected format
+                moonshot_content = []
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "text":
+                            moonshot_content.append({
+                                "type": "text",
+                                "text": part.get("text", "")
+                            })
+                        elif part.get("type") == "image_url":
+                            image_url_obj = part.get("image_url", {})
+                            url_str = image_url_obj.get("url", "")
+                            # Parse data URL for vision models
+                            parsed_image = _parse_data_url_for_multimodal(url_str)
+                            if parsed_image:
+                                mime_type, b64_data = parsed_image
+                                moonshot_content.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": url_str  # Keep original data URL
+                                    }
+                                })
+                            else:
+                                # Regular URL
+                                moonshot_content.append({
+                                    "type": "image_url", 
+                                    "image_url": {
+                                        "url": url_str
+                                    }
+                                })
+                    elif isinstance(part, str):
+                        moonshot_content.append({
+                            "type": "text",
+                            "text": part
+                        })
+                
+                # For vision models, keep structured content
+                api_messages.append({"role": role, "content": moonshot_content})
+            else:
+                # For non-vision models, extract only text
+                text_parts = []
+                has_images = False
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif isinstance(part, dict) and part.get("type") == "image_url":
+                        has_images = True
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                
+                if has_images:
+                    logger.warning(f"Moonshot: Non-vision model {final_model} cannot process images. Extracting text only.")
+                
+                content_str = " ".join(text_parts).strip()
+                api_messages.append({"role": role, "content": content_str})
+        else:
+            # Simple string content
+            if content is None:
+                content = ""
+            elif not isinstance(content, str):
+                content = str(content)
+            
+            api_messages.append({"role": role, "content": content})
+    
+    payload = {
+        "model": final_model,
+        "messages": api_messages,
+        "stream": final_streaming,
+    }
+    
+    # Add optional parameters if they have a value
+    if final_temp is not None:
+        payload["temperature"] = final_temp
+    if final_top_p is not None:
+        payload["top_p"] = final_top_p
+    if final_max_tokens is not None:
+        payload["max_tokens"] = final_max_tokens
+    if frequency_penalty is not None:
+        payload["frequency_penalty"] = frequency_penalty
+    if final_n is not None and final_n > 1:
+        payload["n"] = final_n
+    if presence_penalty is not None:
+        payload["presence_penalty"] = presence_penalty
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if seed is not None:
+        payload["seed"] = seed
+    if stop is not None:
+        payload["stop"] = stop
+    if tools is not None:
+        payload["tools"] = tools
+        
+    # Handle tool_choice - Moonshot doesn't support "required"
+    if payload.get("tools") and tool_choice is not None:
+        if tool_choice == "required":
+            logger.warning("Moonshot: tool_choice='required' is not supported. Using 'auto' instead.")
+            payload["tool_choice"] = "auto"
+        else:
+            payload["tool_choice"] = tool_choice
+    elif tool_choice == "none":  # Allow "none" even if no tools are present
+        payload["tool_choice"] = "none"
+        
+    if user is not None:
+        payload["user"] = user
+    
+    headers = {
+        'Authorization': f'Bearer {final_api_key}',
+        'Content-Type': 'application/json'
+    }
+    logger.debug(f"Moonshot Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
+    
+    # Determine API endpoint based on config (default to international)
+    api_region = moonshot_config.get('api_region', 'international').lower()
+    if api_region == 'china':
+        api_base_url = moonshot_config.get('api_base_url', 'https://api.moonshot.cn/v1')
+    else:
+        api_base_url = moonshot_config.get('api_base_url', 'https://api.moonshot.ai/v1')
+    
+    api_url = api_base_url.rstrip('/') + '/chat/completions'
+    
+    start_time = time.time()
+    log_counter("moonshot_api_request", labels={"model": final_model, "streaming": str(final_streaming)})
+    
+    try:
+        if final_streaming:
+            logger.debug("Moonshot: Posting request (streaming)")
+            with requests.Session() as session:
+                response = session.post(api_url, headers=headers, json=payload, stream=True, timeout=180)
+                response.raise_for_status()
+                
+                def stream_generator():
+                    try:
+                        for line in response.iter_lines(decode_unicode=True):
+                            if line and line.strip():
+                                # Pass through Moonshot's SSE lines directly (OpenAI compatible)
+                                yield line if line.endswith("\n") else line + "\n"
+                    except requests.exceptions.ChunkedEncodingError as e_chunk:
+                        logger.error(f"Moonshot: ChunkedEncodingError during stream: {e_chunk}", exc_info=True)
+                        error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_chunk)}",
+                                                              "type": "moonshot_stream_error"}})
+                        yield f"data: {error_content}\n\n"
+                    except Exception as e_stream:
+                        logger.error(f"Moonshot: Error during stream iteration: {e_stream}", exc_info=True)
+                        error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
+                                                              "type": "moonshot_stream_error"}})
+                        yield f"data: {error_content}\n\n"
+                    finally:
+                        yield "data: [DONE]\n\n"
+                        if response:
+                            response.close()
+                
+                return stream_generator()
+        
+        else:  # Non-streaming
+            logger.debug("Moonshot: Posting request (non-streaming)")
+            retry_count = int(moonshot_config.get('api_retries', 3))
+            retry_delay = float(moonshot_config.get('api_retry_delay', 1.0))
+            
+            retry_strategy = Retry(
+                total=retry_count,
+                backoff_factor=retry_delay,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["POST"]
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            with requests.Session() as session:
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+                response = session.post(api_url, headers=headers, json=payload,
+                                        timeout=float(moonshot_config.get('api_timeout', 90.0)))
+            
+            logger.debug(f"Moonshot: Full API response status: {response.status_code}")
+            response.raise_for_status()
+            response_data = response.json()
+            
+            # Log success metrics
+            duration = time.time() - start_time
+            log_histogram("moonshot_api_response_time", duration, labels={
+                "model": final_model,
+                "streaming": "false",
+                "status_code": str(response.status_code)
+            })
+            log_counter("moonshot_api_success", labels={"model": final_model, "streaming": "false"})
+            
+            # Log token usage if available
+            usage = response_data.get("usage", {})
+            if usage:
+                log_histogram("moonshot_api_prompt_tokens", usage.get("prompt_tokens", 0), labels={"model": final_model})
+                log_histogram("moonshot_api_completion_tokens", usage.get("completion_tokens", 0), labels={"model": final_model})
+                log_histogram("moonshot_api_total_tokens", usage.get("total_tokens", 0), labels={"model": final_model})
+            
+            logger.debug("Moonshot: Non-streaming request successful.")
+            return response_data
+    
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else 0
+        
+        # Log error metrics
+        duration = time.time() - start_time
+        log_counter("moonshot_api_error", labels={
+            "model": final_model,
+            "error_type": "http_error",
+            "status_code": str(status_code)
+        })
+        log_histogram("moonshot_api_error_response_time", duration, labels={
+            "model": final_model,
+            "status_code": str(status_code)
+        })
+        
+        if e.response is not None:
+            logger.error(f"Moonshot Full Error Response (status {e.response.status_code}): {e.response.text}")
+        else:
+            logger.error(f"Moonshot HTTPError with no response object: {e}")
+        raise
+    except requests.exceptions.RequestException as e:
+        # Log network error metrics
+        duration = time.time() - start_time
+        log_counter("moonshot_api_error", labels={
+            "model": final_model,
+            "error_type": "network_error"
+        })
+        log_histogram("moonshot_api_error_response_time", duration, labels={
+            "model": final_model,
+            "error_type": "network"
+        })
+        logger.error(f"Moonshot RequestException: {e}", exc_info=True)
+        raise
+    except Exception as e:
+        # Log unexpected error metrics
+        duration = time.time() - start_time
+        log_counter("moonshot_api_error", labels={
+            "model": final_model,
+            "error_type": "unexpected"
+        })
+        logger.error(f"Moonshot: Unexpected error in chat_with_moonshot: {e}", exc_info=True)
+        raise ChatProviderError(provider="moonshot", message=f"Unexpected error: {e}")
 
 #
 #

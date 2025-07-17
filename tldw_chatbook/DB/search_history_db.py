@@ -347,12 +347,14 @@ class SearchHistoryDB:
             logger.error(f"Error getting search history: {e}")
             return []
             
-    def get_search_results(self, search_id: int) -> List[Dict[str, Any]]:
+    def get_search_results(self, search_id: int, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """
         Get results for a specific search.
         
         Args:
             search_id: ID of the search
+            limit: Maximum number of results to return
+            offset: Number of results to skip
             
         Returns:
             List of search results
@@ -363,10 +365,11 @@ class SearchHistoryDB:
             FROM search_results
             WHERE search_id = ?
             ORDER BY result_index
+            LIMIT ? OFFSET ?
             """
             
             with self._get_connection() as conn:
-                cursor = conn.execute(query, (search_id,))
+                cursor = conn.execute(query, (search_id, limit, offset))
                 
                 results = []
                 for row in cursor:

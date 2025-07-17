@@ -68,11 +68,18 @@ max_tokens = 4096
 # temperature = 0.7
 # max_tokens = 4096
 
+# [api_settings.moonshot]
+# api_key = ""
+# model = "kimi-latest"  # Options: kimi-latest, kimi-thinking-preview, moonshot-v1-auto, moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k, moonshot-v1-8k-vision-preview, moonshot-v1-32k-vision-preview, moonshot-v1-128k-vision-preview, kimi-k2-0711-preview
+# temperature = 0.7
+# max_tokens = 4096
+# api_region = "international"  # Options: "international" or "china"
+
 # --- Add other API providers as needed ---
 
 [providers]
 # List of available LLM providers to show in UI
-available = ["openai", "anthropic", "local"]
+available = ["openai", "anthropic", "moonshot", "local"]
 
 [chat_defaults]
 system_message = ""

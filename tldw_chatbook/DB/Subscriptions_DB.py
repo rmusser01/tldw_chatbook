@@ -542,25 +542,47 @@ class SubscriptionsDB(BaseDB):
         
         return results
     
-    def get_subscriptions_by_tag(self, tag: str) -> List[Dict[str, Any]]:
-        """Filter subscriptions by tag."""
+    def get_subscriptions_by_tag(self, tag: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Filter subscriptions by tag.
+        
+        Args:
+            tag: The tag to filter by
+            limit: Maximum number of subscriptions to return
+            offset: Number of subscriptions to skip
+            
+        Returns:
+            List of subscription dictionaries
+        """
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT * FROM subscriptions
             WHERE is_active = 1 AND tags LIKE ?
             ORDER BY name
-        """, (f'%{tag}%',))
+            LIMIT ? OFFSET ?
+        """, (f'%{tag}%', limit, offset))
         
         return [dict(row) for row in cursor.fetchall()]
     
-    def get_subscriptions_by_folder(self, folder: str) -> List[Dict[str, Any]]:
-        """Get all subscriptions in a folder."""
+    def get_subscriptions_by_folder(self, folder: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Get all subscriptions in a folder.
+        
+        Args:
+            folder: The folder name to filter by
+            limit: Maximum number of subscriptions to return
+            offset: Number of subscriptions to skip
+            
+        Returns:
+            List of subscription dictionaries
+        """
         cursor = self.conn.cursor()
         cursor.execute("""
             SELECT * FROM subscriptions
             WHERE is_active = 1 AND folder = ?
             ORDER BY priority DESC, name
-        """, (folder,))
+            LIMIT ? OFFSET ?
+        """, (folder, limit, offset))
         
         return [dict(row) for row in cursor.fetchall()]
     
@@ -883,8 +905,18 @@ class SubscriptionsDB(BaseDB):
             
             return cursor.lastrowid
     
-    def get_active_filters(self, subscription_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get filters for processing."""
+    def get_active_filters(self, subscription_id: Optional[int] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Get filters for processing.
+        
+        Args:
+            subscription_id: Optional subscription ID to filter by
+            limit: Maximum number of filters to return
+            offset: Number of filters to skip
+            
+        Returns:
+            List of filter dictionaries
+        """
         cursor = self.conn.cursor()
         
         if subscription_id is not None:
@@ -892,12 +924,14 @@ class SubscriptionsDB(BaseDB):
                 SELECT * FROM subscription_filters
                 WHERE is_active = 1 AND (subscription_id = ? OR subscription_id IS NULL)
                 ORDER BY subscription_id DESC
-            """, (subscription_id,))
+                LIMIT ? OFFSET ?
+            """, (subscription_id, limit, offset))
         else:
             cursor.execute("""
                 SELECT * FROM subscription_filters
                 WHERE is_active = 1 AND subscription_id IS NULL
-            """)
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
         
         filters = []
         for row in cursor.fetchall():
@@ -933,8 +967,18 @@ class SubscriptionsDB(BaseDB):
             
             return cursor.lastrowid
     
-    def get_templates(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Retrieve available templates."""
+    def get_templates(self, category: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Retrieve available templates.
+        
+        Args:
+            category: Optional category to filter by
+            limit: Maximum number of templates to return
+            offset: Number of templates to skip
+            
+        Returns:
+            List of template dictionaries
+        """
         cursor = self.conn.cursor()
         
         if category:
@@ -942,12 +986,14 @@ class SubscriptionsDB(BaseDB):
                 SELECT * FROM subscription_templates
                 WHERE category = ?
                 ORDER BY usage_count DESC, name
-            """, (category,))
+                LIMIT ? OFFSET ?
+            """, (category, limit, offset))
         else:
             cursor.execute("""
                 SELECT * FROM subscription_templates
                 ORDER BY usage_count DESC, name
-            """)
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
         
         templates = []
         for row in cursor.fetchall():
@@ -1037,16 +1083,26 @@ class SubscriptionsDB(BaseDB):
             logger.warning(f"Failed to parse URL '{url}' for canonicalization: {e}")
             return url.lower()
     
-    def get_all_subscriptions(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
-        """Get all subscriptions with optional filtering."""
+    def get_all_subscriptions(self, include_inactive: bool = False, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Get all subscriptions with optional filtering.
+        
+        Args:
+            include_inactive: Whether to include inactive subscriptions
+            limit: Maximum number of subscriptions to return
+            offset: Number of subscriptions to skip
+            
+        Returns:
+            List of subscription dictionaries
+        """
         start_time = time.time()
         
         cursor = self.conn.cursor()
         
         if include_inactive:
-            cursor.execute("SELECT * FROM subscriptions ORDER BY name")
+            cursor.execute("SELECT * FROM subscriptions ORDER BY name LIMIT ? OFFSET ?", (limit, offset))
         else:
-            cursor.execute("SELECT * FROM subscriptions WHERE is_active = 1 ORDER BY name")
+            cursor.execute("SELECT * FROM subscriptions WHERE is_active = 1 ORDER BY name LIMIT ? OFFSET ?", (limit, offset))
         
         results = [dict(row) for row in cursor.fetchall()]
         

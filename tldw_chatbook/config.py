@@ -1329,6 +1329,7 @@ Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatil
 Google = ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
 HuggingFace = ["meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
+Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
 # Local Providers
 Llama_cpp = ["None"]
@@ -1464,6 +1465,20 @@ local_mlx_lm = ["None"]
     timeout = 120
     retries = 3
     retry_delay = 5
+    streaming = false
+
+    [api_settings.moonshot]
+    api_key_env_var = "MOONSHOT_API_KEY"
+    # api_key = "" # Less secure fallback - use env var instead
+    model = "kimi-latest"  # Latest Kimi model, or use moonshot-v1-auto for auto selection
+    temperature = 0.7
+    top_p = 0.95 # Moonshot uses top_p (OpenAI compatible)
+    max_tokens = 4096
+    api_region = "international" # "international" or "china"
+    api_base_url = "https://api.moonshot.ai/v1" # Default for international; use https://api.moonshot.cn/v1 for China
+    timeout = 90
+    retries = 3
+    retry_delay = 1.0
     streaming = false
 
     # --- Local Providers ---

@@ -130,11 +130,11 @@ class ToolsSettingsWindow(Container):
     /* Tool Settings Styles */
     .tool-item {
         layout: horizontal;
-        align: left middle;
+        align-horizontal: left;
+        align-vertical: middle;
         margin-bottom: 1;
-        padding: 0.5 1;
+        padding: 1;
         background: $panel;
-        border-radius: 4;
     }
     
     .tool-switch {
@@ -158,9 +158,18 @@ class ToolsSettingsWindow(Container):
     .tool-stats {
         padding: 1;
         background: $panel;
-        border-radius: 4;
         width: 100%;
         min-height: 30;
+    }
+    
+    .button-row {
+        layout: horizontal;
+        height: 3;
+        margin-top: 1;
+    }
+    
+    .button-row Button {
+        margin-right: 1;
     }
     
     .config-button-container {
@@ -3724,7 +3733,8 @@ Thank you for using tldw-chatbook! 🎉
             class ConfirmDisableDialog(ModalScreen):
                 DEFAULT_CSS = """
                 ConfirmDisableDialog {
-                    align: center middle;
+                    align-horizontal: center;
+                    align-vertical: middle;
                 }
                 
                 ConfirmDisableDialog > Container {
@@ -3743,7 +3753,8 @@ Thank you for using tldw-chatbook! 🎉
                 }
                 
                 .button-container {
-                    align: center middle;
+                    align-horizontal: center;
+                    align-vertical: middle;
                     margin-top: 2;
                 }
                 

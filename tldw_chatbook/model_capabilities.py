@@ -53,6 +53,13 @@ DEFAULT_MODEL_PATTERNS = {
         {"pattern": r"anthropic/claude-3", "vision": True},
         {"pattern": r"google/gemini.*vision", "vision": True},
         {"pattern": r"google/gemini-[0-9.]+-(pro|flash)", "vision": True}
+    ],
+    "Moonshot": [
+        # Moonshot vision models
+        {"pattern": r"moonshot-v1-.*-vision-preview", "vision": True},  # Matches all vision preview models
+        {"pattern": r"moonshot-v1-8k-vision-preview", "vision": True},
+        {"pattern": r"moonshot-v1-32k-vision-preview", "vision": True},
+        {"pattern": r"moonshot-v1-128k-vision-preview", "vision": True}
     ]
 }
 
@@ -82,7 +89,12 @@ DEFAULT_MODEL_CAPABILITIES = {
     "gemini-pro-vision": {"vision": True, "max_images": 1},
     "gemini-1.5-pro": {"vision": True, "max_images": 10},
     "gemini-1.5-flash": {"vision": True, "max_images": 10},
-    "gemini-2.0-flash": {"vision": True, "max_images": 10}
+    "gemini-2.0-flash": {"vision": True, "max_images": 10},
+    
+    # Moonshot
+    "moonshot-v1-8k-vision-preview": {"vision": True, "max_images": 1},
+    "moonshot-v1-32k-vision-preview": {"vision": True, "max_images": 1},
+    "moonshot-v1-128k-vision-preview": {"vision": True, "max_images": 1}
 }
 
 

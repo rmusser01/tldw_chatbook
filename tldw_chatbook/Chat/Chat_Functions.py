@@ -42,7 +42,8 @@ from .Chat_Deps import ChatBadRequestError, ChatConfigurationError, ChatAPIError
     ChatProviderError, ChatRateLimitError, ChatAuthenticationError
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError, CharactersRAGDBError
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import chat_with_openai, chat_with_anthropic, chat_with_cohere, \
-    chat_with_groq, chat_with_openrouter, chat_with_deepseek, chat_with_mistral, chat_with_huggingface, chat_with_google
+    chat_with_groq, chat_with_openrouter, chat_with_deepseek, chat_with_mistral, chat_with_huggingface, chat_with_google, \
+    chat_with_moonshot
 from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_aphrodite, chat_with_local_llm, chat_with_ollama, \
     chat_with_kobold, chat_with_llama, chat_with_oobabooga, chat_with_tabbyapi, chat_with_vllm, chat_with_custom_openai, \
     chat_with_custom_openai_2, chat_with_mlx_lm
@@ -88,6 +89,7 @@ API_CALL_HANDLERS = {
     'mistralai': chat_with_mistral,  # Handle both 'mistral' and 'MistralAI' API types
     'google': chat_with_google,
     'huggingface': chat_with_huggingface,
+    'moonshot': chat_with_moonshot,
     'llama_cpp': chat_with_llama,
     'koboldcpp': chat_with_kobold,
     'oobabooga': chat_with_oobabooga,
@@ -610,6 +612,26 @@ PROVIDER_PARAM_MAP = {
         'user_identifier': 'user_identifier',
         'tools': 'tools',
         'tool_choice': 'tool_choice',
+    },
+    'moonshot': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt_arg',
+        'temp': 'temp',
+        'system_message': 'system_message',
+        'streaming': 'streaming',
+        'maxp': 'maxp',
+        'model': 'model',
+        'tools': 'tools',
+        'tool_choice': 'tool_choice',
+        'presence_penalty': 'presence_penalty',
+        'frequency_penalty': 'frequency_penalty',
+        'max_tokens': 'max_tokens',
+        'seed': 'seed',
+        'stop': 'stop',
+        'response_format': 'response_format',
+        'n': 'n',
+        'user_identifier': 'user',
     },
     # Add other providers here
 }

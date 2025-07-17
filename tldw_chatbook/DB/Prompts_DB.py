@@ -1611,12 +1611,14 @@ class PromptsDatabase:
             raise DatabaseError("Failed to delete sync log entries") from e
 
     # --- Additional Query Methods ---
-    def get_all_prompts(self, include_deleted: bool = False) -> List[Dict]:
+    def get_all_prompts(self, include_deleted: bool = False, limit: int = 100, offset: int = 0) -> List[Dict]:
         """
         Get all prompts from the database.
         
         Args:
             include_deleted: Whether to include soft-deleted prompts
+            limit: Maximum number of prompts to return
+            offset: Number of prompts to skip
             
         Returns:
             List of prompt dictionaries
@@ -1624,21 +1626,23 @@ class PromptsDatabase:
         query = "SELECT * FROM Prompts"
         if not include_deleted:
             query += " WHERE deleted = 0"
-        query += " ORDER BY name COLLATE NOCASE"
+        query += " ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?"
         
         try:
-            cursor = self.execute_query(query)
+            cursor = self.execute_query(query, (limit, offset))
             return [dict(row) for row in cursor.fetchall()]
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error fetching all prompts: {e}")
             raise DatabaseError(f"Failed to fetch all prompts: {e}") from e
 
-    def get_all_keywords(self, include_deleted: bool = False) -> List[Dict]:
+    def get_all_keywords(self, include_deleted: bool = False, limit: int = 100, offset: int = 0) -> List[Dict]:
         """
         Get all keywords from the database.
         
         Args:
             include_deleted: Whether to include soft-deleted keywords
+            limit: Maximum number of keywords to return
+            offset: Number of keywords to skip
             
         Returns:
             List of keyword dictionaries with 'name' key
@@ -1649,10 +1653,10 @@ class PromptsDatabase:
         """
         if not include_deleted:
             query += " WHERE deleted = 0"
-        query += " ORDER BY keyword COLLATE NOCASE"
+        query += " ORDER BY keyword COLLATE NOCASE LIMIT ? OFFSET ?"
         
         try:
-            cursor = self.execute_query(query)
+            cursor = self.execute_query(query, (limit, offset))
             return [dict(row) for row in cursor.fetchall()]
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error fetching all keywords: {e}")
