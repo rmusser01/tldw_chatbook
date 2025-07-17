@@ -17,6 +17,11 @@ import sys
 # This must happen before importing any modules that use optional_deps
 os.environ.pop('PYTEST_CURRENT_TEST', None)  # Remove pytest env var temporarily
 
+# Set environment variables to prevent meta tensors in transformers
+os.environ['TRANSFORMERS_OFFLINE'] = '0'  # Allow downloading if needed
+os.environ['HF_HUB_DISABLE_EXPERIMENTAL_WARNING'] = '1'  # Disable warnings
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'  # Avoid tokenizer warnings in tests
+
 # Add the project root to the path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -616,6 +621,40 @@ def initialize_test_dependencies():
     # Dependencies should already be initialized at module import time
     # This fixture just ensures they stay initialized
     print(f"[Session Start] Dependencies available: {DEPENDENCIES_AVAILABLE}")
+    
+    # Force proper model initialization for transformers
+    if DEPENDENCIES_AVAILABLE.get('transformers', False):
+        try:
+            import torch
+            # Set torch to use normal initialization instead of meta tensors
+            if hasattr(torch, 'set_default_device'):
+                # Ensure we're using CPU by default in tests
+                torch.set_default_device('cpu')
+            
+            # Configure transformers to avoid meta tensors
+            import transformers
+            if hasattr(transformers, 'is_offline_mode'):
+                # Ensure models can be downloaded if needed
+                transformers.utils.move_cache()
+                
+            # Pre-download a small test model to ensure proper setup
+            from transformers import AutoModel, AutoTokenizer
+            test_model_name = "hf-internal-testing/tiny-bert"
+            try:
+                # Try to load a tiny test model to ensure everything works
+                tokenizer = AutoTokenizer.from_pretrained(test_model_name)
+                model = AutoModel.from_pretrained(
+                    test_model_name,
+                    low_cpu_mem_usage=False,
+                    _fast_init=False
+                )
+                del model, tokenizer
+                print(f"[Session Start] Successfully initialized transformers with test model")
+            except Exception as e:
+                print(f"[Session Start] Warning: Could not load test model: {e}")
+        except Exception as e:
+            print(f"[Session Start] Warning: Could not initialize transformers properly: {e}")
+    
     yield
     print(f"[Session End] Tests completed")
 

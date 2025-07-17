@@ -261,13 +261,11 @@ class TestRAGServiceIntegration:
     def test_rag_service_workflow(self, temp_dir):
         """Test complete RAG workflow with RAGService"""
         with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
-            # Mock embeddings
-            mock_instance = MagicMock()
-            def mock_embed(texts, as_list=True):
-                # Return different embeddings for different texts
-                return np.array([[hash(text) % 100 / 100.0 + i * 0.01 for i in range(384)] for text in texts])
+            # Create a mock factory using the helper from conftest
+            from conftest import create_mock_embedding_factory
+            mock_factory_impl, mock_instance = create_mock_embedding_factory(dimension=384, return_numpy=True)
             
-            mock_instance.embed.side_effect = mock_embed
+            # Replace the factory with our mock
             mock_factory.return_value = mock_instance
             
             # Create RAG service
@@ -297,17 +295,13 @@ class TestRAGServiceIntegration:
             assert all(r.success for r in results)
             
             # Search
-            search_results = rag_service.search(
+            search_results = rag_service.search_sync(
                 query="programming languages like Python",
-                collection_name="test_rag",
-                n_results=2
+                top_k=2
             )
             
             assert len(search_results) == 2
-            assert any("Python" in result.content for result in search_results)
-            
-            # Cleanup
-            rag_service.delete_collection("test_rag")
+            assert any("Python" in result.document for result in search_results)
 
 
 @pytest.mark.integration

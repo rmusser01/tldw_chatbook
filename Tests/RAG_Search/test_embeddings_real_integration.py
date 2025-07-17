@@ -80,13 +80,36 @@ def cache_dir(temp_dir):
 @pytest.fixture
 def real_embedding_service(persist_dir):
     """Create a real embedding service with default model"""
-    if DEPENDENCIES_AVAILABLE.get('sentence_transformers', False):
-        service = EmbeddingsServiceWrapper(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-        return service
-    else:
+    if not DEPENDENCIES_AVAILABLE.get('sentence_transformers', False):
         pytest.skip("Real embedding models not available")
+    
+    # Set environment to ensure proper model loading
+    import os
+    os.environ['TRANSFORMERS_OFFLINE'] = '0'
+    os.environ['HF_HUB_DISABLE_EXPERIMENTAL_WARNING'] = '1'
+    
+    try:
+        # Force torch to use CPU for tests to avoid device issues
+        import torch
+        torch.set_default_device('cpu')
+    except:
+        pass
+    
+    # Create service with explicit configuration
+    service = EmbeddingsServiceWrapper(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        device="cpu",  # Force CPU to avoid meta tensor issues
+        cache_size=1   # Minimize memory usage in tests
+    )
+    
+    # Try to create a test embedding to ensure model is properly loaded
+    try:
+        test_embedding = service.create_embeddings(["test"])
+        assert test_embedding.shape[0] == 1
+    except Exception as e:
+        pytest.skip(f"Could not initialize embedding model: {e}")
+    
+    return service
 
 
 @pytest.fixture

@@ -348,24 +348,58 @@ class _HuggingFaceEmbedder:
         else:
             # Use explicitly specified device
             self._device = torch.device(cfg.device)
-        # Check if model is on meta device first
-        if hasattr(self._model, 'device') and str(self._model.device) == 'meta':
-            logger.warning("Model is on meta device, using to_empty() to properly move it")
-            # Use to_empty() to move from meta device, then load state dict
-            self._model = self._model.to_empty(device=self._device)
-            # Now reload the model properly
-            # Import locally to avoid scope issues
-            from transformers import AutoModel as LocalAutoModel
-            state_dict = LocalAutoModel.from_pretrained(
-                cfg.model_name_or_path,
-                trust_remote_code=cfg.trust_remote_code,
-                cache_dir=cache_dir,
-                revision=cfg.revision
-            ).state_dict()
-            self._model.load_state_dict(state_dict)
-        else:
-            # Normal device transfer
-            self._model = self._model.to(self._device)
+        # Try to move model to device, handling meta tensor issues
+        try:
+            # Check if model is on meta device first
+            if hasattr(self._model, 'device') and str(self._model.device) == 'meta':
+                logger.warning("Model is on meta device, reloading with proper initialization")
+                # Delete the meta model and reload properly
+                del self._model
+                
+                # Force garbage collection to free memory
+                import gc
+                gc.collect()
+                
+                # Reload the model with explicit device placement
+                self._model = AutoModel.from_pretrained(
+                    cfg.model_name_or_path,
+                    torch_dtype=dtype,
+                    trust_remote_code=cfg.trust_remote_code,
+                    cache_dir=cache_dir,
+                    revision=cfg.revision,
+                    low_cpu_mem_usage=False,  # Avoid meta tensors
+                    device_map=None,  # Disable device mapping
+                    _fast_init=False  # Force proper initialization
+                )
+                # Move to target device
+                self._model = self._model.to(self._device)
+            else:
+                # Normal device transfer
+                self._model = self._model.to(self._device)
+        except RuntimeError as e:
+            if "Cannot copy out of meta tensor" in str(e):
+                logger.warning(f"Caught meta tensor error: {e}. Reloading model properly.")
+                # Delete the problematic model
+                if hasattr(self, '_model'):
+                    del self._model
+                
+                # Force garbage collection
+                import gc
+                gc.collect()
+                
+                # Reload with explicit settings to avoid meta tensors
+                self._model = AutoModel.from_pretrained(
+                    cfg.model_name_or_path,
+                    torch_dtype=dtype,
+                    trust_remote_code=cfg.trust_remote_code,
+                    cache_dir=cache_dir,
+                    revision=cfg.revision,
+                    low_cpu_mem_usage=False,
+                    device_map=None,
+                    _fast_init=False
+                ).to(self._device)
+            else:
+                raise
         
         self._model.eval()
         
