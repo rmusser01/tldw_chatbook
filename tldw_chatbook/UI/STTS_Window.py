@@ -114,6 +114,7 @@ class TTSPlaygroundWidget(Widget):
                         ("elevenlabs", "ElevenLabs"),
                         ("kokoro", "Kokoro (Local)"),
                         ("chatterbox", "Chatterbox (Local)"),
+                        ("alltalk", "AllTalk (Local)"),
                     ],
                     id="tts-provider-select"
                 )
@@ -400,6 +401,19 @@ class TTSPlaygroundWidget(Widget):
                 # Predefined voices will be loaded dynamically if available
             ])
             voice_select.value = "default"
+        elif provider == "alltalk":
+            voice_select.set_options([
+                ("female_01.wav", "Female 01"),
+                ("female_02.wav", "Female 02"),
+                ("female_03.wav", "Female 03"),
+                ("female_04.wav", "Female 04"),
+                ("male_01.wav", "Male 01"),
+                ("male_02.wav", "Male 02"),
+                ("male_03.wav", "Male 03"),
+                ("male_04.wav", "Male 04"),
+                # AllTalk typically supports more voices, these are common defaults
+            ])
+            voice_select.value = "female_01.wav"
     
     def _update_model_options(self, provider: str) -> None:
         """Update model options based on provider"""
@@ -432,6 +446,11 @@ class TTSPlaygroundWidget(Widget):
                 ("chatterbox", "Chatterbox 0.5B"),
             ])
             model_select.value = "chatterbox"
+        elif provider == "alltalk":
+            model_select.set_options([
+                ("alltalk", "AllTalk TTS"),
+            ])
+            model_select.value = "alltalk"
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""

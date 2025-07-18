@@ -2,11 +2,13 @@
 
 ## Working Notes and Issues
 
-### Current Task: AllTalk TTS Backend Implementation [2025-07-18]
+### Current Task: Add Progress Callbacks to Kokoro Backend [2025-07-18]
 
-**Goal**: Create AllTalk TTS backend using the existing configuration and OpenAI-compatible API.
+**Goal**: Implement progress tracking callbacks in Kokoro backend to provide real-time generation progress updates.
 
-**Previous Task**: ✅ Kokoro True Streaming Implementation - Successfully implemented chunk-based streaming for both ONNX and PyTorch backends.
+**Previous Tasks**: 
+- ✅ Kokoro True Streaming Implementation - Successfully implemented chunk-based streaming for both ONNX and PyTorch backends.
+- ✅ AllTalk TTS Backend Implementation - Created and integrated AllTalk backend with UI support.
 
 ---
 
@@ -17,12 +19,25 @@
   - PyTorch: Per-chunk streaming instead of collecting all
   - Fixed convert_audio_sync issue by using async properly
   - Added first chunk latency tracking
-- [ ] Kokoro progress callbacks
+- [x] Kokoro progress callbacks ✅
+  - Added ProgressCallback protocol to base_backends.py
+  - Implemented progress reporting in both ONNX and PyTorch paths
+  - Reports progress, tokens processed, status, and metrics
+  - Includes completion reporting with final metrics
 - [ ] Kokoro word-level timestamps
 - [ ] Chatterbox async streaming fix
 - [ ] Chatterbox crossfade implementation
-- [ ] AllTalk backend creation
-- [ ] AllTalk backend registration
+- [x] AllTalk backend creation ✅
+  - Created alltalk.py with full OpenAI-compatible implementation
+  - Supports voice mapping and language selection
+  - Proper error handling for local server connection
+- [x] AllTalk backend registration ✅
+  - Added to TTSBackendManager._register_builtin_backends()
+  - Registered with pattern "alltalk_*"
+- [x] AllTalk UI Integration ✅
+  - Added to provider list in STTS_Window.py
+  - Added model-to-backend mapping in tts_events.py
+  - Added voice options for AllTalk
 - [ ] Progress interface standardization
 - [ ] Cost estimation implementation
 - [ ] Testing framework setup
@@ -39,7 +54,12 @@
 #### Issue #2: Non-PCM formats collect all audio before yielding
 **Problem**: Current implementation for non-PCM formats (mp3, opus, etc.) collects all samples in a list before converting and yielding
 **Solution**: Implement chunk-based conversion to enable true streaming
-**Status**: Working on solution 
+**Status**: ✅ RESOLVED - Implemented chunk-based streaming for all formats
+
+#### Issue #3: Progress tracking standardization
+**Problem**: No standardized way to track and report TTS generation progress across backends
+**Solution**: Created ProgressCallback protocol in base_backends.py
+**Status**: ✅ RESOLVED - Implemented for Kokoro, ready to extend to other backends 
 
 ---
 
@@ -51,12 +71,32 @@
 
 ---
 
+### Summary of Completed High-Priority Tasks
+
+1. **Kokoro True Streaming** ✅
+   - Implemented real-time chunk-based streaming for all formats
+   - Fixed async audio conversion issue
+   - Added first chunk latency tracking
+   - Both ONNX and PyTorch backends now stream properly
+
+2. **AllTalk Backend** ✅
+   - Created complete OpenAI-compatible backend
+   - Registered in backend manager
+   - Added UI integration (provider, model, voice options)
+   - Added to event handler model mapping
+
+3. **Progress Callbacks** ✅
+   - Created standardized ProgressCallback protocol
+   - Implemented in Kokoro backend (both ONNX and PyTorch)
+   - Reports progress, tokens, status, and detailed metrics
+   - Ready to extend to other backends
+
 ### Performance Benchmarks
 
 | Backend | First Chunk Latency | Total Generation Time | Real-time Factor |
 |---------|-------------------|---------------------|------------------|
-| Kokoro ONNX | TBD | TBD | TBD |
-| Kokoro PyTorch | TBD | TBD | TBD |
+| Kokoro ONNX | <1s expected | TBD | Target: 35x-100x |
+| Kokoro PyTorch | <1s expected | TBD | Target: 35x-100x |
 | Chatterbox | TBD | TBD | TBD |
 | OpenAI | TBD | TBD | TBD |
 | ElevenLabs | TBD | TBD | TBD |
