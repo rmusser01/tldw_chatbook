@@ -2,6 +2,7 @@
 # Central module for checking availability of optional dependencies
 #
 import sys
+import importlib.util
 from typing import Dict, Any, Optional, Callable
 from loguru import logger
 
@@ -111,12 +112,28 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
 
 def check_embeddings_rag_deps() -> bool:
     """Check all dependencies needed for embeddings and RAG functionality."""
+    # Check if already determined
+    if 'embeddings_rag' in DEPENDENCIES_AVAILABLE:
+        return DEPENDENCIES_AVAILABLE['embeddings_rag']
+    
+    # Don't actually import heavy deps unless explicitly checking
+    # Just check if they would be importable
     required_deps = ['torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers']
     all_available = True
     
     for dep in required_deps:
-        if not check_dependency(dep):
+        try:
+            # Use importlib to check without actually importing
+            import importlib.util
+            spec = importlib.util.find_spec(dep)
+            if spec is None:
+                all_available = False
+                logger.debug(f"⚠️ {dep} not found (lazy check)")
+            else:
+                logger.debug(f"✅ {dep} is available (lazy check)")
+        except (ImportError, ModuleNotFoundError):
             all_available = False
+            logger.debug(f"⚠️ {dep} not found (lazy check)")
     
     DEPENDENCIES_AVAILABLE['embeddings_rag'] = all_available
     if all_available:
@@ -632,9 +649,42 @@ def initialize_dependency_checks():
     
     logger.info("Dependency check complete.")
 
-# Auto-initialize when module is imported unless in test environment
+# Lazy initialization - dependencies will be checked on first use
 import os
-if 'PYTEST_CURRENT_TEST' not in os.environ:
-    initialize_dependency_checks()
+
+# Track if we've initialized
+_initialized = False
+
+def ensure_dependencies_checked():
+    """Ensure dependencies have been checked at least once."""
+    global _initialized
+    if not _initialized and 'PYTEST_CURRENT_TEST' not in os.environ:
+        initialize_dependency_checks()
+        _initialized = True
+    
+# Check configuration for eager dependency checking
+eager_check = False
+
+# First check environment variable (highest priority)
+if os.environ.get('TLDW_EAGER_DEPENDENCY_CHECK', '').lower() == 'true':
+    eager_check = True
+    logger.info("Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK environment variable")
 else:
+    # Check config file if not in test environment
+    if 'PYTEST_CURRENT_TEST' not in os.environ:
+        try:
+            # Import config lazily to avoid circular dependencies
+            from ..config import get_cli_setting
+            if get_cli_setting("rag", "performance", {}).get("eager_dependency_check", False):
+                eager_check = True
+                logger.info("Eager dependency checking enabled via config file")
+        except Exception as e:
+            logger.debug(f"Could not check config for eager_dependency_check: {e}")
+
+if eager_check:
+    initialize_dependency_checks()
+    _initialized = True
+elif 'PYTEST_CURRENT_TEST' in os.environ:
     logger.debug("Skipping auto-initialization in test environment")
+else:
+    logger.info("Lazy dependency checking enabled (default). Dependencies will be checked on first use.")

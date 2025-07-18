@@ -331,55 +331,89 @@ class KokoroTTSBackend(LocalTTSBackend):
                 if self.track_performance:
                     self._update_performance_metrics(token_count, time.time() - start_time)
             
-            # For other formats, we need to collect and convert
+            # For other formats, we need to stream with chunked conversion
             else:
-                # Collect all audio samples
-                all_samples = []
+                # Stream with chunked conversion for true real-time output
                 sample_rate = 24000  # Default
                 token_count = 0
+                chunk_buffer = []
+                chunk_size = 8192  # samples per chunk (about 0.34s at 24kHz)
+                total_samples_processed = 0
+                first_chunk_time = None
                 
+                # Choose generator based on voice configuration
                 if voice_config['is_mixed']:
-                    # Generate mixed voice audio
-                    async for samples, sr in self._generate_mixed_voice(
+                    audio_generator = self._generate_mixed_voice(
                         text, voice_config, speed=request.speed, lang=lang
-                    ):
-                        sample_rate = sr
-                        all_samples.append(samples)
-                        token_count += len(samples) // 256
-                else:
-                    # Single voice generation
-                    async for samples, sr in self.kokoro_instance.create_stream(
-                        text, voice=voice_config['primary_voice'], speed=request.speed, lang=lang
-                    ):
-                        sample_rate = sr
-                        all_samples.append(samples)
-                        token_count += len(samples) // 256
-                
-                if all_samples:
-                    # Concatenate all samples
-                    combined_samples = np.concatenate(all_samples)
-                    
-                    # Convert to requested format
-                    audio_bytes = self.audio_service.convert_audio_sync(
-                        combined_samples,
-                        request.response_format,
-                        sample_rate=sample_rate
                     )
+                else:
+                    audio_generator = self.kokoro_instance.create_stream(
+                        text, voice=voice_config['primary_voice'], speed=request.speed, lang=lang
+                    )
+                
+                # Process audio chunks as they are generated
+                async for samples, sr in audio_generator:
+                    sample_rate = sr
+                    chunk_buffer.extend(samples)
+                    token_count += len(samples) // 256  # Approximate token count
                     
-                    yield audio_bytes
-                    
-                    # Update performance metrics
-                    if self.track_performance:
-                        self._update_performance_metrics(token_count, time.time() - start_time)
-                    
-                    # Log performance info
+                    # Yield complete chunks as they become available
+                    while len(chunk_buffer) >= chunk_size:
+                        # Extract a chunk
+                        chunk_array = np.array(chunk_buffer[:chunk_size], dtype=np.float32)
+                        chunk_buffer = chunk_buffer[chunk_size:]
+                        
+                        # Convert chunk to target format
+                        try:
+                            audio_bytes = await self.audio_service.convert_audio(
+                                chunk_array,
+                                request.response_format,
+                                source_format="pcm",
+                                sample_rate=sample_rate
+                            )
+                            
+                            # Track first chunk latency
+                            if first_chunk_time is None:
+                                first_chunk_time = time.time() - start_time
+                                logger.debug(f"KokoroTTSBackend: First chunk latency: {first_chunk_time:.3f}s")
+                            
+                            yield audio_bytes
+                            total_samples_processed += len(chunk_array)
+                            
+                        except Exception as e:
+                            logger.error(f"KokoroTTSBackend: Chunk conversion failed: {e}")
+                            # Continue with next chunk instead of failing completely
+                            continue
+                
+                # Process any remaining samples in buffer
+                if chunk_buffer:
+                    remaining_array = np.array(chunk_buffer, dtype=np.float32)
+                    try:
+                        audio_bytes = await self.audio_service.convert_audio(
+                            remaining_array,
+                            request.response_format,
+                            source_format="pcm",
+                            sample_rate=sample_rate
+                        )
+                        yield audio_bytes
+                        total_samples_processed += len(remaining_array)
+                    except Exception as e:
+                        logger.error(f"KokoroTTSBackend: Final chunk conversion failed: {e}")
+                
+                # Update performance metrics
+                if self.track_performance:
+                    self._update_performance_metrics(token_count, time.time() - start_time)
+                
+                # Log performance info
+                if total_samples_processed > 0:
                     generation_time = time.time() - start_time
                     tokens_per_second = token_count / generation_time if generation_time > 0 else 0
-                    audio_duration = len(combined_samples) / sample_rate
+                    audio_duration = total_samples_processed / sample_rate
                     speed_factor = audio_duration / generation_time if generation_time > 0 else 0
                     
-                    logger.info(f"KokoroTTSBackend: Generated {audio_duration:.2f}s of audio in {generation_time:.2f}s "
-                               f"({speed_factor:.1f}x realtime, {tokens_per_second:.1f} tokens/s)")
+                    logger.info(f"KokoroTTSBackend: Streamed {audio_duration:.2f}s of audio in {generation_time:.2f}s "
+                               f"({speed_factor:.1f}x realtime, {tokens_per_second:.1f} tokens/s, "
+                               f"first chunk: {first_chunk_time:.3f}s)")
                 else:
                     logger.warning("KokoroTTSBackend: No audio generated")
                     yield b""
@@ -604,13 +638,15 @@ class KokoroTTSBackend(LocalTTSBackend):
             # Import generation function
             from App_Function_Libraries.TTS.Kokoro.kokoro import generate
             
-            # Generate audio for each chunk
-            all_audio = []
+            # Generate and stream audio for each chunk
             token_count = 0
+            first_chunk_time = None
+            total_audio_duration = 0.0
             
-            for chunk in text_chunks:
+            for i, chunk in enumerate(text_chunks):
                 # Generate audio
-                audio_tensor, phonemes = generate(
+                audio_tensor, phonemes = await asyncio.to_thread(
+                    generate,
                     self.kokoro_model_pt, 
                     chunk, 
                     voice_pack, 
@@ -624,25 +660,51 @@ class KokoroTTSBackend(LocalTTSBackend):
                 else:
                     audio_data = audio_tensor
                 
-                all_audio.append(audio_data)
+                # Track metrics
                 token_count += len(chunk.split())  # Approximate
+                chunk_duration = len(audio_data) / 24000  # Assuming 24kHz
+                total_audio_duration += chunk_duration
+                
+                # Convert and yield based on format
+                if request.response_format == "pcm":
+                    # For PCM, convert to int16 and yield directly
+                    int16_samples = np.int16(audio_data * 32767)
+                    yield int16_samples.tobytes()
+                else:
+                    # For other formats, convert chunk
+                    try:
+                        audio_bytes = await self.audio_service.convert_audio(
+                            audio_data,
+                            request.response_format,
+                            source_format="pcm",
+                            sample_rate=24000
+                        )
+                        yield audio_bytes
+                    except Exception as e:
+                        logger.error(f"KokoroTTSBackend: PyTorch chunk conversion failed: {e}")
+                        # Try to continue with next chunk
+                        continue
+                
+                # Track first chunk latency
+                if first_chunk_time is None:
+                    first_chunk_time = time.time() - start_time
+                    logger.debug(f"KokoroTTSBackend PyTorch: First chunk latency: {first_chunk_time:.3f}s")
+                
+                # Log progress
+                logger.debug(f"KokoroTTSBackend PyTorch: Processed chunk {i+1}/{len(text_chunks)} "
+                           f"({chunk_duration:.2f}s of audio)")
             
-            # Combine all audio
-            if all_audio:
-                combined_audio = np.concatenate(all_audio)
-                
-                # Convert to requested format
-                audio_bytes = self.audio_service.convert_audio_sync(
-                    combined_audio,
-                    request.response_format,
-                    sample_rate=24000
-                )
-                
-                yield audio_bytes
-                
-                # Update metrics
-                if self.track_performance:
-                    self._update_performance_metrics(token_count, time.time() - start_time)
+            # Update metrics
+            if self.track_performance:
+                self._update_performance_metrics(token_count, time.time() - start_time)
+            
+            # Log performance summary
+            if token_count > 0:
+                generation_time = time.time() - start_time
+                speed_factor = total_audio_duration / generation_time if generation_time > 0 else 0
+                logger.info(f"KokoroTTSBackend PyTorch: Generated {total_audio_duration:.2f}s of audio "
+                           f"in {generation_time:.2f}s ({speed_factor:.1f}x realtime, "
+                           f"first chunk: {first_chunk_time:.3f}s)")
             
         except Exception as e:
             logger.error(f"KokoroTTSBackend: PyTorch generation failed: {e}", exc_info=True)

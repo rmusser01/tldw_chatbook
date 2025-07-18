@@ -841,11 +841,11 @@ class TTSSettingsWidget(Widget):
             self.app.notify(f"Failed to save settings: {e}", severity="error")
 
 
-class AudioBookPodcastWidget(Widget):
+class AudioBookGenerationWidget(Widget):
     """AudioBook/Podcast Generation widget"""
     
     DEFAULT_CSS = """
-    AudioBookPodcastWidget {
+    AudioBookGenerationWidget {
         height: 100%;
         width: 100%;
     }
@@ -859,8 +859,25 @@ class AudioBookPodcastWidget(Widget):
         height: 20;
         border: solid $primary;
         margin: 1 0;
+        overflow-y: auto;
+    }
+    
+    #audiobook-generation-log {
+        height: 15;
+        border: solid $secondary;
+    }
+    
+    .cost-estimate {
+        color: $warning;
+        margin: 1 0;
     }
     """
+    
+    def __init__(self):
+        super().__init__()
+        self.content_text = ""
+        self.detected_chapters = []
+        self.generated_audiobook_path = None
     
     def compose(self) -> ComposeResult:
         """Compose the AudioBook/Podcast UI"""
@@ -927,14 +944,30 @@ class AudioBookPodcastWidget(Widget):
             # Generation settings
             with Collapsible(title="Generation Settings", classes="settings-section"):
                 with Horizontal(classes="form-row"):
-                    yield Label("Output Format:", classes="form-label")
+                    yield Label("Provider:", classes="form-label")
                     yield Select(
                         options=[
-                            ("single", "Single File"),
-                            ("chapters", "Separate Chapters"),
-                            ("both", "Both"),
+                            ("openai", "OpenAI"),
+                            ("elevenlabs", "ElevenLabs"),
+                            ("kokoro", "Kokoro (Local)"),
+                            ("chatterbox", "Chatterbox (Local)"),
                         ],
-                        id="output-format-select"
+                        value=get_cli_setting("app_tts", "default_provider", "openai"),
+                        id="audiobook-provider-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Audio Format:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("mp3", "MP3"),
+                            ("m4b", "M4B (AudioBook)"),
+                            ("opus", "Opus"),
+                            ("aac", "AAC"),
+                            ("wav", "WAV"),
+                        ],
+                        value="m4b",
+                        id="audiobook-format-select"
                 )
                 
                 with Horizontal(classes="form-row"):
@@ -945,13 +978,19 @@ class AudioBookPodcastWidget(Widget):
                     yield Label("Background Music:", classes="form-label")
                     yield Switch(id="background-music-switch", value=False)
             
+            # Cost estimate
+            yield Static("", id="cost-estimate", classes="cost-estimate")
+            
             # Generate button
             yield Button("🎙️ Generate AudioBook", id="generate-audiobook-btn", variant="primary")
+            
+            # Export button (initially disabled)
+            yield Button("💾 Export AudioBook", id="audiobook-export-btn", variant="success", disabled=True)
             
             # Progress section
             yield Rule()
             yield Label("Generation Progress:")
-            yield RichLog(id="generation-progress-log", highlight=True, markup=True)
+            yield RichLog(id="audiobook-generation-log", highlight=True, markup=True)
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
@@ -959,16 +998,313 @@ class AudioBookPodcastWidget(Widget):
             self._import_content()
         elif event.button.id == "generate-audiobook-btn":
             self._generate_audiobook()
+        elif event.button.id == "audiobook-export-btn":
+            self._export_audiobook()
     
     def _import_content(self) -> None:
         """Import content for audiobook generation"""
-        # TODO: Implement content import
-        self.app.notify("Import functionality coming soon!", severity="information")
+        import_source = self.query_one("#import-source-select", Select).value
+        
+        if import_source == "file":
+            self._import_from_file()
+        elif import_source == "notes":
+            self._import_from_notes()
+        elif import_source == "conversation":
+            self._import_from_conversation()
+        elif import_source == "paste":
+            self._import_from_paste()
+    
+    def _import_from_file(self) -> None:
+        """Import content from a text file"""
+        try:
+            from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFilePicker
+            
+            # Create file picker for text files
+            file_picker = EnhancedFilePicker(
+                title="Select Text File for AudioBook",
+                filters=[
+                    ("Text Files", "*.txt,*.md,*.rst"),
+                    ("eBook Files", "*.epub,*.mobi"),
+                    ("All Files", "*"),
+                ],
+                select_type="file"
+            )
+            
+            # Mount the file picker
+            self.app.push_screen(file_picker, self._handle_file_selection)
+        except ImportError:
+            # Fallback to simple file input
+            self.app.notify("File picker not available. Please paste your text instead.", severity="warning")
+    
+    def _handle_file_selection(self, path: str | None) -> None:
+        """Handle file selection for audiobook content"""
+        if not path:
+            return
+        
+        try:
+            # Read the file content
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Update content preview
+            self.content_text = content
+            content_preview = self.query_one("#content-preview", TextArea)
+            content_preview.load_text(content[:1000] + "..." if len(content) > 1000 else content)
+            content_preview.disabled = False
+            
+            # Detect chapters if enabled
+            if self.query_one("#auto-chapters-switch", Switch).value:
+                self._detect_chapters()
+            
+            self.app.notify(f"Imported {len(content)} characters from {Path(path).name}", severity="information")
+            
+        except Exception as e:
+            logger.error(f"Failed to import file: {e}")
+            self.app.notify(f"Failed to import file: {e}", severity="error")
+    
+    def _import_from_notes(self) -> None:
+        """Import content from notes"""
+        # TODO: Implement note selection dialog
+        self.app.notify("Note import will be implemented when note selection dialog is ready", severity="information")
+    
+    def _import_from_conversation(self) -> None:
+        """Import content from conversation"""
+        # TODO: Implement conversation selection dialog
+        self.app.notify("Conversation import will be implemented when conversation selection dialog is ready", severity="information")
+    
+    def _import_from_paste(self) -> None:
+        """Import content from clipboard paste"""
+        # Enable the content preview for editing
+        content_preview = self.query_one("#content-preview", TextArea)
+        content_preview.disabled = False
+        content_preview.focus()
+        self.app.notify("Paste your text into the content preview area", severity="information")
+    
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Handle text area content changes"""
+        if event.text_area.id == "content-preview":
+            self.content_text = event.text_area.text
+            # Detect chapters if auto-detect is enabled
+            if self.query_one("#auto-chapters-switch", Switch).value and self.content_text:
+                self._detect_chapters()
+    
+    def _detect_chapters(self) -> None:
+        """Detect chapters in the content"""
+        if not self.content_text:
+            return
+        
+        try:
+            from tldw_chatbook.TTS.audiobook_generator import ChapterDetector
+            
+            # Detect chapters
+            self.detected_chapters = ChapterDetector.detect_chapters(self.content_text)
+            
+            # Update chapter list display
+            chapter_list = self.query_one("#chapter-list", Static)
+            if self.detected_chapters:
+                chapter_display = []
+                for i, chapter in enumerate(self.detected_chapters):
+                    chapter_display.append(f"{i+1}. {chapter.title} ({len(chapter.content.split())} words)")
+                
+                chapter_list.update("\n".join(chapter_display))
+                self.app.notify(f"Detected {len(self.detected_chapters)} chapters", severity="information")
+            else:
+                chapter_list.update("No chapters detected")
+                
+        except Exception as e:
+            logger.error(f"Failed to detect chapters: {e}")
+            self.app.notify(f"Failed to detect chapters: {e}", severity="error")
     
     def _generate_audiobook(self) -> None:
         """Generate the audiobook"""
-        # TODO: Implement audiobook generation
-        self.app.notify("AudioBook generation coming soon!", severity="information")
+        # Validate content
+        if not self.content_text:
+            self.app.notify("Please import content first", severity="warning")
+            return
+        
+        # Get settings from UI
+        provider = self.query_one("#audiobook-provider-select", Select).value
+        audio_format = self.query_one("#audiobook-format-select", Select).value
+        narrator_voice = self.query_one("#narrator-voice-select", Select).value
+        multi_voice = self.query_one("#multi-voice-switch", Switch).value
+        include_chapters = self.query_one("#chapter-markers-switch", Switch).value
+        background_music = self.query_one("#background-music-switch", Switch).value
+        
+        # Get title from first chapter or use default
+        title = "Untitled AudioBook"
+        if self.detected_chapters:
+            # Use book title if detected, otherwise use first chapter
+            for chapter in self.detected_chapters:
+                if "title" in chapter.title.lower() or chapter.number == 1:
+                    title = chapter.title
+                    break
+        
+        # Prepare options
+        options = {
+            "title": title,
+            "author": "Unknown",
+            "provider": provider,
+            "model": self._get_model_for_provider(provider),
+            "chapter_detection": include_chapters,
+            "multi_voice": multi_voice,
+            "background_music": None if not background_music else True,
+            "enable_ssml": provider in ["elevenlabs"],
+            "normalize_audio": True,
+        }
+        
+        # Log start
+        log = self.query_one("#audiobook-generation-log", RichLog)
+        log.clear()
+        log.write("[bold yellow]Starting audiobook generation...[/bold yellow]")
+        log.write(f"Provider: {provider}")
+        log.write(f"Format: {audio_format}")
+        log.write(f"Content length: {len(self.content_text)} characters")
+        
+        # Estimate cost
+        self._estimate_cost(provider, len(self.content_text))
+        
+        # Disable generate button
+        self.query_one("#generate-audiobook-btn", Button).disabled = True
+        
+        # Post event to generate audiobook
+        self.app.post_message(STTSAudioBookGenerateEvent(
+            content=self.content_text,
+            chapters=self.detected_chapters if include_chapters else [],
+            narrator_voice=narrator_voice,
+            output_format=audio_format,
+            options=options
+        ))
+    
+    def _get_model_for_provider(self, provider: str) -> str:
+        """Get default model for provider"""
+        models = {
+            "openai": "tts-1",
+            "elevenlabs": "eleven_multilingual_v2",
+            "kokoro": "kokoro-v0_19",
+            "chatterbox": "chatterbox-v1"
+        }
+        return models.get(provider, "tts-1")
+    
+    def _estimate_cost(self, provider: str, char_count: int) -> None:
+        """Estimate and display cost"""
+        # Simple cost estimation (prices per 1K characters)
+        costs_per_1k = {
+            "openai": 0.015,  # TTS-1 pricing
+            "elevenlabs": 0.13,  # Starter pricing
+            "kokoro": 0.0,  # Local
+            "chatterbox": 0.0,  # Local
+        }
+        
+        cost_per_1k = costs_per_1k.get(provider, 0.0)
+        estimated_cost = (char_count / 1000) * cost_per_1k
+        
+        cost_display = self.query_one("#cost-estimate", Static)
+        if estimated_cost > 0:
+            cost_display.update(f"Estimated cost: ${estimated_cost:.2f}")
+        else:
+            cost_display.update("Free (using local model)")
+    
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle select changes"""
+        if event.select.id == "audiobook-provider-select":
+            # Update narrator voice options based on provider
+            self._update_voice_options(event.value)
+            # Update cost estimate
+            if self.content_text:
+                self._estimate_cost(event.value, len(self.content_text))
+    
+    def _update_voice_options(self, provider: str) -> None:
+        """Update voice options based on provider"""
+        voice_select = self.query_one("#narrator-voice-select", Select)
+        
+        if provider == "openai":
+            voice_select.set_options([
+                ("alloy", "Alloy"),
+                ("echo", "Echo"),
+                ("fable", "Fable"),
+                ("onyx", "Onyx"),
+                ("nova", "Nova"),
+                ("shimmer", "Shimmer"),
+            ])
+        elif provider == "elevenlabs":
+            voice_select.set_options([
+                ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
+                ("AZnzlk1XvdvUeBnXmlld", "Domi"),
+                ("EXAVITQu4vr4xnSDxMaL", "Bella"),
+                ("ErXwobaYiN019PkySvjV", "Antoni"),
+                ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
+            ])
+        elif provider == "kokoro":
+            voice_select.set_options([
+                ("af", "Afrikaans"),
+                ("en", "English"), 
+                ("es", "Spanish"),
+                ("fr", "French"),
+                ("de", "German"),
+            ])
+        elif provider == "chatterbox":
+            voice_select.set_options([
+                ("default", "Default"),
+                ("custom", "Custom Voice"),
+            ])
+    
+    def _export_audiobook(self) -> None:
+        """Export the generated audiobook"""
+        if not self.generated_audiobook_path:
+            self.app.notify("No audiobook to export", severity="warning")
+            return
+        
+        try:
+            from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFilePicker
+            
+            # Create file picker for save location
+            file_picker = EnhancedFilePicker(
+                title="Save AudioBook As",
+                filters=[
+                    ("AudioBook Files", "*.m4b,*.mp3"),
+                    ("All Files", "*"),
+                ],
+                select_type="save",
+                default_filename=self.generated_audiobook_path.name
+            )
+            
+            # Mount the file picker
+            self.app.push_screen(file_picker, self._handle_export_location)
+        except ImportError:
+            # Fallback
+            self.app.notify(f"AudioBook saved to: {self.generated_audiobook_path}", severity="information")
+    
+    def _handle_export_location(self, path: str | None) -> None:
+        """Handle export location selection"""
+        if not path or not self.generated_audiobook_path:
+            return
+        
+        try:
+            import shutil
+            shutil.copy2(self.generated_audiobook_path, path)
+            self.app.notify(f"AudioBook exported to: {Path(path).name}", severity="information")
+        except Exception as e:
+            logger.error(f"Failed to export audiobook: {e}")
+            self.app.notify(f"Failed to export audiobook: {e}", severity="error")
+    
+    def audiobook_generation_complete(self, success: bool, path: Optional[Path] = None) -> None:
+        """Handle audiobook generation completion"""
+        # Re-enable generate button
+        self.query_one("#generate-audiobook-btn", Button).disabled = False
+        
+        if success and path:
+            self.generated_audiobook_path = path
+            # Enable export button
+            self.query_one("#audiobook-export-btn", Button).disabled = False
+            
+            # Update log
+            log = self.query_one("#audiobook-generation-log", RichLog)
+            log.write("[bold green]✓ AudioBook generation complete![/bold green]")
+            log.write(f"Output file: {path.name}")
+        else:
+            # Update log
+            log = self.query_one("#audiobook-generation-log", RichLog)
+            log.write("[bold red]✗ AudioBook generation failed![/bold red]")
 
 
 class STTSWindow(Container):
@@ -1041,7 +1377,7 @@ class STTSWindow(Container):
         elif new_view == "settings":
             content_container.mount(TTSSettingsWidget())
         elif new_view == "audiobook":
-            content_container.mount(AudioBookPodcastWidget())
+            content_container.mount(AudioBookGenerationWidget())
         
         # Update button variants
         for btn in self.query(".sidebar-button").results(Button):

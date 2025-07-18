@@ -3,6 +3,7 @@
 #
 # Imports
 import asyncio
+from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 from loguru import logger
@@ -255,12 +256,137 @@ class STTSEventHandler:
     async def handle_audiobook_generate(self, event: STTSAudioBookGenerateEvent) -> None:
         """Handle audiobook generation"""
         try:
-            # TODO: Implement audiobook generation
+            from tldw_chatbook.TTS.audiobook_generator import (
+                AudioBookGenerator, AudioBookRequest, AudioBookProgress
+            )
+            
             logger.info("AudioBook generation requested")
-            self.app.notify("AudioBook generation coming soon!", severity="information")
+            
+            # Initialize audiobook generator
+            generator = AudioBookGenerator(self._stts_service)
+            await generator.initialize()
+            
+            # Create audiobook request from event data
+            audiobook_request = AudioBookRequest(
+                content=event.content,
+                title=event.options.get("title", "Untitled Book"),
+                author=event.options.get("author", "Unknown"),
+                narrator_voice=event.narrator_voice,
+                provider=event.options.get("provider", "openai"),
+                model=event.options.get("model", "tts-1"),
+                output_format=event.output_format,
+                chapter_detection=event.options.get("chapter_detection", True),
+                multi_voice=event.options.get("multi_voice", False),
+                character_voices=event.options.get("character_voices", {}),
+                voice_settings=event.options.get("voice_settings", {}),
+                background_music=event.options.get("background_music"),
+                music_volume=event.options.get("music_volume", 0.1),
+                chapter_pause_duration=event.options.get("chapter_pause_duration", 2.0),
+                paragraph_pause_duration=event.options.get("paragraph_pause_duration", 0.5),
+                sentence_pause_duration=event.options.get("sentence_pause_duration", 0.3),
+                max_chunk_size=event.options.get("max_chunk_size", 4000),
+                enable_ssml=event.options.get("enable_ssml", False),
+                normalize_audio=event.options.get("normalize_audio", True),
+                target_db=event.options.get("target_db", -20.0)
+            )
+            
+            # Get cost estimate
+            estimated_cost = generator.get_cost_estimate(audiobook_request)
+            
+            # Update UI with initial status
+            if hasattr(self.app, "query_one"):
+                try:
+                    from tldw_chatbook.UI.STTS_Window import AudioBookGenerationWidget
+                    audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
+                    if audiobook_widget:
+                        log = audiobook_widget.query_one("#audiobook-generation-log", RichLog)
+                        log.write(f"[bold yellow]Starting audiobook generation...[/bold yellow]")
+                        log.write(f"Estimated cost: ${estimated_cost:.2f}")
+                except Exception:
+                    pass  # UI element not found, continue without UI updates
+            
+            # Define progress callback
+            async def progress_callback(progress: AudioBookProgress):
+                """Update UI with generation progress"""
+                if hasattr(self.app, "query_one"):
+                    try:
+                        from tldw_chatbook.UI.STTS_Window import AudioBookGenerationWidget
+                        audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
+                        if audiobook_widget:
+                            log = audiobook_widget.query_one("#audiobook-generation-log", RichLog)
+                            
+                            # Update progress message
+                            if progress.current_chapter:
+                                log.write(f"[cyan]Processing: {progress.current_chapter}[/cyan]")
+                            
+                            # Update progress bar if available
+                            if progress.total_chapters > 0:
+                                percent_complete = (progress.completed_chapters / progress.total_chapters) * 100
+                                log.write(f"Progress: {progress.completed_chapters}/{progress.total_chapters} chapters ({percent_complete:.1f}%)")
+                            
+                            # Show time estimates
+                            if progress.estimated_completion:
+                                remaining_time = progress.estimated_completion - datetime.now()
+                                if remaining_time.total_seconds() > 0:
+                                    minutes_remaining = int(remaining_time.total_seconds() / 60)
+                                    log.write(f"Estimated time remaining: {minutes_remaining} minutes")
+                            
+                            # Show errors if any
+                            for error in progress.errors:
+                                log.write(f"[bold red]Error: {error}[/bold red]")
+                    except Exception:
+                        pass  # UI element not found, continue without UI updates
+            
+            # Generate the audiobook
+            output_path = await generator.generate_audiobook(
+                audiobook_request,
+                progress_callback=progress_callback
+            )
+            
+            # Update UI with completion
+            if hasattr(self.app, "query_one"):
+                try:
+                    from tldw_chatbook.UI.STTS_Window import AudioBookGenerationWidget
+                    audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
+                    if audiobook_widget:
+                        log = audiobook_widget.query_one("#audiobook-generation-log", RichLog)
+                        log.write(f"[bold green]✓ AudioBook generation complete![/bold green]")
+                        log.write(f"Output file: {output_path}")
+                        log.write(f"Total duration: {generator.progress.actual_duration / 60:.1f} minutes")
+                        
+                        # Enable export button if available
+                        export_btn = audiobook_widget.query_one("#audiobook-export-btn", Button)
+                        if export_btn:
+                            export_btn.disabled = False
+                            # Store the output path for export
+                            audiobook_widget.generated_audiobook_path = output_path
+                except Exception:
+                    pass  # UI element not found
+            
+            # Store the generated audiobook path for playback
+            self._current_audio_file = output_path
+            
+            # Notify the UI widget
+            if audiobook_widget and hasattr(audiobook_widget, 'audiobook_generation_complete'):
+                audiobook_widget.audiobook_generation_complete(True, output_path)
+            
+            self.app.notify(f"AudioBook generated successfully: {output_path.name}", severity="information")
+            
+        except ImportError as e:
+            logger.error(f"Failed to import audiobook generator: {e}")
+            self.app.notify("AudioBook generation module not available", severity="error")
         except Exception as e:
             logger.error(f"AudioBook generation failed: {e}")
             self.app.notify(f"AudioBook generation failed: {e}", severity="error")
+            
+            # Notify the UI widget of failure
+            try:
+                from tldw_chatbook.UI.STTS_Window import AudioBookGenerationWidget
+                audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
+                if audiobook_widget and hasattr(audiobook_widget, 'audiobook_generation_complete'):
+                    audiobook_widget.audiobook_generation_complete(False)
+            except Exception:
+                pass
     
     async def play_current_audio(self) -> None:
         """Play the current audio file"""

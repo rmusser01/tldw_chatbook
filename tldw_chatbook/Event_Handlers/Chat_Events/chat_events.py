@@ -1599,7 +1599,21 @@ async def handle_chat_new_temp_chat_button_pressed(app: 'TldwCli', event: Button
     loguru_logger.info("New Temp Chat button pressed.")
     try:
         chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+        
+        # Properly clear existing widgets to prevent memory leak
+        existing_widgets = list(chat_log_widget.children)
+        for widget in existing_widgets:
+            # Clear image data references if they exist
+            if hasattr(widget, 'image_data'):
+                widget.image_data = None
+            if hasattr(widget, 'image_mime_type'):
+                widget.image_mime_type = None
+        
         await chat_log_widget.remove_children()
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
     except QueryError:
         loguru_logger.error("Failed to find #chat-log to clear.")
 
@@ -1653,7 +1667,21 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
     # Clear chat log
     try:
         chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+        
+        # Properly clear existing widgets to prevent memory leak
+        existing_widgets = list(chat_log_widget.children)
+        for widget in existing_widgets:
+            # Clear image data references if they exist
+            if hasattr(widget, 'image_data'):
+                widget.image_data = None
+            if hasattr(widget, 'image_mime_type'):
+                widget.image_mime_type = None
+        
         await chat_log_widget.remove_children()
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
     except QueryError:
         loguru_logger.error("Failed to find #chat-log to clear.")
     
@@ -1733,102 +1761,117 @@ async def handle_chat_new_conversation_button_pressed(app: 'TldwCli', event: But
         app.current_chat_is_ephemeral = True
 
 async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    loguru_logger.info("Save Current Chat button pressed.")
-    if not (app.current_chat_is_ephemeral and app.current_chat_conversation_id is None):
-        loguru_logger.warning("Chat not eligible for saving (not ephemeral or already has ID).")
-        app.notify("This chat is already saved or cannot be saved in its current state.", severity="warning")
-        return
-
-    if not app.chachanotes_db: # Use correct DB instance name
-        app.notify("Database service not available.", severity="error")
-        loguru_logger.error("chachanotes_db not available for saving chat.")
-        return
-
-    db = app.chachanotes_db
     try:
-        chat_log_widget = app.query_one("#chat-log", VerticalScroll)
-    except QueryError:
-        app.notify("Chat log not found, cannot save.", severity="error")
-        return
+        loguru_logger.info("Save Current Chat button pressed.")
+        
+        # Add platform-specific debugging
+        import platform
+        loguru_logger.debug(f"Platform: {platform.system()}, Version: {platform.version()}")
+        
+        if not (app.current_chat_is_ephemeral and app.current_chat_conversation_id is None):
+            loguru_logger.warning("Chat not eligible for saving (not ephemeral or already has ID).")
+            app.notify("This chat is already saved or cannot be saved in its current state.", severity="warning")
+            return
 
-    messages_in_log = list(chat_log_widget.query(ChatMessage))
+        if not app.chachanotes_db: # Use correct DB instance name
+            app.notify("Database service not available.", severity="error")
+            loguru_logger.error("chachanotes_db not available for saving chat.")
+            return
 
-    if not messages_in_log:
-        app.notify("Nothing to save in an empty chat.", severity="warning")
-        return
+        db = app.chachanotes_db
+        try:
+            chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+        except QueryError as qe:
+            loguru_logger.error(f"Failed to find chat log widget: {qe}")
+            app.notify("Chat log not found, cannot save.", severity="error")
+            return
 
-    character_id_for_saving = ccl.DEFAULT_CHARACTER_ID
-    char_name_for_sender = "AI" # Default sender name for AI messages if no specific character
+        # Query both ChatMessage and ChatMessageEnhanced widgets
+        messages_in_log = list(chat_log_widget.query(ChatMessage))
+        enhanced_messages = list(chat_log_widget.query(ChatMessageEnhanced))
+        messages_in_log.extend(enhanced_messages)
+        loguru_logger.debug(f"Found {len(messages_in_log)} messages in chat log (including enhanced)")
 
-    if app.current_chat_active_character_data and 'id' in app.current_chat_active_character_data:
-        character_id_for_saving = app.current_chat_active_character_data['id']
-        char_name_for_sender = app.current_chat_active_character_data.get('name', 'AI') # Use actual char name for sender
-        loguru_logger.info(f"Saving chat with active character: {char_name_for_sender} (ID: {character_id_for_saving})")
-    else:
-        loguru_logger.info(f"Saving chat with default character association (ID: {character_id_for_saving})")
+        if not messages_in_log:
+            app.notify("Nothing to save in an empty chat.", severity="warning")
+            return
+
+        character_id_for_saving = ccl.DEFAULT_CHARACTER_ID
+        char_name_for_sender = "AI" # Default sender name for AI messages if no specific character
+
+        if app.current_chat_active_character_data and 'id' in app.current_chat_active_character_data:
+            character_id_for_saving = app.current_chat_active_character_data['id']
+            char_name_for_sender = app.current_chat_active_character_data.get('name', 'AI') # Use actual char name for sender
+            loguru_logger.info(f"Saving chat with active character: {char_name_for_sender} (ID: {character_id_for_saving})")
+        else:
+            loguru_logger.info(f"Saving chat with default character association (ID: {character_id_for_saving})")
 
 
-    ui_messages_to_save: List[Dict[str, Any]] = []
-    for msg_widget in messages_in_log:
-        # Store the actual role/name displayed in the UI
-        sender_for_db_initial_msg = msg_widget.role
+        ui_messages_to_save: List[Dict[str, Any]] = []
+        for msg_widget in messages_in_log:
+            # Store the actual role/name displayed in the UI
+            sender_for_db_initial_msg = msg_widget.role
 
-        if msg_widget.generation_complete :
-            ui_messages_to_save.append({
-                'sender': sender_for_db_initial_msg,
-                'content': msg_widget.message_text,
-                'image_data': msg_widget.image_data,
-                'image_mime_type': msg_widget.image_mime_type,
-            })
+            if msg_widget.generation_complete :
+                ui_messages_to_save.append({
+                    'sender': sender_for_db_initial_msg,
+                    'content': msg_widget.message_text,
+                    'image_data': msg_widget.image_data,
+                    'image_mime_type': msg_widget.image_mime_type,
+                })
 
-    new_conv_title_from_ui = app.query_one("#chat-conversation-title-input", Input).value.strip()
-    final_title_for_db = new_conv_title_from_ui
+        new_conv_title_from_ui = app.query_one("#chat-conversation-title-input", Input).value.strip()
+        final_title_for_db = new_conv_title_from_ui
 
-    if not final_title_for_db:
-        # Use character's name for title generation if a specific character is active
-        title_char_name_part = char_name_for_sender if character_id_for_saving != ccl.DEFAULT_CHARACTER_ID else "Assistant"
-        # Check if first message is from a user (not the AI character)
-        if ui_messages_to_save and ui_messages_to_save[0]['sender'] != char_name_for_sender:
-            content_preview = ui_messages_to_save[0]['content'][:30].strip()
-            if content_preview:
-                final_title_for_db = f"Chat: {content_preview}..."
+        if not final_title_for_db:
+            # Use character's name for title generation if a specific character is active
+            title_char_name_part = char_name_for_sender if character_id_for_saving != ccl.DEFAULT_CHARACTER_ID else "Assistant"
+            # Check if first message is from a user (not the AI character)
+            if ui_messages_to_save and ui_messages_to_save[0]['sender'] != char_name_for_sender:
+                content_preview = ui_messages_to_save[0]['content'][:30].strip()
+                if content_preview:
+                    final_title_for_db = f"Chat: {content_preview}..."
+                else:
+                    final_title_for_db = f"Chat with {title_char_name_part}"
             else:
-                final_title_for_db = f"Chat with {title_char_name_part}"
-        else:
-            final_title_for_db = f"Chat with {title_char_name_part} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                final_title_for_db = f"Chat with {title_char_name_part} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
 
-    keywords_str_from_ui = app.query_one("#chat-conversation-keywords-input", TextArea).text.strip()
-    keywords_list_for_db = [kw.strip() for kw in keywords_str_from_ui.split(',') if kw.strip() and not kw.strip().startswith("__")]
+        keywords_str_from_ui = app.query_one("#chat-conversation-keywords-input", TextArea).text.strip()
+        keywords_list_for_db = [kw.strip() for kw in keywords_str_from_ui.split(',') if kw.strip() and not kw.strip().startswith("__")]
 
 
-    try:
-        new_conv_id = ccl.create_conversation(
-            db,
-            title=final_title_for_db,
-            character_id=character_id_for_saving,
-            initial_messages=ui_messages_to_save,
-            system_keywords=keywords_list_for_db,
-            user_name_for_placeholders=app.app_config.get("USERS_NAME", "User")
-        )
+        try:
+            new_conv_id = ccl.create_conversation(
+                db,
+                title=final_title_for_db,
+                character_id=character_id_for_saving,
+                initial_messages=ui_messages_to_save,
+                system_keywords=keywords_list_for_db,
+                user_name_for_placeholders=app.app_config.get("USERS_NAME", "User")
+            )
 
-        if new_conv_id:
-            app.current_chat_conversation_id = new_conv_id
-            app.current_chat_is_ephemeral = False  # Now it's saved, triggers watcher
-            app.notify("Chat saved successfully!", severity="information")
+            if new_conv_id:
+                app.current_chat_conversation_id = new_conv_id
+                app.current_chat_is_ephemeral = False  # Now it's saved, triggers watcher
+                app.notify("Chat saved successfully!", severity="information")
 
-            # After saving, reload the conversation to get all messages with their DB IDs and versions
-            await display_conversation_in_chat_tab_ui(app, new_conv_id)
+                # After saving, reload the conversation to get all messages with their DB IDs and versions
+                await display_conversation_in_chat_tab_ui(app, new_conv_id)
 
-            # The display_conversation_in_chat_tab_ui will populate title, uuid, keywords.
-            # It will also set the title bar.
+                # The display_conversation_in_chat_tab_ui will populate title, uuid, keywords.
+                # It will also set the title bar.
 
-        else:
-            app.notify("Failed to save chat (no ID returned).", severity="error")
+            else:
+                app.notify("Failed to save chat (no ID returned).", severity="error")
 
-    except Exception as e_save_chat:
-        loguru_logger.error(f"Exception while saving chat: {e_save_chat}", exc_info=True)
-        app.notify(f"Error saving chat: {str(e_save_chat)[:100]}", severity="error")
+        except Exception as e_save_chat:
+            loguru_logger.error(f"Exception while saving chat: {e_save_chat}", exc_info=True)
+            app.notify(f"Error saving chat: {str(e_save_chat)[:100]}", severity="error")
+    
+    except Exception as e_outer:
+        loguru_logger.error(f"Unexpected error in save current chat handler: {e_outer}", exc_info=True)
+        app.notify(f"Unexpected error saving chat: {str(e_outer)[:100]}", severity="error")
 
 
 async def handle_chat_convert_to_note_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -2390,8 +2433,25 @@ async def display_conversation_in_chat_tab_ui(app: 'TldwCli', conversation_id: s
         app.query_one(TitleBar).update_title(f"Chat - {conv_metadata.get('title', 'Untitled Conversation')}")
 
         chat_log_widget_disp = app.query_one("#chat-log", VerticalScroll)
+        
+        # Properly clear existing widgets to prevent memory leak
+        existing_widgets = list(chat_log_widget_disp.children)
+        for widget in existing_widgets:
+            # Clear image data references if they exist
+            if hasattr(widget, 'image_data'):
+                widget.image_data = None
+            if hasattr(widget, 'image_mime_type'):
+                widget.image_mime_type = None
+        
         await chat_log_widget_disp.remove_children()
         app.current_ai_message_widget = None
+        
+        # Force garbage collection after clearing widgets (especially important on Windows)
+        import gc
+        import asyncio
+        # Small delay to ensure widgets are fully released
+        await asyncio.sleep(0.01)
+        gc.collect()
 
         # Check if we should use enhanced widgets
         use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)

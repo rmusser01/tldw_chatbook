@@ -288,6 +288,15 @@ class TTSEventHandler:
             elif request.model == "kokoro":
                 internal_model_id = "local_kokoro_default_onnx"
                 provider = "local"
+            elif request.model == "alltalk":
+                internal_model_id = "alltalk_default"
+                provider = "local"
+            elif request.model.startswith("elevenlabs"):
+                internal_model_id = f"elevenlabs_{request.model}"
+                provider = "elevenlabs"
+            elif request.model == "chatterbox":
+                internal_model_id = "local_chatterbox_default"
+                provider = "local"
             else:
                 internal_model_id = request.model
                 provider = "unknown"

@@ -3909,20 +3909,29 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         self.loguru_logger.debug(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
         self.loguru_logger.debug(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
+        
+        # Special debug logging for save chat button
+        if button_id == "chat-save-current-chat-button":
+            self.loguru_logger.info(f"Save Temp Chat button pressed - Handler found: {handler is not None}")
+            self.loguru_logger.info(f"Current tab: {self.current_tab}, Expected: {TAB_CHAT}")
 
         if handler:
             if callable(handler):
-                # Call the handler, which is expected to return a coroutine (an awaitable object).
-                result = handler(self, event)
+                try:
+                    # Call the handler, which is expected to return a coroutine (an awaitable object).
+                    result = handler(self, event)
 
-                # Check if the result is indeed awaitable before awaiting it.
-                # This makes the code more robust and satisfies static type checkers.
-                if inspect.isawaitable(result):
-                    await result
-                else:
-                    self.loguru_logger.warning(
-                        f"Handler for button '{button_id}' did not return an awaitable object."
-                    )
+                    # Check if the result is indeed awaitable before awaiting it.
+                    # This makes the code more robust and satisfies static type checkers.
+                    if inspect.isawaitable(result):
+                        await result
+                    else:
+                        self.loguru_logger.warning(
+                            f"Handler for button '{button_id}' did not return an awaitable object."
+                        )
+                except Exception as e:
+                    self.loguru_logger.error(f"Error executing handler for button '{button_id}': {e}", exc_info=True)
+                    self.notify(f"Error handling button action: {str(e)[:100]}", severity="error")
             else:
                 self.loguru_logger.error(f"Handler for button '{button_id}' is not callable: {handler}")
             return  # The button press was handled (or an error occurred).
@@ -4144,6 +4153,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await notes_handlers.handle_notes_sort_changed(self, event)
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
+        elif select_id == "chat-rag-search-mode" and current_active_tab == TAB_CHAT:
+            await self.handle_rag_pipeline_changed(event)
         elif select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT:
             await self.handle_query_expansion_method_changed(event)
         elif select_id == "chat-rag-expansion-provider" and current_active_tab == TAB_CHAT:
@@ -4337,6 +4348,32 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e:
             self.loguru_logger.error(f"Error applying RAG preset: {e}")
             self.notify("Error applying RAG preset", severity="error")
+    
+    async def handle_rag_pipeline_changed(self, event: Select.Changed) -> None:
+        """Handles RAG pipeline selection."""
+        try:
+            from .Widgets.settings_sidebar import get_pipeline_description
+            
+            pipeline_id = event.value
+            
+            # Update the description display
+            description_widget = self.query_one("#chat-rag-pipeline-description", Static)
+            description = get_pipeline_description(pipeline_id)
+            description_widget.update(description)
+            
+            # If "none" is selected, just show manual config message
+            if pipeline_id == "none":
+                self.notify("Manual RAG configuration mode enabled")
+            else:
+                # Show what pipeline was selected
+                pipeline_name = event.select.value_to_label(pipeline_id)
+                self.notify(f"Selected pipeline: {pipeline_name}")
+                
+            self.loguru_logger.info(f"RAG pipeline changed to: {pipeline_id}")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error handling RAG pipeline change: {e}")
+            self.notify("Error changing RAG pipeline", severity="error")
     
     async def handle_query_expansion_method_changed(self, event: Select.Changed) -> None:
         """Handles query expansion method selection - shows/hides appropriate fields."""

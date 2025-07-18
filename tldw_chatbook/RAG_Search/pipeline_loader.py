@@ -70,7 +70,29 @@ class PipelineLoader:
     def load_pipeline_config(self, config_file: Optional[Path] = None) -> None:
         """Load pipeline configurations from TOML file."""
         if config_file is None:
-            config_file = self.config_dir / "rag_pipelines.toml"
+            # Check user config directory first
+            user_config_dir = Path.home() / ".config" / "tldw_cli"
+            user_config_file = user_config_dir / "rag_pipelines.toml"
+            default_config_file = self.config_dir / "rag_pipelines.toml"
+            
+            if user_config_file.exists():
+                config_file = user_config_file
+                logger.info(f"Loading pipeline config from user directory: {config_file}")
+            elif default_config_file.exists():
+                config_file = default_config_file
+                logger.info(f"Loading pipeline config from default location: {config_file}")
+                
+                # Copy default file to user directory if it doesn't exist
+                try:
+                    user_config_dir.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(default_config_file, user_config_file)
+                    logger.info(f"Copied default pipeline config to user directory: {user_config_file}")
+                except Exception as e:
+                    logger.warning(f"Could not copy default pipeline config to user directory: {e}")
+            else:
+                logger.warning("Pipeline config file not found in user or default locations")
+                return
         
         if not config_file.exists():
             logger.warning(f"Pipeline config file not found: {config_file}")

@@ -97,6 +97,12 @@ class TTSBackendManager:
             BackendRegistry.register("local_chatterbox_*", ChatterboxTTSBackend)
         except ImportError:
             logger.warning("Chatterbox TTS backend not available")
+        
+        try:
+            from tldw_chatbook.TTS.backends.alltalk import AllTalkTTSBackend
+            BackendRegistry.register("alltalk_*", AllTalkTTSBackend)
+        except ImportError:
+            logger.warning("AllTalk TTS backend not available")
     
     async def get_backend(self, backend_id: str) -> Optional[TTSBackendBase]:
         if backend_id not in self._backends:
