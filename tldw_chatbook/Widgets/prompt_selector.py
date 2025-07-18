@@ -111,13 +111,126 @@ class PromptSelector(Container):
                 self._set_default_prompts()
                 return
             
-            # Query prompts from database
-            # For now, we'll use hardcoded defaults until database integration is complete
-            self._set_default_prompts()
+            # Query prompts from database based on media type
+            try:
+                if self.media_type == "general":
+                    # For general, get all prompts
+                    all_prompts = self.app_instance.prompts_db.get_all_prompts(limit=500)
+                    # Add keywords to each prompt
+                    for prompt in all_prompts:
+                        prompt['keywords'] = self.app_instance.prompts_db.fetch_keywords_for_prompt(
+                            prompt['id'], include_deleted=False
+                        )
+                else:
+                    # For specific media types, search by keyword
+                    media_prompts = self.app_instance.prompts_db.search_prompts_by_keyword(
+                        self.media_type, include_deleted=False
+                    )
+                    
+                    # Also check for related keywords (e.g., "document" for "pdf")
+                    related_prompts = []
+                    if self.media_type == "pdf":
+                        related_prompts = self.app_instance.prompts_db.search_prompts_by_keyword(
+                            "document", include_deleted=False
+                        )
+                    elif self.media_type == "document":
+                        related_prompts = self.app_instance.prompts_db.search_prompts_by_keyword(
+                            "pdf", include_deleted=False
+                        )
+                    
+                    # Combine and deduplicate
+                    prompt_dict = {p['id']: p for p in media_prompts}
+                    for prompt in related_prompts:
+                        if prompt['id'] not in prompt_dict:
+                            prompt_dict[prompt['id']] = prompt
+                    
+                    all_prompts = list(prompt_dict.values())
+                    
+                    # Also get general prompts that might be useful
+                    general_prompts = self.app_instance.prompts_db.search_prompts_by_keyword(
+                        "general", include_deleted=False
+                    )
+                    for prompt in general_prompts:
+                        if prompt['id'] not in prompt_dict:
+                            all_prompts.append(prompt)
+                
+                if all_prompts:
+                    logger.info(f"Loaded {len(all_prompts)} prompts for media type '{self.media_type}'")
+                    self._load_prompts_from_db(all_prompts)
+                else:
+                    logger.warning(f"No prompts found for media type '{self.media_type}', using defaults")
+                    self._set_default_prompts()
+                    
+            except Exception as db_error:
+                logger.error(f"Error querying prompts database: {db_error}")
+                self._set_default_prompts()
             
         except Exception as e:
             logger.error(f"Error loading prompts: {e}")
             self._set_default_prompts()
+    
+    def _load_prompts_from_db(self, prompts: List[Dict[str, Any]]) -> None:
+        """Load prompts from database records and organize them for the UI."""
+        # Separate system and user prompts
+        system_prompts = [("Custom", "custom")]
+        user_prompts = [("Custom", "custom")]
+        
+        # Clear prompts cache
+        self.prompts_cache = {}
+        
+        # Process each prompt
+        for prompt in prompts:
+            try:
+                prompt_name = prompt.get('name', '')
+                prompt_id = str(prompt.get('id', ''))
+                system_prompt = prompt.get('system_prompt', '')
+                user_prompt = prompt.get('user_prompt', '')
+                
+                # Skip if no name
+                if not prompt_name:
+                    continue
+                
+                # Store prompt in cache
+                cache_key = f"db_{prompt_id}"
+                self.prompts_cache[cache_key] = {
+                    "system": system_prompt,
+                    "user": user_prompt
+                }
+                
+                # Add to appropriate list
+                if system_prompt and not user_prompt:
+                    # System prompt only
+                    system_prompts.append((prompt_name, cache_key))
+                elif user_prompt and not system_prompt:
+                    # User prompt only
+                    user_prompts.append((prompt_name, cache_key))
+                elif system_prompt and user_prompt:
+                    # Both - add to both lists
+                    system_prompts.append((prompt_name, cache_key))
+                    user_prompts.append((prompt_name, cache_key))
+                    
+            except Exception as e:
+                logger.error(f"Error processing prompt: {e}")
+                continue
+        
+        # Sort prompts alphabetically (except Custom which stays first)
+        system_prompts = system_prompts[:1] + sorted(system_prompts[1:], key=lambda x: x[0])
+        user_prompts = user_prompts[:1] + sorted(user_prompts[1:], key=lambda x: x[0])
+        
+        # Update the select widgets
+        try:
+            system_select = self.query_one(f"#{self.system_prompt_id}-select", Select)
+            system_select.set_options(system_prompts)
+            logger.debug(f"Set {len(system_prompts)} system prompt options for {self.media_type}")
+        except Exception as e:
+            logger.error(f"Error updating system prompt select: {e}")
+        
+        try:
+            user_select = self.query_one(f"#{self.user_prompt_id}-select", Select)
+            user_select.set_options(user_prompts)
+            logger.debug(f"Set {len(user_prompts)} user prompt options for {self.media_type}")
+        except Exception as e:
+            logger.error(f"Error updating user prompt select: {e}")
     
     def _set_default_prompts(self) -> None:
         """Set default prompt options based on media type."""
@@ -377,7 +490,20 @@ class PromptSelector(Container):
                 textarea.load_text(prompt_text)
                 logger.debug(f"Loaded {prompt_type} prompt: {event.value}")
             else:
-                logger.warning(f"No {prompt_type} prompt text found for: {event.value}")
+                # If no text for this prompt type, check if there's text for the other type
+                # This handles cases where a prompt might only have system or user text
+                other_type = "user" if prompt_type == "system" else "system"
+                other_text = prompt_data.get(other_type, "")
+                if other_text and prompt_type == "user":
+                    # If we're looking for user prompt but only system exists, leave empty
+                    textarea.load_text("")
+                    logger.debug(f"No user prompt for {event.value}, leaving empty")
+                elif other_text and prompt_type == "system":
+                    # If we're looking for system prompt but only user exists, leave empty
+                    textarea.load_text("")
+                    logger.debug(f"No system prompt for {event.value}, leaving empty")
+                else:
+                    logger.warning(f"No {prompt_type} prompt text found for: {event.value}")
     
     def get_prompts(self) -> Tuple[str, str]:
         """
