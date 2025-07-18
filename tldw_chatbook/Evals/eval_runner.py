@@ -530,7 +530,7 @@ class MetricsCalculator:
                 dot_product = sum(a * b for a, b in zip(pred_embedding, exp_embedding))
                 norm1 = sum(a * a for a in pred_embedding) ** 0.5
                 norm2 = sum(b * b for b in exp_embedding) ** 0.5
-                cosine_sim = dot_product / ((norm1 * norm2) if norm1 * norm2 >0 else 0.0
+                cosine_sim = dot_product / ((norm1 * norm2) if norm1 * norm2 >0 else 0.0)
             
         except ImportError:
             # Fallback to token overlap if embeddings not available
