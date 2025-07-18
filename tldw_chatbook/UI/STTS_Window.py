@@ -20,7 +20,12 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
 # Note: Not using form_components due to generator/widget incompatibility
+
+import json
 
 #######################################################################################################################
 #
@@ -602,16 +607,16 @@ class TTSPlaygroundWidget(Widget):
     
     def _select_reference_audio(self) -> None:
         """Select reference audio file for voice cloning"""
-        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFilePicker
+        # Create file picker for audio files using pre-imported FileOpen
+        filters = Filters(
+            ("Audio Files", lambda p: p.suffix.lower() in [".wav", ".mp3", ".m4a", ".flac", ".aac"]),
+            ("All Files", lambda p: True)
+        )
         
-        # Create file picker for audio files
-        file_picker = EnhancedFilePicker(
+        file_picker = FileOpen(
             title="Select Reference Audio",
-            filters=[
-                ("Audio Files", "*.wav,*.mp3,*.m4a,*.flac,*.aac"),
-                ("All Files", "*"),
-            ],
-            select_type="file"
+            filters=filters,
+            context="reference_audio"
         )
         
         # Mount the file picker
@@ -645,6 +650,11 @@ class TTSPlaygroundWidget(Widget):
 class TTSSettingsWidget(Widget):
     """TTS Settings for global configuration"""
     
+    # Store file paths
+    kokoro_model_path = reactive("")
+    kokoro_voices_path = reactive("")
+    chatterbox_voice_dir = reactive("")
+    
     DEFAULT_CSS = """
     TTSSettingsWidget {
         height: 100%;
@@ -658,6 +668,40 @@ class TTSSettingsWidget(Widget):
     
     .settings-section {
         margin-bottom: 2;
+    }
+    
+    .voice-blends-container {
+        height: 5;
+        background: $surface;
+        border: solid $primary;
+        padding: 0 1;
+    }
+    
+    .voice-blends-list {
+        padding: 1;
+    }
+    
+    .subsection-label {
+        text-style: bold;
+        margin: 1 0;
+    }
+    
+    .form-row {
+        height: 3;
+        margin-bottom: 1;
+    }
+    
+    .form-label {
+        width: 20;
+        height: 1;
+        margin-top: 1;
+    }
+    
+    .path-browse-button {
+        min-width: 3;
+        width: 3;
+        height: 3;
+        margin-left: 1;
     }
     """
     
@@ -676,24 +720,23 @@ class TTSSettingsWidget(Widget):
                             ("elevenlabs", "ElevenLabs"),
                             ("kokoro", "Kokoro (Local)"),
                             ("chatterbox", "Chatterbox (Local)"),
+                            ("alltalk", "AllTalk (Local Server)"),
                         ],
                         id="default-provider-select"
                     )
                 
                 with Horizontal(classes="form-row"):
                     yield Label("Default Voice:", classes="form-label")
-                    yield Input(
-                        id="default-voice-input",
-                        value=get_cli_setting("app_tts", "default_voice", "alloy"),
-                        placeholder="Default voice ID"
+                    yield Select(
+                        options=[("alloy", "Alloy")],  # Will be updated based on provider
+                        id="default-voice-select"
                     )
                 
                 with Horizontal(classes="form-row"):
                     yield Label("Default Model:", classes="form-label")
-                    yield Input(
-                        id="default-model-input",
-                        value=get_cli_setting("app_tts", "default_model", "tts-1"),
-                        placeholder="Default model"
+                    yield Select(
+                        options=[("tts-1", "TTS-1")],  # Will be updated based on provider
+                        id="default-model-select"
                     )
                 
                 with Horizontal(classes="form-row"):
@@ -727,6 +770,21 @@ class TTSSettingsWidget(Widget):
                         password=True,
                         placeholder="sk-..."
                     )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Base URL:", classes="form-label")
+                    yield Input(
+                        id="openai-base-url-input",
+                        value=get_cli_setting("app_tts", "OPENAI_BASE_URL", "https://api.openai.com/v1/audio/speech"),
+                        placeholder="Custom API endpoint (optional)"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Organization ID:", classes="form-label")
+                    yield Input(
+                        id="openai-org-id-input",
+                        placeholder="org-... (optional)"
+                    )
             
             # ElevenLabs settings
             with Collapsible(title="ElevenLabs Settings", classes="settings-section"):
@@ -739,10 +797,39 @@ class TTSSettingsWidget(Widget):
                     )
                 
                 with Horizontal(classes="form-row"):
+                    yield Label("Model:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("eleven_multilingual_v2", "Multilingual v2"),
+                            ("eleven_turbo_v2", "Turbo v2"),
+                            ("eleven_multilingual_v1", "Multilingual v1"),
+                            ("eleven_monolingual_v1", "Monolingual v1"),
+                        ],
+                        id="elevenlabs-model-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Output Format:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("mp3_44100_192", "MP3 192kbps"),
+                            ("mp3_44100_128", "MP3 128kbps"),
+                            ("mp3_44100_96", "MP3 96kbps"),
+                            ("mp3_44100_64", "MP3 64kbps"),
+                            ("mp3_44100_32", "MP3 32kbps"),
+                            ("pcm_44100", "PCM 44.1kHz"),
+                            ("pcm_24000", "PCM 24kHz"),
+                            ("pcm_16000", "PCM 16kHz"),
+                            ("ulaw_8000", "μ-law 8kHz"),
+                        ],
+                        id="elevenlabs-format-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
                     yield Label("Voice Stability:", classes="form-label")
                     yield Input(
                         id="elevenlabs-stability-input",
-                        value="0.5",
+                        value=str(get_cli_setting("app_tts", "ELEVENLABS_VOICE_STABILITY", "0.5")),
                         placeholder="0.0-1.0",
                         type="number"
                     )
@@ -751,9 +838,25 @@ class TTSSettingsWidget(Widget):
                     yield Label("Similarity Boost:", classes="form-label")
                     yield Input(
                         id="elevenlabs-similarity-input",
-                        value="0.8",
+                        value=str(get_cli_setting("app_tts", "ELEVENLABS_SIMILARITY_BOOST", "0.8")),
                         placeholder="0.0-1.0",
                         type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Style:", classes="form-label")
+                    yield Input(
+                        id="elevenlabs-style-input",
+                        value=str(get_cli_setting("app_tts", "ELEVENLABS_STYLE", "0.0")),
+                        placeholder="0.0-1.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Speaker Boost:", classes="form-label")
+                    yield Switch(
+                        id="elevenlabs-speaker-boost-switch",
+                        value=get_cli_setting("app_tts", "ELEVENLABS_USE_SPEAKER_BOOST", True)
                     )
             
             # Kokoro settings
@@ -772,14 +875,250 @@ class TTSSettingsWidget(Widget):
                     yield Label("Use ONNX:", classes="form-label")
                     yield Switch(
                         id="kokoro-use-onnx-switch",
-                        value=get_cli_setting("app_tts", "kokoro_use_onnx", True)
-                )
+                        value=get_cli_setting("app_tts", "KOKORO_USE_ONNX", True)
+                    )
                 
                 with Horizontal(classes="form-row"):
                     yield Label("Model Path:", classes="form-label")
+                    yield Button(
+                        "📁 Select model file",
+                        id="kokoro-browse-model-btn",
+                        variant="default"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Voices JSON:", classes="form-label")
+                    yield Button(
+                        "📁 Select voices.json",
+                        id="kokoro-browse-voices-btn",
+                        variant="default"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Max Tokens:", classes="form-label")
                     yield Input(
-                        id="kokoro-model-path-input",
-                        placeholder="Path to Kokoro model"
+                        id="kokoro-max-tokens-input",
+                        value=str(get_cli_setting("app_tts", "KOKORO_MAX_TOKENS", "500")),
+                        placeholder="Max tokens per chunk",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Voice Mixing:", classes="form-label")
+                    yield Switch(
+                        id="kokoro-voice-mixing-switch",
+                        value=get_cli_setting("app_tts", "KOKORO_ENABLE_VOICE_MIXING", False)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Performance Tracking:", classes="form-label")
+                    yield Switch(
+                        id="kokoro-performance-switch",
+                        value=get_cli_setting("app_tts", "KOKORO_TRACK_PERFORMANCE", True)
+                    )
+                
+                # Voice blends section
+                yield Label("Voice Blends:", classes="form-label")
+                with ScrollableContainer(classes="voice-blends-container"):
+                    yield Static(id="kokoro-voice-blends-list", classes="voice-blends-list")
+                with Horizontal(classes="form-row"):
+                    yield Button("➕ Add Blend", id="add-voice-blend-btn", variant="default")
+                    yield Button("📥 Import", id="import-blends-btn", variant="default")
+                    yield Button("📤 Export", id="export-blends-btn", variant="default")
+            
+            # Chatterbox settings
+            with Collapsible(title="Chatterbox Settings", classes="settings-section"):
+                with Horizontal(classes="form-row"):
+                    yield Label("Device:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("cpu", "CPU"),
+                            ("cuda", "CUDA (GPU)"),
+                        ],
+                        id="chatterbox-device-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Voice Directory:", classes="form-label")
+                    yield Button(
+                        "📁 Select voice directory",
+                        id="chatterbox-browse-voice-dir-btn",
+                        variant="default"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Emotion Exaggeration:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-exaggeration-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_EXAGGERATION", "0.5")),
+                        placeholder="0.0-1.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("CFG Weight:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-cfg-weight-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_CFG_WEIGHT", "0.5")),
+                        placeholder="0.0-1.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Temperature:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-temperature-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_TEMPERATURE", "0.5")),
+                        placeholder="0.0-2.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Chunk Size:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-chunk-size-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_CHUNK_SIZE", "1024")),
+                        placeholder="Audio chunk size",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Random Seed:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-seed-input",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_RANDOM_SEED", ""),
+                        placeholder="Random seed (optional)"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Number of Candidates:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-candidates-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_NUM_CANDIDATES", "1")),
+                        placeholder="1-5",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Whisper Validation:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-whisper-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_VALIDATE_WHISPER", False)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Text Preprocessing:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-preprocess-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_PREPROCESS_TEXT", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Audio Normalization:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-normalize-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_NORMALIZE_AUDIO", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Target dB:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-target-db-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_TARGET_DB", "-20.0")),
+                        placeholder="-40 to 0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Max Text Chunk:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-max-chunk-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_MAX_CHUNK_SIZE", "500")),
+                        placeholder="Max characters per chunk",
+                        type="number"
+                    )
+                
+                # Streaming settings subsection
+                yield Label("Streaming Settings:", classes="subsection-label")
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Streaming:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-streaming-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_STREAMING", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Stream Chunk Size:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-stream-chunk-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_STREAM_CHUNK_SIZE", "4096")),
+                        placeholder="Stream chunk size",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Crossfade:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-crossfade-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_ENABLE_CROSSFADE", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Crossfade Duration:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-crossfade-ms-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_CROSSFADE_MS", "50")),
+                        placeholder="Duration in ms",
+                        type="number"
+                    )
+            
+            # AllTalk settings
+            with Collapsible(title="AllTalk Settings", classes="settings-section"):
+                with Horizontal(classes="form-row"):
+                    yield Label("Server URL:", classes="form-label")
+                    yield Input(
+                        id="alltalk-url-input",
+                        value=get_cli_setting("app_tts", "ALLTALK_TTS_URL_DEFAULT", "http://127.0.0.1:7851"),
+                        placeholder="AllTalk server URL"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Voice:", classes="form-label")
+                    yield Input(
+                        id="alltalk-voice-input",
+                        value=get_cli_setting("app_tts", "ALLTALK_TTS_VOICE_DEFAULT", "female_01.wav"),
+                        placeholder="Voice file name"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Language:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("en", "English"),
+                            ("es", "Spanish"),
+                            ("fr", "French"),
+                            ("de", "German"),
+                            ("it", "Italian"),
+                            ("pt", "Portuguese"),
+                            ("ru", "Russian"),
+                            ("zh", "Chinese"),
+                            ("ja", "Japanese"),
+                            ("ko", "Korean"),
+                        ],
+                        id="alltalk-language-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Output Format:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("wav", "WAV"),
+                            ("mp3", "MP3"),
+                            ("opus", "Opus"),
+                            ("flac", "FLAC"),
+                        ],
+                        id="alltalk-format-select"
                     )
             
             # Save button
@@ -791,8 +1130,42 @@ class TTSSettingsWidget(Widget):
             # Set default provider
             provider_select = self.query_one("#default-provider-select", Select)
             default_provider = get_cli_setting("app_tts", "default_provider", "openai")
-            if default_provider in ["openai", "elevenlabs", "kokoro"]:
+            if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox", "alltalk"]:
                 provider_select.value = default_provider
+            
+            # Load voice blends
+            self._load_kokoro_voice_blends()
+            
+            # Load and display file paths
+            self.kokoro_model_path = get_cli_setting("app_tts", "KOKORO_ONNX_MODEL_PATH_DEFAULT", "")
+            self.kokoro_voices_path = get_cli_setting("app_tts", "KOKORO_ONNX_VOICES_JSON_DEFAULT", "")
+            self.chatterbox_voice_dir = get_cli_setting("app_tts", "CHATTERBOX_VOICE_DIR", "~/.config/tldw_cli/chatterbox_voices")
+            
+            # Update button labels
+            self._update_file_button_labels()
+            
+            # Update voice and model options based on default provider
+            self._update_default_voice_model_options(default_provider)
+            
+            # Set default voice and model
+            default_voice = get_cli_setting("app_tts", "default_voice", "alloy")
+            default_model = get_cli_setting("app_tts", "default_model", "tts-1")
+            
+            voice_select = self.query_one("#default-voice-select", Select)
+            model_select = self.query_one("#default-model-select", Select)
+            
+            # Try to set the values if they exist in options
+            try:
+                if any(opt[0] == default_voice for opt in voice_select._options):
+                    voice_select.value = default_voice
+            except:
+                pass
+                
+            try:
+                if any(opt[0] == default_model for opt in model_select._options):
+                    model_select.value = default_model
+            except:
+                pass
             
             # Set default format
             format_select = self.query_one("#default-format-select", Select)
@@ -802,16 +1175,62 @@ class TTSSettingsWidget(Widget):
             
             # Set Kokoro device
             device_select = self.query_one("#kokoro-device-select", Select)
-            kokoro_device = get_cli_setting("app_tts", "kokoro_device", "cpu")
+            kokoro_device = get_cli_setting("app_tts", "KOKORO_DEVICE_DEFAULT", "cpu")
             if kokoro_device in ["cpu", "cuda"]:
                 device_select.value = kokoro_device
+            
+            # Set Chatterbox device
+            chatterbox_device_select = self.query_one("#chatterbox-device-select", Select)
+            chatterbox_device = get_cli_setting("app_tts", "CHATTERBOX_DEVICE", "cpu")
+            if chatterbox_device in ["cpu", "cuda"]:
+                chatterbox_device_select.value = chatterbox_device
+            
+            # Set ElevenLabs model
+            elevenlabs_model_select = self.query_one("#elevenlabs-model-select", Select)
+            elevenlabs_model = get_cli_setting("app_tts", "ELEVENLABS_DEFAULT_MODEL", "eleven_multilingual_v2")
+            if elevenlabs_model in ["eleven_multilingual_v2", "eleven_turbo_v2", "eleven_multilingual_v1", "eleven_monolingual_v1"]:
+                elevenlabs_model_select.value = elevenlabs_model
+            
+            # Set ElevenLabs format
+            elevenlabs_format_select = self.query_one("#elevenlabs-format-select", Select)
+            elevenlabs_format = get_cli_setting("app_tts", "ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_192")
+            if elevenlabs_format in ["mp3_44100_192", "mp3_44100_128", "mp3_44100_96", "mp3_44100_64", "mp3_44100_32", "pcm_44100", "pcm_24000", "pcm_16000", "ulaw_8000"]:
+                elevenlabs_format_select.value = elevenlabs_format
+            
+            # Set AllTalk language
+            alltalk_language_select = self.query_one("#alltalk-language-select", Select)
+            alltalk_language = get_cli_setting("app_tts", "ALLTALK_TTS_LANGUAGE_DEFAULT", "en")
+            if alltalk_language in ["en", "es", "fr", "de", "it", "pt", "ru", "zh", "ja", "ko"]:
+                alltalk_language_select.value = alltalk_language
+            
+            # Set AllTalk format
+            alltalk_format_select = self.query_one("#alltalk-format-select", Select)
+            alltalk_format = get_cli_setting("app_tts", "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT", "wav")
+            if alltalk_format in ["wav", "mp3", "opus", "flac"]:
+                alltalk_format_select.value = alltalk_format
+            
+            # Load and display Kokoro voice blends
+            self._load_kokoro_voice_blends()
+            
         except Exception as e:
             logger.warning(f"Failed to set initial values: {e}")
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle save button press"""
+        """Handle button presses"""
         if event.button.id == "save-settings-btn":
             self._save_settings()
+        elif event.button.id == "add-voice-blend-btn":
+            self.run_worker(self._show_add_voice_blend_dialog)
+        elif event.button.id == "import-blends-btn":
+            self._import_voice_blends()
+        elif event.button.id == "export-blends-btn":
+            self._export_voice_blends()
+        elif event.button.id == "kokoro-browse-model-btn":
+            self._browse_kokoro_model()
+        elif event.button.id == "kokoro-browse-voices-btn":
+            self._browse_kokoro_voices()
+        elif event.button.id == "chatterbox-browse-voice-dir-btn":
+            self._browse_chatterbox_voice_dir()
     
     def _save_settings(self) -> None:
         """Save TTS settings"""
@@ -821,43 +1240,495 @@ class TTSSettingsWidget(Widget):
             
             # Default settings
             settings["default_provider"] = self.query_one("#default-provider-select", Select).value
-            settings["default_voice"] = self.query_one("#default-voice-input", Input).value
-            settings["default_model"] = self.query_one("#default-model-input", Input).value
+            settings["default_voice"] = self.query_one("#default-voice-select", Select).value
+            settings["default_model"] = self.query_one("#default-model-select", Select).value
             settings["default_format"] = self.query_one("#default-format-select", Select).value
-            settings["default_speed"] = float(self.query_one("#default-speed-input", Input).value or "1.0")
+            settings["default_speed"] = self._validate_numeric_input(
+                self.query_one("#default-speed-input", Input).value, 0.25, 4.0, 1.0
+            )
             
             # OpenAI settings
             openai_key = self.query_one("#openai-api-key-input", Input).value
             if openai_key:
                 settings["openai_api_key"] = openai_key
             
+            base_url = self.query_one("#openai-base-url-input", Input).value
+            if base_url and base_url != "https://api.openai.com/v1/audio/speech":
+                settings["OPENAI_BASE_URL"] = base_url
+            
+            org_id = self.query_one("#openai-org-id-input", Input).value
+            if org_id:
+                settings["OPENAI_ORG_ID"] = org_id
+            
             # ElevenLabs settings
             elevenlabs_key = self.query_one("#elevenlabs-api-key-input", Input).value
             if elevenlabs_key:
                 settings["elevenlabs_api_key"] = elevenlabs_key
             
-            stability = self.query_one("#elevenlabs-stability-input", Input).value
-            if stability:
-                settings["elevenlabs_voice_stability"] = float(stability)
-            
-            similarity = self.query_one("#elevenlabs-similarity-input", Input).value
-            if similarity:
-                settings["elevenlabs_similarity_boost"] = float(similarity)
+            settings["ELEVENLABS_DEFAULT_MODEL"] = self.query_one("#elevenlabs-model-select", Select).value
+            settings["ELEVENLABS_OUTPUT_FORMAT"] = self.query_one("#elevenlabs-format-select", Select).value
+            settings["ELEVENLABS_VOICE_STABILITY"] = self._validate_numeric_input(
+                self.query_one("#elevenlabs-stability-input", Input).value, 0.0, 1.0, 0.5
+            )
+            settings["ELEVENLABS_SIMILARITY_BOOST"] = self._validate_numeric_input(
+                self.query_one("#elevenlabs-similarity-input", Input).value, 0.0, 1.0, 0.8
+            )
+            settings["ELEVENLABS_STYLE"] = self._validate_numeric_input(
+                self.query_one("#elevenlabs-style-input", Input).value, 0.0, 1.0, 0.0
+            )
+            settings["ELEVENLABS_USE_SPEAKER_BOOST"] = self.query_one("#elevenlabs-speaker-boost-switch", Switch).value
             
             # Kokoro settings
-            settings["kokoro_device"] = self.query_one("#kokoro-device-select", Select).value
-            settings["kokoro_use_onnx"] = self.query_one("#kokoro-use-onnx-switch", Switch).value
+            settings["KOKORO_DEVICE_DEFAULT"] = self.query_one("#kokoro-device-select", Select).value
+            settings["KOKORO_USE_ONNX"] = self.query_one("#kokoro-use-onnx-switch", Switch).value
             
-            model_path = self.query_one("#kokoro-model-path-input", Input).value
-            if model_path:
-                settings["kokoro_model_path"] = model_path
+            if self.kokoro_model_path:
+                settings["KOKORO_ONNX_MODEL_PATH_DEFAULT"] = self.kokoro_model_path
+            
+            if self.kokoro_voices_path:
+                settings["KOKORO_ONNX_VOICES_JSON_DEFAULT"] = self.kokoro_voices_path
+            
+            settings["KOKORO_MAX_TOKENS"] = int(self._validate_numeric_input(
+                self.query_one("#kokoro-max-tokens-input", Input).value, 1, 10000, 500
+            ))
+            settings["KOKORO_ENABLE_VOICE_MIXING"] = self.query_one("#kokoro-voice-mixing-switch", Switch).value
+            settings["KOKORO_TRACK_PERFORMANCE"] = self.query_one("#kokoro-performance-switch", Switch).value
+            
+            # Chatterbox settings
+            settings["CHATTERBOX_DEVICE"] = self.query_one("#chatterbox-device-select", Select).value
+            
+            if self.chatterbox_voice_dir:
+                settings["CHATTERBOX_VOICE_DIR"] = self.chatterbox_voice_dir
+                
+            settings["CHATTERBOX_EXAGGERATION"] = self._validate_numeric_input(
+                self.query_one("#chatterbox-exaggeration-input", Input).value, 0.0, 1.0, 0.5
+            )
+            settings["CHATTERBOX_CFG_WEIGHT"] = self._validate_numeric_input(
+                self.query_one("#chatterbox-cfg-weight-input", Input).value, 0.0, 1.0, 0.5
+            )
+            settings["CHATTERBOX_TEMPERATURE"] = self._validate_numeric_input(
+                self.query_one("#chatterbox-temperature-input", Input).value, 0.0, 2.0, 0.5
+            )
+            settings["CHATTERBOX_CHUNK_SIZE"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-chunk-size-input", Input).value, 256, 8192, 1024
+            ))
+            
+            seed = self.query_one("#chatterbox-seed-input", Input).value
+            if seed:
+                try:
+                    settings["CHATTERBOX_RANDOM_SEED"] = int(seed)
+                except ValueError:
+                    pass
+                    
+            settings["CHATTERBOX_NUM_CANDIDATES"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-candidates-input", Input).value, 1, 5, 1
+            ))
+            settings["CHATTERBOX_VALIDATE_WHISPER"] = self.query_one("#chatterbox-whisper-switch", Switch).value
+            settings["CHATTERBOX_PREPROCESS_TEXT"] = self.query_one("#chatterbox-preprocess-switch", Switch).value
+            settings["CHATTERBOX_NORMALIZE_AUDIO"] = self.query_one("#chatterbox-normalize-switch", Switch).value
+            settings["CHATTERBOX_TARGET_DB"] = self._validate_numeric_input(
+                self.query_one("#chatterbox-target-db-input", Input).value, -40, 0, -20
+            )
+            settings["CHATTERBOX_MAX_CHUNK_SIZE"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-max-chunk-input", Input).value, 50, 5000, 500
+            ))
+            settings["CHATTERBOX_STREAMING"] = self.query_one("#chatterbox-streaming-switch", Switch).value
+            settings["CHATTERBOX_STREAM_CHUNK_SIZE"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-stream-chunk-input", Input).value, 512, 16384, 4096
+            ))
+            settings["CHATTERBOX_ENABLE_CROSSFADE"] = self.query_one("#chatterbox-crossfade-switch", Switch).value
+            settings["CHATTERBOX_CROSSFADE_MS"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-crossfade-ms-input", Input).value, 10, 500, 50
+            ))
+            
+            # AllTalk settings
+            url = self.query_one("#alltalk-url-input", Input).value
+            if url:
+                settings["ALLTALK_TTS_URL_DEFAULT"] = url
+            
+            voice = self.query_one("#alltalk-voice-input", Input).value
+            if voice:
+                settings["ALLTALK_TTS_VOICE_DEFAULT"] = voice
+                
+            settings["ALLTALK_TTS_LANGUAGE_DEFAULT"] = self.query_one("#alltalk-language-select", Select).value
+            settings["ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT"] = self.query_one("#alltalk-format-select", Select).value
             
             # Post save event
             self.app.post_message(STTSSettingsSaveEvent(settings))
+            self.app.notify("TTS settings saved successfully", severity="information")
             
         except Exception as e:
             logger.error(f"Failed to collect settings: {e}")
             self.app.notify(f"Failed to save settings: {e}", severity="error")
+    
+    def _validate_numeric_input(self, value: str, min_val: float, max_val: float, default: float) -> float:
+        """Validate and convert numeric input"""
+        try:
+            if not value:
+                return default
+            num_val = float(value)
+            return max(min_val, min(max_val, num_val))
+        except ValueError:
+            return default
+    
+    def _load_kokoro_voice_blends(self) -> None:
+        """Load and display Kokoro voice blends"""
+        try:
+            # Get voice blends from stored config
+            blend_list = self.query_one("#kokoro-voice-blends-list", Static)
+            
+            # Load blends from config file
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                with open(blend_file, 'r') as f:
+                    blends = json.load(f)
+                
+                if blends:
+                    # Format blends for display
+                    blend_text = ""
+                    for blend_name, blend_data in blends.items():
+                        voices_str = ", ".join([f"{v[0]} ({v[1]:.2f})" for v in blend_data.get("voices", [])])
+                        blend_text += f"[bold]{blend_name}[/bold]: {voices_str}\n"
+                        if blend_data.get("description"):
+                            blend_text += f"  [dim]{blend_data['description']}[/dim]\n"
+                    blend_list.update(blend_text.strip())
+                else:
+                    blend_list.update("[dim]No voice blends configured[/dim]")
+            else:
+                blend_list.update("[dim]No voice blends configured[/dim]")
+            
+        except Exception as e:
+            logger.error(f"Failed to load voice blends: {e}")
+            blend_list.update("[red]Error loading voice blends[/red]")
+    
+    async def _show_add_voice_blend_dialog(self) -> None:
+        """Show dialog to add a new voice blend"""
+        try:
+            # Show the voice blend dialog
+            result = await self.app.push_screen_wait(VoiceBlendDialog())
+            
+            if result:
+                # Save the blend
+                blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+                blend_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Load existing blends
+                if blend_file.exists():
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                else:
+                    blends = {}
+                
+                # Add new blend
+                blends[result['name']] = result
+                
+                # Save back
+                with open(blend_file, 'w') as f:
+                    json.dump(blends, f, indent=2)
+                
+                # Refresh display
+                self._load_kokoro_voice_blends()
+                self.app.notify(f"Voice blend '{result['name']}' created successfully", severity="success")
+                
+        except Exception as e:
+            logger.error(f"Failed to create voice blend: {e}")
+            self.app.notify(f"Error creating voice blend: {e}", severity="error")
+    
+    def _import_voice_blends(self) -> None:
+        """Import voice blends from file"""
+        try:
+            # For now, use a simple file dialog workaround
+            import_path = Path.home() / "Downloads" / "kokoro_voice_blends_export.json"
+            
+            if not import_path.exists():
+                self.app.notify(
+                    f"Please place your import file at: {import_path}",
+                    severity="information"
+                )
+                return
+            
+            # Load the import file
+            with open(import_path, 'r') as f:
+                imported_blends = json.load(f)
+            
+            # Load existing blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            blend_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            if blend_file.exists():
+                with open(blend_file, 'r') as f:
+                    existing_blends = json.load(f)
+            else:
+                existing_blends = {}
+            
+            # Merge blends (imported overwrites existing with same name)
+            existing_blends.update(imported_blends)
+            
+            # Save merged blends
+            with open(blend_file, 'w') as f:
+                json.dump(existing_blends, f, indent=2)
+            
+            # Refresh display
+            self._load_kokoro_voice_blends()
+            self.app.notify(
+                f"Imported {len(imported_blends)} voice blend(s) successfully",
+                severity="success"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to import voice blends: {e}")
+            self.app.notify(f"Error importing voice blends: {e}", severity="error")
+    
+    def _export_voice_blends(self) -> None:
+        """Export voice blends to file"""
+        try:
+            # Load existing blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            
+            if not blend_file.exists():
+                self.app.notify("No voice blends to export", severity="warning")
+                return
+            
+            with open(blend_file, 'r') as f:
+                blends = json.load(f)
+            
+            if not blends:
+                self.app.notify("No voice blends to export", severity="warning")
+                return
+            
+            # Export to Downloads folder
+            export_path = Path.home() / "Downloads" / "kokoro_voice_blends_export.json"
+            
+            with open(export_path, 'w') as f:
+                json.dump(blends, f, indent=2)
+            
+            self.app.notify(
+                f"Exported {len(blends)} voice blend(s) to: {export_path}",
+                severity="success"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to export voice blends: {e}")
+            self.app.notify(f"Error exporting voice blends: {e}", severity="error")
+    
+    def _browse_kokoro_model(self) -> None:
+        """Browse for Kokoro model file"""
+        # Create file picker for model files
+        filters = Filters(
+            ("ONNX Models", lambda p: p.suffix.lower() in [".onnx"]),
+            ("All Files", lambda p: True)
+        )
+        
+        # Get current value as starting path
+        current_value = self.kokoro_model_path
+        location = Path(current_value).parent if current_value and Path(current_value).parent.exists() else Path.home()
+        
+        file_picker = FileOpen(
+            location=str(location),
+            title="Select Kokoro Model File",
+            filters=filters,
+            context="kokoro_model"
+        )
+        
+        # Mount the file picker
+        self.app.push_screen(file_picker, self._handle_kokoro_model_selection)
+    
+    def _handle_kokoro_model_selection(self, path: Path | None) -> None:
+        """Handle Kokoro model file selection"""
+        if path:
+            # Update the stored path
+            self.kokoro_model_path = str(path)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Kokoro model selected: {path}")
+    
+    def _browse_kokoro_voices(self) -> None:
+        """Browse for Kokoro voices JSON file"""
+        # Create file picker for JSON files
+        filters = Filters(
+            ("JSON Files", lambda p: p.suffix.lower() in [".json"]),
+            ("All Files", lambda p: True)
+        )
+        
+        # Get current value as starting path
+        current_value = self.kokoro_voices_path
+        location = Path(current_value).parent if current_value and Path(current_value).parent.exists() else Path.home()
+        
+        file_picker = FileOpen(
+            location=str(location),
+            title="Select Voices Configuration File",
+            filters=filters,
+            context="kokoro_voices"
+        )
+        
+        # Mount the file picker
+        self.app.push_screen(file_picker, self._handle_kokoro_voices_selection)
+    
+    def _handle_kokoro_voices_selection(self, path: Path | None) -> None:
+        """Handle Kokoro voices file selection"""
+        if path:
+            # Update the stored path
+            self.kokoro_voices_path = str(path)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Kokoro voices config selected: {path}")
+    
+    def _browse_chatterbox_voice_dir(self) -> None:
+        """Browse for Chatterbox voice directory"""
+        # For directory selection, we'll use the file picker and guide user to select a file in the target directory
+        # then extract the directory path
+        
+        # Get current value as starting path
+        current_value = self.chatterbox_voice_dir
+        if current_value.startswith("~"):
+            current_value = str(Path(current_value).expanduser())
+        location = Path(current_value) if current_value and Path(current_value).exists() else Path.home()
+        
+        # Create a filter that shows directories prominently
+        filters = Filters(
+            ("Directories", lambda p: p.is_dir() if p.exists() else False),
+            ("All Files", lambda p: True)
+        )
+        
+        file_picker = FileOpen(
+            location=str(location),
+            title="Select Voice Directory (choose any file in target directory)",
+            filters=filters,
+            context="chatterbox_voices_dir"
+        )
+        
+        # Mount the file picker
+        self.app.push_screen(file_picker, self._handle_chatterbox_voice_dir_selection)
+    
+    def _handle_chatterbox_voice_dir_selection(self, path: Path | None) -> None:
+        """Handle Chatterbox voice directory selection"""
+        if path:
+            # Get the directory from the selected path
+            directory = path if path.is_dir() else path.parent
+            # Update the stored path
+            self.chatterbox_voice_dir = str(directory)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Chatterbox voice directory selected: {directory}")
+    
+    def _update_file_button_labels(self) -> None:
+        """Update file picker button labels based on selected paths"""
+        # Update Kokoro model button
+        model_btn = self.query_one("#kokoro-browse-model-btn", Button)
+        if self.kokoro_model_path:
+            model_btn.label = f"📁 {Path(self.kokoro_model_path).name}"
+        else:
+            model_btn.label = "📁 Select model file"
+        
+        # Update Kokoro voices button
+        voices_btn = self.query_one("#kokoro-browse-voices-btn", Button)
+        if self.kokoro_voices_path:
+            voices_btn.label = f"📁 {Path(self.kokoro_voices_path).name}"
+        else:
+            voices_btn.label = "📁 Select voices.json"
+        
+        # Update Chatterbox voice directory button
+        voice_dir_btn = self.query_one("#chatterbox-browse-voice-dir-btn", Button)
+        if self.chatterbox_voice_dir:
+            voice_dir_btn.label = f"📁 {Path(self.chatterbox_voice_dir).name}"
+        else:
+            voice_dir_btn.label = "📁 Select voice directory"
+    
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle select widget changes"""
+        if event.select.id == "default-provider-select":
+            # Update voice and model options when provider changes
+            self._update_default_voice_model_options(event.value)
+    
+    def _update_default_voice_model_options(self, provider: str) -> None:
+        """Update default voice and model options based on selected provider"""
+        voice_select = self.query_one("#default-voice-select", Select)
+        model_select = self.query_one("#default-model-select", Select)
+        
+        if provider == "openai":
+            voice_select.set_options([
+                ("alloy", "Alloy"),
+                ("ash", "Ash"),
+                ("ballad", "Ballad"),
+                ("coral", "Coral"),
+                ("echo", "Echo"),
+                ("fable", "Fable"),
+                ("onyx", "Onyx"),
+                ("nova", "Nova"),
+                ("sage", "Sage"),
+                ("shimmer", "Shimmer"),
+                ("verse", "Verse"),
+            ])
+            model_select.set_options([
+                ("tts-1", "TTS-1 (Standard)"),
+                ("tts-1-hd", "TTS-1-HD (High Quality)"),
+            ])
+        elif provider == "elevenlabs":
+            voice_select.set_options([
+                ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
+                ("AZnzlk1XvdvUeBnXmlld", "Domi"),
+                ("EXAVITQu4vr4xnSDxMaL", "Bella"),
+                ("ErXwobaYiN019PkySvjV", "Antoni"),
+                ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
+                ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
+                ("VR6AewLTigWG4xSOukaG", "Arnold"),
+                ("pNInz6obpgDQGcFmaJgB", "Adam"),
+                ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
+            ])
+            model_select.set_options([
+                ("eleven_monolingual_v1", "Eleven Monolingual v1"),
+                ("eleven_multilingual_v1", "Eleven Multilingual v1"),
+                ("eleven_multilingual_v2", "Eleven Multilingual v2 (Default)"),
+                ("eleven_turbo_v2", "Eleven Turbo v2"),
+                ("eleven_turbo_v2_5", "Eleven Turbo v2.5"),
+                ("eleven_flash_v2", "Eleven Flash v2 (Low Latency)"),
+                ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
+            ])
+        elif provider == "kokoro":
+            voice_select.set_options([
+                ("af_alloy", "Alloy (US Female)"),
+                ("af_aoede", "Aoede (US Female)"),
+                ("af_bella", "Bella (US Female)"),
+                ("af_heart", "Heart (US Female)"),
+                ("af_jessica", "Jessica (US Female)"),
+                ("af_kore", "Kore (US Female)"),
+                ("af_nicole", "Nicole (US Female)"),
+                ("af_nova", "Nova (US Female)"),
+                ("af_river", "River (US Female)"),
+                ("af_sarah", "Sarah (US Female)"),
+                ("af_sky", "Sky (US Female)"),
+                ("am_adam", "Adam (US Male)"),
+                ("am_michael", "Michael (US Male)"),
+                ("bf_emma", "Emma (UK Female)"),
+                ("bf_isabella", "Isabella (UK Female)"),
+                ("bm_george", "George (UK Male)"),
+                ("bm_lewis", "Lewis (UK Male)"),
+            ])
+            model_select.set_options([
+                ("kokoro", "Kokoro 82M"),
+            ])
+        elif provider == "chatterbox":
+            voice_select.set_options([
+                ("default", "Default Voice"),
+                ("custom", "Custom (Upload Reference)"),
+            ])
+            model_select.set_options([
+                ("chatterbox", "Chatterbox 0.5B"),
+            ])
+        elif provider == "alltalk":
+            voice_select.set_options([
+                ("female_01.wav", "Female 01"),
+                ("female_02.wav", "Female 02"),
+                ("female_03.wav", "Female 03"),
+                ("female_04.wav", "Female 04"),
+                ("male_01.wav", "Male 01"),
+                ("male_02.wav", "Male 02"),
+                ("male_03.wav", "Male 03"),
+                ("male_04.wav", "Male 04"),
+            ])
+            model_select.set_options([
+                ("alltalk", "AllTalk TTS"),
+            ])
 
 
 class AudioBookGenerationWidget(Widget):
@@ -971,7 +1842,6 @@ class AudioBookGenerationWidget(Widget):
                             ("kokoro", "Kokoro (Local)"),
                             ("chatterbox", "Chatterbox (Local)"),
                         ],
-                        value=get_cli_setting("app_tts", "default_provider", "openai"),
                         id="audiobook-provider-select"
                     )
                 
@@ -1011,6 +1881,17 @@ class AudioBookGenerationWidget(Widget):
             yield Label("Generation Progress:")
             yield RichLog(id="audiobook-generation-log", highlight=True, markup=True)
     
+    def on_mount(self) -> None:
+        """Set initial values from config after mount"""
+        try:
+            # Set audiobook provider
+            provider_select = self.query_one("#audiobook-provider-select", Select)
+            default_provider = get_cli_setting("app_tts", "default_provider", "openai")
+            if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox"]:
+                provider_select.value = default_provider
+        except Exception as e:
+            logger.warning(f"Failed to set audiobook provider: {e}")
+    
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         if event.button.id == "import-content-btn":
@@ -1036,17 +1917,17 @@ class AudioBookGenerationWidget(Widget):
     def _import_from_file(self) -> None:
         """Import content from a text file"""
         try:
-            from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFilePicker
+            # Create file picker for text files using pre-imported FileOpen
+            filters = Filters(
+                ("Text Files", lambda p: p.suffix.lower() in [".txt", ".md", ".rst"]),
+                ("eBook Files", lambda p: p.suffix.lower() in [".epub", ".mobi"]),
+                ("All Files", lambda p: True)
+            )
             
-            # Create file picker for text files
-            file_picker = EnhancedFilePicker(
+            file_picker = FileOpen(
                 title="Select Text File for AudioBook",
-                filters=[
-                    ("Text Files", "*.txt,*.md,*.rst"),
-                    ("eBook Files", "*.epub,*.mobi"),
-                    ("All Files", "*"),
-                ],
-                select_type="file"
+                filters=filters,
+                context="audiobook_text"
             )
             
             # Mount the file picker
@@ -1274,17 +2155,17 @@ class AudioBookGenerationWidget(Widget):
             return
         
         try:
-            from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFilePicker
+            # Create file picker for save location using pre-imported FileSave
+            filters = Filters(
+                ("AudioBook Files", lambda p: p.suffix.lower() in [".m4b", ".mp3"]),
+                ("All Files", lambda p: True)
+            )
             
-            # Create file picker for save location
-            file_picker = EnhancedFilePicker(
+            file_picker = FileSave(
                 title="Save AudioBook As",
-                filters=[
-                    ("AudioBook Files", "*.m4b,*.mp3"),
-                    ("All Files", "*"),
-                ],
-                select_type="save",
-                default_filename=self.generated_audiobook_path.name
+                filters=filters,
+                default_filename=self.generated_audiobook_path.name,
+                context="audiobook_save"
             )
             
             # Mount the file picker

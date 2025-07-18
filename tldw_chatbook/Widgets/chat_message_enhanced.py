@@ -131,6 +131,36 @@ class ChatMessageEnhanced(Widget):
     ChatMessageEnhanced.-ai .message-actions.-generating {
         display: none;
     }
+    .message-text.tts-generating {
+        border-left: 2px solid $accent;
+        padding-left: 1;
+    }
+    .tts-generating-button {
+        animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+        0% { opacity: 0.6; }
+        50% { opacity: 1.0; }
+        100% { opacity: 0.6; }
+    }
+    .tts-play-button, .tts-pause-button {
+        background: $success-darken-1;
+    }
+    .tts-play-button:hover, .tts-pause-button:hover {
+        background: $success;
+    }
+    .tts-save-button {
+        background: $primary-darken-1;
+    }
+    .tts-save-button:hover {
+        background: $primary;
+    }
+    .tts-stop-button {
+        background: $error-darken-1;
+    }
+    .tts-stop-button:hover {
+        background: $error;
+    }
     """
     
     # Reactive properties
@@ -150,6 +180,10 @@ class ChatMessageEnhanced(Widget):
     # Store extracted files
     _extracted_files = None
     _file_extractor = None
+    # TTS state tracking
+    tts_state: reactive[str] = reactive("idle")  # "idle", "generating", "ready", "playing", "paused"
+    tts_audio_file: reactive[Optional[Path]] = reactive(None)
+    tts_progress: reactive[float] = reactive(0.0)
     
     def __init__(
         self,
@@ -231,7 +265,20 @@ class ChatMessageEnhanced(Widget):
                                id="extract-files", 
                                tooltip=f"Extract {file_count} file{'s' if file_count > 1 else ''} from message")
                 
-                yield Button("🔊", classes="action-button speak-button", id="speak", tooltip="Read message aloud")
+                # TTS buttons based on state
+                if self.tts_state == "idle":
+                    yield Button("🔊", classes="action-button speak-button", id="speak", tooltip="Read message aloud")
+                elif self.tts_state == "generating":
+                    yield Button("⏳", classes="action-button tts-generating-button", id="tts-generating", 
+                               tooltip=f"Generating audio... {self.tts_progress:.0%}", disabled=True)
+                elif self.tts_state in ["ready", "paused"]:
+                    yield Button("▶️", classes="action-button tts-play-button", id="tts-play", tooltip="Play audio")
+                    yield Button("💾", classes="action-button tts-save-button", id="tts-save", tooltip="Save audio")
+                    yield Button("⏹️", classes="action-button tts-stop-button", id="tts-stop", tooltip="Stop and clear audio")
+                elif self.tts_state == "playing":
+                    yield Button("⏸️", classes="action-button tts-pause-button", id="tts-pause", tooltip="Pause audio")
+                    yield Button("💾", classes="action-button tts-save-button", id="tts-save", tooltip="Save audio")
+                    yield Button("⏹️", classes="action-button tts-stop-button", id="tts-stop", tooltip="Stop and clear audio")
                 
                 # AI-specific buttons
                 if self.has_class("-ai"):
@@ -352,6 +399,22 @@ Preview: {preview}...
         if self.image_data and self._image_widget:
             self._render_image()
     
+    def watch_tts_state(self, old_state: str, new_state: str) -> None:
+        """Handle TTS state changes."""
+        logging.info(f"TTS state changed from {old_state} to {new_state} for message {self.message_id_internal}")
+        # Force a recompose of the action buttons
+        self.refresh()
+    
+    def watch_tts_progress(self, progress: float) -> None:
+        """Handle TTS progress updates."""
+        # Update the tooltip on the generating button if it exists
+        try:
+            if self.tts_state == "generating":
+                generating_btn = self.query_one("#tts-generating", Button)
+                generating_btn.tooltip = f"Generating audio... {progress:.0%}"
+        except Exception:
+            pass
+    
     def watch__generation_complete_internal(self, complete: bool) -> None:
         """Watcher for the internal generation status."""
         logging.info(f"watch__generation_complete_internal called with complete={complete}")
@@ -410,6 +473,21 @@ Preview: {preview}...
             self.post_message(self.Action(self, event.button))
             # Stop the event from bubbling up
             event.stop()
+    
+    def update_tts_state(self, state: str, audio_file: Optional[Path] = None) -> None:
+        """Update TTS state and audio file."""
+        self.tts_state = state
+        if audio_file:
+            self.tts_audio_file = audio_file
+        elif state == "idle":
+            self.tts_audio_file = None
+            self.tts_progress = 0.0
+    
+    def update_tts_progress(self, progress: float, status: str = "") -> None:
+        """Update TTS generation progress."""
+        self.tts_progress = progress
+        if status:
+            logging.debug(f"TTS progress for message {self.message_id_internal}: {progress:.0%} - {status}")
     
     def mark_generation_complete(self):
         """Marks the AI message generation as complete."""

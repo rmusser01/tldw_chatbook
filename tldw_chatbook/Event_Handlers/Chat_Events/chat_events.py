@@ -1122,6 +1122,10 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
         # Get message ID for tracking
         message_id = getattr(action_widget, 'message_id_internal', None)
         
+        # Update widget state to generating
+        if hasattr(action_widget, 'update_tts_state'):
+            action_widget.update_tts_state("generating")
+        
         # Post TTS request event
         app.post_message(TTSRequestEvent(
             text=message_text,
@@ -1137,6 +1141,97 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
             # The TTSCompleteEvent handler will remove this class when done
         except QueryError:
             logging.error("Could not find .message-text Static for speak action.")
+    
+    elif "tts-play-button" in button_classes:
+        logging.info(f"Action: TTS Play clicked for message")
+        
+        # Import TTS events
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSPlaybackEvent
+        
+        # Get message ID for tracking
+        message_id = getattr(action_widget, 'message_id_internal', None)
+        
+        # Update widget state to playing
+        if hasattr(action_widget, 'update_tts_state'):
+            action_widget.update_tts_state("playing")
+        
+        # Post TTS playback event
+        app.post_message(TTSPlaybackEvent(
+            action="play",
+            message_id=message_id
+        ))
+    
+    elif "tts-pause-button" in button_classes:
+        logging.info(f"Action: TTS Pause clicked for message")
+        
+        # Import TTS events
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSPlaybackEvent
+        
+        # Get message ID for tracking
+        message_id = getattr(action_widget, 'message_id_internal', None)
+        
+        # Update widget state to paused
+        if hasattr(action_widget, 'update_tts_state'):
+            action_widget.update_tts_state("paused")
+        
+        # Post TTS playback event
+        app.post_message(TTSPlaybackEvent(
+            action="pause",
+            message_id=message_id
+        ))
+    
+    elif "tts-save-button" in button_classes:
+        logging.info(f"Action: TTS Save clicked for message")
+        
+        # Import TTS events and Path
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSExportEvent
+        from pathlib import Path
+        from datetime import datetime
+        
+        # Get message ID and audio file
+        message_id = getattr(action_widget, 'message_id_internal', None)
+        audio_file = getattr(action_widget, 'tts_audio_file', None)
+        
+        if audio_file and message_id:
+            # Generate default filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"tts_audio_{timestamp}.mp3"
+            output_path = Path.home() / "Downloads" / default_filename
+            
+            # Post TTS export event
+            app.post_message(TTSExportEvent(
+                message_id=message_id,
+                output_path=output_path,
+                include_metadata=True
+            ))
+        else:
+            app.notify("No audio file available to save", severity="warning")
+    
+    elif "tts-stop-button" in button_classes:
+        logging.info(f"Action: TTS Stop clicked for message")
+        
+        # Import TTS events
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSPlaybackEvent
+        
+        # Get message ID for tracking
+        message_id = getattr(action_widget, 'message_id_internal', None)
+        
+        # Update widget state to idle
+        if hasattr(action_widget, 'update_tts_state'):
+            action_widget.update_tts_state("idle")
+        
+        # Post TTS playback event to stop and clean up
+        app.post_message(TTSPlaybackEvent(
+            action="stop",
+            message_id=message_id
+        ))
+        
+        # Remove TTS generating class if present
+        try:
+            text_widget = action_widget.query_one(".message-text", Markdown)
+            text_widget.remove_class("tts-generating")
+        except QueryError:
+            pass
 
 
     elif "thumb-up-button" in button_classes:

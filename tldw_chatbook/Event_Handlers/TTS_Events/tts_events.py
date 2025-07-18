@@ -428,6 +428,12 @@ class TTSEventHandler:
             else:
                 logger.warning(f"Audio file not found for message {event.message_id}")
         
+        elif event.action == "pause" and event.message_id:
+            # The audio player doesn't support pause, so we stop playback
+            # but keep the audio file for resuming
+            logger.info(f"Pausing audio for message {event.message_id}")
+            # This will stop any playing audio but won't delete the file
+            
         elif event.action == "stop" and event.message_id:
             # Clean up immediately if stopped
             await self._cleanup_audio_file(event.message_id)

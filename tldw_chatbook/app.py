@@ -96,7 +96,7 @@ from .Event_Handlers import (
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-    TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSEventHandler
+    TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSProgressEvent, TTSEventHandler
 )
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler, STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
@@ -1678,27 +1678,41 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         if event.error:
             self.notify(f"TTS failed: {event.error}", severity="error")
-            # Remove TTS generating class from message
+            # Update widget state back to idle on error
             try:
                 if event.message_id:
-                    # Find the message widget and remove the generating class
+                    # Find the message widget and update state
                     for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
                         if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                            # Update TTS state to idle on error
+                            if hasattr(message_widget, 'update_tts_state'):
+                                message_widget.update_tts_state("idle")
+                            # Remove TTS generating class
                             text_widget = message_widget.query_one(".message-text", Markdown)
                             text_widget.remove_class("tts-generating")
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
         else:
-            # Play the audio file
+            # Update widget state to ready with audio file
             if event.audio_file and event.audio_file.exists():
                 try:
-                    # Import the play function
-                    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import play_audio_file
-                    play_audio_file(event.audio_file)
-                    
-                    # Clean up the temp file after playing
-                    event.audio_file.unlink(missing_ok=True)
+                    if event.message_id:
+                        # Find the message widget and update state
+                        for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                            if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                                # Update TTS state to ready with audio file
+                                if hasattr(message_widget, 'update_tts_state'):
+                                    message_widget.update_tts_state("ready", event.audio_file)
+                                # Remove TTS generating class
+                                try:
+                                    text_widget = message_widget.query_one(".message-text", Markdown)
+                                    text_widget.remove_class("tts-generating")
+                                except Exception:
+                                    pass
+                                break
+                    # Don't automatically play or delete - let user control playback
+                    self.notify("TTS audio ready - click play to listen", severity="information")
                 except Exception as e:
                     self.loguru_logger.error(f"Error playing audio: {e}")
                     self.notify("Failed to play audio", severity="error")
@@ -1713,6 +1727,23 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
+    
+    @on(TTSProgressEvent)
+    async def handle_tts_progress_event(self, event: TTSProgressEvent) -> None:
+        """Handle TTS generation progress updates."""
+        self.loguru_logger.debug(f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}")
+        
+        try:
+            if event.message_id:
+                # Find the message widget and update progress
+                for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                    if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                        # Update TTS progress
+                        if hasattr(message_widget, 'update_tts_progress'):
+                            message_widget.update_tts_progress(event.progress, event.status)
+                        break
+        except Exception as e:
+            self.loguru_logger.error(f"Error updating TTS progress: {e}")
 
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
