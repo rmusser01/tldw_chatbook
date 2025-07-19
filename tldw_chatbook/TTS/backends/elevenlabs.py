@@ -111,16 +111,30 @@ class ElevenLabsTTSBackend(APITTSBackend):
             # Use default ElevenLabs model for non-ElevenLabs models
             model_id = self.default_model
         
+        # Use default voice settings
+        voice_settings = {
+            "stability": self.voice_stability,
+            "similarity_boost": self.similarity_boost,
+            "style": self.style,
+            "use_speaker_boost": self.use_speaker_boost
+        }
+        
+        # Override with request-specific settings if provided
+        if hasattr(request, 'extra_params') and request.extra_params:
+            if 'stability' in request.extra_params:
+                voice_settings['stability'] = float(request.extra_params['stability'])
+            if 'similarity_boost' in request.extra_params:
+                voice_settings['similarity_boost'] = float(request.extra_params['similarity_boost'])
+            if 'style' in request.extra_params:
+                voice_settings['style'] = float(request.extra_params['style'])
+            if 'use_speaker_boost' in request.extra_params:
+                voice_settings['use_speaker_boost'] = bool(request.extra_params['use_speaker_boost'])
+        
         payload = {
             "text": request.input,
             "model_id": model_id,
             "output_format": output_format,
-            "voice_settings": {
-                "stability": self.voice_stability,
-                "similarity_boost": self.similarity_boost,
-                "style": self.style,
-                "use_speaker_boost": self.use_speaker_boost
-            }
+            "voice_settings": voice_settings
         }
         
         # Add optional parameters
@@ -129,8 +143,9 @@ class ElevenLabsTTSBackend(APITTSBackend):
         
         logger.info(f"ElevenLabsTTSBackend: Requesting TTS for {len(request.input)} characters")
         logger.debug(f"ElevenLabsTTSBackend: Request params: model={model_id}, voice={voice_id}, "
-                    f"format={output_format}, stability={self.voice_stability}, "
-                    f"similarity={self.similarity_boost}")
+                    f"format={output_format}, stability={voice_settings['stability']}, "
+                    f"similarity={voice_settings['similarity_boost']}, style={voice_settings['style']}, "
+                    f"speaker_boost={voice_settings['use_speaker_boost']}")
         
         try:
             async with self.client.stream("POST", url, headers=headers, json=payload) as response:

@@ -307,8 +307,11 @@ class KokoroTTSBackend(LocalTTSBackend):
             # Parse voice for potential mixing
             voice_config = self._parse_voice_config(request.voice)
             
-            # Detect language from voice
-            lang = detect_language(request.input, voice_config['primary_voice'])
+            # Detect language from voice or use provided language code
+            if hasattr(request, 'extra_params') and request.extra_params and 'language' in request.extra_params:
+                lang = request.extra_params['language']
+            else:
+                lang = detect_language(request.input, voice_config['primary_voice'])
             
             # Normalize text if requested
             text = request.input
@@ -745,8 +748,11 @@ class KokoroTTSBackend(LocalTTSBackend):
             # Load voice pack
             voice_pack = self._load_voice_pack(voice)
             
-            # Detect language
-            lang = 'a' if voice.startswith('a') else 'b'
+            # Detect language from voice or use provided language code
+            if hasattr(request, 'extra_params') and request.extra_params and 'language' in request.extra_params:
+                lang = request.extra_params['language']
+            else:
+                lang = 'a' if voice.startswith('a') else 'b'
             
             # Split text into chunks
             text_chunks = self._split_text_for_pytorch(request.input)

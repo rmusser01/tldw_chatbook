@@ -132,16 +132,11 @@ class ChatMessageEnhanced(Widget):
         display: none;
     }
     .message-text.tts-generating {
-        border-left: 2px solid $accent;
+        border-left: solid $accent;
         padding-left: 1;
     }
     .tts-generating-button {
-        animation: pulse 1.5s ease-in-out infinite;
-    }
-    @keyframes pulse {
-        0% { opacity: 0.6; }
-        50% { opacity: 1.0; }
-        100% { opacity: 0.6; }
+        opacity: 0.8;
     }
     .tts-play-button, .tts-pause-button {
         background: $success-darken-1;
