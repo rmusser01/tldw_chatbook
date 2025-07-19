@@ -196,7 +196,7 @@ class TTSPlaygroundWidget(Widget):
             with Horizontal(classes="form-row"):
                 yield Label("Voice:", classes="form-label")
                 yield Select(
-                    options=[("alloy", "Alloy")],
+                    options=[],  # Will be populated on mount
                     id="tts-voice-select"
                 )
             
@@ -204,7 +204,7 @@ class TTSPlaygroundWidget(Widget):
             with Horizontal(classes="form-row"):
                 yield Label("Model:", classes="form-label")
                 yield Select(
-                    options=[("tts-1", "TTS-1"), ("tts-1-hd", "TTS-1-HD")],
+                    options=[],  # Will be populated on mount
                     id="tts-model-select"
                 )
             
@@ -422,47 +422,92 @@ class TTSPlaygroundWidget(Widget):
             
             # Update voices and models for the default provider
             provider_select = self.query_one("#tts-provider-select", Select)
-            # Select widgets automatically select the first option, so get that value
-            if provider_select.value is not None:
-                self._update_voice_options(provider_select.value)
-                self._update_model_options(provider_select.value)
-            else:
-                # If no value set, use the first option
-                self._update_voice_options("openai")
-                self._update_model_options("openai")
+            
+            # Get the current value - it should default to the first option
+            current_provider = provider_select.value
+            
+            # If no value selected (shouldn't happen with options), default to openai
+            if current_provider is None or current_provider == Select.BLANK:
+                current_provider = "openai"
+            
+            logger.debug(f"Initializing with provider: {current_provider}")
+            
+            # Always update voice and model options based on current provider
+            if current_provider != Select.BLANK:
+                self._update_voice_options(current_provider)
+                self._update_model_options(current_provider)
         except Exception as e:
             logger.warning(f"Error initializing defaults: {e}")
     
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle provider/model selection changes"""
         if event.select.id == "tts-provider-select":
-            self._update_voice_options(event.value)
-            self._update_model_options(event.value)
+            # Get the provider select widget
+            provider_select = self.query_one("#tts-provider-select", Select)
+            
+            # The event.value might be the display text, so we need to find the key
+            # by matching against the options
+            provider_value = None
+            for option_value, option_label in [
+                ("openai", "OpenAI"),
+                ("elevenlabs", "ElevenLabs"),
+                ("kokoro", "Kokoro (Local)"),
+                ("chatterbox", "Chatterbox (Local)"),
+                ("alltalk", "AllTalk (Local)"),
+            ]:
+                if event.value == option_label or event.value == option_value:
+                    provider_value = option_value
+                    break
+            
+            logger.info(f"Provider select changed - event.value: {event.value!r}")
+            logger.info(f"Resolved provider key: {provider_value!r}")
+            
+            # The widget value should be the key (e.g., "kokoro")
+            if provider_value and provider_value != Select.BLANK:
+                self._update_voice_options(provider_value)
+                self._update_model_options(provider_value)
             
             # Show/hide language selection based on provider
-            language_row = self.query_one("#kokoro-language-row", Horizontal)
-            if event.value == "kokoro":
-                language_row.add_class("visible")
-            else:
-                language_row.remove_class("visible")
-            
-            # Show/hide ElevenLabs settings
-            elevenlabs_settings = self.query_one("#elevenlabs-settings", Vertical)
-            if event.value == "elevenlabs":
-                elevenlabs_settings.add_class("visible")
-            else:
-                elevenlabs_settings.remove_class("visible")
-            
-            # Show/hide Chatterbox settings
-            chatterbox_settings = self.query_one("#chatterbox-settings", Vertical)
-            if event.value == "chatterbox":
-                chatterbox_settings.add_class("visible")
-            else:
-                chatterbox_settings.remove_class("visible")
+            if provider_value and provider_value != Select.BLANK:
+                language_row = self.query_one("#kokoro-language-row", Horizontal)
+                if provider_value == "kokoro":
+                    language_row.add_class("visible")
+                else:
+                    language_row.remove_class("visible")
+                
+                # Show/hide ElevenLabs settings
+                elevenlabs_settings = self.query_one("#elevenlabs-settings", Vertical)
+                if provider_value == "elevenlabs":
+                    elevenlabs_settings.add_class("visible")
+                else:
+                    elevenlabs_settings.remove_class("visible")
+                
+                # Show/hide Chatterbox settings
+                chatterbox_settings = self.query_one("#chatterbox-settings", Vertical)
+                if provider_value == "chatterbox":
+                    chatterbox_settings.add_class("visible")
+                else:
+                    chatterbox_settings.remove_class("visible")
+    
+    def _is_valid_voice(self, voice: str) -> bool:
+        """Check if a voice value is valid (not a separator)"""
+        return voice and not str(voice).startswith("_separator")
     
     def _update_voice_options(self, provider: str) -> None:
         """Update voice options based on provider"""
-        voice_select = self.query_one("#tts-voice-select", Select)
+        logger.info(f"_update_voice_options called with provider: '{provider}' (type: {type(provider)})")
+        
+        # Handle Select.BLANK
+        if provider == Select.BLANK or str(provider) == "Select.BLANK":
+            logger.debug("Provider is Select.BLANK, skipping update")
+            return
+            
+        try:
+            voice_select = self.query_one("#tts-voice-select", Select)
+            logger.debug(f"Found voice select widget, current value: {voice_select.value}, options: {len(voice_select._options) if hasattr(voice_select, '_options') else 'unknown'}")
+        except Exception as e:
+            logger.error(f"Failed to find voice select widget: {e}")
+            return
         
         if provider == "openai":
             voice_select.set_options([
@@ -478,7 +523,11 @@ class TTSPlaygroundWidget(Widget):
                 ("shimmer", "Shimmer"),
                 ("verse", "Verse"),
             ])
-            voice_select.value = "alloy"
+            # Don't set value directly - let Select handle it
+            try:
+                voice_select.value = "alloy"
+            except Exception as e:
+                logger.debug(f"Could not set default voice value: {e}")
         elif provider == "elevenlabs":
             voice_select.set_options([
                 ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
@@ -493,6 +542,7 @@ class TTSPlaygroundWidget(Widget):
             ])
             voice_select.value = "21m00Tcm4TlvDq8ikWAM"
         elif provider == "kokoro":
+            logger.info(f"Setting up Kokoro voices for provider: {provider}")
             voice_options = [
                 # American Female voices
                 ("af_alloy", "Alloy (US Female)"),
@@ -539,7 +589,18 @@ class TTSPlaygroundWidget(Widget):
                     logger.error(f"Failed to load voice blends: {e}")
             
             voice_select.set_options(voice_options)
-            voice_select.value = "af_bella"
+            
+            # Find first valid voice option (skip separators)
+            valid_voice = None
+            for value, _ in voice_options:
+                if self._is_valid_voice(value):
+                    valid_voice = value
+                    break
+            
+            if valid_voice:
+                voice_select.value = valid_voice
+            else:
+                voice_select.value = "af_bella"  # Fallback
         elif provider == "chatterbox":
             voice_select.set_options([
                 ("default", "Default Voice"),
@@ -560,9 +621,19 @@ class TTSPlaygroundWidget(Widget):
                 # AllTalk typically supports more voices, these are common defaults
             ])
             voice_select.value = "female_01.wav"
+        else:
+            logger.warning(f"Unknown TTS provider: {provider}")
+            voice_select.set_options([("default", "Default")])
     
     def _update_model_options(self, provider: str) -> None:
         """Update model options based on provider"""
+        logger.debug(f"Updating model options for provider: {provider}")
+        
+        # Handle Select.BLANK
+        if provider == Select.BLANK or str(provider) == "Select.BLANK":
+            logger.debug("Provider is Select.BLANK, skipping model update")
+            return
+            
         model_select = self.query_one("#tts-model-select", Select)
         
         if provider == "openai":
@@ -583,10 +654,12 @@ class TTSPlaygroundWidget(Widget):
             ])
             model_select.value = "eleven_multilingual_v2"
         elif provider == "kokoro":
+            logger.info("Setting Kokoro model options")
             model_select.set_options([
                 ("kokoro", "Kokoro 82M"),
             ])
             model_select.value = "kokoro"
+            logger.info("Kokoro model set successfully")
         elif provider == "chatterbox":
             model_select.set_options([
                 ("chatterbox", "Chatterbox 0.5B"),
@@ -597,6 +670,9 @@ class TTSPlaygroundWidget(Widget):
                 ("alltalk", "AllTalk TTS"),
             ])
             model_select.value = "alltalk"
+        else:
+            logger.warning(f"Unknown TTS provider for model: {provider}")
+            model_select.set_options([("default", "Default Model")])
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
@@ -757,23 +833,53 @@ class TTSPlaygroundWidget(Widget):
     
     def _play_audio(self) -> None:
         """Play the generated audio"""
-        # Call the app's play method if it has the event handler
-        if hasattr(self.app, 'play_current_audio'):
+        if self._ensure_audio_player():
             # Enable pause and stop buttons
             self.query_one("#pause-audio-btn", Button).disabled = False
             self.query_one("#stop-audio-btn", Button).disabled = False
             self.query_one("#audio-player-status", Static).update("Playing...")
             
-            self.app.run_worker(self.app.play_current_audio())
-            # Start progress timer
-            import asyncio
-            asyncio.create_task(self._update_progress_timer())
+            # Use the new audio player method
+            self.run_worker(self._play_audio_async)
         else:
             self.app.notify("Audio playback not available", severity="warning")
     
+    async def _play_audio_async(self) -> None:
+        """Play audio asynchronously using the audio player"""
+        try:
+            # Get the current audio file from the STTS handler
+            if hasattr(self.app, '_stts_handler') and self.app._stts_handler._current_audio_file:
+                audio_file = self.app._stts_handler._current_audio_file
+                success = await self.app.audio_player.play(audio_file)
+                if success:
+                    # Start progress timer
+                    import asyncio
+                    asyncio.create_task(self._update_progress_timer())
+                else:
+                    self.app.notify("Failed to start playback", severity="error")
+            else:
+                self.app.notify("No audio file to play", severity="warning")
+        except Exception as e:
+            logger.error(f"Error playing audio: {e}")
+            self.app.notify(f"Playback error: {str(e)}", severity="error")
+    
+    def _ensure_audio_player(self) -> bool:
+        """Ensure audio player is initialized (lazy loading)"""
+        if not hasattr(self.app, 'audio_player'):
+            try:
+                from tldw_chatbook.TTS.audio_player import AsyncAudioPlayer
+                self.app.audio_player = AsyncAudioPlayer()
+                logger.info("Audio player initialized on first use")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to initialize audio player: {e}")
+                self.app.notify("Failed to initialize audio player", severity="error")
+                return False
+        return True
+    
     def _pause_audio(self) -> None:
         """Pause audio playback"""
-        if hasattr(self.app, 'audio_player'):
+        if self._ensure_audio_player():
             self.run_worker(self._pause_audio_async)
         else:
             self.app.notify("Audio player not available", severity="warning")
@@ -810,7 +916,7 @@ class TTSPlaygroundWidget(Widget):
     
     def _stop_audio(self) -> None:
         """Stop audio playback"""
-        if hasattr(self.app, 'audio_player'):
+        if self._ensure_audio_player():
             self.run_worker(self._stop_audio_async)
         else:
             self.app.notify("Audio player not available", severity="warning")
@@ -968,6 +1074,10 @@ class TTSPlaygroundWidget(Widget):
         from tldw_chatbook.TTS.audio_player import PlaybackState
         from textual.widgets import ProgressBar
         
+        # Ensure audio player exists
+        if not hasattr(self.app, 'audio_player'):
+            return
+            
         while True:
             try:
                 state = await self.app.audio_player.get_state()
@@ -1505,7 +1615,8 @@ class TTSSettingsWidget(Widget):
             self._update_file_button_labels()
             
             # Update voice and model options based on default provider
-            self._update_default_voice_model_options(default_provider)
+            self._update_default_voice_options(default_provider)
+            self._update_default_model_options(default_provider)
             
             # Set default voice and model
             default_voice = get_cli_setting("app_tts", "default_voice", "alloy")
@@ -1591,6 +1702,171 @@ class TTSSettingsWidget(Widget):
             self._browse_kokoro_voices()
         elif event.button.id == "chatterbox-browse-voice-dir-btn":
             self._browse_chatterbox_voice_dir()
+    
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle select widget changes"""
+        if event.select.id == "default-provider-select":
+            # Update voice and model options when provider changes
+            self._update_default_voice_options(event.value)
+            self._update_default_model_options(event.value)
+    
+    def _update_default_voice_options(self, provider: str) -> None:
+        """Update default voice options based on provider"""
+        voice_select = self.query_one("#default-voice-select", Select)
+        
+        if provider == "openai":
+            voice_select.set_options([
+                ("alloy", "Alloy"),
+                ("ash", "Ash"),
+                ("ballad", "Ballad"),
+                ("coral", "Coral"),
+                ("echo", "Echo"),
+                ("fable", "Fable"),
+                ("nova", "Nova"),
+                ("onyx", "Onyx"),
+                ("sage", "Sage"),
+                ("shimmer", "Shimmer"),
+                ("verse", "Verse"),
+            ])
+            # Set the saved default or fallback to alloy
+            default_voice = get_cli_setting("app_tts", "default_voice", "alloy")
+            if default_voice in [v[0] for v in voice_select._options if v[0] != Select.BLANK]:
+                voice_select.value = default_voice
+            else:
+                voice_select.value = "alloy"
+        elif provider == "elevenlabs":
+            voice_select.set_options([
+                ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
+                ("AZnzlk1XvdvUeBnXmlld", "Domi"),
+                ("EXAVITQu4vr4xnSDxMaL", "Bella"),
+                ("ErXwobaYiN019PkySvjV", "Antoni"),
+                ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
+                ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
+                ("VR6AewLTigWG4xSOukaG", "Arnold"),
+                ("pNInz6obpgDQGcFmaJgB", "Adam"),
+                ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
+            ])
+            voice_select.value = "21m00Tcm4TlvDq8ikWAM"
+        elif provider == "kokoro":
+            logger.info(f"Setting up Kokoro voices for provider: {provider}")
+            voice_options = [
+                # American Female voices
+                ("af_alloy", "Alloy (US Female)"),
+                ("af_aoede", "Aoede (US Female)"),
+                ("af_bella", "Bella (US Female)"),
+                ("af_heart", "Heart (US Female)"),
+                ("af_jessica", "Jessica (US Female)"),
+                ("af_kore", "Kore (US Female)"),
+                ("af_nicole", "Nicole (US Female)"),
+                ("af_nova", "Nova (US Female)"),
+                ("af_river", "River (US Female)"),
+                ("af_sarah", "Sarah (US Female)"),
+                ("af_sky", "Sky (US Female)"),
+                # American Male voices
+                ("am_adam", "Adam (US Male)"),
+                ("am_michael", "Michael (US Male)"),
+                # British Female voices
+                ("bf_emma", "Emma (UK Female)"),
+                ("bf_isabella", "Isabella (UK Female)"),
+                # British Male voices
+                ("bm_george", "George (UK Male)"),
+                ("bm_lewis", "Lewis (UK Male)"),
+            ]
+            
+            # Add saved voice blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                try:
+                    import json
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                        if blends:
+                            # Add separator
+                            voice_options.append(("_separator", "──── Voice Blends ────"))
+                            # Add each blend
+                            for blend_name, blend_data in blends.items():
+                                display_name = f"🎭 {blend_name}"
+                                if blend_data.get('description'):
+                                    display_name += f" - {blend_data['description'][:30]}"
+                                voice_options.append((f"blend:{blend_name}", display_name))
+                except Exception as e:
+                    logger.error(f"Failed to load voice blends: {e}")
+            
+            voice_select.set_options(voice_options)
+            
+            # Find first valid voice option (skip separators)
+            valid_voice = None
+            for value, _ in voice_options:
+                if self._is_valid_voice(value):
+                    valid_voice = value
+                    break
+            
+            if valid_voice:
+                voice_select.value = valid_voice
+            else:
+                voice_select.value = "af_bella"  # Fallback
+        elif provider == "chatterbox":
+            voice_select.set_options([
+                ("default", "Default Voice"),
+                ("custom", "Custom (Upload Reference)"),
+            ])
+            voice_select.value = "default"
+        elif provider == "alltalk":
+            voice_select.set_options([
+                ("female_01.wav", "Female 01"),
+                ("female_02.wav", "Female 02"),
+                ("female_03.wav", "Female 03"),
+                ("female_04.wav", "Female 04"),
+                ("male_01.wav", "Male 01"),
+                ("male_02.wav", "Male 02"),
+                ("male_03.wav", "Male 03"),
+                ("male_04.wav", "Male 04"),
+            ])
+            voice_select.value = "female_01.wav"
+    
+    def _update_default_model_options(self, provider: str) -> None:
+        """Update default model options based on provider"""
+        model_select = self.query_one("#default-model-select", Select)
+        
+        if provider == "openai":
+            model_select.set_options([
+                ("tts-1", "TTS-1 (Standard)"),
+                ("tts-1-hd", "TTS-1-HD (High Quality)"),
+            ])
+            # Set the saved default or fallback
+            default_model = get_cli_setting("app_tts", "default_model", "tts-1")
+            if default_model in ["tts-1", "tts-1-hd"]:
+                model_select.value = default_model
+            else:
+                model_select.value = "tts-1"
+        elif provider == "elevenlabs":
+            model_select.set_options([
+                ("eleven_monolingual_v1", "Eleven Monolingual v1"),
+                ("eleven_multilingual_v1", "Eleven Multilingual v1"),
+                ("eleven_multilingual_v2", "Eleven Multilingual v2 (Default)"),
+                ("eleven_turbo_v2", "Eleven Turbo v2"),
+                ("eleven_turbo_v2_5", "Eleven Turbo v2.5"),
+                ("eleven_flash_v2", "Eleven Flash v2 (Low Latency)"),
+                ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
+            ])
+            model_select.value = "eleven_multilingual_v2"
+        elif provider == "kokoro":
+            logger.info("Setting Kokoro model options")
+            model_select.set_options([
+                ("kokoro", "Kokoro 82M"),
+            ])
+            model_select.value = "kokoro"
+            logger.info("Kokoro model set successfully")
+        elif provider == "chatterbox":
+            model_select.set_options([
+                ("chatterbox", "Chatterbox 0.5B"),
+            ])
+            model_select.value = "chatterbox"
+        elif provider == "alltalk":
+            model_select.set_options([
+                ("alltalk", "AllTalk TTS"),
+            ])
+            model_select.value = "alltalk"
     
     def _save_settings(self) -> None:
         """Save TTS settings"""
@@ -2090,6 +2366,7 @@ class TTSSettingsWidget(Widget):
                 ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
             ])
         elif provider == "kokoro":
+            logger.info(f"Setting up Kokoro voices for provider: {provider}")
             voice_options = [
                 ("af_alloy", "Alloy (US Female)"),
                 ("af_aoede", "Aoede (US Female)"),
@@ -2130,6 +2407,17 @@ class TTSSettingsWidget(Widget):
                     logger.error(f"Failed to load voice blends: {e}")
             
             voice_select.set_options(voice_options)
+            
+            # Find first valid voice option (skip separators)
+            valid_voice = None
+            for value, _ in voice_options:
+                if self._is_valid_voice(value):
+                    valid_voice = value
+                    break
+            
+            if valid_voice:
+                voice_select.value = valid_voice
+            
             model_select.set_options([
                 ("kokoro", "Kokoro 82M"),
             ])
@@ -2667,6 +2955,7 @@ class AudioBookGenerationWidget(Widget):
                 ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
             ])
         elif provider == "kokoro":
+            logger.info(f"Setting up Kokoro voices for provider: {provider}")
             voice_options = [
                 ("af_bella", "Bella (US Female)"),
                 ("af_nicole", "Nicole (US Female)"),
@@ -2697,6 +2986,17 @@ class AudioBookGenerationWidget(Widget):
                     logger.error(f"Failed to load voice blends: {e}")
             
             voice_select.set_options(voice_options)
+            
+            # Find first valid voice option (skip separators)
+            valid_voice = None
+            for value, _ in voice_options:
+                if self._is_valid_voice(value):
+                    valid_voice = value
+                    break
+            
+            if valid_voice:
+                voice_select.value = valid_voice
+                
         elif provider == "chatterbox":
             voice_select.set_options([
                 ("default", "Default"),
