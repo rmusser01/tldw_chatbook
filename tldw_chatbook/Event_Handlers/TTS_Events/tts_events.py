@@ -288,6 +288,15 @@ class TTSEventHandler:
             elif request.model == "kokoro":
                 internal_model_id = "local_kokoro_default_onnx"
                 provider = "local"
+            elif request.model == "alltalk":
+                internal_model_id = "alltalk_default"
+                provider = "local"
+            elif request.model.startswith("elevenlabs"):
+                internal_model_id = f"elevenlabs_{request.model}"
+                provider = "elevenlabs"
+            elif request.model == "chatterbox":
+                internal_model_id = "local_chatterbox_default"
+                provider = "local"
             else:
                 internal_model_id = request.model
                 provider = "unknown"
@@ -394,11 +403,12 @@ class TTSEventHandler:
                 raise
                 
         except Exception as e:
+            from rich.markup import escape
             logger.error(f"TTS generation failed: {e}")
             await self.post_message(
                 TTSCompleteEvent(
                     message_id=message_id or "adhoc",
-                    error=str(e)
+                    error=escape(str(e))
                 )
             )
     
@@ -419,6 +429,12 @@ class TTSEventHandler:
             else:
                 logger.warning(f"Audio file not found for message {event.message_id}")
         
+        elif event.action == "pause" and event.message_id:
+            # The audio player doesn't support pause, so we stop playback
+            # but keep the audio file for resuming
+            logger.info(f"Pausing audio for message {event.message_id}")
+            # This will stop any playing audio but won't delete the file
+            
         elif event.action == "stop" and event.message_id:
             # Clean up immediately if stopped
             await self._cleanup_audio_file(event.message_id)

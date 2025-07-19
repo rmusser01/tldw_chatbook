@@ -1,0 +1,42 @@
+{
+  "Friendly Assistant": {
+    "name": "Friendly Assistant",
+    "description": "A warm and approachable voice blend",
+    "voices": [
+      ["af_bella", 0.6],
+      ["af_sarah", 0.4]
+    ],
+    "metadata": {
+      "created_by": "TUI",
+      "normalized": true,
+      "created_at": "2024-01-15T10:30:00Z"
+    }
+  },
+  "Professional Speaker": {
+    "name": "Professional Speaker",
+    "description": "Clear and authoritative voice for presentations",
+    "voices": [
+      ["am_michael", 0.7],
+      ["bm_george", 0.3]
+    ],
+    "metadata": {
+      "created_by": "TUI",
+      "normalized": true,
+      "created_at": "2024-01-15T11:00:00Z"
+    }
+  },
+  "Storyteller": {
+    "name": "Storyteller",
+    "description": "Expressive voice blend for narration",
+    "voices": [
+      ["bf_emma", 0.4],
+      ["af_nicole", 0.3],
+      ["bm_lewis", 0.3]
+    ],
+    "metadata": {
+      "created_by": "TUI",
+      "normalized": true,
+      "created_at": "2024-01-15T11:30:00Z"
+    }
+  }
+}

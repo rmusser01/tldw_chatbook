@@ -24,9 +24,29 @@ except ImportError:
         class ndarray:
             pass
 
-from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
+# Lazy imports - will be loaded on demand
+EmbeddingFactory = None
+EmbeddingConfigSchema = None
+
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 from .circuit_breaker import get_circuit_breaker, CircuitBreakerConfig, CircuitBreakerOpenError
+
+def _ensure_embeddings_imported():
+    """Lazily import embeddings components when needed."""
+    global EmbeddingFactory, EmbeddingConfigSchema
+    
+    if EmbeddingFactory is not None:  # Already imported
+        return True
+    
+    try:
+        from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory as _EF, EmbeddingConfigSchema as _ECS
+        EmbeddingFactory = _EF
+        EmbeddingConfigSchema = _ECS
+        logger.info("Successfully imported embeddings components")
+        return True
+    except ImportError as e:
+        logger.error(f"Failed to import embeddings components: {e}")
+        return False
 
 
 
@@ -71,45 +91,29 @@ class EmbeddingsServiceWrapper:
         
         # Auto-detect device if not specified
         if device is None:
-            import torch
-            if torch.cuda.is_available():
-                self.device = "cuda"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                self.device = "mps"
-            else:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    self.device = "cuda"
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    self.device = "mps"
+                else:
+                    self.device = "cpu"
+                logger.info(f"Auto-detected device: {self.device}")
+            except ImportError:
                 self.device = "cpu"
-            logger.info(f"Auto-detected device: {self.device}")
+                logger.info("Torch not available, defaulting to CPU")
         
         # Note API key source without logging sensitive info
         self._has_api_key = bool(api_key or os.environ.get("OPENAI_API_KEY"))
         
-        # Determine provider and model configuration
-        config_dict = self._build_config(model_name, self.device, api_key, base_url, cache_dir)
+        # Lazy initialization - factory will be created on first use
+        self.factory = None
+        self._config_dict = None
+        logger.info(f"Embeddings service configured for lazy initialization with model: {model_name}")
         
-        try:
-            # Import EmbeddingConfigSchema for validation
-            from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingConfigSchema
-            
-            # Validate the configuration
-            validated_config = EmbeddingConfigSchema(**config_dict)
-            
-            # Initialize factory with validated configuration
-            self.factory = EmbeddingFactory(
-                cfg=validated_config,
-                max_cached=cache_size,
-                idle_seconds=900,  # 15 minutes idle timeout
-                allow_dynamic_hf=True  # Allow loading HF models not in config
-            )
-            logger.info(f"Initialized embeddings service with model: {model_name}, device: {self.device}, cache_size: {cache_size}")
-            
-            # Log initialization metrics
-            log_counter("embeddings_service_initialized", labels={"model": model_name, "device": self.device})
-            log_gauge("embeddings_cache_max_size", cache_size)
-            
-        except Exception as e:
-            logger.error(f"(EW) Failed to initialize embeddings service: {e}")
-            log_counter("embeddings_service_init_error", labels={"model": model_name, "error": type(e).__name__})
-            raise
+        # Log configuration metrics
+        log_counter("embeddings_service_configured", labels={"model": model_name, "device": self.device})
         
         # Metrics tracking
         self._embeddings_created = 0
@@ -139,6 +143,40 @@ class EmbeddingsServiceWrapper:
         self._circuit_breaker = get_circuit_breaker(f"embeddings_{model_name}", breaker_config)
         logger.info(f"Circuit breaker configured: failure_threshold={breaker_config.failure_threshold}, "
                    f"recovery_timeout={breaker_config.recovery_timeout}s")
+    
+    def _ensure_initialized(self):
+        """Ensure the factory is initialized when first needed."""
+        if self.factory is not None:
+            return
+        
+        if not _ensure_embeddings_imported():
+            raise ImportError("Embeddings dependencies not available. Install with: pip install tldw_chatbook[embeddings_rag]")
+        
+        # Build configuration if not already done
+        if self._config_dict is None:
+            self._config_dict = self._build_config(self.model_name, self.device, self._api_key, self._base_url, self._cache_dir)
+        
+        try:
+            # Validate the configuration
+            validated_config = EmbeddingConfigSchema(**self._config_dict)
+            
+            # Initialize factory with validated configuration
+            self.factory = EmbeddingFactory(
+                cfg=validated_config,
+                max_cached=self._cache_size,
+                idle_seconds=900,  # 15 minutes idle timeout
+                allow_dynamic_hf=True  # Allow loading HF models not in config
+            )
+            logger.info(f"Initialized embeddings factory with model: {self.model_name}, device: {self.device}")
+            
+            # Log initialization metrics
+            log_counter("embeddings_factory_initialized", labels={"model": self.model_name, "device": self.device})
+            log_gauge("embeddings_cache_max_size", self._cache_size)
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize embeddings factory: {e}")
+            log_counter("embeddings_factory_init_error", labels={"model": self.model_name, "error": type(e).__name__})
+            raise
     
     def _get_cached_memory_info(self):
         """
@@ -249,6 +287,9 @@ class EmbeddingsServiceWrapper:
         """
         if not NUMPY_AVAILABLE:
             raise ImportError("NumPy is required for embeddings. Install with: pip install tldw_chatbook[embeddings_rag]")
+        
+        # Ensure factory is initialized
+        self._ensure_initialized()
             
         if not texts:
             logger.warning("create_embeddings called with empty text list")
@@ -358,6 +399,9 @@ class EmbeddingsServiceWrapper:
         """
         if not NUMPY_AVAILABLE:
             raise ImportError("NumPy is required for embeddings. Install with: pip install tldw_chatbook[embeddings_rag]")
+        
+        # Ensure factory is initialized
+        self._ensure_initialized()
             
         if not texts:
             logger.warning("create_embeddings_async called with empty text list")

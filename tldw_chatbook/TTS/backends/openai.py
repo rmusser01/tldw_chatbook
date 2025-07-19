@@ -5,6 +5,7 @@
 from typing import AsyncGenerator, Optional, Dict, Any
 import json
 import httpx
+import os
 from loguru import logger
 
 # Local imports
@@ -21,14 +22,49 @@ class OpenAITTSBackend(APITTSBackend):
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
-        # Try to get API key from config
-        self.api_key = self.config.get("OPENAI_API_KEY")
+        
+        # Try environment variable first
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        logger.debug(f"OpenAITTSBackend: Checking env var OPENAI_API_KEY: {'found' if self.api_key else 'not found'}")
+        
+        if not self.api_key:
+            # Try to get API key from config dict
+            self.api_key = self.config.get("OPENAI_API_KEY")
+            logger.debug(f"OpenAITTSBackend: Checking config dict for OPENAI_API_KEY: {'found' if self.api_key else 'not found'}")
+        
+        if not self.api_key:
+            # Try from api_settings.openai config (new standard location)
+            # We need to access the full config and navigate to api_settings.openai.api_key
+            from tldw_chatbook.config import load_cli_config_and_ensure_existence
+            full_config = load_cli_config_and_ensure_existence()
+            api_settings = full_config.get("api_settings", {})
+            if isinstance(api_settings, dict):
+                openai_settings = api_settings.get("openai", {})
+                self.api_key = openai_settings.get("api_key")
+            logger.debug(f"OpenAITTSBackend: Checking api_settings.openai/api_key: {'found' if self.api_key else 'not found'}")
+            if self.api_key:
+                logger.debug(f"OpenAITTSBackend: API key length: {len(self.api_key)}, starts with: {self.api_key[:10] if len(self.api_key) > 10 else self.api_key}")
+            
+        if not self.api_key:
+            # Try from openai_api config (legacy location)
+            openai_api_settings = get_cli_setting("openai_api")
+            if openai_api_settings and isinstance(openai_api_settings, dict):
+                self.api_key = openai_api_settings.get("api_key")
+            logger.debug(f"OpenAITTSBackend: Checking openai_api/api_key: {'found' if self.api_key else 'not found'}")
+            
         if not self.api_key:
             # Try from CLI config
-            self.api_key = get_cli_setting("API", "openai_api_key")
+            api_settings = get_cli_setting("API")
+            if api_settings and isinstance(api_settings, dict):
+                self.api_key = api_settings.get("openai_api_key")
+            logger.debug(f"OpenAITTSBackend: Checking API/openai_api_key: {'found' if self.api_key else 'not found'}")
+            
         if not self.api_key:
             # Try from app_tts config
-            self.api_key = get_cli_setting("app_tts", "OPENAI_API_KEY_fallback")
+            app_tts_settings = get_cli_setting("app_tts")
+            if app_tts_settings and isinstance(app_tts_settings, dict):
+                self.api_key = app_tts_settings.get("OPENAI_API_KEY_fallback")
+            logger.debug(f"OpenAITTSBackend: Checking app_tts/OPENAI_API_KEY_fallback: {'found' if self.api_key else 'not found'}")
         
         self.base_url = "https://api.openai.com/v1/audio/speech"
         

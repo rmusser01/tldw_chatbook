@@ -2005,6 +2005,14 @@ cache_size_limit_gb = 10.0
     memory_limit_bytes = 2147483648   # Memory limit for ChromaDB (2GB)
     min_documents_to_keep = 100       # Minimum documents to always keep
     cleanup_confirmation_required = false  # Require confirmation for cleanup
+    
+    # --- Performance Settings ---
+    [rag.performance]
+    lazy_load_embeddings = true        # Defer loading embeddings models until first use
+    preload_models = false             # Preload embedding models on startup
+    unload_models_after_idle = true    # Unload models after idle timeout
+    model_idle_timeout_seconds = 900   # Idle timeout before unloading (15 minutes)
+    eager_dependency_check = false     # Check all dependencies on startup
 
 # Legacy RAG settings (for backwards compatibility)
 [rag_search]

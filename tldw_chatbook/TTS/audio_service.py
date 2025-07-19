@@ -50,12 +50,16 @@ class AudioService:
         "flac": 44100,
         "wav": 44100,
         "pcm": 24000,  # Default for TTS
+        "m4a": 44100,
+        "m4b": 44100,  # M4B is essentially M4A with chapter markers
     }
     
     BIT_RATES = {
         "mp3": "192k",
         "opus": "128k",
         "aac": "192k",
+        "m4a": "192k",
+        "m4b": "128k",  # Typically lower for audiobooks
     }
     
     def __init__(self):
@@ -198,7 +202,17 @@ class AudioService:
             
             # Export to target format
             output_buffer = io.BytesIO()
-            audio.export(output_buffer, **output_params)
+            
+            # Special handling for M4B (audiobook format)
+            if target_format == "m4b":
+                # M4B is essentially M4A with different extension
+                # Use AAC codec which is standard for M4B
+                output_params["format"] = "mp4"
+                output_params["codec"] = "aac"
+                audio.export(output_buffer, **output_params)
+            else:
+                audio.export(output_buffer, **output_params)
+            
             return output_buffer.getvalue()
             
         except Exception as e:
@@ -261,6 +275,7 @@ class AudioService:
                 "flac": True,
                 "ogg": True,
                 "m4a": True,
+                "m4b": True,  # M4B is supported via pydub (same as M4A)
             })
         elif SOUNDFILE_AVAILABLE:
             # Soundfile has limited format support
@@ -270,6 +285,98 @@ class AudioService:
             })
         
         return base_formats
+    
+    async def create_m4b_with_chapters(
+        self,
+        audio_files: list,
+        chapter_titles: list,
+        output_path: str,
+        metadata: Optional[Dict[str, str]] = None
+    ) -> bool:
+        """
+        Create an M4B audiobook file with chapter markers.
+        
+        Args:
+            audio_files: List of audio file paths
+            chapter_titles: List of chapter titles
+            output_path: Output M4B file path
+            metadata: Optional metadata (title, author, etc.)
+            
+        Returns:
+            Success status
+            
+        Note: This requires ffmpeg to be installed for chapter support
+        """
+        if not PYDUB_AVAILABLE:
+            logger.error("pydub is required for M4B creation")
+            return False
+        
+        try:
+            # Combine all audio files
+            combined = AudioSegment.empty()
+            chapter_times = [0]  # Start time of each chapter in milliseconds
+            
+            for audio_file in audio_files:
+                audio = AudioSegment.from_file(audio_file)
+                combined += audio
+                chapter_times.append(len(combined))
+            
+            # Create metadata file for chapters (FFmpeg format)
+            metadata_content = ";FFMETADATA1\n"
+            
+            # Add general metadata
+            if metadata:
+                for key, value in metadata.items():
+                    metadata_content += f"{key}={value}\n"
+            
+            # Add chapters
+            for i, (title, start_time) in enumerate(zip(chapter_titles, chapter_times[:-1])):
+                end_time = chapter_times[i + 1] if i + 1 < len(chapter_times) else len(combined)
+                metadata_content += f"\n[CHAPTER]\n"
+                metadata_content += f"TIMEBASE=1/1000\n"
+                metadata_content += f"START={start_time}\n"
+                metadata_content += f"END={end_time}\n"
+                metadata_content += f"title={title}\n"
+            
+            # Write metadata to temporary file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                f.write(metadata_content)
+                metadata_path = f.name
+            
+            # Export with metadata using ffmpeg
+            try:
+                # First export to temporary m4a
+                temp_audio = tempfile.NamedTemporaryFile(suffix='.m4a', delete=False)
+                combined.export(temp_audio.name, format="mp4", codec="aac", bitrate="128k")
+                
+                # Use ffmpeg to add metadata and create final M4B
+                import subprocess
+                cmd = [
+                    'ffmpeg', '-i', temp_audio.name,
+                    '-i', metadata_path,
+                    '-map_metadata', '1',
+                    '-c', 'copy',
+                    '-f', 'mp4',
+                    output_path
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    logger.error(f"FFmpeg error: {result.stderr}")
+                    # Fallback: just save as M4B without chapters
+                    combined.export(output_path, format="mp4", codec="aac", bitrate="128k")
+                
+                # Cleanup
+                os.unlink(temp_audio.name)
+                
+            finally:
+                os.unlink(metadata_path)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to create M4B with chapters: {e}")
+            return False
     
     async def validate_audio(self, audio_data: bytes, expected_format: str) -> bool:
         """

@@ -3,7 +3,7 @@
 #
 # Imports
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional, Dict, Any, AsyncGenerator, Callable, Protocol
 import httpx
 from loguru import logger
 
@@ -12,6 +12,30 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 
 #######################################################################################################################
 #
+# Progress Callback Protocol
+#
+
+class ProgressCallback(Protocol):
+    """Protocol for TTS generation progress callbacks"""
+    
+    async def __call__(self, progress_info: Dict[str, Any]) -> None:
+        """
+        Progress callback with information about generation progress.
+        
+        Args:
+            progress_info: Dictionary containing progress information:
+                - progress: float (0.0-1.0) indicating overall progress
+                - processed: int - tokens/samples/characters processed
+                - total: int - total tokens/samples/characters to process
+                - status: str - human-readable status message
+                - eta_seconds: Optional[float] - estimated time remaining
+                - current_chunk: Optional[int] - current chunk being processed
+                - total_chunks: Optional[int] - total number of chunks
+                - metrics: Optional[Dict] - backend-specific metrics
+        """
+        ...
+
+#
 # Base Backend Classes
 
 class TTSBackendBase(ABC):
@@ -19,6 +43,7 @@ class TTSBackendBase(ABC):
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
+        self.progress_callback: Optional[ProgressCallback] = None
     
     @abstractmethod
     async def initialize(self):
@@ -48,6 +73,28 @@ class TTSBackendBase(ABC):
             "voices": [],
             "models": [],
         }
+    
+    def set_progress_callback(self, callback: Optional[ProgressCallback]) -> None:
+        """
+        Set the progress callback for generation tracking.
+        
+        Args:
+            callback: Progress callback function or None to disable
+        """
+        self.progress_callback = callback
+    
+    async def _report_progress(self, **kwargs) -> None:
+        """
+        Helper method to report progress if callback is set.
+        
+        Args:
+            **kwargs: Progress information to pass to callback
+        """
+        if self.progress_callback:
+            try:
+                await self.progress_callback(kwargs)
+            except Exception as e:
+                logger.warning(f"Progress callback error: {e}")
 
 
 class APITTSBackend(TTSBackendBase):

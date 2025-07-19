@@ -11,6 +11,7 @@ from textual.widgets import (
 )
 from ..config import get_media_ingestion_defaults
 from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from ..Widgets.prompt_selector import PromptSelector
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -60,11 +61,16 @@ class IngestLocalEbookWindow(Vertical):
             yield TextArea(id="local-keywords-ebook", classes="ingest-textarea-small")
             
             # --- Common Processing Options ---
-            yield Label("Custom Prompt (for analysis):")
-            yield TextArea(id="local-custom-prompt-ebook", classes="ingest-textarea-medium")
-            yield Label("System Prompt (for analysis):")
-            yield TextArea(id="local-system-prompt-ebook", classes="ingest-textarea-medium")
             yield Checkbox("Perform Analysis (e.g., Summarization)", True, id="local-perform-analysis-ebook")
+            
+            # Prompt selector widget
+            yield PromptSelector(
+                self.app_instance,
+                system_prompt_id="local-system-prompt-ebook",
+                user_prompt_id="local-custom-prompt-ebook",
+                media_type="document",  # Using 'document' as ebooks are similar
+                id="local-prompt-selector-ebook"
+            )
             yield Label("Analysis API Provider (if analysis enabled):")
             yield Select(analysis_provider_options, id="local-analysis-api-name-ebook",
                          prompt="Select API for Analysis...")

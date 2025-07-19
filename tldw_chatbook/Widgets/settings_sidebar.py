@@ -9,6 +9,7 @@ import logging
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll, Horizontal, Container
 from textual.widgets import Static, Select, TextArea, Input, Collapsible, Button, Checkbox, ListView, Switch, Label
+from textual.message import Message
 #
 # Local Imports
 from ..config import get_cli_providers_and_models
@@ -16,9 +17,12 @@ from ..config import get_cli_providers_and_models
 # Try to import pipeline integration
 try:
     from ..RAG_Search.pipeline_integration import get_pipeline_manager
+    from ..RAG_Search.pipeline_builder_simple import get_pipeline, BUILTIN_PIPELINES
     PIPELINE_INTEGRATION_AVAILABLE = True
 except ImportError:
     PIPELINE_INTEGRATION_AVAILABLE = False
+    get_pipeline = None
+    BUILTIN_PIPELINES = {}
 
 #
 #######################################################################################################################
@@ -27,6 +31,31 @@ except ImportError:
 
 # Sidebar visual constants ---------------------------------------------------
 SIDEBAR_WIDTH = "30%"
+
+
+def get_pipeline_description(pipeline_id: str) -> str:
+    """Get a description for a pipeline configuration."""
+    descriptions = {
+        "none": "Manual configuration mode. Set all RAG parameters individually.",
+        "speed_optimized_v2": "Optimized for fast response times using BM25 search with minimal processing overhead.",
+        "high_accuracy": "Semantic search with embeddings, re-ranking, and comprehensive processing for best accuracy.",
+        "hybrid": "Balanced approach combining BM25 and semantic search for good performance and accuracy.",
+        "research_focused_v2": "Advanced pipeline with query expansion and multi-stage retrieval for research tasks.",
+        "adaptive_v2": "Dynamically adjusts search strategy based on query complexity and available resources.",
+        "plain": "Simple keyword-based search using FTS5 full-text search.",
+        "semantic": "Pure semantic search using embeddings for conceptual matching.",
+    }
+    
+    # Try to get description from pipeline config if available
+    if PIPELINE_INTEGRATION_AVAILABLE and get_pipeline:
+        try:
+            pipeline_config = get_pipeline(pipeline_id)
+            if pipeline_config and 'description' in pipeline_config:
+                return pipeline_config['description']
+        except:
+            pass
+    
+    return descriptions.get(pipeline_id, f"Pipeline configuration: {pipeline_id}")
 
 
 def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
@@ -181,52 +210,87 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 classes="rag-preset-select sidebar-select"
             )
             
-            # Pipeline selection (for custom pipelines from TOML)
-            yield Static("Search Pipeline", classes="sidebar-label")
+            # Pipeline selection (for pre-configured RAG pipelines)
+            yield Static("RAG Pipeline Configuration", classes="sidebar-label")
             
-            # Build pipeline options
-            pipeline_options = [
-                ("📊 Plain (Fast)", "plain"),
-                ("🧠 Semantic", "semantic"), 
-                ("🔀 Hybrid", "hybrid")
-            ]
+            # Build pipeline options - organized by use case
+            pipeline_options = []
             
-            # Add custom pipelines if available
+            # Add "No Pipeline" option first for manual configuration
+            pipeline_options.append(("🔧 Manual Configuration (No Pipeline)", "none"))
+            
+            # Add built-in optimized pipelines
+            pipeline_options.extend([
+                ("⚡ Speed Optimized", "speed_optimized_v2"),
+                ("🎯 High Accuracy", "high_accuracy"),
+                ("🔀 Balanced (Default)", "hybrid"),
+                ("🔬 Research Mode", "research_focused_v2"),
+                ("🤖 Adaptive", "adaptive_v2"),
+            ])
+            
+            # Load additional pipelines from TOML if available
             if PIPELINE_INTEGRATION_AVAILABLE:
                 try:
                     pipeline_manager = get_pipeline_manager()
-                    custom_pipelines = pipeline_manager.list_available_pipelines()
+                    all_pipelines = pipeline_manager.list_available_pipelines()
                     
-                    # Add separator if we have custom pipelines
-                    has_custom = False
-                    for pipeline in custom_pipelines:
-                        if pipeline["enabled"] and pipeline["id"] not in ["plain", "semantic", "full", "hybrid"]:
-                            if not has_custom:
-                                pipeline_options.append(("─" * 15, "separator"))
-                                has_custom = True
+                    # Filter and categorize custom pipelines
+                    custom_pipelines = []
+                    for pipeline in all_pipelines:
+                        # Skip built-in pipelines we already added
+                        if pipeline["id"] in ["speed_optimized_v2", "high_accuracy", "hybrid", 
+                                              "research_focused_v2", "adaptive_v2", "plain", 
+                                              "semantic", "full"]:
+                            continue
                             
-                            # Use emoji based on type/tags
-                            emoji = "🔧"  # Default
-                            if "technical" in pipeline.get("tags", []):
-                                emoji = "🛠️"
-                            elif "support" in pipeline.get("tags", []):
+                        if pipeline["enabled"]:
+                            # Determine emoji based on tags or type
+                            emoji = "🛠️"  # Default custom
+                            tags = pipeline.get("tags", [])
+                            if "technical" in tags or "documentation" in tags:
+                                emoji = "📖"
+                            elif "support" in tags or "customer" in tags:
                                 emoji = "💬"
-                            elif "medical" in pipeline.get("tags", []):
+                            elif "medical" in tags or "health" in tags:
                                 emoji = "🏥"
-                            elif "legal" in pipeline.get("tags", []):
+                            elif "legal" in tags or "compliance" in tags:
                                 emoji = "⚖️"
+                            elif "academic" in tags or "research" in tags:
+                                emoji = "🎓"
+                            elif "fast" in tags or "speed" in tags:
+                                emoji = "🚀"
                             
                             label = f"{emoji} {pipeline['name']}"
-                            pipeline_options.append((label, pipeline["id"]))
+                            custom_pipelines.append((label, pipeline["id"]))
+                    
+                    # Add separator and custom pipelines if any exist
+                    if custom_pipelines:
+                        pipeline_options.append(("─" * 20, "separator"))
+                        pipeline_options.extend(sorted(custom_pipelines, key=lambda x: x[0]))
+                        
                 except Exception as e:
-                    logging.warning(f"Failed to load custom pipelines: {e}")
+                    logging.warning(f"Failed to load pipeline configurations: {e}")
+            
+            # Add fallback legacy options at the end
+            pipeline_options.extend([
+                ("─" * 20, "separator"),
+                ("📊 Legacy: Plain Search", "plain"),
+                ("🧠 Legacy: Semantic Search", "semantic"),
+            ])
             
             yield Select(
                 options=pipeline_options,
-                value="plain",
+                value="none",  # Default to manual configuration
                 id=f"{id_prefix}-rag-search-mode",
-                prompt="Select pipeline...",
+                prompt="Select RAG pipeline...",
                 classes="rag-pipeline-select sidebar-select"
+            )
+            
+            # Pipeline description display
+            yield Static(
+                "Select a pipeline to see its configuration",
+                id=f"{id_prefix}-rag-pipeline-description",
+                classes="sidebar-label rag-pipeline-description"
             )
             
             # Search scope

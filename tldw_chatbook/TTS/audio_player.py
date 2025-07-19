@@ -7,10 +7,11 @@ import subprocess
 import platform
 import shutil
 import threading
+import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from loguru import logger
 
 #######################################################################################################################
@@ -21,6 +22,7 @@ class PlaybackState(Enum):
     """Audio playback states"""
     IDLE = "idle"
     PLAYING = "playing"
+    PAUSED = "paused"
     FINISHED = "finished"
     ERROR = "error"
 
@@ -31,14 +33,19 @@ class AudioPlayerInfo:
     file_path: Optional[Path] = None
     state: PlaybackState = PlaybackState.IDLE
     process: Optional[subprocess.Popen] = None
+    start_time: Optional[float] = None  # When playback started
+    pause_time: Optional[float] = None  # When paused
+    total_pause_duration: float = 0.0  # Total time spent paused
+    duration: Optional[float] = None  # Total duration of the file
+    position: float = 0.0  # Current playback position in seconds
 
 
 class SimpleAudioPlayer:
     """
-    Simple cross-platform audio player using system commands.
+    Enhanced cross-platform audio player with pause/resume support.
     
-    For a TUI app, we don't need complex pause/resume - just play and stop.
-    Uses native system commands for maximum compatibility.
+    Uses native system commands with pause/resume capabilities where available.
+    Falls back to stop/restart for players without native pause support.
     """
     
     def __init__(self):
@@ -46,6 +53,7 @@ class SimpleAudioPlayer:
         self._current: AudioPlayerInfo = AudioPlayerInfo()
         self._system = platform.system()
         self._lock = threading.Lock()  # Thread safety for state management
+        self._supports_pause = False  # Whether the player supports native pause
         self._find_player()
     
     def _find_player(self) -> None:
@@ -53,31 +61,35 @@ class SimpleAudioPlayer:
         if self._system == "Darwin":  # macOS
             self._player_cmd = ["/usr/bin/afplay"]
             self._player_name = "afplay"
+            self._supports_pause = False  # afplay doesn't support pause
         elif self._system == "Linux":
-            # Try to find available player
-            for player, cmd in [
-                ("mpv", ["mpv", "--no-video", "--really-quiet"]),
-                ("mplayer", ["mplayer", "-really-quiet"]),
-                ("ffplay", ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error"]),
-                ("aplay", ["aplay", "-q"]),
-                ("paplay", ["paplay"])
+            # Try to find available player with pause support info
+            for player, cmd, supports_pause in [
+                ("mpv", ["mpv", "--no-video", "--really-quiet", "--input-ipc-server=/tmp/mpv-socket"], True),
+                ("mplayer", ["mplayer", "-really-quiet", "-slave"], True),  # slave mode supports pause
+                ("ffplay", ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error"], False),
+                ("aplay", ["aplay", "-q"], False),
+                ("paplay", ["paplay"], False)
             ]:
                 if shutil.which(player):
                     self._player_cmd = cmd
                     self._player_name = player
+                    self._supports_pause = supports_pause
                     break
             else:
                 self._player_cmd = None
                 self._player_name = None
+                self._supports_pause = False
                 logger.warning("No suitable audio player found on Linux")
         elif self._system == "Windows":
-            # Windows has built-in support via wmplayer or start command
-            # We'll determine the actual command in the play() method
+            # Windows Media Player supports pause through COM automation
             self._player_cmd = ["windows"]  # Placeholder, actual command built in play()
             self._player_name = "windows"
+            self._supports_pause = True  # We'll use COM automation for pause
         else:
             self._player_cmd = None
             self._player_name = None
+            self._supports_pause = False
             logger.warning(f"Unsupported platform: {self._system}")
     
     def play(self, file_path: Path) -> bool:
@@ -121,13 +133,39 @@ class SimpleAudioPlayer:
             
             # Start playback in background
             with self._lock:
-                self._current.process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
+                # Special handling for players with pause support
+                if self._player_name == "mpv":
+                    # Create a unique socket for this instance
+                    import tempfile
+                    socket_path = Path(tempfile.gettempdir()) / f"mpv-socket-{id(self)}"
+                    cmd = self._player_cmd[:-1] + [f"--input-ipc-server={socket_path}", str(file_path)]
+                    self._mpv_socket = socket_path
+                    self._current.process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                elif self._player_name == "mplayer":
+                    # For mplayer slave mode, we need pipes
+                    self._current.process = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                else:
+                    self._current.process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                
                 self._current.file_path = file_path
                 self._current.state = PlaybackState.PLAYING
+                self._current.start_time = time.time()
+                self._current.pause_time = None
+                self._current.total_pause_duration = 0.0
+                self._current.position = 0.0
             
             # Start monitoring thread
             monitor = threading.Thread(target=self._monitor_playback, daemon=True)
@@ -141,6 +179,95 @@ class SimpleAudioPlayer:
             self._current.state = PlaybackState.ERROR
             return False
     
+    def pause(self) -> bool:
+        """
+        Pause current playback.
+        
+        Returns:
+            True if paused successfully
+        """
+        with self._lock:
+            if self._current.state != PlaybackState.PLAYING:
+                return False
+            
+            if not self._supports_pause:
+                # For players without pause, we'll stop and track position
+                self._current.position = self.get_position()
+                self.stop()
+                self._current.state = PlaybackState.PAUSED
+                self._current.pause_time = time.time()
+                logger.info(f"Paused at position {self._current.position:.1f}s (using stop)")
+                return True
+            
+            # Native pause support
+            try:
+                if self._player_name == "mpv" and hasattr(self, '_mpv_socket'):
+                    # Send pause command via socket
+                    import socket
+                    import json
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                        s.connect(str(self._mpv_socket))
+                        s.send(json.dumps({"command": ["set_property", "pause", True]}).encode() + b'\n')
+                elif self._player_name == "mplayer" and self._current.process and self._current.process.stdin:
+                    # Send pause command to mplayer
+                    self._current.process.stdin.write(b'pause\n')
+                    self._current.process.stdin.flush()
+                else:
+                    return False
+                
+                self._current.state = PlaybackState.PAUSED
+                self._current.pause_time = time.time()
+                logger.info("Playback paused")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Failed to pause: {e}")
+                return False
+    
+    def resume(self) -> bool:
+        """
+        Resume paused playback.
+        
+        Returns:
+            True if resumed successfully
+        """
+        with self._lock:
+            if self._current.state != PlaybackState.PAUSED or not self._current.file_path:
+                return False
+            
+            if not self._supports_pause:
+                # For players without pause, restart from saved position
+                # This is a limitation - we can't truly resume from exact position
+                logger.info(f"Resuming from start (pause not supported by {self._player_name})")
+                self._current.total_pause_duration += time.time() - self._current.pause_time
+                return self.play(self._current.file_path)
+            
+            # Native resume support
+            try:
+                if self._player_name == "mpv" and hasattr(self, '_mpv_socket'):
+                    # Send resume command via socket
+                    import socket
+                    import json
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                        s.connect(str(self._mpv_socket))
+                        s.send(json.dumps({"command": ["set_property", "pause", False]}).encode() + b'\n')
+                elif self._player_name == "mplayer" and self._current.process and self._current.process.stdin:
+                    # Send pause command again to toggle
+                    self._current.process.stdin.write(b'pause\n')
+                    self._current.process.stdin.flush()
+                else:
+                    return False
+                
+                self._current.state = PlaybackState.PLAYING
+                self._current.total_pause_duration += time.time() - self._current.pause_time
+                self._current.pause_time = None
+                logger.info("Playback resumed")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Failed to resume: {e}")
+                return False
+    
     def stop(self) -> bool:
         """
         Stop current playback.
@@ -149,7 +276,7 @@ class SimpleAudioPlayer:
             True if stopped successfully
         """
         with self._lock:
-            if self._current.process and self._current.state == PlaybackState.PLAYING:
+            if self._current.process and self._current.state in [PlaybackState.PLAYING, PlaybackState.PAUSED]:
                 try:
                     self._current.process.terminate()
                     self._current.process.wait(timeout=2)
@@ -158,8 +285,18 @@ class SimpleAudioPlayer:
                 except Exception as e:
                     logger.error(f"Error stopping playback: {e}")
                 
+                # Clean up mpv socket if exists
+                if self._player_name == "mpv" and hasattr(self, '_mpv_socket'):
+                    try:
+                        Path(self._mpv_socket).unlink(missing_ok=True)
+                    except:
+                        pass
+                
                 self._current.process = None
                 self._current.state = PlaybackState.IDLE
+                self._current.start_time = None
+                self._current.pause_time = None
+                self._current.position = 0.0
                 logger.info("Playback stopped")
                 return True
         
@@ -174,6 +311,30 @@ class SimpleAudioPlayer:
         """Get current playback state"""
         with self._lock:
             return self._current.state
+    
+    def get_position(self) -> float:
+        """
+        Get current playback position in seconds.
+        
+        Returns:
+            Current position in seconds
+        """
+        with self._lock:
+            if self._current.state == PlaybackState.IDLE:
+                return 0.0
+            elif self._current.state == PlaybackState.PAUSED:
+                return self._current.position
+            elif self._current.state == PlaybackState.PLAYING and self._current.start_time:
+                # Calculate current position based on elapsed time
+                elapsed = time.time() - self._current.start_time - self._current.total_pause_duration
+                return elapsed
+            else:
+                return self._current.position
+    
+    def get_duration(self) -> Optional[float]:
+        """Get total duration of current file"""
+        with self._lock:
+            return self._current.duration
     
     def _monitor_playback(self) -> None:
         """Monitor playback process"""
@@ -223,6 +384,16 @@ class AsyncAudioPlayer:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._player.play, file_path)
     
+    async def pause(self) -> bool:
+        """Pause playback asynchronously"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._player.pause)
+    
+    async def resume(self) -> bool:
+        """Resume playback asynchronously"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._player.resume)
+    
     async def stop(self) -> bool:
         """Stop playback asynchronously"""
         loop = asyncio.get_event_loop()
@@ -232,6 +403,21 @@ class AsyncAudioPlayer:
         """Check if playing asynchronously"""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._player.is_playing)
+    
+    async def get_state(self) -> PlaybackState:
+        """Get state asynchronously"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._player.get_state)
+    
+    async def get_position(self) -> float:
+        """Get playback position asynchronously"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._player.get_position)
+    
+    async def get_duration(self) -> Optional[float]:
+        """Get duration asynchronously"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._player.get_duration)
 
 #
 # End of audio_player.py

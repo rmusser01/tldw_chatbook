@@ -38,11 +38,9 @@ from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 # Import test markers from conftest
-import sys
-import os
 import numpy as np
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from conftest import requires_embeddings, requires_chromadb, requires_numpy
+# Import from the same directory using absolute import
+from Tests.RAG_Search.conftest import requires_embeddings, requires_chromadb, requires_numpy, create_mock_embedding_factory
 
 
 @pytest.mark.integration
@@ -260,48 +258,60 @@ class TestRAGServiceIntegration:
     
     def test_rag_service_workflow(self, temp_dir):
         """Test complete RAG workflow with RAGService"""
-        with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
-            # Create a mock factory using the helper from conftest
-            from conftest import create_mock_embedding_factory
-            mock_factory_impl, mock_instance = create_mock_embedding_factory(dimension=384, return_numpy=True)
-            
-            # Replace the factory with our mock
-            mock_factory.return_value = mock_instance
-            
-            # Create RAG service
-            rag_service = create_rag_service(
-                embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-                vector_store="memory"
-            )
-            
-            # Index documents
-            documents = [
-                {"id": "doc1", "content": "Python is a high-level programming language.", "metadata": {"topic": "programming"}},
-                {"id": "doc2", "content": "Machine learning uses statistical techniques.", "metadata": {"topic": "ml"}},
-                {"id": "doc3", "content": "Neural networks are inspired by biological neurons.", "metadata": {"topic": "ai"}}
-            ]
-            
-            # Use async context to call index_batch
-            import asyncio
-            results = asyncio.run(rag_service.index_batch(documents))
-            
-            # Check all documents were indexed successfully
-            assert len(results) == 3
-            # Debug: print any failures
-            failed_results = [r for r in results if not r.success]
-            if failed_results:
-                for r in failed_results:
-                    print(f"Failed to index {r.doc_id}: {r.error}")
-            assert all(r.success for r in results)
-            
-            # Search
-            search_results = rag_service.search_sync(
-                query="programming languages like Python",
-                top_k=2
-            )
-            
-            assert len(search_results) == 2
-            assert any("Python" in result.document for result in search_results)
+        # Import required modules
+        from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+        from unittest.mock import AsyncMock, MagicMock
+        
+        # Mock the config schema
+        mock_config_schema = MagicMock()
+        mock_config_schema.return_value = MagicMock()
+        
+        # Patch the _ensure_embeddings_imported to return True
+        with patch.object(embeddings_wrapper, '_ensure_embeddings_imported', return_value=True):
+            # Patch EmbeddingConfigSchema
+            with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingConfigSchema', mock_config_schema):
+                # Now patch EmbeddingFactory 
+                with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
+                    # Create a mock factory using the helper from conftest
+                    mock_factory_impl, mock_instance = create_mock_embedding_factory(dimension=384, return_numpy=True)
+                    
+                    # Replace the factory with our mock
+                    mock_factory.return_value = mock_instance
+                    
+                    # Create RAG service
+                    rag_service = create_rag_service(
+                        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+                        vector_store="memory"
+                    )
+                    
+                    # Index documents
+                    documents = [
+                        {"id": "doc1", "content": "Python is a high-level programming language.", "metadata": {"topic": "programming"}},
+                        {"id": "doc2", "content": "Machine learning uses statistical techniques.", "metadata": {"topic": "ml"}},
+                        {"id": "doc3", "content": "Neural networks are inspired by biological neurons.", "metadata": {"topic": "ai"}}
+                    ]
+                    
+                    # Use async context to call index_batch
+                    import asyncio
+                    results = asyncio.run(rag_service.index_batch(documents))
+                    
+                    # Check all documents were indexed successfully
+                    assert len(results) == 3
+                    # Debug: print any failures
+                    failed_results = [r for r in results if not r.success]
+                    if failed_results:
+                        for r in failed_results:
+                            print(f"Failed to index {r.doc_id}: {r.error}")
+                    assert all(r.success for r in results)
+                    
+                    # Search
+                    search_results = rag_service.search_sync(
+                        query="programming languages like Python",
+                        top_k=2
+                    )
+                    
+                    assert len(search_results) == 2
+                    assert any("Python" in result.document for result in search_results)
 
 
 @pytest.mark.integration
