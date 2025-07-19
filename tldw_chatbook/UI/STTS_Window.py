@@ -373,7 +373,7 @@ class TTSPlaygroundWidget(Widget):
             ])
             voice_select.value = "21m00Tcm4TlvDq8ikWAM"
         elif provider == "kokoro":
-            voice_select.set_options([
+            voice_options = [
                 # American Female voices
                 ("af_alloy", "Alloy (US Female)"),
                 ("af_aoede", "Aoede (US Female)"),
@@ -397,7 +397,28 @@ class TTSPlaygroundWidget(Widget):
                 ("bm_lewis", "Lewis (UK Male)"),
                 # Note: Additional voices for other languages (Japanese, Chinese, Spanish, etc.) 
                 # can be added here with proper voice codes
-            ])
+            ]
+            
+            # Add saved voice blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                try:
+                    import json
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                        if blends:
+                            # Add separator
+                            voice_options.append(("_separator", "──── Voice Blends ────"))
+                            # Add each blend
+                            for blend_name, blend_data in blends.items():
+                                display_name = f"🎭 {blend_name}"
+                                if blend_data.get('description'):
+                                    display_name += f" - {blend_data['description'][:30]}"
+                                voice_options.append((f"blend:{blend_name}", display_name))
+                except Exception as e:
+                    logger.error(f"Failed to load voice blends: {e}")
+            
+            voice_select.set_options(voice_options)
             voice_select.value = "af_bella"
         elif provider == "chatterbox":
             voice_select.set_options([
@@ -1437,15 +1458,30 @@ class TTSSettingsWidget(Widget):
     def _import_voice_blends(self) -> None:
         """Import voice blends from file"""
         try:
-            # For now, use a simple file dialog workaround
-            import_path = Path.home() / "Downloads" / "kokoro_voice_blends_export.json"
+            filters = Filters(
+                ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                ("All Files", lambda p: True)
+            )
             
-            if not import_path.exists():
-                self.app.notify(
-                    f"Please place your import file at: {import_path}",
-                    severity="information"
-                )
-                return
+            file_picker = FileOpen(
+                title="Import Voice Blends",
+                filters=filters,
+                context="voice_blends_import"
+            )
+            
+            self.app.push_screen(file_picker, self._handle_import_file)
+            
+        except Exception as e:
+            logger.error(f"Failed to show import dialog: {e}")
+            self.app.notify(f"Error showing import dialog: {e}", severity="error")
+    
+    def _handle_import_file(self, path: str | None) -> None:
+        """Handle the imported file"""
+        if not path:
+            return
+        
+        try:
+            import_path = Path(path)
             
             # Load the import file
             with open(import_path, 'r') as f:
@@ -1496,16 +1532,46 @@ class TTSSettingsWidget(Widget):
                 self.app.notify("No voice blends to export", severity="warning")
                 return
             
-            # Export to Downloads folder
-            export_path = Path.home() / "Downloads" / "kokoro_voice_blends_export.json"
+            # Store blends temporarily for export
+            self._export_blends = blends
             
+            filters = Filters(
+                ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                ("All Files", lambda p: True)
+            )
+            
+            file_picker = FileSave(
+                title="Export Voice Blends",
+                filters=filters,
+                default_filename="kokoro_voice_blends_export.json",
+                context="voice_blends_export"
+            )
+            
+            self.app.push_screen(file_picker, self._handle_export_file)
+            
+        except Exception as e:
+            logger.error(f"Failed to export voice blends: {e}")
+            self.app.notify(f"Error exporting voice blends: {e}", severity="error")
+    
+    def _handle_export_file(self, path: str | None) -> None:
+        """Handle the export file location"""
+        if not path or not hasattr(self, '_export_blends'):
+            return
+        
+        try:
+            export_path = Path(path)
+            
+            # Write the blends to the selected file
             with open(export_path, 'w') as f:
-                json.dump(blends, f, indent=2)
+                json.dump(self._export_blends, f, indent=2)
             
             self.app.notify(
-                f"Exported {len(blends)} voice blend(s) to: {export_path}",
+                f"Exported {len(self._export_blends)} voice blend(s) to: {export_path.name}",
                 severity="success"
             )
+            
+            # Clean up temporary storage
+            del self._export_blends
             
         except Exception as e:
             logger.error(f"Failed to export voice blends: {e}")
@@ -1685,7 +1751,7 @@ class TTSSettingsWidget(Widget):
                 ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
             ])
         elif provider == "kokoro":
-            voice_select.set_options([
+            voice_options = [
                 ("af_alloy", "Alloy (US Female)"),
                 ("af_aoede", "Aoede (US Female)"),
                 ("af_bella", "Bella (US Female)"),
@@ -1703,7 +1769,28 @@ class TTSSettingsWidget(Widget):
                 ("bf_isabella", "Isabella (UK Female)"),
                 ("bm_george", "George (UK Male)"),
                 ("bm_lewis", "Lewis (UK Male)"),
-            ])
+            ]
+            
+            # Add saved voice blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                try:
+                    import json
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                        if blends:
+                            # Add separator
+                            voice_options.append(("_separator", "──── Voice Blends ────"))
+                            # Add each blend
+                            for blend_name, blend_data in blends.items():
+                                display_name = f"🎭 {blend_name}"
+                                if blend_data.get('description'):
+                                    display_name += f" - {blend_data['description'][:30]}"
+                                voice_options.append((f"blend:{blend_name}", display_name))
+                except Exception as e:
+                    logger.error(f"Failed to load voice blends: {e}")
+            
+            voice_select.set_options(voice_options)
             model_select.set_options([
                 ("kokoro", "Kokoro 82M"),
             ])
@@ -2135,13 +2222,36 @@ class AudioBookGenerationWidget(Widget):
                 ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
             ])
         elif provider == "kokoro":
-            voice_select.set_options([
-                ("af", "Afrikaans"),
-                ("en", "English"), 
-                ("es", "Spanish"),
-                ("fr", "French"),
-                ("de", "German"),
-            ])
+            voice_options = [
+                ("af_bella", "Bella (US Female)"),
+                ("af_nicole", "Nicole (US Female)"),
+                ("af_sarah", "Sarah (US Female)"),
+                ("am_adam", "Adam (US Male)"),
+                ("am_michael", "Michael (US Male)"),
+                ("bf_emma", "Emma (UK Female)"),
+                ("bm_george", "George (UK Male)"),
+            ]
+            
+            # Add saved voice blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                try:
+                    import json
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                        if blends:
+                            # Add separator
+                            voice_options.append(("_separator", "──── Voice Blends ────"))
+                            # Add each blend
+                            for blend_name, blend_data in blends.items():
+                                display_name = f"🎭 {blend_name}"
+                                if blend_data.get('description'):
+                                    display_name += f" - {blend_data['description'][:30]}"
+                                voice_options.append((f"blend:{blend_name}", display_name))
+                except Exception as e:
+                    logger.error(f"Failed to load voice blends: {e}")
+            
+            voice_select.set_options(voice_options)
         elif provider == "chatterbox":
             voice_select.set_options([
                 ("default", "Default"),

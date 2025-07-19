@@ -53,3 +53,29 @@
 - pydub for audio manipulation
 - mutagen for metadata
 - numpy for audio normalization
+
+## PROGRESS UPDATE:
+
+### COMPLETED:
+1. ✅ Fixed ElevenLabs backend to use dynamic settings from request.extra_params
+2. ✅ Fixed Kokoro backend to use language from request.extra_params
+3. ✅ Added voice blends to all three dropdown locations (playground, settings, audiobook)
+4. ✅ Voice blends now appear with "blend:" prefix and emoji
+
+### IN PROGRESS:
+- Need to fix import/export file picker - the whitespace in the method is preventing the edit
+
+### TODO:
+1. Fix import/export methods (whitespace issue)
+2. Implement audio processing functions
+3. Add cost estimation
+4. Fix audiobook backend
+
+## File Picker Fix Needed:
+
+The import/export methods at lines 1458 and 1503 need to be updated to use:
+- FileOpen for import
+- FileSave for export
+- Proper callbacks to handle file selection
+
+Current issue: The exact whitespace doesn't match, need to use line-by-line replacement.

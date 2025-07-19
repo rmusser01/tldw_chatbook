@@ -707,28 +707,144 @@ class AudioBookGenerator:
     
     async def _generate_silence(self, duration: float, format: str) -> bytes:
         """Generate silence of specified duration"""
-        # This is a simplified implementation
-        # TODO: Implement proper silence generation for each format
-        if format == "mp3":
-            # Approximate silence for MP3 (this is simplified)
-            return b'\xff\xfb\x90\x00' * int(duration * 100)
-        else:
-            # For other formats, return empty bytes (not ideal)
-            return b''
+        try:
+            # Try to use pydub for proper silence generation
+            from pydub import AudioSegment
+            import io
+            
+            # Create silence segment (duration in milliseconds)
+            silence = AudioSegment.silent(duration=int(duration * 1000))
+            
+            # Export to requested format
+            buffer = io.BytesIO()
+            silence.export(buffer, format=format)
+            return buffer.getvalue()
+            
+        except ImportError:
+            logger.warning("pydub not installed. Install with: pip install pydub")
+            # Fallback: return minimal valid audio data
+            if format == "mp3":
+                # Minimal MP3 frame header for silence
+                # FF FB = sync word + MPEG-1 Layer 3
+                # 90 = 128kbps, 44.1kHz, no padding, stereo
+                # 00 = no data
+                frame = b'\xff\xfb\x90\x00'
+                # Approximate number of frames needed
+                # MP3 frame is ~26ms at 128kbps
+                frames_needed = int(duration * 38.46)  # 1000ms / 26ms
+                return frame * frames_needed
+            elif format == "wav":
+                # Minimal WAV header + silence
+                import struct
+                sample_rate = 44100
+                num_channels = 1
+                bits_per_sample = 16
+                num_samples = int(sample_rate * duration)
+                
+                # WAV header
+                header = b'RIFF'
+                header += struct.pack('<I', 36 + num_samples * 2)  # file size - 8
+                header += b'WAVEfmt '
+                header += struct.pack('<IHHIIHH', 16, 1, num_channels, sample_rate,
+                                    sample_rate * num_channels * bits_per_sample // 8,
+                                    num_channels * bits_per_sample // 8, bits_per_sample)
+                header += b'data'
+                header += struct.pack('<I', num_samples * 2)
+                
+                # Silent samples (16-bit zeros)
+                silence_data = b'\x00\x00' * num_samples
+                
+                return header + silence_data
+            else:
+                # For other formats, return empty (will likely cause issues)
+                logger.error(f"Cannot generate silence for format {format} without pydub")
+                return b''
     
     async def _normalize_audio(self, audio_data: bytes, format: str, target_db: float) -> bytes:
         """Normalize audio to target dB level"""
-        # TODO: Implement proper audio normalization
-        # For now, return unchanged
-        return audio_data
+        try:
+            from pydub import AudioSegment
+            import io
+            import numpy as np
+            
+            # Load audio from bytes
+            audio = AudioSegment.from_file(io.BytesIO(audio_data), format=format)
+            
+            # Calculate current dBFS (decibels relative to full scale)
+            current_db = audio.dBFS
+            
+            # If audio is silent or very quiet, skip normalization
+            if current_db == -float('inf') or current_db < -60:
+                logger.warning("Audio is too quiet to normalize effectively")
+                return audio_data
+            
+            # Calculate gain adjustment needed
+            gain_db = target_db - current_db
+            
+            # Apply gain (limit to reasonable range to prevent distortion)
+            gain_db = max(-20, min(20, gain_db))  # Limit gain adjustment to ±20dB
+            
+            # Apply the gain
+            normalized = audio.apply_gain(gain_db)
+            
+            # Export back to bytes
+            buffer = io.BytesIO()
+            normalized.export(buffer, format=format)
+            return buffer.getvalue()
+            
+        except ImportError:
+            logger.warning("Audio normalization requires pydub and numpy. Install with: pip install pydub numpy")
+            return audio_data  # Return unchanged
+        except Exception as e:
+            logger.error(f"Failed to normalize audio: {e}")
+            return audio_data  # Return unchanged on error
     
     async def _get_audio_duration(self, audio_path: Path) -> float:
         """Get duration of audio file in seconds"""
-        # TODO: Implement proper duration detection
-        # For now, estimate based on file size
-        file_size = audio_path.stat().st_size
-        # Rough estimate: 1MB = 1 minute for MP3 at 128kbps
-        return (file_size / 1_000_000) * 60
+        try:
+            # Try mutagen first (lightweight, no dependencies)
+            from mutagen import File
+            
+            audio_file = File(str(audio_path))
+            if audio_file is not None and hasattr(audio_file.info, 'length'):
+                return float(audio_file.info.length)
+            else:
+                raise ValueError("Could not determine duration with mutagen")
+                
+        except (ImportError, Exception) as e:
+            # Fallback to pydub
+            try:
+                from pydub import AudioSegment
+                
+                audio = AudioSegment.from_file(audio_path)
+                return len(audio) / 1000.0  # Convert milliseconds to seconds
+                
+            except ImportError:
+                logger.warning("Cannot determine accurate duration. Install mutagen or pydub.")
+                # Final fallback: estimate based on file size
+                file_size = audio_path.stat().st_size
+                
+                # Estimate based on format and typical bitrates
+                ext = audio_path.suffix.lower()
+                if ext == '.mp3':
+                    # Assume 128kbps for MP3
+                    bitrate = 128 * 1000 / 8  # Convert to bytes per second
+                    return file_size / bitrate
+                elif ext == '.wav':
+                    # Assume 44.1kHz, 16-bit, stereo
+                    bitrate = 44100 * 2 * 2  # samples/sec * bytes/sample * channels
+                    return file_size / bitrate
+                elif ext == '.m4b' or ext == '.aac':
+                    # Assume 64kbps for AAC/M4B
+                    bitrate = 64 * 1000 / 8
+                    return file_size / bitrate
+                else:
+                    # Generic estimate: 1MB = 1 minute
+                    return (file_size / 1_000_000) * 60
+            except Exception as e2:
+                logger.error(f"Failed to determine audio duration: {e2}")
+                # Last resort estimate
+                return (audio_path.stat().st_size / 1_000_000) * 60
     
     def _get_internal_model_id(self, provider: str, model: str) -> str:
         """Map provider and model to internal model ID"""
