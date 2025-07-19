@@ -861,7 +861,7 @@ class EnhancedFileSave(EnhancedFileDialog):
         yield Input(value=self.default_filename, placeholder="File name...")
         if self.filters:
             yield Select(
-                [(f.name, i) for i, f in enumerate(self.filters.filters)],
+                self.filters.selections,
                 prompt="File type",
                 value=0,
                 id="file-filter"
