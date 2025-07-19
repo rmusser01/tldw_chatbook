@@ -6,11 +6,12 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
-from textual.widgets import Label, Button, TextArea, Select, Input, Static, RichLog, Switch, Collapsible, Rule
+from textual.widgets import Label, Button, TextArea, Select, Input, Static, RichLog, Switch, Collapsible, Rule, ProgressBar
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.message import Message
 from textual import work
+from textual.binding import Binding
 from loguru import logger
 
 # Local imports
@@ -33,6 +34,14 @@ import json
 
 class TTSPlaygroundWidget(Widget):
     """TTS Playground for testing different providers and settings"""
+    
+    BINDINGS = [
+        Binding("ctrl+g", "generate_tts", "Generate Speech"),
+        Binding("ctrl+r", "random_text", "Random Text"),
+        Binding("ctrl+l", "clear_text", "Clear Text"),
+        Binding("ctrl+p", "play_audio", "Play Audio"),
+        Binding("ctrl+s", "stop_audio", "Stop Audio"),
+    ]
     
     DEFAULT_CSS = """
     TTSPlaygroundWidget {
@@ -92,12 +101,64 @@ class TTSPlaygroundWidget(Widget):
         border: solid $secondary;
         margin-top: 1;
     }
+    
+    .audio-progress {
+        width: 100%;
+        margin: 0 1;
+    }
+    
+    .audio-time {
+        width: auto;
+        margin: 0 1;
+    }
+    
+    .hidden {
+        display: none;
+    }
+    
+    .tts-text-input, #tts-text-input {
+        height: 10;
+        min-height: 5;
+        max-height: 20;
+        border: solid $primary;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    
+    .text-input-container {
+        height: auto;
+        min-height: 12;
+        margin-bottom: 1;
+    }
+    
+    .example-text {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    
+    .quick-tips {
+        border: solid $secondary;
+        padding: 1;
+        margin: 1 0;
+        background: $boost;
+    }
+    
+    .tip-text {
+        color: $text-muted;
+    }
     """
     
     def __init__(self):
         super().__init__()
         self.current_audio_file = None
         self.reference_audio_path = None
+        self.example_texts = [
+            "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
+            "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
+            "In a world of artificial intelligence, the ability to convert text into natural speech opens countless possibilities.",
+            "Testing, one, two, three. Can you hear the difference between various voice models?",
+            "Good morning! Today's weather is sunny with a high of 75 degrees. Perfect for a walk in the park."
+        ]
         
     def compose(self) -> ComposeResult:
         """Compose the TTS Playground UI"""
@@ -105,10 +166,17 @@ class TTSPlaygroundWidget(Widget):
             yield Label("🎤 TTS Playground", classes="section-title")
             
             # Text input area
-            yield Label("Text to Synthesize:")
-            yield TextArea(
-                id="tts-text-input"
-            )
+            with Vertical(classes="text-input-container"):
+                yield Label("Text to Synthesize:")
+                yield Static(
+                    "Example: Hello! Welcome to the TTS Playground. Try different voices and settings.",
+                    classes="example-text"
+                )
+                yield TextArea(
+                    "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
+                    id="tts-text-input",
+                    classes="tts-text-input"
+                )
             
             # Provider selection
             with Horizontal(classes="form-row"):
@@ -297,21 +365,73 @@ class TTSPlaygroundWidget(Widget):
                     id="tts-format-select"
                 )
             
-            # Generate button
-            yield Button("🔊 Generate Speech", id="tts-generate-btn", variant="primary")
+            # Generate button and quick actions
+            with Horizontal(classes="form-row"):
+                yield Button("🔊 Generate Speech", id="tts-generate-btn", variant="primary")
+                yield Button("🎲 Random Text", id="tts-random-text-btn", variant="default")
+                yield Button("🗑️ Clear", id="tts-clear-text-btn", variant="default")
             
             # Audio player placeholder
             with Container(id="audio-player-container", classes="audio-player"):
                 yield Static("Audio player will appear here after generation", id="audio-player-status")
+                
+                # Progress bar for playback
+                from textual.widgets import ProgressBar
+                yield ProgressBar(
+                    total=100,
+                    show_eta=False,
+                    show_percentage=False,
+                    id="audio-progress-bar",
+                    classes="audio-progress hidden"
+                )
+                yield Static("0:00 / 0:00", id="audio-time-display", classes="audio-time hidden")
+                
                 with Horizontal():
                     yield Button("▶️ Play", id="audio-play-btn", disabled=True)
-                    yield Button("⏸️ Pause", id="audio-pause-btn", disabled=True)
-                    yield Button("⏹️ Stop", id="audio-stop-btn", disabled=True)
+                    yield Button("⏸️ Pause", id="pause-audio-btn", disabled=True)
+                    yield Button("⏹️ Stop", id="stop-audio-btn", disabled=True)
                     yield Button("💾 Export", id="audio-export-btn", disabled=True)
             
             # Generation log
             yield Label("Generation Log:")
             yield RichLog(id="tts-generation-log", classes="generation-log", highlight=True, markup=True)
+            
+            # Keyboard shortcuts info
+            yield Rule()
+            yield Static(
+                "Shortcuts: Ctrl+G=Generate | Ctrl+R=Random | Ctrl+L=Clear | Ctrl+P=Play | Ctrl+S=Stop",
+                classes="tip-text"
+            )
+    
+    def on_mount(self) -> None:
+        """Initialize default values on mount"""
+        # Delay initialization to ensure widgets are ready
+        self.set_timer(0.1, self._initialize_defaults)
+    
+    def _initialize_defaults(self) -> None:
+        """Initialize default values after mount"""
+        try:
+            # Set default format if not already set
+            format_select = self.query_one("#tts-format-select", Select)
+            if format_select.value is None or format_select.value == Select.BLANK:
+                # Force selection of first option
+                try:
+                    format_select.action_select_cursor()
+                except Exception:
+                    pass
+            
+            # Update voices and models for the default provider
+            provider_select = self.query_one("#tts-provider-select", Select)
+            # Select widgets automatically select the first option, so get that value
+            if provider_select.value is not None:
+                self._update_voice_options(provider_select.value)
+                self._update_model_options(provider_select.value)
+            else:
+                # If no value set, use the first option
+                self._update_voice_options("openai")
+                self._update_model_options("openai")
+        except Exception as e:
+            logger.warning(f"Error initializing defaults: {e}")
     
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle provider/model selection changes"""
@@ -482,11 +602,15 @@ class TTSPlaygroundWidget(Widget):
         """Handle button presses"""
         if event.button.id == "tts-generate-btn":
             self._generate_tts()
+        elif event.button.id == "tts-random-text-btn":
+            self._insert_random_text()
+        elif event.button.id == "tts-clear-text-btn":
+            self._clear_text()
         elif event.button.id == "audio-play-btn":
             self._play_audio()
-        elif event.button.id == "audio-pause-btn":
+        elif event.button.id == "pause-audio-btn":
             self._pause_audio()
-        elif event.button.id == "audio-stop-btn":
+        elif event.button.id == "stop-audio-btn":
             self._stop_audio()
         elif event.button.id == "audio-export-btn":
             self._export_audio()
@@ -509,7 +633,30 @@ class TTSPlaygroundWidget(Widget):
         voice = self.query_one("#tts-voice-select", Select).value
         model = self.query_one("#tts-model-select", Select).value
         speed = float(self.query_one("#tts-speed-input", Input).value or "1.0")
-        format = self.query_one("#tts-format-select", Select).value
+        format_select = self.query_one("#tts-format-select", Select)
+        format = format_select.value
+        
+        # Debug logging
+        logger.debug(f"Format select value: {format!r}, type: {type(format)}")
+        logger.debug(f"Format select options: {format_select._options}")
+        
+        # Ensure format has a valid value
+        if not format or format == Select.BLANK or str(format) == "Select.BLANK":
+            format = "mp3"
+            logger.warning("No format selected, defaulting to mp3")
+        elif isinstance(format, tuple):
+            # If it's a tuple, take the first element
+            format = format[0]
+            logger.debug(f"Format was tuple, extracted: {format}")
+        
+        # Additional validation - also handle uppercase
+        valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
+        format_lower = format.lower() if isinstance(format, str) else format
+        if format_lower in valid_formats:
+            format = format_lower
+        else:
+            logger.warning(f"Invalid format '{format}', defaulting to mp3")
+            format = "mp3"
         
         # Collect provider-specific settings
         extra_params = {}
@@ -584,16 +731,21 @@ class TTSPlaygroundWidget(Widget):
             extra_params=extra_params
         ))
     
-    def _generation_complete(self, success: bool) -> None:
+    def _generation_complete(self, success: bool, audio_file: Optional[Path] = None) -> None:
         """Handle TTS generation completion"""
         self.query_one("#tts-generate-btn", Button).disabled = False
         
-        if success:
+        if success and audio_file:
+            # Store the audio file path
+            self.current_audio_file = audio_file
+            
             log = self.query_one("#tts-generation-log", RichLog)
             log.write("[bold green]✓ TTS generation complete![/bold green]")
             
             # Enable audio controls
             self.query_one("#audio-play-btn", Button).disabled = False
+            self.query_one("#pause-audio-btn", Button).disabled = True  # Disabled until playing
+            self.query_one("#stop-audio-btn", Button).disabled = True   # Disabled until playing
             self.query_one("#audio-export-btn", Button).disabled = False
             self.query_one("#audio-player-status", Static).update("Audio ready to play")
             
@@ -607,24 +759,130 @@ class TTSPlaygroundWidget(Widget):
         """Play the generated audio"""
         # Call the app's play method if it has the event handler
         if hasattr(self.app, 'play_current_audio'):
+            # Enable pause and stop buttons
+            self.query_one("#pause-audio-btn", Button).disabled = False
+            self.query_one("#stop-audio-btn", Button).disabled = False
+            self.query_one("#audio-player-status", Static).update("Playing...")
+            
             self.app.run_worker(self.app.play_current_audio())
+            # Start progress timer
+            import asyncio
+            asyncio.create_task(self._update_progress_timer())
         else:
             self.app.notify("Audio playback not available", severity="warning")
     
     def _pause_audio(self) -> None:
         """Pause audio playback"""
-        # TODO: Implement audio pause
-        pass
+        if hasattr(self.app, 'audio_player'):
+            self.run_worker(self._pause_audio_async)
+        else:
+            self.app.notify("Audio player not available", severity="warning")
+    
+    async def _pause_audio_async(self) -> None:
+        """Pause audio playback asynchronously"""
+        try:
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+            
+            state = await self.app.audio_player.get_state()
+            if state == PlaybackState.PLAYING:
+                success = await self.app.audio_player.pause()
+                if success:
+                    # Update button states
+                    self.query_one("#pause-audio-btn", Button).label = "▶️ Resume"
+                    self.app.notify("Playback paused", severity="information")
+                else:
+                    self.app.notify("Failed to pause playback", severity="warning")
+            elif state == PlaybackState.PAUSED:
+                success = await self.app.audio_player.resume()
+                if success:
+                    # Update button states
+                    self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
+                    self.app.notify("Playback resumed", severity="information")
+                    # Restart progress timer
+                    import asyncio
+                    asyncio.create_task(self._update_progress_timer())
+                else:
+                    self.app.notify("Failed to resume playback", severity="warning")
+        except Exception as e:
+            logger.error(f"Error toggling pause: {e}")
+            from rich.markup import escape
+            self.app.notify(f"Error: {escape(str(e))}", severity="error")
     
     def _stop_audio(self) -> None:
         """Stop audio playback"""
-        # TODO: Implement audio stop
-        pass
+        if hasattr(self.app, 'audio_player'):
+            self.run_worker(self._stop_audio_async)
+        else:
+            self.app.notify("Audio player not available", severity="warning")
+    
+    async def _stop_audio_async(self) -> None:
+        """Stop audio playback asynchronously"""
+        try:
+            success = await self.app.audio_player.stop()
+            if success:
+                # Reset button states
+                self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
+                self.query_one("#pause-audio-btn", Button).disabled = True
+                self.query_one("#stop-audio-btn", Button).disabled = True
+                self.app.notify("Playback stopped", severity="information")
+            else:
+                self.app.notify("No active playback to stop", severity="warning")
+        except Exception as e:
+            logger.error(f"Error stopping playback: {e}")
+            from rich.markup import escape
+            self.app.notify(f"Error: {escape(str(e))}", severity="error")
     
     def _export_audio(self) -> None:
         """Export the generated audio"""
-        # TODO: Implement audio export
-        self.app.notify("Export functionality coming soon!", severity="information")
+        if not self.current_audio_file:
+            self.app.notify("No audio file to export", severity="warning")
+            return
+        
+        # Create file save dialog
+        filters = Filters(
+            ("Audio Files", lambda p: p.suffix.lower() in [".mp3", ".wav", ".aac", ".flac", ".opus"]),
+            ("All Files", lambda p: True)
+        )
+        
+        # Get original filename and extension
+        original_path = Path(self.current_audio_file)
+        default_name = f"tts_export_{original_path.stem}{original_path.suffix}"
+        
+        file_picker = FileSave(
+            title="Export Audio File",
+            filters=filters,
+            default_filename=default_name,
+            context="audio_export"
+        )
+        
+        self.app.push_screen(file_picker, self._handle_audio_export)
+    
+    def _handle_audio_export(self, path: str | None) -> None:
+        """Handle audio file export"""
+        if not path or not self.current_audio_file:
+            return
+        
+        try:
+            import shutil
+            source_path = Path(self.current_audio_file)
+            dest_path = Path(path)
+            
+            # If different format requested, we need conversion
+            if source_path.suffix.lower() != dest_path.suffix.lower():
+                # For now, just copy - format conversion would require audio service
+                self.app.notify(
+                    f"Format conversion not yet implemented. Exporting as {source_path.suffix}",
+                    severity="warning"
+                )
+                dest_path = dest_path.with_suffix(source_path.suffix)
+            
+            # Copy the file
+            shutil.copy2(source_path, dest_path)
+            self.app.notify(f"Audio exported to: {dest_path.name}", severity="success")
+            
+        except Exception as e:
+            logger.error(f"Failed to export audio: {e}")
+            self.app.notify(f"Export failed: {str(e)}", severity="error")
     
     def _select_reference_audio(self) -> None:
         """Select reference audio file for voice cloning"""
@@ -666,6 +924,87 @@ class TTSPlaygroundWidget(Widget):
         # Disable clear button
         self.query_one("#clear-reference-audio-btn", Button).disabled = True
         logger.info("Reference audio cleared")
+    
+    def _insert_random_text(self) -> None:
+        """Insert a random example text"""
+        import random
+        text_area = self.query_one("#tts-text-input", TextArea)
+        text_area.text = random.choice(self.example_texts)
+        text_area.focus()
+        self.app.notify("Random example text inserted", severity="information")
+    
+    def _clear_text(self) -> None:
+        """Clear the text input"""
+        text_area = self.query_one("#tts-text-input", TextArea)
+        text_area.clear()
+        text_area.focus()
+        self.app.notify("Text cleared", severity="information")
+    
+    def action_generate_tts(self) -> None:
+        """Keyboard shortcut action for generate"""
+        self._generate_tts()
+    
+    def action_random_text(self) -> None:
+        """Keyboard shortcut action for random text"""
+        self._insert_random_text()
+    
+    def action_clear_text(self) -> None:
+        """Keyboard shortcut action for clear text"""
+        self._clear_text()
+    
+    def action_play_audio(self) -> None:
+        """Keyboard shortcut action for play audio"""
+        if not self.query_one("#audio-play-btn", Button).disabled:
+            self._play_audio()
+    
+    def action_stop_audio(self) -> None:
+        """Keyboard shortcut action for stop audio"""
+        if not self.query_one("#stop-audio-btn", Button).disabled:
+            self._stop_audio()
+    
+    async def _update_progress_timer(self) -> None:
+        """Update progress bar during playback"""
+        import asyncio
+        from tldw_chatbook.TTS.audio_player import PlaybackState
+        from textual.widgets import ProgressBar
+        
+        while True:
+            try:
+                state = await self.app.audio_player.get_state()
+                if state == PlaybackState.PLAYING:
+                    position = await self.app.audio_player.get_position()
+                    duration = await self.app.audio_player.get_duration()
+                    
+                    if duration and duration > 0:
+                        # Update progress bar
+                        progress_bar = self.query_one("#audio-progress-bar", ProgressBar)
+                        progress_bar.update(progress=position, total=duration)
+                        
+                        # Update time display
+                        time_display = self.query_one("#audio-time-display")
+                        current_time = self._format_time(position)
+                        total_time = self._format_time(duration)
+                        time_display.update(f"{current_time} / {total_time}")
+                        
+                        # Show progress elements
+                        progress_bar.remove_class("hidden")
+                        time_display.remove_class("hidden")
+                elif state in [PlaybackState.IDLE, PlaybackState.FINISHED]:
+                    # Hide progress elements
+                    self.query_one("#audio-progress-bar").add_class("hidden")
+                    self.query_one("#audio-time-display").add_class("hidden")
+                    break
+                
+                await asyncio.sleep(0.1)  # Update every 100ms
+            except Exception as e:
+                logger.error(f"Error updating progress: {e}")
+                break
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds to MM:SS format"""
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes}:{secs:02d}"
 
 
 class TTSSettingsWidget(Widget):
@@ -1942,7 +2281,6 @@ class AudioBookGenerationWidget(Widget):
                             ("aac", "AAC"),
                             ("wav", "WAV"),
                         ],
-                        value="m4b",
                         id="audiobook-format-select"
                 )
                 
@@ -1976,8 +2314,12 @@ class AudioBookGenerationWidget(Widget):
             default_provider = get_cli_setting("app_tts", "default_provider", "openai")
             if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox"]:
                 provider_select.value = default_provider
+            
+            # Set default format to m4b
+            format_select = self.query_one("#audiobook-format-select", Select)
+            format_select.value = "m4b"
         except Exception as e:
-            logger.warning(f"Failed to set audiobook provider: {e}")
+            logger.warning(f"Failed to set audiobook defaults: {e}")
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
@@ -2051,13 +2393,116 @@ class AudioBookGenerationWidget(Widget):
     
     def _import_from_notes(self) -> None:
         """Import content from notes"""
-        # TODO: Implement note selection dialog
-        self.app.notify("Note import will be implemented when note selection dialog is ready", severity="information")
+        from tldw_chatbook.Widgets.note_selection_dialog import NoteSelectionDialog
+        from tldw_chatbook.DB.ChaChaNotes_DB import fetch_all_notes
+        
+        try:
+            # Fetch all notes from database
+            notes = fetch_all_notes()
+            if not notes:
+                self.app.notify("No notes found in database", severity="warning")
+                return
+            
+            # Show note selection dialog
+            def handle_note_selection(selected_ids: Optional[List[int]]) -> None:
+                if selected_ids:
+                    # Fetch full content for selected notes
+                    from tldw_chatbook.DB.ChaChaNotes_DB import fetch_note_by_id
+                    combined_content = []
+                    
+                    for note_id in selected_ids:
+                        note = fetch_note_by_id(note_id)
+                        if note:
+                            # Add note title as chapter if it exists
+                            if note.get('title'):
+                                combined_content.append(f"# {note['title']}\n")
+                            combined_content.append(note.get('content', ''))
+                            combined_content.append("\n\n")  # Separator between notes
+                    
+                    # Load combined content
+                    self.content_text = "\n".join(combined_content)
+                    content_preview = self.query_one("#content-preview", TextArea)
+                    preview_text = self.content_text[:1000] + "..." if len(self.content_text) > 1000 else self.content_text
+                    content_preview.load_text(preview_text)
+                    content_preview.disabled = False
+                    
+                    # Detect chapters if enabled
+                    if self.query_one("#auto-chapters-switch", Switch).value:
+                        self._detect_chapters()
+                    
+                    self.app.notify(f"Imported {len(selected_ids)} note(s)", severity="information")
+            
+            self.app.push_screen(NoteSelectionDialog(notes), handle_note_selection)
+            
+        except Exception as e:
+            logger.error(f"Failed to import from notes: {e}")
+            self.app.notify(f"Failed to import notes: {e}", severity="error")
     
     def _import_from_conversation(self) -> None:
         """Import content from conversation"""
-        # TODO: Implement conversation selection dialog
-        self.app.notify("Conversation import will be implemented when conversation selection dialog is ready", severity="information")
+        from tldw_chatbook.Widgets.conversation_selection_dialog import ConversationSelectionDialog
+        from tldw_chatbook.DB.ChaChaNotes_DB import fetch_all_conversations
+        
+        try:
+            # Fetch all conversations from database
+            conversations = fetch_all_conversations()
+            if not conversations:
+                self.app.notify("No conversations found in database", severity="warning")
+                return
+            
+            # Show conversation selection dialog
+            def handle_conversation_selection(selection: Optional[Dict[str, Any]]) -> None:
+                if selection:
+                    # Fetch messages for selected conversation
+                    from tldw_chatbook.DB.ChaChaNotes_DB import fetch_messages_by_conversation_id
+                    messages = fetch_messages_by_conversation_id(selection['conversation_id'])
+                    
+                    if not messages:
+                        self.app.notify("No messages found in conversation", severity="warning")
+                        return
+                    
+                    # Build content based on options
+                    content_parts = []
+                    for msg in messages:
+                        role = msg.get('role', 'unknown')
+                        content = msg.get('content', '')
+                        
+                        # Filter based on inclusion options
+                        if selection.get('include_all'):
+                            pass  # Include all messages
+                        elif selection.get('include_user') and role != 'user':
+                            continue
+                        elif selection.get('include_assistant') and role != 'assistant':
+                            continue
+                        
+                        # Format based on speaker option
+                        if selection.get('include_speakers'):
+                            speaker_name = "User" if role == "user" else "Assistant"
+                            content_parts.append(f"{speaker_name}: {content}")
+                        else:
+                            content_parts.append(content)
+                        
+                        content_parts.append("")  # Empty line between messages
+                    
+                    # Load combined content
+                    self.content_text = "\n".join(content_parts)
+                    content_preview = self.query_one("#content-preview", TextArea)
+                    preview_text = self.content_text[:1000] + "..." if len(self.content_text) > 1000 else self.content_text
+                    content_preview.load_text(preview_text)
+                    content_preview.disabled = False
+                    
+                    # Auto-detect chapters might not be suitable for conversations
+                    # but run it if enabled
+                    if self.query_one("#auto-chapters-switch", Switch).value:
+                        self._detect_chapters()
+                    
+                    self.app.notify(f"Imported conversation with {len(messages)} messages", severity="information")
+            
+            self.app.push_screen(ConversationSelectionDialog(conversations), handle_conversation_selection)
+            
+        except Exception as e:
+            logger.error(f"Failed to import from conversation: {e}")
+            self.app.notify(f"Failed to import conversation: {e}", severity="error")
     
     def _import_from_paste(self) -> None:
         """Import content from clipboard paste"""

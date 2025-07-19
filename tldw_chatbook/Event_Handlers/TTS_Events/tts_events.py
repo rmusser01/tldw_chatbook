@@ -403,11 +403,12 @@ class TTSEventHandler:
                 raise
                 
         except Exception as e:
+            from rich.markup import escape
             logger.error(f"TTS generation failed: {e}")
             await self.post_message(
                 TTSCompleteEvent(
                     message_id=message_id or "adhoc",
-                    error=str(e)
+                    error=escape(str(e))
                 )
             )
     

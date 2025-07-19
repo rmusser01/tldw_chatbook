@@ -2,11 +2,27 @@
 # Description: Kokoro TTS backend implementation supporting both ONNX and PyTorch
 #
 # Imports
+import asyncio
 import os
+import time
+import io
+import json
+import wave
+import tempfile
+import shutil
+import hashlib
 from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from pathlib import Path
 from loguru import logger
+
+# Optional requests import for model downloading
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    requests = None
 
 # Optional numpy import
 try:
@@ -51,6 +67,13 @@ class KokoroTTSBackend(LocalTTSBackend):
         if not NUMPY_AVAILABLE:
             raise ImportError("numpy is required for Kokoro TTS backend but is not installed. "
                             "Install it with: pip install numpy")
+        
+        # Lazy-loaded heavy dependencies
+        self._torch = None
+        self._nltk = None
+        self._transformers = None
+        self._kokoro_onnx = None
+        self._kokoro_pt_modules = None
         
         # Configuration
         self.use_onnx = self.config.get("KOKORO_USE_ONNX", True)
@@ -114,14 +137,15 @@ class KokoroTTSBackend(LocalTTSBackend):
         
         self.model_loaded = True
     
-    async def _initialize_onnx(self):
+    async def _initialize_onnx(self, shutil=None):
         """Initialize ONNX backend"""
         try:
             # Try to import kokoro_onnx
             try:
-                from kokoro_onnx import Kokoro, EspeakConfig
-            except ImportError:
-                logger.error("kokoro_onnx not installed. Please install with: pip install kokoro-onnx")
+                Kokoro = self.kokoro_onnx_module.Kokoro
+                EspeakConfig = self.kokoro_onnx_module.EspeakConfig
+            except Exception as e:
+                logger.error(f"Failed to load kokoro_onnx: {e}")
                 self.use_onnx = False
                 return
             
@@ -131,8 +155,8 @@ class KokoroTTSBackend(LocalTTSBackend):
                 # Download the model with checksum verification
                 try:
                     logger.info("Downloading Kokoro ONNX model...")
-                    import requests
-                    import hashlib
+                    if not REQUESTS_AVAILABLE:
+                        raise ImportError("requests library required for model download")
                     
                     url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/kokoro-v0_19.onnx"
                     # Expected SHA256 checksum for kokoro-v0_19.onnx
@@ -142,7 +166,6 @@ class KokoroTTSBackend(LocalTTSBackend):
                     response.raise_for_status()
                     
                     # Download to temporary file first
-                    import tempfile
                     with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
                         hasher = hashlib.sha256()
                         for chunk in response.iter_content(chunk_size=8192):
@@ -160,7 +183,6 @@ class KokoroTTSBackend(LocalTTSBackend):
                     
                     # Move to final location
                     os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-                    import shutil
                     shutil.move(tmp_path, self.model_path)
                     
                     logger.info(f"Downloaded ONNX model to {self.model_path}")
@@ -174,8 +196,8 @@ class KokoroTTSBackend(LocalTTSBackend):
                 # Download the voices.json with checksum verification
                 try:
                     logger.info("Downloading Kokoro voices.json...")
-                    import requests
-                    import hashlib
+                    if not REQUESTS_AVAILABLE:
+                        raise ImportError("requests library required for voices.json download")
                     
                     url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/voices.json"
                     
@@ -183,7 +205,6 @@ class KokoroTTSBackend(LocalTTSBackend):
                     response.raise_for_status()
                     
                     # Download to temporary file first
-                    import tempfile
                     with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
                         hasher = hashlib.sha256()
                         for chunk in response.iter_content(chunk_size=8192):
@@ -223,26 +244,68 @@ class KokoroTTSBackend(LocalTTSBackend):
             logger.error(f"KokoroTTSBackend: Failed to initialize ONNX backend: {e}", exc_info=True)
             self.use_onnx = False
     
+    @property
+    def torch(self):
+        """Lazy load torch module"""
+        if self._torch is None:
+            try:
+                import torch
+                self._torch = torch
+            except ImportError:
+                raise ImportError("PyTorch is required but not installed. Install with: pip install torch")
+        return self._torch
+    
+    @property
+    def nltk(self):
+        """Lazy load nltk module"""
+        if self._nltk is None:
+            try:
+                import nltk
+                self._nltk = nltk
+            except ImportError:
+                raise ImportError("NLTK is required but not installed. Install with: pip install nltk")
+        return self._nltk
+    
+    @property
+    def transformers(self):
+        """Lazy load transformers module"""
+        if self._transformers is None:
+            try:
+                import transformers
+                self._transformers = transformers
+            except ImportError:
+                raise ImportError("Transformers is required but not installed. Install with: pip install transformers")
+        return self._transformers
+    
+    @property
+    def kokoro_onnx_module(self):
+        """Lazy load kokoro_onnx module"""
+        if self._kokoro_onnx is None:
+            try:
+                import kokoro_onnx
+                self._kokoro_onnx = kokoro_onnx
+            except ImportError:
+                raise ImportError("kokoro_onnx not installed. Please install with: pip install kokoro-onnx")
+        return self._kokoro_onnx
+    
     async def _initialize_pytorch(self):
         """Initialize PyTorch backend"""
         try:
-            import torch
-            import nltk
-            from transformers import AutoTokenizer
             
             # Check device
-            if self.device == "cuda" and not torch.cuda.is_available():
+            if self.device == "cuda" and not self.torch.cuda.is_available():
                 logger.warning("CUDA requested but not available, falling back to CPU")
                 self.device = "cpu"
             
             # Ensure NLTK data is available
             try:
-                nltk.data.find('tokenizers/punkt')
+                self.nltk.data.find('tokenizers/punkt')
             except LookupError:
                 logger.info("Downloading NLTK punkt tokenizer...")
-                nltk.download('punkt', quiet=True)
+                self.nltk.download('punkt', quiet=True)
             
             # Initialize tokenizer
+            AutoTokenizer = self.transformers.AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
             
             # Model path setup
@@ -268,10 +331,6 @@ class KokoroTTSBackend(LocalTTSBackend):
             
             logger.info("KokoroTTSBackend: PyTorch backend initialized (model loading deferred)")
             
-        except ImportError as e:
-            logger.error(f"KokoroTTSBackend: Missing PyTorch dependencies: {e}")
-            logger.info("Install with: pip install torch transformers nltk")
-            raise
         except Exception as e:
             logger.error(f"KokoroTTSBackend: Failed to initialize PyTorch backend: {e}", exc_info=True)
             raise
@@ -300,7 +359,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         self, request: OpenAISpeechRequest
     ) -> AsyncGenerator[bytes, None]:
         """Generate audio using ONNX backend with advanced features"""
-        import time
         start_time = time.time()
         
         try:
@@ -656,26 +714,33 @@ class KokoroTTSBackend(LocalTTSBackend):
     def _load_pytorch_model(self):
         """Load PyTorch model"""
         try:
-            import torch
             # Import Kokoro modules dynamically
-            try:
-                from App_Function_Libraries.TTS.Kokoro.models import build_model
-                self.kokoro_model_pt = build_model(self.model_path, device=self.device)
-                logger.info(f"Loaded Kokoro PyTorch model from {self.model_path}")
-            except ImportError:
-                logger.error("Kokoro PyTorch modules not found in App_Function_Libraries")
-                raise
+            if self._kokoro_pt_modules is None:
+                try:
+                    from App_Function_Libraries.TTS.Kokoro.models import build_model
+                    from App_Function_Libraries.TTS.Kokoro.kokoro import generate
+                    self._kokoro_pt_modules = {
+                        'build_model': build_model,
+                        'generate': generate
+                    }
+                except ImportError:
+                    logger.error("Kokoro PyTorch modules not found in App_Function_Libraries")
+                    raise
+            
+            build_model = self._kokoro_pt_modules['build_model']
+            self.kokoro_model_pt = build_model(self.model_path, device=self.device)
+            logger.info(f"Loaded Kokoro PyTorch model from {self.model_path}")
         except Exception as e:
             logger.error(f"Failed to load PyTorch model: {e}")
             raise
     
     async def _download_model_if_needed(self):
         """Download Kokoro model if not present"""
-        import os
         if not os.path.exists(self.model_path):
             logger.info("Downloading Kokoro PyTorch model...")
             try:
-                import requests
+                if not REQUESTS_AVAILABLE:
+                    raise ImportError("requests library required for model download")
                 url = "https://huggingface.co/hexgrad/kLegacy/resolve/main/v0.19/kokoro-v0_19.pth?download=true"
                 response = requests.get(url, stream=True)
                 response.raise_for_status()
@@ -693,12 +758,12 @@ class KokoroTTSBackend(LocalTTSBackend):
     
     async def _download_voice_if_needed(self, voice: str):
         """Download voice pack if not present"""
-        import os
         voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
         if not os.path.exists(voice_path):
             logger.info(f"Downloading voice pack: {voice}")
             try:
-                import requests
+                if not REQUESTS_AVAILABLE:
+                    raise ImportError("requests library required for voice download")
                 url = f"https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{voice}.pt?download=true"
                 response = requests.get(url, stream=True)
                 response.raise_for_status()
@@ -715,23 +780,16 @@ class KokoroTTSBackend(LocalTTSBackend):
     
     def _load_voice_pack(self, voice: str):
         """Load a voice pack for PyTorch"""
-        import os
-        import torch
-        
         voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
         if not os.path.exists(voice_path):
             raise FileNotFoundError(f"Voice pack not found: {voice_path}")
         
-        return torch.load(voice_path, weights_only=True).to(self.device)
+        return self.torch.load(voice_path, weights_only=True).to(self.device)
     
     async def _generate_pytorch_stream(
         self, request: OpenAISpeechRequest
     ) -> AsyncGenerator[bytes, None]:
         """Generate audio using PyTorch backend"""
-        import time
-        import torch
-        import nltk
-        
         start_time = time.time()
         
         try:
@@ -757,8 +815,11 @@ class KokoroTTSBackend(LocalTTSBackend):
             # Split text into chunks
             text_chunks = self._split_text_for_pytorch(request.input)
             
-            # Import generation function
-            from App_Function_Libraries.TTS.Kokoro.kokoro import generate
+            # Get generation function from cached modules
+            if self._kokoro_pt_modules is None:
+                # Load modules if not already loaded
+                self._load_pytorch_model()
+            generate = self._kokoro_pt_modules['generate']
             
             # Generate and stream audio for each chunk
             token_count = 0
@@ -799,7 +860,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                 )
                 
                 # Convert to numpy
-                if isinstance(audio_tensor, torch.Tensor):
+                if isinstance(audio_tensor, self.torch.Tensor):
                     audio_data = audio_tensor.cpu().numpy()
                 else:
                     audio_data = audio_tensor
@@ -876,8 +937,7 @@ class KokoroTTSBackend(LocalTTSBackend):
         if self.tokenizer:
             # Use NLTK for sentence splitting
             try:
-                import nltk
-                sentences = nltk.sent_tokenize(text)
+                sentences = self.nltk.sent_tokenize(text)
                 
                 chunks = []
                 current_chunk = []
@@ -940,7 +1000,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         self, text: str, voice: str, speed: float
     ) -> Tuple[bytes, List[Dict[str, Any]]]:
         """Generate audio with timestamps using ONNX backend"""
-        import time
         
         # Map voice
         kokoro_voice = map_voice_to_kokoro(voice)
@@ -967,7 +1026,6 @@ class KokoroTTSBackend(LocalTTSBackend):
             return b"", []
         
         # Combine all samples
-        import numpy as np
         full_audio = np.concatenate(samples_list)
         
         # Estimate word timings based on audio length and word count
@@ -996,8 +1054,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         audio_bytes = int16_samples.tobytes()
         
         # Wrap in WAV format
-        import io
-        import wave
         buffer = io.BytesIO()
         with wave.open(buffer, 'wb') as wav_file:
             wav_file.setnchannels(1)  # Mono
@@ -1011,8 +1067,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         self, text: str, voice: str, speed: float
     ) -> Tuple[bytes, List[Dict[str, Any]]]:
         """Generate audio with timestamps using PyTorch backend"""
-        import torch
-        
         # Ensure model is loaded
         if not self.kokoro_model_pt:
             await self._download_model_if_needed()
@@ -1025,8 +1079,11 @@ class KokoroTTSBackend(LocalTTSBackend):
         # Detect language
         lang = 'a' if kokoro_voice.startswith('a') else 'b'
         
-        # Import generation function
-        from App_Function_Libraries.TTS.Kokoro.kokoro import generate
+        # Get generation function from cached modules
+        if self._kokoro_pt_modules is None:
+            # Load modules if not already loaded
+            self._load_pytorch_model()
+        generate = self._kokoro_pt_modules['generate']
         
         # Generate audio with phonemes
         audio_tensor, phonemes = await asyncio.to_thread(
@@ -1039,7 +1096,7 @@ class KokoroTTSBackend(LocalTTSBackend):
         )
         
         # Convert to numpy
-        if isinstance(audio_tensor, torch.Tensor):
+        if isinstance(audio_tensor, self.torch.Tensor):
             audio_data = audio_tensor.cpu().numpy()
         else:
             audio_data = audio_tensor
@@ -1048,8 +1105,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         word_timestamps = self._phonemes_to_word_timestamps(text, phonemes, len(audio_data) / 24000)
         
         # Convert audio to WAV bytes
-        import io
-        import wave
         buffer = io.BytesIO()
         with wave.open(buffer, 'wb') as wav_file:
             wav_file.setnchannels(1)  # Mono
@@ -1107,7 +1162,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         
         if blend_file.exists():
             try:
-                import json
                 with open(blend_file, 'r') as f:
                     blends = json.load(f)
                 logger.info(f"Loaded {len(blends)} saved voice blends")
@@ -1120,7 +1174,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         """Save voice blends to disk"""
         blend_file = self.voice_blends_dir / "voice_blends.json"
         try:
-            import json
             with open(blend_file, 'w') as f:
                 json.dump(self.saved_blends, f, indent=2)
             logger.info(f"Saved {len(self.saved_blends)} voice blends")

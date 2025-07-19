@@ -141,7 +141,30 @@ class TTSBackendManager:
             config.update(self.app_config["app_tts"])
         
         # Special handling for specific backends - set defaults first
-        if backend_id.startswith("local_kokoro"):
+        if backend_id.startswith("openai_official"):
+            # Add OpenAI API key from various sources
+            import os
+            openai_key = None
+            
+            # Check environment variable
+            openai_key = os.getenv("OPENAI_API_KEY")
+            
+            # Check api_settings.openai section
+            if not openai_key and "api_settings.openai" in self.app_config:
+                openai_key = self.app_config["api_settings.openai"].get("api_key")
+            
+            # Check openai_api section (legacy)
+            if not openai_key and "openai_api" in self.app_config:
+                openai_key = self.app_config["openai_api"].get("api_key")
+            
+            # Check API section
+            if not openai_key and "API" in self.app_config:
+                openai_key = self.app_config["API"].get("openai_api_key")
+                
+            if openai_key:
+                config["OPENAI_API_KEY"] = openai_key
+                
+        elif backend_id.startswith("local_kokoro"):
             # Get Kokoro-specific paths from environment or config
             import os
             kokoro_defaults = {

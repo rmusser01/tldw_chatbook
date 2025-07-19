@@ -87,6 +87,11 @@ class STTSEventHandler:
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
         try:
+            from tldw_chatbook.config import load_cli_config_and_ensure_existence
+            
+            # Load the full config to get API keys
+            full_config = load_cli_config_and_ensure_existence()
+            
             # Get TTS service instance
             app_config = {
                 "app_tts": {
@@ -97,6 +102,15 @@ class STTSEventHandler:
                     "default_speed": get_cli_setting("app_tts", "default_speed", 1.0),
                 }
             }
+            
+            # Add API settings sections if they exist
+            if "api_settings.openai" in full_config:
+                app_config["api_settings.openai"] = full_config["api_settings.openai"]
+            if "openai_api" in full_config:
+                app_config["openai_api"] = full_config["openai_api"]
+            if "API" in full_config:
+                app_config["API"] = full_config["API"]
+                
             self._stts_service = await get_tts_service(app_config)
             logger.info("S/TT/S service initialized successfully")
         except Exception as e:
@@ -115,22 +129,46 @@ class STTSEventHandler:
         
         self._is_generating = True
         
+        # Get playground widget first
         try:
+            playground = self.app.query_one("TTSPlaygroundWidget")
+        except Exception:
+            playground = None
+        
+        try:
+            # Validate and clean format
+            format_value = event.format
+            if isinstance(format_value, tuple):
+                format_value = format_value[0]
+            elif not format_value or format_value == Select.BLANK or str(format_value) == "Select.BLANK":
+                format_value = "mp3"
+            
+            # Additional validation for allowed formats
+            valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
+            if format_value not in valid_formats:
+                logger.warning(f"Invalid format value '{format_value}', defaulting to mp3")
+                format_value = "mp3"
+            
+            logger.debug(f"TTS Request - format: {format_value}, provider: {event.provider}")
+            
             # Create TTS request
             request = OpenAISpeechRequest(
                 model=event.model,
                 input=event.text,
                 voice=event.voice,
-                response_format=event.format,
+                response_format=format_value,
                 speed=event.speed
             )
             
-            # Map provider to internal model ID
-            if event.provider == "openai":
-                internal_model_id = f"openai_official_{event.model}"
-            elif event.provider == "elevenlabs":
+            # Map provider to internal model ID (handle case-insensitive)
+            provider_lower = event.provider.lower() if event.provider else ""
+            if provider_lower == "openai":
+                # Also convert model to lowercase
+                model_lower = event.model.lower().replace("-", "")  # Convert TTS-1 to tts1
+                internal_model_id = f"openai_official_{model_lower}"
+            elif provider_lower == "elevenlabs":
                 internal_model_id = f"elevenlabs_{event.model}"
-            elif event.provider == "kokoro":
+            elif provider_lower == "kokoro":
                 internal_model_id = "local_kokoro_default_onnx"
                 # Handle Kokoro language code
                 if event.extra_params.get("language"):
@@ -140,7 +178,7 @@ class STTSEventHandler:
                     if not event.voice.startswith(f"{lang_code}"):
                         # Voice might need language adjustment
                         pass  # The voice already includes the language prefix
-            elif event.provider == "chatterbox":
+            elif provider_lower == "chatterbox":
                 internal_model_id = "local_chatterbox_default"
                 # Pass voice and extra params to the request
                 if event.voice.startswith("custom:"):
@@ -149,11 +187,13 @@ class STTSEventHandler:
                 # Add extra params to request for Chatterbox
                 if event.extra_params:
                     request.extra_params = event.extra_params
+            elif provider_lower == "alltalk":
+                internal_model_id = f"alltalk_{event.model}"
             else:
+                # Default case - use the model as-is
                 internal_model_id = event.model
             
             # Log to playground
-            playground = self.app.query_one("TTSPlaygroundWidget")
             if playground:
                 log = playground.query_one("#tts-generation-log", RichLog)
                 log.write(f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]")
@@ -187,12 +227,16 @@ class STTSEventHandler:
                 log.write(f"[bold green]✓ Generation complete! File: {self._current_audio_file.name}[/bold green]")
                 log.write(f"Size: {len(audio_data) / 1024:.1f} KB")
                 
-                # Enable playback controls
-                playground.query_one("#audio-play-btn", Button).disabled = False
-                playground.query_one("#audio-export-btn", Button).disabled = False
-                playground.query_one("#audio-player-status").update(
-                    f"Audio ready: {self._current_audio_file.name}"
-                )
+                # Call the widget's completion method
+                if hasattr(playground, '_generation_complete'):
+                    playground._generation_complete(True, self._current_audio_file)
+                else:
+                    # Fallback to direct UI updates
+                    playground.query_one("#audio-play-btn", Button).disabled = False
+                    playground.query_one("#audio-export-btn", Button).disabled = False
+                    playground.query_one("#audio-player-status").update(
+                        f"Audio ready: {self._current_audio_file.name}"
+                    )
             
             self.app.notify("TTS generation complete!", severity="information")
             
@@ -201,12 +245,22 @@ class STTSEventHandler:
             if playground:
                 log = playground.query_one("#tts-generation-log", RichLog)
                 log.write(f"[bold red]✗ Generation failed: {e}[/bold red]")
-            self.app.notify(f"TTS generation failed: {e}", severity="error")
+                
+                # Call the widget's completion method
+                if hasattr(playground, '_generation_complete'):
+                    playground._generation_complete(False)
+                
+            from rich.markup import escape
+            self.app.notify(f"TTS generation failed: {escape(str(e))}", severity="error")
         finally:
             self._is_generating = False
-            # Re-enable generate button
+            # Re-enable generate button is now handled in _generation_complete
+            # But ensure it's re-enabled as a fallback
             if playground:
-                playground.query_one("#tts-generate-btn", Button).disabled = False
+                try:
+                    playground.query_one("#tts-generate-btn", Button).disabled = False
+                except Exception:
+                    pass
     
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save"""
