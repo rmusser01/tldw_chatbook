@@ -7,16 +7,17 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 from loguru import logger
-
+import tempfile
+#
 # Third-party imports
 from textual.message import Message
 from textual.widgets import Button, TextArea, Select, Input, RichLog
-
+#
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent
 from tldw_chatbook.config import get_cli_setting
-
+#
 #######################################################################################################################
 #
 # Event Messages
@@ -131,10 +132,27 @@ class STTSEventHandler:
         
         # Get playground widget first
         try:
-            playground = self.app.query_one("TTSPlaygroundWidget")
-        except Exception:
+            from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
+            playground = self.app.query_one(TTSPlaygroundWidget)
+            logger.debug(f"Found playground widget: {playground}")
+        except Exception as e:
+            logger.warning(f"Could not find TTSPlaygroundWidget: {e}")
             playground = None
         
+        # Run the generation in a worker thread to avoid blocking UI
+        if playground and hasattr(playground, 'run_worker'):
+            # Use the widget's worker to keep UI responsive
+            # Create a wrapper function that captures the needed variables
+            async def worker():
+                await self._generate_tts_worker(event, playground)
+            
+            playground.run_worker(worker, thread=True)
+        else:
+            # Fallback to direct async execution
+            await self._generate_tts_worker(event, playground)
+    
+    async def _generate_tts_worker(self, event: STTSPlaygroundGenerateEvent, playground=None) -> None:
+        """Worker function for TTS generation"""
         try:
             # Validate and clean format
             format_value = event.format
@@ -149,14 +167,19 @@ class STTSEventHandler:
                 logger.warning(f"Invalid format value '{format_value}', defaulting to mp3")
                 format_value = "mp3"
             
-            logger.debug(f"TTS Request - format: {format_value}, provider: {event.provider}")
+            # Store the requested format for later conversion
+            requested_format = format_value
             
-            # Create TTS request
+            # For non-WAV formats, generate WAV first to avoid choppiness
+            generation_format = "wav"
+            logger.debug(f"TTS Request - requested format: {requested_format}, generation format: {generation_format}, provider: {event.provider}")
+            
+            # Create TTS request with generation format (WAV for quality)
             request = OpenAISpeechRequest(
                 model=event.model,
                 input=event.text,
                 voice=event.voice,
-                response_format=format_value,
+                response_format=generation_format,
                 speed=event.speed
             )
             
@@ -213,11 +236,20 @@ class STTSEventHandler:
             
             # Log to playground
             if playground:
-                log = playground.query_one("#tts-generation-log", RichLog)
-                log.write(f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]")
+                # Use call_from_thread if we're in a worker thread
+                def update_log(msg):
+                    log = playground.query_one("#tts-generation-log", RichLog)
+                    log.write(msg)
+                
+                if hasattr(playground, 'call_from_thread'):
+                    playground.call_from_thread(update_log, f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]")
+                else:
+                    update_log(f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]")
             
             # Generate audio with provider-specific settings
             audio_data = b""
+            chunk_count = 0
+            total_size = 0
             
             # Pass extra params to the service if needed
             if event.provider == "elevenlabs" and event.extra_params:
@@ -229,44 +261,97 @@ class STTSEventHandler:
                 
             async for chunk in self._stts_service.generate_audio_stream(request, internal_model_id):
                 audio_data += chunk
+                chunk_count += 1
+                total_size = len(audio_data)
+                
+                # Update progress periodically (every 10 chunks)
+                if chunk_count % 10 == 0 and playground:
+                    progress_msg = f"[cyan]Generating... {total_size / 1024:.1f} KB received[/cyan]"
+                    if hasattr(playground, 'call_from_thread'):
+                        playground.call_from_thread(update_log, progress_msg)
+                    else:
+                        update_log(progress_msg)
             
-            # Save to temporary file
+            # Save to temporary WAV file first
             import tempfile
+            wav_file = None
             with tempfile.NamedTemporaryFile(
                 delete=False,
-                suffix=f".{event.format}",
+                suffix=".wav",
                 prefix="stts_playground_"
             ) as tmp_file:
                 tmp_file.write(audio_data)
-                self._current_audio_file = Path(tmp_file.name)
+                wav_file = Path(tmp_file.name)
+            
+            # Convert to requested format if needed
+            if requested_format != "wav":
+                if playground:
+                    def update_converting():
+                        log = playground.query_one("#tts-generation-log", RichLog)
+                        log.write(f"[yellow]Converting to {requested_format.upper()}...[/yellow]")
+                    
+                    if hasattr(playground, 'call_from_thread'):
+                        playground.call_from_thread(update_converting)
+                    else:
+                        update_converting()
+                
+                # Convert audio format
+                converted_file = await self._convert_audio_format(wav_file, requested_format)
+                if converted_file:
+                    # Delete the temporary WAV file
+                    try:
+                        wav_file.unlink()
+                    except (FileNotFoundError, PermissionError) as e:
+                        logger.warning(f"Failed to delete temporary WAV file: {e}")
+                        pass
+                    self._current_audio_file = converted_file
+                else:
+                    # Conversion failed, use WAV file
+                    logger.warning(f"Failed to convert to {requested_format}, using WAV")
+                    self._current_audio_file = wav_file
+            else:
+                self._current_audio_file = wav_file
             
             # Update UI
             if playground:
-                log.write(f"[bold green]✓ Generation complete! File: {self._current_audio_file.name}[/bold green]")
-                log.write(f"Size: {len(audio_data) / 1024:.1f} KB")
+                def complete_generation():
+                    log = playground.query_one("#tts-generation-log", RichLog)
+                    log.write(f"[bold green]✓ Generation complete! File: {self._current_audio_file.name}[/bold green]")
+                    log.write(f"Size: {len(audio_data) / 1024:.1f} KB")
+                    
+                    # Call the widget's completion method
+                    if hasattr(playground, '_generation_complete'):
+                        playground._generation_complete(True, self._current_audio_file)
+                    else:
+                        # Fallback to direct UI updates
+                        playground.query_one("#audio-play-btn", Button).disabled = False
+                        playground.query_one("#audio-export-btn", Button).disabled = False
+                        playground.query_one("#audio-player-status").update(
+                            f"Audio ready: {self._current_audio_file.name}"
+                        )
                 
-                # Call the widget's completion method
-                if hasattr(playground, '_generation_complete'):
-                    playground._generation_complete(True, self._current_audio_file)
+                if hasattr(playground, 'call_from_thread'):
+                    playground.call_from_thread(complete_generation)
                 else:
-                    # Fallback to direct UI updates
-                    playground.query_one("#audio-play-btn", Button).disabled = False
-                    playground.query_one("#audio-export-btn", Button).disabled = False
-                    playground.query_one("#audio-player-status").update(
-                        f"Audio ready: {self._current_audio_file.name}"
-                    )
+                    complete_generation()
             
             self.app.notify("TTS generation complete!", severity="information")
             
         except Exception as e:
             logger.error(f"TTS generation failed: {e}")
             if playground:
-                log = playground.query_one("#tts-generation-log", RichLog)
-                log.write(f"[bold red]✗ Generation failed: {e}[/bold red]")
+                def handle_error():
+                    log = playground.query_one("#tts-generation-log", RichLog)
+                    log.write(f"[bold red]✗ Generation failed: {e}[/bold red]")
+                    
+                    # Call the widget's completion method
+                    if hasattr(playground, '_generation_complete'):
+                        playground._generation_complete(False)
                 
-                # Call the widget's completion method
-                if hasattr(playground, '_generation_complete'):
-                    playground._generation_complete(False)
+                if hasattr(playground, 'call_from_thread'):
+                    playground.call_from_thread(handle_error)
+                else:
+                    handle_error()
                 
             from rich.markup import escape
             self.app.notify(f"TTS generation failed: {escape(str(e))}", severity="error")
@@ -277,7 +362,7 @@ class STTSEventHandler:
             if playground:
                 try:
                     playground.query_one("#tts-generate-btn", Button).disabled = False
-                except Exception:
+                except (OSError, FileNotFoundError):
                     pass
     
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
@@ -331,6 +416,58 @@ class STTSEventHandler:
         except Exception as e:
             logger.error(f"Failed to save settings: {e}")
             self.app.notify(f"Failed to save settings: {e}", severity="error")
+    
+    async def _convert_audio_format(self, input_file: Path, output_format: str) -> Optional[Path]:
+        """Convert audio file to a different format using ffmpeg"""
+        try:
+            # Create output file with requested format
+            output_file = input_file.with_suffix(f".{output_format}")
+            
+            # Use ffmpeg for conversion
+            cmd = [
+                "ffmpeg",
+                "-i", str(input_file),
+                "-y",  # Overwrite output files
+                "-loglevel", "error",  # Suppress verbose output
+            ]
+            
+            # Add format-specific options
+            if output_format == "mp3":
+                # High quality MP3 encoding
+                cmd.extend(["-codec:a", "libmp3lame", "-b:a", "192k"])
+            elif output_format == "opus":
+                cmd.extend(["-codec:a", "libopus", "-b:a", "128k"])
+            elif output_format == "aac":
+                cmd.extend(["-codec:a", "aac", "-b:a", "192k"])
+            elif output_format == "flac":
+                cmd.extend(["-codec:a", "flac"])
+            
+            cmd.append(str(output_file))
+            
+            # Run conversion asynchronously
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # Wait for the process to complete
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                logger.info(f"Successfully converted audio to {output_format}")
+                return output_file
+            else:
+                stderr_text = stderr.decode('utf-8') if stderr else "Unknown error"
+                logger.error(f"ffmpeg conversion failed: {stderr_text}")
+                return None
+                
+        except FileNotFoundError:
+            logger.error("ffmpeg not found. Please install ffmpeg for audio format conversion.")
+            return None
+        except Exception as e:
+            logger.error(f"Audio conversion failed: {e}")
+            return None
     
     async def handle_audiobook_generate(self, event: STTSAudioBookGenerateEvent) -> None:
         """Handle audiobook generation"""

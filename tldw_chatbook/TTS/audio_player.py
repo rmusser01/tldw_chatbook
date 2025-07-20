@@ -187,6 +187,7 @@ class SimpleAudioPlayer:
             True if paused successfully
         """
         with self._lock:
+            logger.debug(f"Pause called - current state: {self._current.state}, supports pause: {self._supports_pause}")
             if self._current.state != PlaybackState.PLAYING:
                 return False
             
@@ -276,14 +277,19 @@ class SimpleAudioPlayer:
             True if stopped successfully
         """
         with self._lock:
-            if self._current.process and self._current.state in [PlaybackState.PLAYING, PlaybackState.PAUSED]:
-                try:
-                    self._current.process.terminate()
-                    self._current.process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self._current.process.kill()
-                except Exception as e:
-                    logger.error(f"Error stopping playback: {e}")
+            logger.debug(f"Stop called - current state: {self._current.state}, process exists: {self._current.process is not None}")
+            if self._current.process or self._current.state in [PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.FINISHED]:
+                # Only try to terminate if process exists
+                if self._current.process:
+                    try:
+                        # Check if process is still running
+                        if self._current.process.poll() is None:
+                            self._current.process.terminate()
+                            self._current.process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self._current.process.kill()
+                    except Exception as e:
+                        logger.error(f"Error stopping playback: {e}")
                 
                 # Clean up mpv socket if exists
                 if self._player_name == "mpv" and hasattr(self, '_mpv_socket'):
@@ -292,13 +298,16 @@ class SimpleAudioPlayer:
                     except:
                         pass
                 
+                # Always reset all state when cleaning up
                 self._current.process = None
                 self._current.state = PlaybackState.IDLE
                 self._current.start_time = None
                 self._current.pause_time = None
                 self._current.position = 0.0
-                logger.info("Playback stopped")
+                logger.info("Playback stopped/cleaned up")
                 return True
+            else:
+                logger.debug(f"Cannot stop - process exists: {self._current.process is not None}, state: {self._current.state}")
         
         return False
     
@@ -344,6 +353,17 @@ class SimpleAudioPlayer:
                 if self._current.state == PlaybackState.PLAYING:
                     self._current.state = PlaybackState.FINISHED
                     logger.debug("Playback finished")
+    
+    def cleanup(self) -> None:
+        """Clean up resources - call this before app exit."""
+        self.stop()
+        # Clean up any remaining resources
+        if hasattr(self, '_mpv_socket') and self._mpv_socket:
+            try:
+                Path(self._mpv_socket).unlink(missing_ok=True)
+            except:
+                pass
+        logger.debug("Audio player cleaned up")
 
 
 # Global player instance
@@ -378,46 +398,75 @@ class AsyncAudioPlayer:
     
     def __init__(self):
         self._player = get_audio_player()
+        self._executor = None
+    
+    def _get_executor(self):
+        """Get or create thread pool executor"""
+        if self._executor is None:
+            import concurrent.futures
+            # Create a daemon thread pool that won't block exit
+            self._executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="AudioPlayer",
+                initializer=lambda: None
+            )
+            # Mark threads as daemon
+            import threading
+            for thread in threading.enumerate():
+                if thread.name.startswith("AudioPlayer"):
+                    thread.daemon = True
+        return self._executor
     
     async def play(self, file_path: Path) -> bool:
         """Play audio file asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._player.play, file_path)
+        return await loop.run_in_executor(self._get_executor(), self._player.play, file_path)
     
     async def pause(self) -> bool:
         """Pause playback asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._player.pause)
+        return await loop.run_in_executor(self._get_executor(), self._player.pause)
     
     async def resume(self) -> bool:
         """Resume playback asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._player.resume)
+        return await loop.run_in_executor(self._get_executor(), self._player.resume)
     
     async def stop(self) -> bool:
         """Stop playback asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._player.stop)
+        return await loop.run_in_executor(self._get_executor(), self._player.stop)
     
     async def is_playing(self) -> bool:
         """Check if playing asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._player.is_playing)
+        return await loop.run_in_executor(self._get_executor(), self._player.is_playing)
     
     async def get_state(self) -> PlaybackState:
         """Get state asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._player.get_state)
+        return await loop.run_in_executor(self._get_executor(), self._player.get_state)
     
     async def get_position(self) -> float:
         """Get playback position asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._player.get_position)
+        return await loop.run_in_executor(self._get_executor(), self._player.get_position)
     
     async def get_duration(self) -> Optional[float]:
         """Get duration asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._player.get_duration)
+        return await loop.run_in_executor(self._get_executor(), self._player.get_duration)
+    
+    async def cleanup(self) -> None:
+        """Clean up resources asynchronously"""
+        await self.stop()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(self._get_executor(), self._player.cleanup)
+        
+        # Shutdown our executor
+        if self._executor:
+            self._executor.shutdown(wait=False)
+            self._executor = None
 
 #
 # End of audio_player.py

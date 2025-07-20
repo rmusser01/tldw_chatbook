@@ -156,6 +156,7 @@ class TTSPlaygroundWidget(Widget):
         super().__init__()
         self.current_audio_file = None
         self.reference_audio_path = None
+        self._progress_timer_task = None
         self.example_texts = [
             "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
             "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
@@ -217,15 +218,15 @@ class TTSPlaygroundWidget(Widget):
                 yield Label("Language:", classes="form-label")
                 yield Select(
                     options=[
-                        ("a", "American English"),
-                        ("b", "British English"),
-                        ("j", "Japanese"),
-                        ("z", "Mandarin Chinese"),
-                        ("e", "Spanish"),
-                        ("f", "French"),
-                        ("h", "Hindi"),
-                        ("i", "Italian"),
-                        ("p", "Brazilian Portuguese"),
+                        ("en-us", "American English"),
+                        ("en-gb", "British English"),
+                        ("ja", "Japanese"),
+                        ("zh", "Mandarin Chinese"),
+                        ("es", "Spanish"),
+                        ("fr", "French"),
+                        ("hi", "Hindi"),
+                        ("it", "Italian"),
+                        ("pt-br", "Brazilian Portuguese"),
                     ],
                     id="tts-language-select"
                 )
@@ -755,24 +756,36 @@ class TTSPlaygroundWidget(Widget):
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
+        logger.debug(f"TTSPlaygroundWidget received button press: {event.button.id}")
         if event.button.id == "tts-generate-btn":
             self._generate_tts()
+            event.stop()  # Prevent event from bubbling up
         elif event.button.id == "tts-random-text-btn":
             self._insert_random_text()
+            event.stop()
         elif event.button.id == "tts-clear-text-btn":
             self._clear_text()
+            event.stop()
         elif event.button.id == "audio-play-btn":
             self._play_audio()
+            event.stop()
         elif event.button.id == "pause-audio-btn":
+            logger.debug("Pause button clicked")
             self._pause_audio()
+            event.stop()
         elif event.button.id == "stop-audio-btn":
+            logger.debug("Stop button clicked")
             self._stop_audio()
+            event.stop()
         elif event.button.id == "audio-export-btn":
             self._export_audio()
+            event.stop()
         elif event.button.id == "reference-audio-btn":
             self._select_reference_audio()
+            event.stop()
         elif event.button.id == "clear-reference-audio-btn":
             self._clear_reference_audio()
+            event.stop()
     
     def _generate_tts(self) -> None:
         """Generate TTS audio"""
@@ -929,6 +942,24 @@ class TTSPlaygroundWidget(Widget):
     
     def _play_audio(self) -> None:
         """Play the generated audio"""
+        logger.debug(f"_play_audio called, current_audio_file: {self.current_audio_file}")
+        
+        if not self.current_audio_file:
+            self.app.notify("No audio file to play", severity="warning")
+            return
+        
+        # Convert to Path if it's a string
+        if isinstance(self.current_audio_file, str):
+            audio_path = Path(self.current_audio_file)
+        else:
+            audio_path = self.current_audio_file
+            
+        logger.debug(f"Audio path: {audio_path}, exists: {audio_path.exists() if audio_path else False}")
+        
+        if not audio_path.exists():
+            self.app.notify(f"Audio file not found: {audio_path.name}", severity="warning")
+            return
+            
         if self._ensure_audio_player():
             # Enable pause and stop buttons
             self.query_one("#pause-audio-btn", Button).disabled = False
@@ -936,28 +967,48 @@ class TTSPlaygroundWidget(Widget):
             self.query_one("#audio-player-status", Static).update("Playing...")
             
             # Use the new audio player method
-            self.run_worker(self._play_audio_async)
+            self.run_worker(self._play_audio_async, exclusive=True)
         else:
             self.app.notify("Audio playback not available", severity="warning")
     
     async def _play_audio_async(self) -> None:
         """Play audio asynchronously using the audio player"""
         try:
-            # Get the current audio file from the STTS handler
-            if hasattr(self.app, '_stts_handler') and self.app._stts_handler._current_audio_file:
-                audio_file = self.app._stts_handler._current_audio_file
-                success = await self.app.audio_player.play(audio_file)
-                if success:
-                    # Start progress timer
-                    import asyncio
-                    asyncio.create_task(self._update_progress_timer())
+            # Use the stored audio file path - ensure it's a Path object
+            if self.current_audio_file:
+                # Convert to Path if it's a string
+                if isinstance(self.current_audio_file, str):
+                    audio_path = Path(self.current_audio_file)
                 else:
-                    self.app.notify("Failed to start playback", severity="error")
+                    audio_path = self.current_audio_file
+                    
+                if audio_path.exists():
+                    success = await self.app.audio_player.play(audio_path)
+                    if success:
+                        # Cancel any existing progress timer
+                        if self._progress_timer_task and not self._progress_timer_task.done():
+                            self._progress_timer_task.cancel()
+                        
+                        # Start new progress timer
+                        import asyncio
+                        self._progress_timer_task = asyncio.create_task(self._update_progress_timer())
+                    else:
+                        self.app.notify("Failed to start playback", severity="error")
+                        # Reset button states on failure
+                        self.query_one("#pause-audio-btn", Button).disabled = True
+                        self.query_one("#stop-audio-btn", Button).disabled = True
+                        self.query_one("#audio-player-status", Static).update("Playback failed")
+                else:
+                    self.app.notify(f"Audio file not found: {audio_path.name}", severity="warning")
             else:
                 self.app.notify("No audio file to play", severity="warning")
         except Exception as e:
             logger.error(f"Error playing audio: {e}")
             self.app.notify(f"Playback error: {str(e)}", severity="error")
+            # Reset button states on error
+            self.query_one("#pause-audio-btn", Button).disabled = True
+            self.query_one("#stop-audio-btn", Button).disabled = True
+            self.query_one("#audio-player-status", Static).update("Playback error")
     
     def _ensure_audio_player(self) -> bool:
         """Ensure audio player is initialized (lazy loading)"""
@@ -975,17 +1026,26 @@ class TTSPlaygroundWidget(Widget):
     
     def _pause_audio(self) -> None:
         """Pause audio playback"""
+        logger.debug("_pause_audio called")
         if self._ensure_audio_player():
-            self.run_worker(self._pause_audio_async)
+            logger.debug("Audio player available, running pause worker")
+            self.run_worker(self._pause_audio_async, exclusive=True)
         else:
+            logger.debug("Audio player not available")
             self.app.notify("Audio player not available", severity="warning")
     
     async def _pause_audio_async(self) -> None:
         """Pause audio playback asynchronously"""
         try:
             from tldw_chatbook.TTS.audio_player import PlaybackState
+            import asyncio
+            
+            logger.debug("_pause_audio_async called")
+            # Small delay to ensure UI is ready
+            await asyncio.sleep(0.1)
             
             state = await self.app.audio_player.get_state()
+            logger.debug(f"Current playback state: {state}")
             if state == PlaybackState.PLAYING:
                 success = await self.app.audio_player.pause()
                 if success:
@@ -1000,9 +1060,11 @@ class TTSPlaygroundWidget(Widget):
                     # Update button states
                     self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
                     self.app.notify("Playback resumed", severity="information")
-                    # Restart progress timer
+                    # Cancel any existing timer and restart
+                    if self._progress_timer_task and not self._progress_timer_task.done():
+                        self._progress_timer_task.cancel()
                     import asyncio
-                    asyncio.create_task(self._update_progress_timer())
+                    self._progress_timer_task = asyncio.create_task(self._update_progress_timer())
                 else:
                     self.app.notify("Failed to resume playback", severity="warning")
         except Exception as e:
@@ -1012,23 +1074,39 @@ class TTSPlaygroundWidget(Widget):
     
     def _stop_audio(self) -> None:
         """Stop audio playback"""
+        logger.debug("_stop_audio called")
         if self._ensure_audio_player():
-            self.run_worker(self._stop_audio_async)
+            logger.debug("Audio player available, running stop worker")
+            self.run_worker(self._stop_audio_async, exclusive=True)
         else:
+            logger.debug("Audio player not available")
             self.app.notify("Audio player not available", severity="warning")
     
     async def _stop_audio_async(self) -> None:
         """Stop audio playback asynchronously"""
         try:
+            logger.debug("_stop_audio_async called")
+            # Cancel progress timer if running
+            if self._progress_timer_task and not self._progress_timer_task.done():
+                self._progress_timer_task.cancel()
+                self._progress_timer_task = None
+            
             success = await self.app.audio_player.stop()
+            logger.debug(f"Stop result: {success}")
             if success:
                 # Reset button states
                 self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
                 self.query_one("#pause-audio-btn", Button).disabled = True
                 self.query_one("#stop-audio-btn", Button).disabled = True
+                self.query_one("#audio-player-status", Static).update("Playback stopped")
                 self.app.notify("Playback stopped", severity="information")
             else:
-                self.app.notify("No active playback to stop", severity="warning")
+                # Still reset UI state even if audio already finished
+                self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
+                self.query_one("#pause-audio-btn", Button).disabled = True
+                self.query_one("#stop-audio-btn", Button).disabled = True
+                self.query_one("#audio-player-status", Static).update("Audio ready to play")
+                logger.debug("Audio may have already finished playing")
         except Exception as e:
             logger.error(f"Error stopping playback: {e}")
             from rich.markup import escape
@@ -1786,18 +1864,25 @@ class TTSSettingsWidget(Widget):
         """Handle button presses"""
         if event.button.id == "save-settings-btn":
             self._save_settings()
+            event.stop()  # Prevent event from bubbling up
         elif event.button.id == "add-voice-blend-btn":
             self.run_worker(self._show_add_voice_blend_dialog)
+            event.stop()
         elif event.button.id == "import-blends-btn":
             self._import_voice_blends()
+            event.stop()
         elif event.button.id == "export-blends-btn":
             self._export_voice_blends()
+            event.stop()
         elif event.button.id == "kokoro-browse-model-btn":
             self._browse_kokoro_model()
+            event.stop()
         elif event.button.id == "kokoro-browse-voices-btn":
             self._browse_kokoro_voices()
+            event.stop()
         elif event.button.id == "chatterbox-browse-voice-dir-btn":
             self._browse_chatterbox_voice_dir()
+            event.stop()
     
     def _is_valid_voice(self, voice: str) -> bool:
         """Check if a voice value is valid (not a separator)"""
@@ -2722,10 +2807,13 @@ class AudioBookGenerationWidget(Widget):
         """Handle button presses"""
         if event.button.id == "import-content-btn":
             self._import_content()
+            event.stop()  # Prevent event from bubbling up
         elif event.button.id == "generate-audiobook-btn":
             self._generate_audiobook()
+            event.stop()
         elif event.button.id == "audiobook-export-btn":
             self._export_audiobook()
+            event.stop()
     
     def _import_content(self) -> None:
         """Import content for audiobook generation"""
@@ -3252,6 +3340,16 @@ class STTSWindow(Container):
         """Handle view changes"""
         # Remove old content
         content_container = self.query_one(".stts-content", Container)
+        
+        # Give widgets a chance to clean up before removal
+        for child in content_container.children:
+            if hasattr(child, 'cleanup') and callable(child.cleanup):
+                try:
+                    child.cleanup()
+                except Exception as e:
+                    logger.debug(f"Error during widget cleanup: {e}")
+        
+        # Remove all children from the container
         content_container.remove_children()
         
         # Add new content based on view
@@ -3274,7 +3372,8 @@ class STTSWindow(Container):
             self.query_one("#view-audiobook-btn", Button).variant = "primary"
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle sidebar button presses"""
+        """Handle sidebar button presses and delegate to content widgets"""
+        # Handle sidebar buttons
         if event.button.id == "view-playground-btn":
             self.current_view = "playground"
         elif event.button.id == "view-settings-btn":
@@ -3287,6 +3386,17 @@ class STTSWindow(Container):
             self.app.notify("Speech Recognition coming soon!", severity="information")
         elif event.button.id == "view-effects-btn":
             self.app.notify("Audio Effects coming soon!", severity="information")
+        else:
+            # Try to delegate to the active content widget
+            try:
+                content_container = self.query_one(".stts-content", Container)
+                if content_container.children:
+                    # Get the active widget (should be only one)
+                    active_widget = content_container.children[0]
+                    if hasattr(active_widget, 'on_button_pressed'):
+                        active_widget.on_button_pressed(event)
+            except Exception as e:
+                logger.debug(f"Could not delegate button event: {e}")
 
 #
 # End of STTS_Window.py
