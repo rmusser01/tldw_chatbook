@@ -770,9 +770,11 @@ class TTSPlaygroundWidget(Widget):
             self._play_audio()
             event.stop()
         elif event.button.id == "pause-audio-btn":
+            logger.debug("Pause button clicked")
             self._pause_audio()
             event.stop()
         elif event.button.id == "stop-audio-btn":
+            logger.debug("Stop button clicked")
             self._stop_audio()
             event.stop()
         elif event.button.id == "audio-export-btn":
@@ -1024,17 +1026,26 @@ class TTSPlaygroundWidget(Widget):
     
     def _pause_audio(self) -> None:
         """Pause audio playback"""
+        logger.debug("_pause_audio called")
         if self._ensure_audio_player():
+            logger.debug("Audio player available, running pause worker")
             self.run_worker(self._pause_audio_async, exclusive=True)
         else:
+            logger.debug("Audio player not available")
             self.app.notify("Audio player not available", severity="warning")
     
     async def _pause_audio_async(self) -> None:
         """Pause audio playback asynchronously"""
         try:
             from tldw_chatbook.TTS.audio_player import PlaybackState
+            import asyncio
+            
+            logger.debug("_pause_audio_async called")
+            # Small delay to ensure UI is ready
+            await asyncio.sleep(0.1)
             
             state = await self.app.audio_player.get_state()
+            logger.debug(f"Current playback state: {state}")
             if state == PlaybackState.PLAYING:
                 success = await self.app.audio_player.pause()
                 if success:
@@ -1063,28 +1074,39 @@ class TTSPlaygroundWidget(Widget):
     
     def _stop_audio(self) -> None:
         """Stop audio playback"""
+        logger.debug("_stop_audio called")
         if self._ensure_audio_player():
+            logger.debug("Audio player available, running stop worker")
             self.run_worker(self._stop_audio_async, exclusive=True)
         else:
+            logger.debug("Audio player not available")
             self.app.notify("Audio player not available", severity="warning")
     
     async def _stop_audio_async(self) -> None:
         """Stop audio playback asynchronously"""
         try:
+            logger.debug("_stop_audio_async called")
             # Cancel progress timer if running
             if self._progress_timer_task and not self._progress_timer_task.done():
                 self._progress_timer_task.cancel()
                 self._progress_timer_task = None
             
             success = await self.app.audio_player.stop()
+            logger.debug(f"Stop result: {success}")
             if success:
                 # Reset button states
                 self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
                 self.query_one("#pause-audio-btn", Button).disabled = True
                 self.query_one("#stop-audio-btn", Button).disabled = True
+                self.query_one("#audio-player-status", Static).update("Playback stopped")
                 self.app.notify("Playback stopped", severity="information")
             else:
-                self.app.notify("No active playback to stop", severity="warning")
+                # Still reset UI state even if audio already finished
+                self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
+                self.query_one("#pause-audio-btn", Button).disabled = True
+                self.query_one("#stop-audio-btn", Button).disabled = True
+                self.query_one("#audio-player-status", Static).update("Audio ready to play")
+                logger.debug("Audio may have already finished playing")
         except Exception as e:
             logger.error(f"Error stopping playback: {e}")
             from rich.markup import escape

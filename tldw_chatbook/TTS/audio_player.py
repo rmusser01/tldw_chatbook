@@ -187,6 +187,7 @@ class SimpleAudioPlayer:
             True if paused successfully
         """
         with self._lock:
+            logger.debug(f"Pause called - current state: {self._current.state}, supports pause: {self._supports_pause}")
             if self._current.state != PlaybackState.PLAYING:
                 return False
             
@@ -276,14 +277,19 @@ class SimpleAudioPlayer:
             True if stopped successfully
         """
         with self._lock:
-            if self._current.process and self._current.state in [PlaybackState.PLAYING, PlaybackState.PAUSED]:
-                try:
-                    self._current.process.terminate()
-                    self._current.process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self._current.process.kill()
-                except Exception as e:
-                    logger.error(f"Error stopping playback: {e}")
+            logger.debug(f"Stop called - current state: {self._current.state}, process exists: {self._current.process is not None}")
+            if self._current.process or self._current.state in [PlaybackState.PLAYING, PlaybackState.PAUSED, PlaybackState.FINISHED]:
+                # Only try to terminate if process exists
+                if self._current.process:
+                    try:
+                        # Check if process is still running
+                        if self._current.process.poll() is None:
+                            self._current.process.terminate()
+                            self._current.process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self._current.process.kill()
+                    except Exception as e:
+                        logger.error(f"Error stopping playback: {e}")
                 
                 # Clean up mpv socket if exists
                 if self._player_name == "mpv" and hasattr(self, '_mpv_socket'):
@@ -292,13 +298,16 @@ class SimpleAudioPlayer:
                     except:
                         pass
                 
+                # Always reset all state when cleaning up
                 self._current.process = None
                 self._current.state = PlaybackState.IDLE
                 self._current.start_time = None
                 self._current.pause_time = None
                 self._current.position = 0.0
-                logger.info("Playback stopped")
+                logger.info("Playback stopped/cleaned up")
                 return True
+            else:
+                logger.debug(f"Cannot stop - process exists: {self._current.process is not None}, state: {self._current.state}")
         
         return False
     

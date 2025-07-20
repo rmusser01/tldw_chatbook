@@ -3004,19 +3004,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Stop TTS service if initialized
             if hasattr(self, '_tts_handler') and self._tts_handler:
                 try:
-                    if hasattr(self._tts_handler, '_stts_service') and self._tts_handler._stts_service:
-                        # Clean up any TTS resources
-                        self._tts_handler._stts_service = None
-                    self.loguru_logger.info("TTS service cleaned up")
+                    # Clean up TTS event handler resources (tasks, files)
+                    await self._tts_handler.cleanup_tts_resources()
+                    
+                    # Import and call the global TTS cleanup function
+                    from tldw_chatbook.TTS import close_tts_resources
+                    await close_tts_resources()
+                    
+                    self.loguru_logger.info("TTS service cleaned up properly")
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up TTS service: {e}")
             
             # Stop STTS service if initialized
             if hasattr(self, '_stts_handler') and self._stts_handler:
                 try:
-                    if hasattr(self._stts_handler, '_stts_service') and self._stts_handler._stts_service:
-                        # Clean up any STTS resources
-                        self._stts_handler._stts_service = None
+                    # Clean up STTS event handler resources if it has the cleanup method
+                    if hasattr(self._stts_handler, 'cleanup_tts_resources'):
+                        await self._stts_handler.cleanup_tts_resources()
+                    
                     self.loguru_logger.info("STTS service cleaned up")
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up STTS service: {e}")
