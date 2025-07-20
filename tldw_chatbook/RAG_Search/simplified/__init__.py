@@ -35,6 +35,15 @@ from .rag_service import (
     create_rag_service
 )
 
+from .enhanced_rag_service import (
+    EnhancedRAGService,
+    create_enhanced_rag_service
+)
+
+from .enhanced_rag_service_v2 import (
+    EnhancedRAGServiceV2
+)
+
 from .data_models import (
     IndexingResult
 )
@@ -51,6 +60,13 @@ from .config import (
     SearchConfig,
     create_config_for_collection,
     create_config_for_testing
+)
+
+from .rag_factory import (
+    create_rag_service_with_level,
+    get_service_level_from_config,
+    create_auto_rag_service,
+    ServiceLevel
 )
 
 __all__ = [
@@ -81,6 +97,11 @@ __all__ = [
     "create_and_index",
     "create_rag_service",
     
+    # Enhanced RAG services
+    "EnhancedRAGService",
+    "create_enhanced_rag_service",
+    "EnhancedRAGServiceV2",
+    
     # Cache
     "SimpleRAGCache",
     "get_rag_cache",
@@ -92,6 +113,12 @@ __all__ = [
     "SearchConfig",
     "create_config_for_collection",
     "create_config_for_testing",
+    
+    # Factory functions
+    "create_rag_service_with_level",
+    "get_service_level_from_config",
+    "create_auto_rag_service",
+    "ServiceLevel",
 ]
 
 __version__ = "0.1.0"

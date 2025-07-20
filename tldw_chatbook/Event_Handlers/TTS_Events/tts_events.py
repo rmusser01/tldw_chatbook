@@ -155,7 +155,7 @@ class TTSEventHandler:
         """Handle TTS generation request"""
         if not self._tts_service:
             logger.error("TTS service not initialized")
-            await self.post_message(
+            self.app.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="TTS service not available"
@@ -165,7 +165,7 @@ class TTSEventHandler:
         
         # Validate input text
         if not event.text:
-            await self.post_message(
+            self.app.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="No text provided for TTS generation"
@@ -177,7 +177,7 @@ class TTSEventHandler:
         MAX_TTS_LENGTH = 5000  # Maximum characters for TTS
         if len(event.text) > MAX_TTS_LENGTH:
             logger.warning(f"TTS text too long: {len(event.text)} characters")
-            await self.post_message(
+            self.app.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error=f"Text is too long for TTS. Maximum {MAX_TTS_LENGTH} characters allowed."
@@ -188,7 +188,7 @@ class TTSEventHandler:
         # Basic sanitization - remove excessive whitespace
         text = ' '.join(event.text.split())
         if len(text) < 1:
-            await self.post_message(
+            self.app.post_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="Text contains only whitespace"
@@ -209,7 +209,7 @@ class TTSEventHandler:
             time_since_last = current_time - self._request_cooldown[message_id]
             if time_since_last < self.COOLDOWN_SECONDS:
                 logger.warning(f"TTS request too soon for message {message_id}. Please wait {self.COOLDOWN_SECONDS - time_since_last:.1f}s")
-                await self.post_message(
+                self.app.post_message(
                     TTSCompleteEvent(
                         message_id=message_id,
                         error=f"Please wait {self.COOLDOWN_SECONDS - time_since_last:.1f} seconds before requesting TTS again"
@@ -265,19 +265,43 @@ class TTSEventHandler:
             
             # Send initial progress
             if message_id:
-                await self.post_message(
+                self.app.post_message(
                     TTSProgressEvent(
                         message_id=message_id,
                         progress=0.0,
                         status="Initializing TTS generation"
                     )
                 )
+            # Determine provider and format based on default_provider
+            provider = self._tts_config["default_provider"]
+            
+            # Set provider-specific defaults
+            if provider == "kokoro":
+                model = "kokoro"
+                format = "wav"  # Kokoro supports wav, pcm
+            elif provider == "openai":
+                model = self._tts_config["default_model"]
+                format = self._tts_config["default_format"]
+            elif provider == "elevenlabs":
+                model = "elevenlabs"
+                format = "mp3"  # ElevenLabs default
+            elif provider == "chatterbox":
+                model = "chatterbox"
+                format = "wav"
+            elif provider == "alltalk":
+                model = "alltalk"
+                format = "wav"
+            else:
+                # Fallback to OpenAI defaults
+                model = self._tts_config["default_model"]
+                format = self._tts_config["default_format"]
+            
             # Prepare request
             request = OpenAISpeechRequest(
-                model=self._tts_config["default_model"],
+                model=model,
                 input=text,
                 voice=voice or self._tts_config["default_voice"],
-                response_format=self._tts_config["default_format"],
+                response_format=format,
                 speed=self._tts_config["default_speed"]
             )
             
@@ -304,7 +328,7 @@ class TTSEventHandler:
             # Estimate cost before generation
             estimated_cost = cost_tracker.estimate_cost(provider, request.model, len(text))
             if message_id and estimated_cost > 0:
-                await self.post_message(
+                self.app.post_message(
                     TTSProgressEvent(
                         message_id=message_id,
                         progress=0.1,
@@ -339,7 +363,7 @@ class TTSEventHandler:
                     
                     # Post progress update every 5 chunks
                     if message_id and chunk_count % 5 == 0:
-                        await self.post_message(
+                        self.app.post_message(
                             TTSProgressEvent(
                                 message_id=message_id,
                                 progress=progress,
@@ -350,7 +374,7 @@ class TTSEventHandler:
                     
                     # Post streaming event for real-time playback (optional)
                     if message_id:
-                        await self.post_message(
+                        self.app.post_message(
                             TTSStreamingEvent(chunk, message_id, is_final=False)
                         )
                 
@@ -369,7 +393,7 @@ class TTSEventHandler:
                 
                 # Final progress update
                 if message_id:
-                    await self.post_message(
+                    self.app.post_message(
                         TTSProgressEvent(
                             message_id=message_id,
                             progress=1.0,
@@ -389,7 +413,7 @@ class TTSEventHandler:
                 )
                 
                 # Post completion event
-                await self.post_message(
+                self.app.post_message(
                     TTSCompleteEvent(message_id=message_id or "adhoc", audio_file=Path(temp_path))
                 )
                 
@@ -405,12 +429,13 @@ class TTSEventHandler:
         except Exception as e:
             from rich.markup import escape
             logger.error(f"TTS generation failed: {e}")
-            await self.post_message(
-                TTSCompleteEvent(
-                    message_id=message_id or "adhoc",
-                    error=escape(str(e))
+            if hasattr(self, 'app') and self.app:
+                self.app.post_message(
+                    TTSCompleteEvent(
+                        message_id=message_id or "adhoc",
+                        error=escape(str(e))
+                    )
                 )
-            )
     
     async def handle_tts_playback(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control"""

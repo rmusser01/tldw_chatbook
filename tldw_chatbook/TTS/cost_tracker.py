@@ -96,9 +96,9 @@ class CostTracker:
         """
         if db_path is None:
             # Use default location
-            from tldw_chatbook.Utils.utils import get_project_root
-            data_dir = get_project_root() / "user_data"
-            data_dir.mkdir(exist_ok=True)
+            from tldw_chatbook.Utils.paths import get_user_data_dir
+            data_dir = get_user_data_dir()
+            data_dir.mkdir(parents=True, exist_ok=True)
             db_path = data_dir / "tts_usage.db"
         
         self.db_path = db_path

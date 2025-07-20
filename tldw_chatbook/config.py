@@ -112,6 +112,17 @@ DEFAULT_RAG_SEARCH_CONFIG = {
         "cache_search_results": True,
         "cache_llm_responses": False
     },
+    "service": {
+        "level": "base",  # Options: "base", "enhanced", "v2"
+        "enable_parent_retrieval": True,
+        "enable_reranking": False,
+        "enable_parallel_processing": True,
+        "parent_size_multiplier": 3,
+        "expand_context_on_retrieval": True,
+        "clean_pdf_artifacts": True,
+        "reranking_strategy": "cross_encoder",  # Options: "cross_encoder", "llm", "ensemble"
+        "profile_name": None  # Optional: use predefined profile
+    },
     "memory_management": {
         "max_total_size_mb": 1024.0,
         "max_collection_size_mb": 512.0,
@@ -1107,6 +1118,19 @@ def load_settings(force_reload: bool = False) -> Dict:
         "COMPREHENSIVE_CONFIG_RAW": toml_config_data, # Store the raw TOML data if needed
         "OPENAI_API_KEY": openai_api_key, # Top-level convenience access
     }
+
+    # Bridge TTSSettings defaults into APP_TTS_CONFIG for runtime use
+    # This ensures TTS event handlers can find the user's selected defaults
+    if 'default_provider' not in config_dict['APP_TTS_CONFIG']:
+        config_dict['APP_TTS_CONFIG']['default_provider'] = config_dict['tts_settings'].get('default_tts_provider', 'openai')
+    if 'default_voice' not in config_dict['APP_TTS_CONFIG']:
+        config_dict['APP_TTS_CONFIG']['default_voice'] = config_dict['tts_settings'].get('default_tts_voice', 'alloy')
+    if 'default_model' not in config_dict['APP_TTS_CONFIG']:
+        config_dict['APP_TTS_CONFIG']['default_model'] = config_dict['tts_settings'].get('default_openai_tts_model', 'tts-1')
+    if 'default_format' not in config_dict['APP_TTS_CONFIG']:
+        config_dict['APP_TTS_CONFIG']['default_format'] = config_dict['tts_settings'].get('default_openai_tts_output_format', 'mp3')
+    if 'default_speed' not in config_dict['APP_TTS_CONFIG']:
+        config_dict['APP_TTS_CONFIG']['default_speed'] = config_dict['tts_settings'].get('default_openai_tts_speed', 1.0)
 
     # Populate the rest of chunking_config (tedious but necessary)
     chunking_types = ['audio', 'book', 'document', 'mediawiki_article', 'mediawiki_dump',

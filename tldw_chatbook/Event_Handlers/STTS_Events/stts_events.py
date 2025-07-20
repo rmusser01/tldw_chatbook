@@ -287,12 +287,12 @@ class STTSEventHandler:
             
             # Save each setting to the appropriate section
             settings_map = {
-                # Default settings
-                "default_provider": ("app_tts", "default_provider"),
-                "default_voice": ("app_tts", "default_voice"),
-                "default_model": ("app_tts", "default_model"),
-                "default_format": ("app_tts", "default_format"),
-                "default_speed": ("app_tts", "default_speed"),
+                # Default settings - save to both sections for compatibility
+                "default_provider": [("app_tts", "default_provider"), ("tts_settings", "default_tts_provider")],
+                "default_voice": [("app_tts", "default_voice"), ("tts_settings", "default_tts_voice")],
+                "default_model": [("app_tts", "default_model"), ("tts_settings", "default_openai_tts_model")],
+                "default_format": [("app_tts", "default_format"), ("tts_settings", "default_openai_tts_output_format")],
+                "default_speed": [("app_tts", "default_speed"), ("tts_settings", "default_openai_tts_speed")],
                 
                 # OpenAI settings
                 "openai_api_key": ("API", "openai_api_key"),
@@ -313,9 +313,16 @@ class STTSEventHandler:
             # Save each setting
             for key, value in event.settings.items():
                 if key in settings_map:
-                    section, setting_name = settings_map[key]
-                    save_setting_to_cli_config(section, setting_name, value)
-                    logger.info(f"Saved {key} = {value} to [{section}].{setting_name}")
+                    mapping = settings_map[key]
+                    # Handle both single tuple and list of tuples
+                    if isinstance(mapping, list):
+                        for section, setting_name in mapping:
+                            save_setting_to_cli_config(section, setting_name, value)
+                            logger.info(f"Saved {key} = {value} to [{section}].{setting_name}")
+                    else:
+                        section, setting_name = mapping
+                        save_setting_to_cli_config(section, setting_name, value)
+                        logger.info(f"Saved {key} = {value} to [{section}].{setting_name}")
             
             # Reinitialize TTS service with new settings
             await self.initialize_stts()

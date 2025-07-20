@@ -2734,6 +2734,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info("Initializing TTS service...")
             # Create TTS event handler instance
             self._tts_handler = TTSEventHandler()
+            self._tts_handler.app = self  # Set app reference for posting messages
             await self._tts_handler.initialize_tts()
             self.loguru_logger.info("TTS service initialized successfully")
         except Exception as e:
