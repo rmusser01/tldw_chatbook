@@ -96,7 +96,7 @@ from .Event_Handlers import (
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-    TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSEventHandler
+    TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSProgressEvent, TTSEventHandler
 )
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler, STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
@@ -1678,27 +1678,41 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         if event.error:
             self.notify(f"TTS failed: {event.error}", severity="error")
-            # Remove TTS generating class from message
+            # Update widget state back to idle on error
             try:
                 if event.message_id:
-                    # Find the message widget and remove the generating class
+                    # Find the message widget and update state
                     for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
                         if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                            # Update TTS state to idle on error
+                            if hasattr(message_widget, 'update_tts_state'):
+                                message_widget.update_tts_state("idle")
+                            # Remove TTS generating class
                             text_widget = message_widget.query_one(".message-text", Markdown)
                             text_widget.remove_class("tts-generating")
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
         else:
-            # Play the audio file
+            # Update widget state to ready with audio file
             if event.audio_file and event.audio_file.exists():
                 try:
-                    # Import the play function
-                    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import play_audio_file
-                    play_audio_file(event.audio_file)
-                    
-                    # Clean up the temp file after playing
-                    event.audio_file.unlink(missing_ok=True)
+                    if event.message_id:
+                        # Find the message widget and update state
+                        for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                            if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                                # Update TTS state to ready with audio file
+                                if hasattr(message_widget, 'update_tts_state'):
+                                    message_widget.update_tts_state("ready", event.audio_file)
+                                # Remove TTS generating class
+                                try:
+                                    text_widget = message_widget.query_one(".message-text", Markdown)
+                                    text_widget.remove_class("tts-generating")
+                                except Exception:
+                                    pass
+                                break
+                    # Don't automatically play or delete - let user control playback
+                    self.notify("TTS audio ready - click play to listen", severity="information")
                 except Exception as e:
                     self.loguru_logger.error(f"Error playing audio: {e}")
                     self.notify("Failed to play audio", severity="error")
@@ -1713,6 +1727,23 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                             break
             except Exception as e:
                 self.loguru_logger.error(f"Error updating message UI: {e}")
+    
+    @on(TTSProgressEvent)
+    async def handle_tts_progress_event(self, event: TTSProgressEvent) -> None:
+        """Handle TTS generation progress updates."""
+        self.loguru_logger.debug(f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}")
+        
+        try:
+            if event.message_id:
+                # Find the message widget and update progress
+                for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                    if getattr(message_widget, 'message_id_internal', None) == event.message_id:
+                        # Update TTS progress
+                        if hasattr(message_widget, 'update_tts_progress'):
+                            message_widget.update_tts_progress(event.progress, event.status)
+                        break
+        except Exception as e:
+            self.loguru_logger.error(f"Error updating TTS progress: {e}")
 
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
@@ -3909,20 +3940,29 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         self.loguru_logger.debug(f"Looking for handler for button '{button_id}' in tab '{self.current_tab}'")
         self.loguru_logger.debug(f"Available handlers for this tab: {list(current_tab_handlers.keys())}")
+        
+        # Special debug logging for save chat button
+        if button_id == "chat-save-current-chat-button":
+            self.loguru_logger.info(f"Save Temp Chat button pressed - Handler found: {handler is not None}")
+            self.loguru_logger.info(f"Current tab: {self.current_tab}, Expected: {TAB_CHAT}")
 
         if handler:
             if callable(handler):
-                # Call the handler, which is expected to return a coroutine (an awaitable object).
-                result = handler(self, event)
+                try:
+                    # Call the handler, which is expected to return a coroutine (an awaitable object).
+                    result = handler(self, event)
 
-                # Check if the result is indeed awaitable before awaiting it.
-                # This makes the code more robust and satisfies static type checkers.
-                if inspect.isawaitable(result):
-                    await result
-                else:
-                    self.loguru_logger.warning(
-                        f"Handler for button '{button_id}' did not return an awaitable object."
-                    )
+                    # Check if the result is indeed awaitable before awaiting it.
+                    # This makes the code more robust and satisfies static type checkers.
+                    if inspect.isawaitable(result):
+                        await result
+                    else:
+                        self.loguru_logger.warning(
+                            f"Handler for button '{button_id}' did not return an awaitable object."
+                        )
+                except Exception as e:
+                    self.loguru_logger.error(f"Error executing handler for button '{button_id}': {e}", exc_info=True)
+                    self.notify(f"Error handling button action: {str(e)[:100]}", severity="error")
             else:
                 self.loguru_logger.error(f"Handler for button '{button_id}' is not callable: {handler}")
             return  # The button press was handled (or an error occurred).
@@ -4144,6 +4184,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await notes_handlers.handle_notes_sort_changed(self, event)
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
+        elif select_id == "chat-rag-search-mode" and current_active_tab == TAB_CHAT:
+            await self.handle_rag_pipeline_changed(event)
         elif select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT:
             await self.handle_query_expansion_method_changed(event)
         elif select_id == "chat-rag-expansion-provider" and current_active_tab == TAB_CHAT:
@@ -4337,6 +4379,32 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e:
             self.loguru_logger.error(f"Error applying RAG preset: {e}")
             self.notify("Error applying RAG preset", severity="error")
+    
+    async def handle_rag_pipeline_changed(self, event: Select.Changed) -> None:
+        """Handles RAG pipeline selection."""
+        try:
+            from .Widgets.settings_sidebar import get_pipeline_description
+            
+            pipeline_id = event.value
+            
+            # Update the description display
+            description_widget = self.query_one("#chat-rag-pipeline-description", Static)
+            description = get_pipeline_description(pipeline_id)
+            description_widget.update(description)
+            
+            # If "none" is selected, just show manual config message
+            if pipeline_id == "none":
+                self.notify("Manual RAG configuration mode enabled")
+            else:
+                # Show what pipeline was selected
+                pipeline_name = event.select.value_to_label(pipeline_id)
+                self.notify(f"Selected pipeline: {pipeline_name}")
+                
+            self.loguru_logger.info(f"RAG pipeline changed to: {pipeline_id}")
+            
+        except Exception as e:
+            self.loguru_logger.error(f"Error handling RAG pipeline change: {e}")
+            self.notify("Error changing RAG pipeline", severity="error")
     
     async def handle_query_expansion_method_changed(self, event: Select.Changed) -> None:
         """Handles query expansion method selection - shows/hides appropriate fields."""

@@ -163,6 +163,28 @@ ELEVENLABS_SIMILARITY_BOOST = 0.8   # Voice clarity (0.0-1.0)
 ELEVENLABS_STYLE = 0.0              # Style exaggeration (0.0-1.0)
 ELEVENLABS_USE_SPEAKER_BOOST = true # Enhanced speaker clarity
 
+# Chatterbox TTS settings
+CHATTERBOX_DEVICE = "cpu"  # Options: "cpu", "cuda"
+CHATTERBOX_VOICE_DIR = "~/.config/tldw_cli/chatterbox_voices"
+CHATTERBOX_EXAGGERATION = 0.5     # Emotion exaggeration (0.0-1.0)
+CHATTERBOX_CFG_WEIGHT = 0.5       # CFG weight (0.0-1.0)
+CHATTERBOX_TEMPERATURE = 0.5      # Generation temperature (0.0-2.0)
+CHATTERBOX_CHUNK_SIZE = 1024      # Audio chunk size
+CHATTERBOX_NUM_CANDIDATES = 1     # Number of candidates (1-5)
+CHATTERBOX_VALIDATE_WHISPER = false  # Enable Whisper validation
+CHATTERBOX_PREPROCESS_TEXT = true    # Enable text preprocessing
+CHATTERBOX_NORMALIZE_AUDIO = true    # Enable audio normalization
+CHATTERBOX_TARGET_DB = -20.0         # Target dB level (-40 to 0)
+CHATTERBOX_MAX_CHUNK_SIZE = 500      # Max text chunk size
+CHATTERBOX_STREAMING = true          # Enable streaming
+CHATTERBOX_STREAM_CHUNK_SIZE = 4096  # Stream chunk size
+CHATTERBOX_ENABLE_CROSSFADE = true   # Enable crossfade
+CHATTERBOX_CROSSFADE_MS = 50         # Crossfade duration (ms)
+
+# OpenAI TTS settings
+OPENAI_BASE_URL = "https://api.openai.com/v1/audio/speech"  # Custom API endpoint
+OPENAI_ORG_ID = ""  # Organization ID (optional)
+
 # --- STT Settings ---
 [STTSettings]
 # Default Speech-to-Text provider

@@ -3,6 +3,7 @@
 #
 # Imports
 import asyncio
+from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 from loguru import logger
@@ -86,6 +87,11 @@ class STTSEventHandler:
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
         try:
+            from tldw_chatbook.config import load_cli_config_and_ensure_existence
+            
+            # Load the full config to get API keys
+            full_config = load_cli_config_and_ensure_existence()
+            
             # Get TTS service instance
             app_config = {
                 "app_tts": {
@@ -96,6 +102,15 @@ class STTSEventHandler:
                     "default_speed": get_cli_setting("app_tts", "default_speed", 1.0),
                 }
             }
+            
+            # Add API settings sections if they exist
+            if "api_settings.openai" in full_config:
+                app_config["api_settings.openai"] = full_config["api_settings.openai"]
+            if "openai_api" in full_config:
+                app_config["openai_api"] = full_config["openai_api"]
+            if "API" in full_config:
+                app_config["API"] = full_config["API"]
+                
             self._stts_service = await get_tts_service(app_config)
             logger.info("S/TT/S service initialized successfully")
         except Exception as e:
@@ -114,23 +129,65 @@ class STTSEventHandler:
         
         self._is_generating = True
         
+        # Get playground widget first
         try:
+            playground = self.app.query_one("TTSPlaygroundWidget")
+        except Exception:
+            playground = None
+        
+        try:
+            # Validate and clean format
+            format_value = event.format
+            if isinstance(format_value, tuple):
+                format_value = format_value[0]
+            elif not format_value or format_value == Select.BLANK or str(format_value) == "Select.BLANK":
+                format_value = "mp3"
+            
+            # Additional validation for allowed formats
+            valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
+            if format_value not in valid_formats:
+                logger.warning(f"Invalid format value '{format_value}', defaulting to mp3")
+                format_value = "mp3"
+            
+            logger.debug(f"TTS Request - format: {format_value}, provider: {event.provider}")
+            
             # Create TTS request
             request = OpenAISpeechRequest(
                 model=event.model,
                 input=event.text,
                 voice=event.voice,
-                response_format=event.format,
+                response_format=format_value,
                 speed=event.speed
             )
             
-            # Map provider to internal model ID
-            if event.provider == "openai":
-                internal_model_id = f"openai_official_{event.model}"
-            elif event.provider == "elevenlabs":
+            # Map provider to internal model ID (handle case-insensitive)
+            provider_lower = event.provider.lower() if event.provider else ""
+            
+            # Extract the actual provider key from display names
+            if "kokoro" in provider_lower:
+                provider_lower = "kokoro"
+            elif "elevenlabs" in provider_lower:
+                provider_lower = "elevenlabs"
+            elif "openai" in provider_lower:
+                provider_lower = "openai"
+            elif "chatterbox" in provider_lower:
+                provider_lower = "chatterbox"
+            elif "alltalk" in provider_lower:
+                provider_lower = "alltalk"
+            
+            if provider_lower == "openai":
+                # Also convert model to lowercase
+                model_lower = event.model.lower().replace("-", "")  # Convert TTS-1 to tts1
+                internal_model_id = f"openai_official_{model_lower}"
+            elif provider_lower == "elevenlabs":
                 internal_model_id = f"elevenlabs_{event.model}"
-            elif event.provider == "kokoro":
-                internal_model_id = "local_kokoro_default_onnx"
+            elif provider_lower == "kokoro":
+                # Check if ONNX or PyTorch should be used
+                use_onnx = event.extra_params.get("use_onnx", True)
+                if use_onnx:
+                    internal_model_id = "local_kokoro_default_onnx"
+                else:
+                    internal_model_id = "local_kokoro_default_pytorch"
                 # Handle Kokoro language code
                 if event.extra_params.get("language"):
                     # Kokoro voices include language code prefix
@@ -139,7 +196,7 @@ class STTSEventHandler:
                     if not event.voice.startswith(f"{lang_code}"):
                         # Voice might need language adjustment
                         pass  # The voice already includes the language prefix
-            elif event.provider == "chatterbox":
+            elif provider_lower == "chatterbox":
                 internal_model_id = "local_chatterbox_default"
                 # Pass voice and extra params to the request
                 if event.voice.startswith("custom:"):
@@ -148,11 +205,13 @@ class STTSEventHandler:
                 # Add extra params to request for Chatterbox
                 if event.extra_params:
                     request.extra_params = event.extra_params
+            elif provider_lower == "alltalk":
+                internal_model_id = f"alltalk_{event.model}"
             else:
+                # Default case - use the model as-is
                 internal_model_id = event.model
             
             # Log to playground
-            playground = self.app.query_one("TTSPlaygroundWidget")
             if playground:
                 log = playground.query_one("#tts-generation-log", RichLog)
                 log.write(f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]")
@@ -186,12 +245,16 @@ class STTSEventHandler:
                 log.write(f"[bold green]✓ Generation complete! File: {self._current_audio_file.name}[/bold green]")
                 log.write(f"Size: {len(audio_data) / 1024:.1f} KB")
                 
-                # Enable playback controls
-                playground.query_one("#audio-play-btn", Button).disabled = False
-                playground.query_one("#audio-export-btn", Button).disabled = False
-                playground.query_one("#audio-player-status").update(
-                    f"Audio ready: {self._current_audio_file.name}"
-                )
+                # Call the widget's completion method
+                if hasattr(playground, '_generation_complete'):
+                    playground._generation_complete(True, self._current_audio_file)
+                else:
+                    # Fallback to direct UI updates
+                    playground.query_one("#audio-play-btn", Button).disabled = False
+                    playground.query_one("#audio-export-btn", Button).disabled = False
+                    playground.query_one("#audio-player-status").update(
+                        f"Audio ready: {self._current_audio_file.name}"
+                    )
             
             self.app.notify("TTS generation complete!", severity="information")
             
@@ -200,12 +263,22 @@ class STTSEventHandler:
             if playground:
                 log = playground.query_one("#tts-generation-log", RichLog)
                 log.write(f"[bold red]✗ Generation failed: {e}[/bold red]")
-            self.app.notify(f"TTS generation failed: {e}", severity="error")
+                
+                # Call the widget's completion method
+                if hasattr(playground, '_generation_complete'):
+                    playground._generation_complete(False)
+                
+            from rich.markup import escape
+            self.app.notify(f"TTS generation failed: {escape(str(e))}", severity="error")
         finally:
             self._is_generating = False
-            # Re-enable generate button
+            # Re-enable generate button is now handled in _generation_complete
+            # But ensure it's re-enabled as a fallback
             if playground:
-                playground.query_one("#tts-generate-btn", Button).disabled = False
+                try:
+                    playground.query_one("#tts-generate-btn", Button).disabled = False
+                except Exception:
+                    pass
     
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save"""
@@ -255,12 +328,137 @@ class STTSEventHandler:
     async def handle_audiobook_generate(self, event: STTSAudioBookGenerateEvent) -> None:
         """Handle audiobook generation"""
         try:
-            # TODO: Implement audiobook generation
+            from tldw_chatbook.TTS.audiobook_generator import (
+                AudioBookGenerator, AudioBookRequest, AudioBookProgress
+            )
+            
             logger.info("AudioBook generation requested")
-            self.app.notify("AudioBook generation coming soon!", severity="information")
+            
+            # Initialize audiobook generator
+            generator = AudioBookGenerator(self._stts_service)
+            await generator.initialize()
+            
+            # Create audiobook request from event data
+            audiobook_request = AudioBookRequest(
+                content=event.content,
+                title=event.options.get("title", "Untitled Book"),
+                author=event.options.get("author", "Unknown"),
+                narrator_voice=event.narrator_voice,
+                provider=event.options.get("provider", "openai"),
+                model=event.options.get("model", "tts-1"),
+                output_format=event.output_format,
+                chapter_detection=event.options.get("chapter_detection", True),
+                multi_voice=event.options.get("multi_voice", False),
+                character_voices=event.options.get("character_voices", {}),
+                voice_settings=event.options.get("voice_settings", {}),
+                background_music=event.options.get("background_music"),
+                music_volume=event.options.get("music_volume", 0.1),
+                chapter_pause_duration=event.options.get("chapter_pause_duration", 2.0),
+                paragraph_pause_duration=event.options.get("paragraph_pause_duration", 0.5),
+                sentence_pause_duration=event.options.get("sentence_pause_duration", 0.3),
+                max_chunk_size=event.options.get("max_chunk_size", 4000),
+                enable_ssml=event.options.get("enable_ssml", False),
+                normalize_audio=event.options.get("normalize_audio", True),
+                target_db=event.options.get("target_db", -20.0)
+            )
+            
+            # Get cost estimate
+            estimated_cost = generator.get_cost_estimate(audiobook_request)
+            
+            # Update UI with initial status
+            if hasattr(self.app, "query_one"):
+                try:
+                    from tldw_chatbook.UI.STTS_Window import AudioBookGenerationWidget
+                    audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
+                    if audiobook_widget:
+                        log = audiobook_widget.query_one("#audiobook-generation-log", RichLog)
+                        log.write(f"[bold yellow]Starting audiobook generation...[/bold yellow]")
+                        log.write(f"Estimated cost: ${estimated_cost:.2f}")
+                except Exception:
+                    pass  # UI element not found, continue without UI updates
+            
+            # Define progress callback
+            async def progress_callback(progress: AudioBookProgress):
+                """Update UI with generation progress"""
+                if hasattr(self.app, "query_one"):
+                    try:
+                        from tldw_chatbook.UI.STTS_Window import AudioBookGenerationWidget
+                        audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
+                        if audiobook_widget:
+                            log = audiobook_widget.query_one("#audiobook-generation-log", RichLog)
+                            
+                            # Update progress message
+                            if progress.current_chapter:
+                                log.write(f"[cyan]Processing: {progress.current_chapter}[/cyan]")
+                            
+                            # Update progress bar if available
+                            if progress.total_chapters > 0:
+                                percent_complete = (progress.completed_chapters / progress.total_chapters) * 100
+                                log.write(f"Progress: {progress.completed_chapters}/{progress.total_chapters} chapters ({percent_complete:.1f}%)")
+                            
+                            # Show time estimates
+                            if progress.estimated_completion:
+                                remaining_time = progress.estimated_completion - datetime.now()
+                                if remaining_time.total_seconds() > 0:
+                                    minutes_remaining = int(remaining_time.total_seconds() / 60)
+                                    log.write(f"Estimated time remaining: {minutes_remaining} minutes")
+                            
+                            # Show errors if any
+                            for error in progress.errors:
+                                log.write(f"[bold red]Error: {error}[/bold red]")
+                    except Exception:
+                        pass  # UI element not found, continue without UI updates
+            
+            # Generate the audiobook
+            output_path = await generator.generate_audiobook(
+                audiobook_request,
+                progress_callback=progress_callback
+            )
+            
+            # Update UI with completion
+            if hasattr(self.app, "query_one"):
+                try:
+                    from tldw_chatbook.UI.STTS_Window import AudioBookGenerationWidget
+                    audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
+                    if audiobook_widget:
+                        log = audiobook_widget.query_one("#audiobook-generation-log", RichLog)
+                        log.write(f"[bold green]✓ AudioBook generation complete![/bold green]")
+                        log.write(f"Output file: {output_path}")
+                        log.write(f"Total duration: {generator.progress.actual_duration / 60:.1f} minutes")
+                        
+                        # Enable export button if available
+                        export_btn = audiobook_widget.query_one("#audiobook-export-btn", Button)
+                        if export_btn:
+                            export_btn.disabled = False
+                            # Store the output path for export
+                            audiobook_widget.generated_audiobook_path = output_path
+                except Exception:
+                    pass  # UI element not found
+            
+            # Store the generated audiobook path for playback
+            self._current_audio_file = output_path
+            
+            # Notify the UI widget
+            if audiobook_widget and hasattr(audiobook_widget, 'audiobook_generation_complete'):
+                audiobook_widget.audiobook_generation_complete(True, output_path)
+            
+            self.app.notify(f"AudioBook generated successfully: {output_path.name}", severity="information")
+            
+        except ImportError as e:
+            logger.error(f"Failed to import audiobook generator: {e}")
+            self.app.notify("AudioBook generation module not available", severity="error")
         except Exception as e:
             logger.error(f"AudioBook generation failed: {e}")
             self.app.notify(f"AudioBook generation failed: {e}", severity="error")
+            
+            # Notify the UI widget of failure
+            try:
+                from tldw_chatbook.UI.STTS_Window import AudioBookGenerationWidget
+                audiobook_widget = self.app.query_one(AudioBookGenerationWidget)
+                if audiobook_widget and hasattr(audiobook_widget, 'audiobook_generation_complete'):
+                    audiobook_widget.audiobook_generation_complete(False)
+            except Exception:
+                pass
     
     async def play_current_audio(self) -> None:
         """Play the current audio file"""

@@ -15,21 +15,42 @@ from textual.events import Event
 from textual.message import Message
 
 # Local imports
-from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_embeddings_rag_deps
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..config import get_cli_setting
 
-# Import embeddings components if available
-if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-    from ..Embeddings.Embeddings_Lib import EmbeddingFactory, EmbeddingConfigSchema
-    from ..Embeddings.Chroma_Lib import ChromaDBManager
-    from ..Chunking.Chunk_Lib import chunk_for_embedding
-else:
-    EmbeddingFactory = None
-    EmbeddingConfigSchema = None
-    ChromaDBManager = None
-    chunk_for_embedding = None
+# Lazy import placeholders - will be loaded on demand
+EmbeddingFactory = None
+EmbeddingConfigSchema = None
+ChromaDBManager = None
+chunk_for_embedding = None
+
+def _ensure_embeddings_imported():
+    """Lazily import embeddings components when needed."""
+    global EmbeddingFactory, EmbeddingConfigSchema, ChromaDBManager, chunk_for_embedding
+    
+    if EmbeddingFactory is not None:  # Already imported
+        return True
+    
+    if not check_embeddings_rag_deps():
+        return False
+    
+    try:
+        from ..Embeddings.Embeddings_Lib import EmbeddingFactory as _EF, EmbeddingConfigSchema as _ECS
+        from ..Embeddings.Chroma_Lib import ChromaDBManager as _CDM
+        from ..Chunking.Chunk_Lib import chunk_for_embedding as _CFE
+        
+        EmbeddingFactory = _EF
+        EmbeddingConfigSchema = _ECS
+        ChromaDBManager = _CDM
+        chunk_for_embedding = _CFE
+        
+        logger.info("Successfully imported embeddings components")
+        return True
+    except ImportError as e:
+        logger.error(f"Failed to import embeddings components: {e}")
+        return False
 
 logger = logger.bind(name="embeddings_events")
 
@@ -192,15 +213,33 @@ class EmbeddingsEventHandler:
         self.app = app
         self.chachanotes_db = chachanotes_db
         self.media_db = media_db
-        self.embedding_factory: Optional[EmbeddingFactory] = None
-        self.chroma_manager: Optional[ChromaDBManager] = None
+        self.embedding_factory: Optional[Any] = None  # Will be EmbeddingFactory when loaded
+        self.chroma_manager: Optional[Any] = None  # Will be ChromaDBManager when loaded
+        self._initialized = False
         
-        # Initialize if dependencies available
-        if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+        # Don't initialize immediately - wait for first use
+        logger.info("EmbeddingsEventHandler created with lazy initialization")
+    
+    def _ensure_initialized(self) -> bool:
+        """Ensure embeddings are initialized when first needed."""
+        if self._initialized:
+            return True
+        
+        if not _ensure_embeddings_imported():
+            logger.warning("Embeddings dependencies not available")
+            return False
+        
+        try:
             self._initialize_embeddings()
+            self._initialized = True
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize embeddings: {e}")
+            return False
     
     def _initialize_embeddings(self) -> None:
         """Initialize embedding factory and ChromaDB manager."""
+        logger.info("Initializing embeddings components...")
         try:
             # Load embedding configuration
             from ..config import load_settings
@@ -302,6 +341,10 @@ class EmbeddingsEventHandler:
     
     async def handle_model_load(self, event: EmbeddingModelLoadEvent) -> None:
         """Handle model load event."""
+        if not self._ensure_initialized():
+            self._notify_error(event.sender, "Failed to initialize embeddings")
+            return
+        
         if not self.embedding_factory:
             self._notify_error(event.sender, "Embedding factory not initialized")
             return
@@ -324,6 +367,10 @@ class EmbeddingsEventHandler:
     
     async def handle_model_unload(self, event: EmbeddingModelUnloadEvent) -> None:
         """Handle model unload event."""
+        if not self._ensure_initialized():
+            self._notify_error(event.sender, "Failed to initialize embeddings")
+            return
+        
         if not self.embedding_factory:
             self._notify_error(event.sender, "Embedding factory not initialized")
             return

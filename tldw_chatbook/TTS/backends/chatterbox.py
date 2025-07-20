@@ -82,6 +82,16 @@ class ChatterboxTTSBackend(TTSBackendBase):
                                                            "~/.config/tldw_cli/chatterbox_voices"))).expanduser()
         self.voice_dir.mkdir(parents=True, exist_ok=True)
         
+        # Streaming configuration
+        self.streaming_enabled = self.config.get("CHATTERBOX_STREAMING",
+                                                get_cli_setting("app_tts", "CHATTERBOX_STREAMING", True))
+        self.stream_chunk_size = int(self.config.get("CHATTERBOX_STREAM_CHUNK_SIZE",
+                                                    get_cli_setting("app_tts", "CHATTERBOX_STREAM_CHUNK_SIZE", 4096)))
+        self.enable_crossfade = self.config.get("CHATTERBOX_ENABLE_CROSSFADE",
+                                              get_cli_setting("app_tts", "CHATTERBOX_ENABLE_CROSSFADE", True))
+        self.crossfade_duration_ms = int(self.config.get("CHATTERBOX_CROSSFADE_MS",
+                                                        get_cli_setting("app_tts", "CHATTERBOX_CROSSFADE_MS", 50)))
+        
         # Model instances
         self.model = None
         self.audio_service = get_audio_service()
@@ -290,6 +300,62 @@ class ChatterboxTTSBackend(TTSBackendBase):
         except Exception as e:
             logger.warning(f"Fade application failed: {e}")
             return audio_tensor
+    
+    def crossfade_audio_chunks(self, chunk1_tensor, chunk2_tensor, crossfade_duration_ms: int = 50):
+        """
+        Apply crossfade between two audio chunks for smooth transitions.
+        
+        Args:
+            chunk1_tensor: First audio chunk (PyTorch tensor)
+            chunk2_tensor: Second audio chunk (PyTorch tensor)
+            crossfade_duration_ms: Duration of crossfade in milliseconds
+            
+        Returns:
+            Combined audio tensor with crossfade applied
+        """
+        try:
+            import torch
+            
+            # Get sample rate
+            sample_rate = getattr(self.model, 'sr', 24000)
+            crossfade_samples = int(sample_rate * crossfade_duration_ms / 1000)
+            
+            # Ensure we have enough samples for crossfade
+            if crossfade_samples >= len(chunk1_tensor) or crossfade_samples >= len(chunk2_tensor):
+                logger.warning("Chunks too short for crossfade, concatenating directly")
+                return torch.cat([chunk1_tensor, chunk2_tensor])
+            
+            # Create fade curves
+            fade_out = torch.linspace(1, 0, crossfade_samples)
+            fade_in = torch.linspace(0, 1, crossfade_samples)
+            
+            # Apply fades to overlap region
+            chunk1_fade = chunk1_tensor.clone()
+            chunk1_fade[-crossfade_samples:] *= fade_out
+            
+            chunk2_fade = chunk2_tensor.clone()
+            chunk2_fade[:crossfade_samples] *= fade_in
+            
+            # Create result tensor
+            total_length = len(chunk1_tensor) + len(chunk2_tensor) - crossfade_samples
+            result = torch.zeros(total_length)
+            
+            # Copy non-overlapping parts
+            result[:len(chunk1_tensor) - crossfade_samples] = chunk1_tensor[:-crossfade_samples]
+            result[len(chunk1_tensor):] = chunk2_tensor[crossfade_samples:]
+            
+            # Add crossfaded overlap
+            result[len(chunk1_tensor) - crossfade_samples:len(chunk1_tensor)] = (
+                chunk1_fade[-crossfade_samples:] + chunk2_fade[:crossfade_samples]
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Crossfade failed: {e}")
+            # Fallback to simple concatenation
+            import torch
+            return torch.cat([chunk1_tensor, chunk2_tensor])
     
     async def _transcribe_audio(self, audio_bytes: bytes) -> str:
         """
@@ -519,9 +585,12 @@ class ChatterboxTTSBackend(TTSBackendBase):
                     
                     all_audio_bytes.append(audio_bytes)
                 
-                # Combine all chunks
-                # TODO: Implement crossfade for smoother transitions
-                combined_audio = b''.join(all_audio_bytes)
+                # Combine all chunks with crossfade if enabled
+                if self.enable_crossfade and len(all_audio_bytes) > 1:
+                    logger.info("Applying crossfade between audio chunks")
+                    combined_audio = await self._combine_audio_with_crossfade(all_audio_bytes)
+                else:
+                    combined_audio = b''.join(all_audio_bytes)
                 
                 # Convert format if needed
                 if request.response_format != "wav":
@@ -568,33 +637,148 @@ class ChatterboxTTSBackend(TTSBackendBase):
     
     async def _generate_stream_async(self, text: str, audio_prompt_path: Optional[str], 
                                    exaggeration: float, cfg_weight: float) -> AsyncGenerator:
-        """Async wrapper for streaming generation"""
-        # Run the synchronous generator in a thread
+        """Async wrapper for streaming generation with proper thread handling"""
+        import threading
+        import queue
+        
         loop = asyncio.get_event_loop()
+        result_queue = queue.Queue()
+        exception_queue = queue.Queue()
         
-        # Define a generator function
-        def sync_generator():
-            if audio_prompt_path:
-                return self.model.generate_stream(
-                    text,
-                    audio_prompt_path=audio_prompt_path,
-                    exaggeration=exaggeration,
-                    cfg_weight=cfg_weight,
-                    chunk_size=self.chunk_size
-                )
-            else:
-                return self.model.generate_stream(
-                    text,
-                    exaggeration=exaggeration,
-                    cfg_weight=cfg_weight,
-                    chunk_size=self.chunk_size
-                )
+        def producer():
+            """Run sync generator in thread and put results in queue"""
+            try:
+                # Check if model has generate_stream method
+                if hasattr(self.model, 'generate_stream'):
+                    if audio_prompt_path:
+                        generator = self.model.generate_stream(
+                            text,
+                            audio_prompt_path=audio_prompt_path,
+                            exaggeration=exaggeration,
+                            cfg_weight=cfg_weight,
+                            chunk_size=self.chunk_size
+                        )
+                    else:
+                        generator = self.model.generate_stream(
+                            text,
+                            exaggeration=exaggeration,
+                            cfg_weight=cfg_weight,
+                            chunk_size=self.chunk_size
+                        )
+                    
+                    # Iterate through generator and put chunks in queue
+                    for chunk, metrics in generator:
+                        result_queue.put((chunk, metrics))
+                else:
+                    # Fallback: generate full audio and chunk it
+                    logger.warning("Chatterbox model doesn't support streaming, using chunked output")
+                    if audio_prompt_path:
+                        full_audio = self.model.generate(
+                            text,
+                            audio_prompt_path=audio_prompt_path,
+                            exaggeration=exaggeration,
+                            cfg_weight=cfg_weight
+                        )
+                    else:
+                        full_audio = self.model.generate(
+                            text,
+                            exaggeration=exaggeration,
+                            cfg_weight=cfg_weight
+                        )
+                    
+                    # Chunk the audio
+                    import torch
+                    chunk_size = self.chunk_size
+                    for i in range(0, len(full_audio), chunk_size):
+                        chunk = full_audio[i:i + chunk_size]
+                        metrics = {"chunk_index": i // chunk_size, "total_samples": len(full_audio)}
+                        result_queue.put((chunk, metrics))
+                
+                # Signal completion
+                result_queue.put(None)
+                
+            except Exception as e:
+                exception_queue.put(e)
+                result_queue.put(None)
         
-        # Execute in thread and yield results
-        generator = await loop.run_in_executor(None, sync_generator)
+        # Start producer thread
+        thread = threading.Thread(target=producer)
+        thread.start()
         
-        for chunk, metrics in generator:
-            yield chunk, metrics
+        # Consume from queue asynchronously
+        while True:
+            # Check for exceptions first
+            try:
+                exc = exception_queue.get_nowait()
+                raise exc
+            except queue.Empty:
+                pass
+            
+            # Get result with timeout to allow for cancellation
+            try:
+                result = await loop.run_in_executor(None, lambda: result_queue.get(timeout=0.1))
+                if result is None:
+                    break
+                yield result
+            except queue.Empty:
+                # Check if thread is still alive
+                if not thread.is_alive():
+                    # Thread died unexpectedly
+                    break
+                continue
+        
+        # Ensure thread completes
+        thread.join(timeout=1.0)
+    
+    async def _combine_audio_with_crossfade(self, audio_chunks: List[bytes]) -> bytes:
+        """
+        Combine multiple WAV audio chunks with crossfade.
+        
+        Args:
+            audio_chunks: List of WAV audio bytes
+            
+        Returns:
+            Combined WAV audio bytes with crossfade applied
+        """
+        import io
+        import wave
+        import torch
+        import torchaudio
+        
+        if len(audio_chunks) <= 1:
+            return b''.join(audio_chunks)
+        
+        try:
+            # Load all chunks as tensors
+            tensors = []
+            sample_rate = None
+            
+            for chunk_bytes in audio_chunks:
+                # Load WAV from bytes
+                buffer = io.BytesIO(chunk_bytes)
+                tensor, sr = torchaudio.load(buffer)
+                
+                # Ensure mono
+                if tensor.shape[0] > 1:
+                    tensor = tensor.mean(dim=0, keepdim=True)
+                
+                tensors.append(tensor.squeeze(0))
+                if sample_rate is None:
+                    sample_rate = sr
+            
+            # Apply crossfade between consecutive chunks
+            result = tensors[0]
+            for i in range(1, len(tensors)):
+                result = self.crossfade_audio_chunks(result, tensors[i], self.crossfade_duration_ms)
+            
+            # Convert back to WAV bytes
+            result = result.unsqueeze(0)  # Add channel dimension
+            return self._tensor_to_wav_bytes(result, sample_rate)
+            
+        except Exception as e:
+            logger.error(f"Failed to apply crossfade: {e}")
+            # Fallback to simple concatenation
+            return b''.join(audio_chunks)
     
     def _tensor_to_wav_bytes(self, tensor, sample_rate: int) -> bytes:
         """Convert PyTorch tensor to WAV bytes"""
@@ -804,6 +988,19 @@ class ChatterboxTTSBackend(TTSBackendBase):
         
         # All strategies failed
         raise ValueError("All generation strategies failed")
+    
+    async def close(self):
+        """Clean up resources"""
+        # Clean up model if needed
+        if self.model is not None:
+            del self.model
+            self.model = None
+        
+        # Clean up transcription service
+        if self.transcription_service is not None:
+            self.transcription_service = None
+        
+        logger.info("ChatterboxTTSBackend: Resources cleaned up")
 
 #
 # End of chatterbox.py

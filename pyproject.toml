@@ -133,6 +133,7 @@ audio = [
     "parakeet-mlx; sys_platform == 'darwin'",  # macOS only - real-time ASR
     "yt-dlp",
     "numpy",
+    "pydub",
 ]
 video = [
     "soundfile",

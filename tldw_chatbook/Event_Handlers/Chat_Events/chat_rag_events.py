@@ -282,6 +282,12 @@ async def get_rag_context_for_chat(app: "TldwCli", user_message: str) -> Optiona
         search_mode_widget = app.query_one("#chat-rag-search-mode")
         search_mode = search_mode_widget.value
         logger.info(f"RAG search mode from dropdown: {search_mode}")
+        
+        # If "none" is selected, determine mode from checkboxes or default
+        if search_mode == "none":
+            # Manual configuration mode - use existing logic
+            search_mode = "plain" if plain_rag_enabled else "semantic"
+            logger.info(f"Manual config mode: using {search_mode} based on checkboxes")
     except NoMatches:
         # Fallback to checkbox-based detection for backward compatibility
         logger.debug("Search mode dropdown not found, using checkbox-based detection")

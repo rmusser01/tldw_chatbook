@@ -6,11 +6,12 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
-from textual.widgets import Label, Button, TextArea, Select, Input, Static, RichLog, Switch, Collapsible, Rule
+from textual.widgets import Label, Button, TextArea, Select, Input, Static, RichLog, Switch, Collapsible, Rule, ProgressBar
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.message import Message
 from textual import work
+from textual.binding import Binding
 from loguru import logger
 
 # Local imports
@@ -20,7 +21,12 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
+from tldw_chatbook.Third_Party.textual_fspicker import Filters
 # Note: Not using form_components due to generator/widget incompatibility
+
+import json
 
 #######################################################################################################################
 #
@@ -28,6 +34,14 @@ from tldw_chatbook.Utils.input_validation import validate_text_input
 
 class TTSPlaygroundWidget(Widget):
     """TTS Playground for testing different providers and settings"""
+    
+    BINDINGS = [
+        Binding("ctrl+g", "generate_tts", "Generate Speech"),
+        Binding("ctrl+r", "random_text", "Random Text"),
+        Binding("ctrl+l", "clear_text", "Clear Text"),
+        Binding("ctrl+p", "play_audio", "Play Audio"),
+        Binding("ctrl+s", "stop_audio", "Stop Audio"),
+    ]
     
     DEFAULT_CSS = """
     TTSPlaygroundWidget {
@@ -55,6 +69,10 @@ class TTSPlaygroundWidget(Widget):
     
     .provider-settings {
         display: none;
+    }
+    
+    #kokoro-settings.visible {
+        display: block;
     }
     
     #elevenlabs-settings.visible {
@@ -87,12 +105,64 @@ class TTSPlaygroundWidget(Widget):
         border: solid $secondary;
         margin-top: 1;
     }
+    
+    .audio-progress {
+        width: 100%;
+        margin: 0 1;
+    }
+    
+    .audio-time {
+        width: auto;
+        margin: 0 1;
+    }
+    
+    .hidden {
+        display: none;
+    }
+    
+    .tts-text-input, #tts-text-input {
+        height: 10;
+        min-height: 5;
+        max-height: 20;
+        border: solid $primary;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    
+    .text-input-container {
+        height: auto;
+        min-height: 12;
+        margin-bottom: 1;
+    }
+    
+    .example-text {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    
+    .quick-tips {
+        border: solid $secondary;
+        padding: 1;
+        margin: 1 0;
+        background: $boost;
+    }
+    
+    .tip-text {
+        color: $text-muted;
+    }
     """
     
     def __init__(self):
         super().__init__()
         self.current_audio_file = None
         self.reference_audio_path = None
+        self.example_texts = [
+            "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
+            "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
+            "In a world of artificial intelligence, the ability to convert text into natural speech opens countless possibilities.",
+            "Testing, one, two, three. Can you hear the difference between various voice models?",
+            "Good morning! Today's weather is sunny with a high of 75 degrees. Perfect for a walk in the park."
+        ]
         
     def compose(self) -> ComposeResult:
         """Compose the TTS Playground UI"""
@@ -100,10 +170,17 @@ class TTSPlaygroundWidget(Widget):
             yield Label("🎤 TTS Playground", classes="section-title")
             
             # Text input area
-            yield Label("Text to Synthesize:")
-            yield TextArea(
-                id="tts-text-input"
-            )
+            with Vertical(classes="text-input-container"):
+                yield Label("Text to Synthesize:")
+                yield Static(
+                    "Example: Hello! Welcome to the TTS Playground. Try different voices and settings.",
+                    classes="example-text"
+                )
+                yield TextArea(
+                    "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
+                    id="tts-text-input",
+                    classes="tts-text-input"
+                )
             
             # Provider selection
             with Horizontal(classes="form-row"):
@@ -114,6 +191,7 @@ class TTSPlaygroundWidget(Widget):
                         ("elevenlabs", "ElevenLabs"),
                         ("kokoro", "Kokoro (Local)"),
                         ("chatterbox", "Chatterbox (Local)"),
+                        ("alltalk", "AllTalk (Local)"),
                     ],
                     id="tts-provider-select"
                 )
@@ -122,7 +200,7 @@ class TTSPlaygroundWidget(Widget):
             with Horizontal(classes="form-row"):
                 yield Label("Voice:", classes="form-label")
                 yield Select(
-                    options=[("alloy", "Alloy")],
+                    options=[],  # Will be populated on mount
                     id="tts-voice-select"
                 )
             
@@ -130,7 +208,7 @@ class TTSPlaygroundWidget(Widget):
             with Horizontal(classes="form-row"):
                 yield Label("Model:", classes="form-label")
                 yield Select(
-                    options=[("tts-1", "TTS-1"), ("tts-1-hd", "TTS-1-HD")],
+                    options=[],  # Will be populated on mount
                     id="tts-model-select"
                 )
             
@@ -151,6 +229,16 @@ class TTSPlaygroundWidget(Widget):
                     ],
                     id="tts-language-select"
                 )
+            
+            # Kokoro-specific settings
+            with Vertical(id="kokoro-settings", classes="provider-settings"):
+                # ONNX/PyTorch toggle
+                with Horizontal(classes="form-row"):
+                    yield Label("Use ONNX:", classes="form-label")
+                    yield Switch(
+                        id="tts-kokoro-use-onnx",
+                        value=get_cli_setting("app_tts", "KOKORO_USE_ONNX", True)
+                    )
             
             # Speed control
             with Horizontal(classes="form-row"):
@@ -291,52 +379,221 @@ class TTSPlaygroundWidget(Widget):
                     id="tts-format-select"
                 )
             
-            # Generate button
-            yield Button("🔊 Generate Speech", id="tts-generate-btn", variant="primary")
+            # Generate button and quick actions
+            with Horizontal(classes="form-row"):
+                yield Button("🔊 Generate Speech", id="tts-generate-btn", variant="primary")
+                yield Button("🎲 Random Text", id="tts-random-text-btn", variant="default")
+                yield Button("🗑️ Clear", id="tts-clear-text-btn", variant="default")
             
             # Audio player placeholder
             with Container(id="audio-player-container", classes="audio-player"):
                 yield Static("Audio player will appear here after generation", id="audio-player-status")
+                
+                # Progress bar for playback
+                from textual.widgets import ProgressBar
+                yield ProgressBar(
+                    total=100,
+                    show_eta=False,
+                    show_percentage=False,
+                    id="audio-progress-bar",
+                    classes="audio-progress hidden"
+                )
+                yield Static("0:00 / 0:00", id="audio-time-display", classes="audio-time hidden")
+                
                 with Horizontal():
                     yield Button("▶️ Play", id="audio-play-btn", disabled=True)
-                    yield Button("⏸️ Pause", id="audio-pause-btn", disabled=True)
-                    yield Button("⏹️ Stop", id="audio-stop-btn", disabled=True)
+                    yield Button("⏸️ Pause", id="pause-audio-btn", disabled=True)
+                    yield Button("⏹️ Stop", id="stop-audio-btn", disabled=True)
                     yield Button("💾 Export", id="audio-export-btn", disabled=True)
             
             # Generation log
             yield Label("Generation Log:")
             yield RichLog(id="tts-generation-log", classes="generation-log", highlight=True, markup=True)
+            
+            # Keyboard shortcuts info
+            yield Rule()
+            yield Static(
+                "Shortcuts: Ctrl+G=Generate | Ctrl+R=Random | Ctrl+L=Clear | Ctrl+P=Play | Ctrl+S=Stop",
+                classes="tip-text"
+            )
+    
+    def on_mount(self) -> None:
+        """Initialize default values on mount"""
+        # Delay initialization to ensure widgets are ready
+        self.set_timer(0.1, self._initialize_defaults)
+    
+    def _initialize_defaults(self) -> None:
+        """Initialize default values after mount"""
+        try:
+            # Set default format if not already set
+            format_select = self.query_one("#tts-format-select", Select)
+            if format_select.value is None or format_select.value == Select.BLANK:
+                # Force selection of first option
+                try:
+                    format_select.action_select_cursor()
+                except Exception:
+                    pass
+            
+            # Update voices and models for the default provider
+            provider_select = self.query_one("#tts-provider-select", Select)
+            
+            # Get the current value - it should default to the first option
+            current_provider = provider_select.value
+            
+            # If no value selected (shouldn't happen with options), default to openai
+            if current_provider is None or current_provider == Select.BLANK:
+                current_provider = "openai"
+            
+            logger.debug(f"Initializing with provider: {current_provider}")
+            
+            # Always update voice and model options based on current provider
+            if current_provider != Select.BLANK:
+                self._update_voice_options(current_provider)
+                self._update_model_options(current_provider)
+        except Exception as e:
+            logger.warning(f"Error initializing defaults: {e}")
     
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle provider/model selection changes"""
         if event.select.id == "tts-provider-select":
-            self._update_voice_options(event.value)
-            self._update_model_options(event.value)
+            # Get the provider select widget
+            provider_select = self.query_one("#tts-provider-select", Select)
             
-            # Show/hide language selection based on provider
-            language_row = self.query_one("#kokoro-language-row", Horizontal)
-            if event.value == "kokoro":
-                language_row.add_class("visible")
-            else:
-                language_row.remove_class("visible")
+            # The event.value might be the display text, so we need to find the key
+            # by matching against the options
+            provider_value = None
+            for option_value, option_label in [
+                ("openai", "OpenAI"),
+                ("elevenlabs", "ElevenLabs"),
+                ("kokoro", "Kokoro (Local)"),
+                ("chatterbox", "Chatterbox (Local)"),
+                ("alltalk", "AllTalk (Local)"),
+            ]:
+                if event.value == option_label or event.value == option_value:
+                    provider_value = option_value
+                    break
             
-            # Show/hide ElevenLabs settings
-            elevenlabs_settings = self.query_one("#elevenlabs-settings", Vertical)
-            if event.value == "elevenlabs":
-                elevenlabs_settings.add_class("visible")
-            else:
-                elevenlabs_settings.remove_class("visible")
+            logger.info(f"Provider select changed - event.value: {event.value!r}")
+            logger.info(f"Resolved provider key: {provider_value!r}")
+            logger.debug(f"Provider widget value is: {provider_select.value}")
             
-            # Show/hide Chatterbox settings
-            chatterbox_settings = self.query_one("#chatterbox-settings", Vertical)
-            if event.value == "chatterbox":
-                chatterbox_settings.add_class("visible")
+            # The widget value should be the key (e.g., "kokoro")
+            if provider_value and provider_value != Select.BLANK:
+                self._update_voice_options(provider_value)
+                self._update_model_options(provider_value)
+            
+            # Show/hide provider-specific settings
+            if provider_value and provider_value != Select.BLANK:
+                # Show/hide Kokoro language row
+                language_row = self.query_one("#kokoro-language-row", Horizontal)
+                if provider_value == "kokoro":
+                    logger.debug("Showing Kokoro language selection row")
+                    language_row.add_class("visible")
+                else:
+                    logger.debug("Hiding Kokoro language selection row")
+                    language_row.remove_class("visible")
+                
+                # Show/hide Kokoro settings
+                kokoro_settings = self.query_one("#kokoro-settings", Vertical)
+                if provider_value == "kokoro":
+                    logger.debug("Showing Kokoro settings")
+                    kokoro_settings.add_class("visible")
+                else:
+                    logger.debug("Hiding Kokoro settings")
+                    kokoro_settings.remove_class("visible")
+                
+                # Show/hide ElevenLabs settings
+                elevenlabs_settings = self.query_one("#elevenlabs-settings", Vertical)
+                if provider_value == "elevenlabs":
+                    elevenlabs_settings.add_class("visible")
+                else:
+                    elevenlabs_settings.remove_class("visible")
+                
+                # Show/hide Chatterbox settings
+                chatterbox_settings = self.query_one("#chatterbox-settings", Vertical)
+                if provider_value == "chatterbox":
+                    chatterbox_settings.add_class("visible")
+                else:
+                    chatterbox_settings.remove_class("visible")
+        
+        elif event.select.id == "tts-voice-select":
+            # Validate voice selection (prevent selecting separators)
+            if not self._is_valid_voice(event.value):
+                # Find and select the first valid voice
+                voice_select = event.select
+                for value, _ in voice_select._options:
+                    if self._is_valid_voice(value):
+                        voice_select.value = value
+                        break
+    
+    def _is_valid_voice(self, voice: str) -> bool:
+        """Check if a voice value is valid (not a separator)"""
+        return bool(voice) and not str(voice).startswith("_separator")
+    
+    def _set_valid_voice(self, voice_select, voice_options, fallback="af_bella"):
+        """Set a valid voice from options, skipping separators"""
+        # Find first valid voice option (skip separators)
+        valid_voice = None
+        for value, label in voice_options:
+            if self._is_valid_voice(value):
+                valid_voice = value
+                logger.debug(f"Found valid voice: {value} ({label})")
+                break
+        
+        # Try to set the value with error handling
+        try:
+            if valid_voice:
+                logger.info(f"Setting voice to: {valid_voice}")
+                voice_select.value = valid_voice
             else:
-                chatterbox_settings.remove_class("visible")
+                logger.warning(f"No valid voice found, using fallback: {fallback}")
+                voice_select.value = fallback
+            
+            # Log final state only if successfully set
+            logger.info(f"Voice select final value: {voice_select.value}")
+        except Exception as e:
+            logger.debug(f"Could not set voice value immediately: {e}")
+            # The value will be set later when the widget is ready
+    
+    def _safe_set_select_value(self, select_widget, value: str, widget_name: str = "widget") -> None:
+        """Safely set a Select widget value with error handling"""
+        try:
+            select_widget.value = value
+            logger.debug(f"Successfully set {widget_name} to: {value}")
+        except Exception as e:
+            logger.debug(f"Could not set {widget_name} value immediately: {e}")
+    
+    def _get_select_key(self, select_widget) -> Optional[str]:
+        """Get the actual key from a Select widget, not the display text"""
+        if not hasattr(select_widget, '_options') or not select_widget._options:
+            return None
+        
+        current_value = select_widget.value
+        if current_value == Select.BLANK:
+            return None
+            
+        # Find the key that matches the current value
+        for key, label in select_widget._options:
+            if label == current_value or key == current_value:
+                return key
+        
+        return None
     
     def _update_voice_options(self, provider: str) -> None:
         """Update voice options based on provider"""
-        voice_select = self.query_one("#tts-voice-select", Select)
+        logger.info(f"_update_voice_options called with provider: '{provider}' (type: {type(provider)})")
+        
+        # Handle Select.BLANK
+        if provider == Select.BLANK or str(provider) == "Select.BLANK":
+            logger.debug("Provider is Select.BLANK, skipping update")
+            return
+            
+        try:
+            voice_select = self.query_one("#tts-voice-select", Select)
+            logger.debug(f"Found voice select widget, current value: {voice_select.value}, options: {len(voice_select._options) if hasattr(voice_select, '_options') else 'unknown'}")
+        except Exception as e:
+            logger.error(f"Failed to find voice select widget: {e}")
+            return
         
         if provider == "openai":
             voice_select.set_options([
@@ -352,7 +609,11 @@ class TTSPlaygroundWidget(Widget):
                 ("shimmer", "Shimmer"),
                 ("verse", "Verse"),
             ])
-            voice_select.value = "alloy"
+            # Don't set value directly - let Select handle it
+            try:
+                voice_select.value = "alloy"
+            except Exception as e:
+                logger.debug(f"Could not set default voice value: {e}")
         elif provider == "elevenlabs":
             voice_select.set_options([
                 ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
@@ -367,7 +628,9 @@ class TTSPlaygroundWidget(Widget):
             ])
             voice_select.value = "21m00Tcm4TlvDq8ikWAM"
         elif provider == "kokoro":
-            voice_select.set_options([
+            logger.info(f"Setting up Kokoro voices for provider: {provider}")
+            logger.debug(f"Voice select widget state - value: {voice_select.value}, enabled: {not voice_select.disabled}")
+            voice_options = [
                 # American Female voices
                 ("af_alloy", "Alloy (US Female)"),
                 ("af_aoede", "Aoede (US Female)"),
@@ -391,18 +654,65 @@ class TTSPlaygroundWidget(Widget):
                 ("bm_lewis", "Lewis (UK Male)"),
                 # Note: Additional voices for other languages (Japanese, Chinese, Spanish, etc.) 
                 # can be added here with proper voice codes
-            ])
-            voice_select.value = "af_bella"
+            ]
+            
+            # Add saved voice blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                try:
+                    import json
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                        if blends:
+                            # Add separator
+                            voice_options.append(("_separator", "──── Voice Blends ────"))
+                            # Add each blend
+                            for blend_name, blend_data in blends.items():
+                                display_name = f"🎭 {blend_name}"
+                                if blend_data.get('description'):
+                                    display_name += f" - {blend_data['description'][:30]}"
+                                voice_options.append((f"blend:{blend_name}", display_name))
+                except Exception as e:
+                    logger.error(f"Failed to load voice blends: {e}")
+            
+            voice_select.set_options(voice_options)
+            logger.debug(f"Set {len(voice_options)} voice options for Kokoro")
+            
+            # Use helper method to set valid voice
+            self._set_valid_voice(voice_select, voice_options, fallback="af_bella")
         elif provider == "chatterbox":
             voice_select.set_options([
                 ("default", "Default Voice"),
                 ("custom", "Custom (Upload Reference)"),
                 # Predefined voices will be loaded dynamically if available
             ])
-            voice_select.value = "default"
+            self._safe_set_select_value(voice_select, "default", "Chatterbox voice")
+        elif provider == "alltalk":
+            voice_select.set_options([
+                ("female_01.wav", "Female 01"),
+                ("female_02.wav", "Female 02"),
+                ("female_03.wav", "Female 03"),
+                ("female_04.wav", "Female 04"),
+                ("male_01.wav", "Male 01"),
+                ("male_02.wav", "Male 02"),
+                ("male_03.wav", "Male 03"),
+                ("male_04.wav", "Male 04"),
+                # AllTalk typically supports more voices, these are common defaults
+            ])
+            self._safe_set_select_value(voice_select, "female_01.wav", "AllTalk voice")
+        else:
+            logger.warning(f"Unknown TTS provider: {provider}")
+            voice_select.set_options([("default", "Default")])
     
     def _update_model_options(self, provider: str) -> None:
         """Update model options based on provider"""
+        logger.debug(f"Updating model options for provider: {provider}")
+        
+        # Handle Select.BLANK
+        if provider == Select.BLANK or str(provider) == "Select.BLANK":
+            logger.debug("Provider is Select.BLANK, skipping model update")
+            return
+            
         model_select = self.query_one("#tts-model-select", Select)
         
         if provider == "openai":
@@ -410,7 +720,7 @@ class TTSPlaygroundWidget(Widget):
                 ("tts-1", "TTS-1 (Standard)"),
                 ("tts-1-hd", "TTS-1-HD (High Quality)"),
             ])
-            model_select.value = "tts-1"
+            self._safe_set_select_value(model_select, "tts-1", "OpenAI model")
         elif provider == "elevenlabs":
             model_select.set_options([
                 ("eleven_monolingual_v1", "Eleven Monolingual v1"),
@@ -421,27 +731,41 @@ class TTSPlaygroundWidget(Widget):
                 ("eleven_flash_v2", "Eleven Flash v2 (Low Latency)"),
                 ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
             ])
-            model_select.value = "eleven_multilingual_v2"
+            self._safe_set_select_value(model_select, "eleven_multilingual_v2", "ElevenLabs model")
         elif provider == "kokoro":
+            logger.info("Setting Kokoro model options")
             model_select.set_options([
                 ("kokoro", "Kokoro 82M"),
             ])
-            model_select.value = "kokoro"
+            self._safe_set_select_value(model_select, "kokoro", "Kokoro model")
+            logger.info("Kokoro model options configured")
         elif provider == "chatterbox":
             model_select.set_options([
                 ("chatterbox", "Chatterbox 0.5B"),
             ])
-            model_select.value = "chatterbox"
+            self._safe_set_select_value(model_select, "chatterbox", "Chatterbox model")
+        elif provider == "alltalk":
+            model_select.set_options([
+                ("alltalk", "AllTalk TTS"),
+            ])
+            self._safe_set_select_value(model_select, "alltalk", "AllTalk model")
+        else:
+            logger.warning(f"Unknown TTS provider for model: {provider}")
+            model_select.set_options([("default", "Default Model")])
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         if event.button.id == "tts-generate-btn":
             self._generate_tts()
+        elif event.button.id == "tts-random-text-btn":
+            self._insert_random_text()
+        elif event.button.id == "tts-clear-text-btn":
+            self._clear_text()
         elif event.button.id == "audio-play-btn":
             self._play_audio()
-        elif event.button.id == "audio-pause-btn":
+        elif event.button.id == "pause-audio-btn":
             self._pause_audio()
-        elif event.button.id == "audio-stop-btn":
+        elif event.button.id == "stop-audio-btn":
             self._stop_audio()
         elif event.button.id == "audio-export-btn":
             self._export_audio()
@@ -460,17 +784,54 @@ class TTSPlaygroundWidget(Widget):
             self.app.notify("Please enter text to synthesize", severity="warning")
             return
         
-        provider = self.query_one("#tts-provider-select", Select).value
-        voice = self.query_one("#tts-voice-select", Select).value
-        model = self.query_one("#tts-model-select", Select).value
+        provider_select = self.query_one("#tts-provider-select", Select)
+        voice_select = self.query_one("#tts-voice-select", Select)
+        model_select = self.query_one("#tts-model-select", Select)
+        
+        # Get the actual keys, not display text
+        provider = self._get_select_key(provider_select) or provider_select.value
+        voice = self._get_select_key(voice_select) or voice_select.value
+        model = self._get_select_key(model_select) or model_select.value
+        
+        # Validate voice selection
+        if not self._is_valid_voice(voice):
+            self.app.notify("Please select a valid voice", severity="warning")
+            return
         speed = float(self.query_one("#tts-speed-input", Input).value or "1.0")
-        format = self.query_one("#tts-format-select", Select).value
+        format_select = self.query_one("#tts-format-select", Select)
+        format = format_select.value
+        
+        # Debug logging
+        logger.debug(f"Format select value: {format!r}, type: {type(format)}")
+        logger.debug(f"Format select options: {format_select._options}")
+        
+        # Ensure format has a valid value
+        if not format or format == Select.BLANK or str(format) == "Select.BLANK":
+            format = "mp3"
+            logger.warning("No format selected, defaulting to mp3")
+        elif isinstance(format, tuple):
+            # If it's a tuple, take the first element
+            format = format[0]
+            logger.debug(f"Format was tuple, extracted: {format}")
+        
+        # Additional validation - also handle uppercase
+        valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
+        format_lower = format.lower() if isinstance(format, str) else format
+        if format_lower in valid_formats:
+            format = format_lower
+        else:
+            logger.warning(f"Invalid format '{format}', defaulting to mp3")
+            format = "mp3"
         
         # Collect provider-specific settings
         extra_params = {}
         if provider == "kokoro":
-            language = self.query_one("#tts-language-select", Select).value
+            language_select = self.query_one("#tts-language-select", Select)
+            language = self._get_select_key(language_select) or language_select.value
             extra_params["language"] = language
+            # Add ONNX setting
+            use_onnx = self.query_one("#tts-kokoro-use-onnx", Switch).value
+            extra_params["use_onnx"] = use_onnx
         elif provider == "elevenlabs":
             stability = float(self.query_one("#tts-stability-input", Input).value or "0.5")
             similarity = float(self.query_one("#tts-similarity-input", Input).value or "0.8")
@@ -521,6 +882,9 @@ class TTSPlaygroundWidget(Widget):
         log.write(f"Format: {format}")
         log.write(f"Text length: {len(text)} characters")
         
+        # Debug log the actual values
+        logger.debug(f"TTS generation - provider: {provider!r}, voice: {voice!r}, model: {model!r}")
+        
         # Log provider-specific settings
         if extra_params:
             log.write(f"Extra settings: {extra_params}")
@@ -539,16 +903,21 @@ class TTSPlaygroundWidget(Widget):
             extra_params=extra_params
         ))
     
-    def _generation_complete(self, success: bool) -> None:
+    def _generation_complete(self, success: bool, audio_file: Optional[Path] = None) -> None:
         """Handle TTS generation completion"""
         self.query_one("#tts-generate-btn", Button).disabled = False
         
-        if success:
+        if success and audio_file:
+            # Store the audio file path
+            self.current_audio_file = audio_file
+            
             log = self.query_one("#tts-generation-log", RichLog)
             log.write("[bold green]✓ TTS generation complete![/bold green]")
             
             # Enable audio controls
             self.query_one("#audio-play-btn", Button).disabled = False
+            self.query_one("#pause-audio-btn", Button).disabled = True  # Disabled until playing
+            self.query_one("#stop-audio-btn", Button).disabled = True   # Disabled until playing
             self.query_one("#audio-export-btn", Button).disabled = False
             self.query_one("#audio-player-status", Static).update("Audio ready to play")
             
@@ -560,39 +929,175 @@ class TTSPlaygroundWidget(Widget):
     
     def _play_audio(self) -> None:
         """Play the generated audio"""
-        # Call the app's play method if it has the event handler
-        if hasattr(self.app, 'play_current_audio'):
-            self.app.run_worker(self.app.play_current_audio())
+        if self._ensure_audio_player():
+            # Enable pause and stop buttons
+            self.query_one("#pause-audio-btn", Button).disabled = False
+            self.query_one("#stop-audio-btn", Button).disabled = False
+            self.query_one("#audio-player-status", Static).update("Playing...")
+            
+            # Use the new audio player method
+            self.run_worker(self._play_audio_async)
         else:
             self.app.notify("Audio playback not available", severity="warning")
     
+    async def _play_audio_async(self) -> None:
+        """Play audio asynchronously using the audio player"""
+        try:
+            # Get the current audio file from the STTS handler
+            if hasattr(self.app, '_stts_handler') and self.app._stts_handler._current_audio_file:
+                audio_file = self.app._stts_handler._current_audio_file
+                success = await self.app.audio_player.play(audio_file)
+                if success:
+                    # Start progress timer
+                    import asyncio
+                    asyncio.create_task(self._update_progress_timer())
+                else:
+                    self.app.notify("Failed to start playback", severity="error")
+            else:
+                self.app.notify("No audio file to play", severity="warning")
+        except Exception as e:
+            logger.error(f"Error playing audio: {e}")
+            self.app.notify(f"Playback error: {str(e)}", severity="error")
+    
+    def _ensure_audio_player(self) -> bool:
+        """Ensure audio player is initialized (lazy loading)"""
+        if not hasattr(self.app, 'audio_player'):
+            try:
+                from tldw_chatbook.TTS.audio_player import AsyncAudioPlayer
+                self.app.audio_player = AsyncAudioPlayer()
+                logger.info("Audio player initialized on first use")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to initialize audio player: {e}")
+                self.app.notify("Failed to initialize audio player", severity="error")
+                return False
+        return True
+    
     def _pause_audio(self) -> None:
         """Pause audio playback"""
-        # TODO: Implement audio pause
-        pass
+        if self._ensure_audio_player():
+            self.run_worker(self._pause_audio_async)
+        else:
+            self.app.notify("Audio player not available", severity="warning")
+    
+    async def _pause_audio_async(self) -> None:
+        """Pause audio playback asynchronously"""
+        try:
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+            
+            state = await self.app.audio_player.get_state()
+            if state == PlaybackState.PLAYING:
+                success = await self.app.audio_player.pause()
+                if success:
+                    # Update button states
+                    self.query_one("#pause-audio-btn", Button).label = "▶️ Resume"
+                    self.app.notify("Playback paused", severity="information")
+                else:
+                    self.app.notify("Failed to pause playback", severity="warning")
+            elif state == PlaybackState.PAUSED:
+                success = await self.app.audio_player.resume()
+                if success:
+                    # Update button states
+                    self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
+                    self.app.notify("Playback resumed", severity="information")
+                    # Restart progress timer
+                    import asyncio
+                    asyncio.create_task(self._update_progress_timer())
+                else:
+                    self.app.notify("Failed to resume playback", severity="warning")
+        except Exception as e:
+            logger.error(f"Error toggling pause: {e}")
+            from rich.markup import escape
+            self.app.notify(f"Error: {escape(str(e))}", severity="error")
     
     def _stop_audio(self) -> None:
         """Stop audio playback"""
-        # TODO: Implement audio stop
-        pass
+        if self._ensure_audio_player():
+            self.run_worker(self._stop_audio_async)
+        else:
+            self.app.notify("Audio player not available", severity="warning")
+    
+    async def _stop_audio_async(self) -> None:
+        """Stop audio playback asynchronously"""
+        try:
+            success = await self.app.audio_player.stop()
+            if success:
+                # Reset button states
+                self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
+                self.query_one("#pause-audio-btn", Button).disabled = True
+                self.query_one("#stop-audio-btn", Button).disabled = True
+                self.app.notify("Playback stopped", severity="information")
+            else:
+                self.app.notify("No active playback to stop", severity="warning")
+        except Exception as e:
+            logger.error(f"Error stopping playback: {e}")
+            from rich.markup import escape
+            self.app.notify(f"Error: {escape(str(e))}", severity="error")
     
     def _export_audio(self) -> None:
         """Export the generated audio"""
-        # TODO: Implement audio export
-        self.app.notify("Export functionality coming soon!", severity="information")
+        if not self.current_audio_file:
+            self.app.notify("No audio file to export", severity="warning")
+            return
+        
+        # Create file save dialog
+        filters = Filters(
+            ("Audio Files", lambda p: p.suffix.lower() in [".mp3", ".wav", ".aac", ".flac", ".opus"]),
+            ("All Files", lambda p: True)
+        )
+        
+        # Get original filename and extension
+        original_path = Path(self.current_audio_file)
+        default_name = f"tts_export_{original_path.stem}{original_path.suffix}"
+        
+        file_picker = FileSave(
+            title="Export Audio File",
+            filters=filters,
+            default_filename=default_name,
+            context="audio_export"
+        )
+        
+        self.app.push_screen(file_picker, self._handle_audio_export)
+    
+    def _handle_audio_export(self, path: str | None) -> None:
+        """Handle audio file export"""
+        if not path or not self.current_audio_file:
+            return
+        
+        try:
+            import shutil
+            source_path = Path(self.current_audio_file)
+            dest_path = Path(path)
+            
+            # If different format requested, we need conversion
+            if source_path.suffix.lower() != dest_path.suffix.lower():
+                # For now, just copy - format conversion would require audio service
+                self.app.notify(
+                    f"Format conversion not yet implemented. Exporting as {source_path.suffix}",
+                    severity="warning"
+                )
+                dest_path = dest_path.with_suffix(source_path.suffix)
+            
+            # Copy the file
+            shutil.copy2(source_path, dest_path)
+            self.app.notify(f"Audio exported to: {dest_path.name}", severity="success")
+            
+        except Exception as e:
+            logger.error(f"Failed to export audio: {e}")
+            self.app.notify(f"Export failed: {str(e)}", severity="error")
     
     def _select_reference_audio(self) -> None:
         """Select reference audio file for voice cloning"""
-        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFilePicker
+        # Create file picker for audio files using pre-imported FileOpen
+        filters = Filters(
+            ("Audio Files", lambda p: p.suffix.lower() in [".wav", ".mp3", ".m4a", ".flac", ".aac"]),
+            ("All Files", lambda p: True)
+        )
         
-        # Create file picker for audio files
-        file_picker = EnhancedFilePicker(
+        file_picker = FileOpen(
             title="Select Reference Audio",
-            filters=[
-                ("Audio Files", "*.wav,*.mp3,*.m4a,*.flac,*.aac"),
-                ("All Files", "*"),
-            ],
-            select_type="file"
+            filters=filters,
+            context="reference_audio"
         )
         
         # Mount the file picker
@@ -621,10 +1126,100 @@ class TTSPlaygroundWidget(Widget):
         # Disable clear button
         self.query_one("#clear-reference-audio-btn", Button).disabled = True
         logger.info("Reference audio cleared")
+    
+    def _insert_random_text(self) -> None:
+        """Insert a random example text"""
+        import random
+        text_area = self.query_one("#tts-text-input", TextArea)
+        text_area.text = random.choice(self.example_texts)
+        text_area.focus()
+        self.app.notify("Random example text inserted", severity="information")
+    
+    def _clear_text(self) -> None:
+        """Clear the text input"""
+        text_area = self.query_one("#tts-text-input", TextArea)
+        text_area.clear()
+        text_area.focus()
+        self.app.notify("Text cleared", severity="information")
+    
+    def action_generate_tts(self) -> None:
+        """Keyboard shortcut action for generate"""
+        self._generate_tts()
+    
+    def action_random_text(self) -> None:
+        """Keyboard shortcut action for random text"""
+        self._insert_random_text()
+    
+    def action_clear_text(self) -> None:
+        """Keyboard shortcut action for clear text"""
+        self._clear_text()
+    
+    def action_play_audio(self) -> None:
+        """Keyboard shortcut action for play audio"""
+        if not self.query_one("#audio-play-btn", Button).disabled:
+            self._play_audio()
+    
+    def action_stop_audio(self) -> None:
+        """Keyboard shortcut action for stop audio"""
+        if not self.query_one("#stop-audio-btn", Button).disabled:
+            self._stop_audio()
+    
+    async def _update_progress_timer(self) -> None:
+        """Update progress bar during playback"""
+        import asyncio
+        from tldw_chatbook.TTS.audio_player import PlaybackState
+        from textual.widgets import ProgressBar
+        
+        # Ensure audio player exists
+        if not hasattr(self.app, 'audio_player'):
+            return
+            
+        while True:
+            try:
+                state = await self.app.audio_player.get_state()
+                if state == PlaybackState.PLAYING:
+                    position = await self.app.audio_player.get_position()
+                    duration = await self.app.audio_player.get_duration()
+                    
+                    if duration and duration > 0:
+                        # Update progress bar
+                        progress_bar = self.query_one("#audio-progress-bar", ProgressBar)
+                        progress_bar.update(progress=position, total=duration)
+                        
+                        # Update time display
+                        time_display = self.query_one("#audio-time-display")
+                        current_time = self._format_time(position)
+                        total_time = self._format_time(duration)
+                        time_display.update(f"{current_time} / {total_time}")
+                        
+                        # Show progress elements
+                        progress_bar.remove_class("hidden")
+                        time_display.remove_class("hidden")
+                elif state in [PlaybackState.IDLE, PlaybackState.FINISHED]:
+                    # Hide progress elements
+                    self.query_one("#audio-progress-bar").add_class("hidden")
+                    self.query_one("#audio-time-display").add_class("hidden")
+                    break
+                
+                await asyncio.sleep(0.1)  # Update every 100ms
+            except Exception as e:
+                logger.error(f"Error updating progress: {e}")
+                break
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds to MM:SS format"""
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes}:{secs:02d}"
 
 
 class TTSSettingsWidget(Widget):
     """TTS Settings for global configuration"""
+    
+    # Store file paths
+    kokoro_model_path = reactive("")
+    kokoro_voices_path = reactive("")
+    chatterbox_voice_dir = reactive("")
     
     DEFAULT_CSS = """
     TTSSettingsWidget {
@@ -639,6 +1234,40 @@ class TTSSettingsWidget(Widget):
     
     .settings-section {
         margin-bottom: 2;
+    }
+    
+    .voice-blends-container {
+        height: 5;
+        background: $surface;
+        border: solid $primary;
+        padding: 0 1;
+    }
+    
+    .voice-blends-list {
+        padding: 1;
+    }
+    
+    .subsection-label {
+        text-style: bold;
+        margin: 1 0;
+    }
+    
+    .form-row {
+        height: 3;
+        margin-bottom: 1;
+    }
+    
+    .form-label {
+        width: 20;
+        height: 1;
+        margin-top: 1;
+    }
+    
+    .path-browse-button {
+        min-width: 3;
+        width: 3;
+        height: 3;
+        margin-left: 1;
     }
     """
     
@@ -657,24 +1286,23 @@ class TTSSettingsWidget(Widget):
                             ("elevenlabs", "ElevenLabs"),
                             ("kokoro", "Kokoro (Local)"),
                             ("chatterbox", "Chatterbox (Local)"),
+                            ("alltalk", "AllTalk (Local Server)"),
                         ],
                         id="default-provider-select"
                     )
                 
                 with Horizontal(classes="form-row"):
                     yield Label("Default Voice:", classes="form-label")
-                    yield Input(
-                        id="default-voice-input",
-                        value=get_cli_setting("app_tts", "default_voice", "alloy"),
-                        placeholder="Default voice ID"
+                    yield Select(
+                        options=[("alloy", "Alloy")],  # Will be updated based on provider
+                        id="default-voice-select"
                     )
                 
                 with Horizontal(classes="form-row"):
                     yield Label("Default Model:", classes="form-label")
-                    yield Input(
-                        id="default-model-input",
-                        value=get_cli_setting("app_tts", "default_model", "tts-1"),
-                        placeholder="Default model"
+                    yield Select(
+                        options=[("tts-1", "TTS-1")],  # Will be updated based on provider
+                        id="default-model-select"
                     )
                 
                 with Horizontal(classes="form-row"):
@@ -708,6 +1336,21 @@ class TTSSettingsWidget(Widget):
                         password=True,
                         placeholder="sk-..."
                     )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Base URL:", classes="form-label")
+                    yield Input(
+                        id="openai-base-url-input",
+                        value=get_cli_setting("app_tts", "OPENAI_BASE_URL", "https://api.openai.com/v1/audio/speech"),
+                        placeholder="Custom API endpoint (optional)"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Organization ID:", classes="form-label")
+                    yield Input(
+                        id="openai-org-id-input",
+                        placeholder="org-... (optional)"
+                    )
             
             # ElevenLabs settings
             with Collapsible(title="ElevenLabs Settings", classes="settings-section"):
@@ -720,10 +1363,39 @@ class TTSSettingsWidget(Widget):
                     )
                 
                 with Horizontal(classes="form-row"):
+                    yield Label("Model:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("eleven_multilingual_v2", "Multilingual v2"),
+                            ("eleven_turbo_v2", "Turbo v2"),
+                            ("eleven_multilingual_v1", "Multilingual v1"),
+                            ("eleven_monolingual_v1", "Monolingual v1"),
+                        ],
+                        id="elevenlabs-model-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Output Format:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("mp3_44100_192", "MP3 192kbps"),
+                            ("mp3_44100_128", "MP3 128kbps"),
+                            ("mp3_44100_96", "MP3 96kbps"),
+                            ("mp3_44100_64", "MP3 64kbps"),
+                            ("mp3_44100_32", "MP3 32kbps"),
+                            ("pcm_44100", "PCM 44.1kHz"),
+                            ("pcm_24000", "PCM 24kHz"),
+                            ("pcm_16000", "PCM 16kHz"),
+                            ("ulaw_8000", "μ-law 8kHz"),
+                        ],
+                        id="elevenlabs-format-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
                     yield Label("Voice Stability:", classes="form-label")
                     yield Input(
                         id="elevenlabs-stability-input",
-                        value="0.5",
+                        value=str(get_cli_setting("app_tts", "ELEVENLABS_VOICE_STABILITY", "0.5")),
                         placeholder="0.0-1.0",
                         type="number"
                     )
@@ -732,9 +1404,25 @@ class TTSSettingsWidget(Widget):
                     yield Label("Similarity Boost:", classes="form-label")
                     yield Input(
                         id="elevenlabs-similarity-input",
-                        value="0.8",
+                        value=str(get_cli_setting("app_tts", "ELEVENLABS_SIMILARITY_BOOST", "0.8")),
                         placeholder="0.0-1.0",
                         type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Style:", classes="form-label")
+                    yield Input(
+                        id="elevenlabs-style-input",
+                        value=str(get_cli_setting("app_tts", "ELEVENLABS_STYLE", "0.0")),
+                        placeholder="0.0-1.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Speaker Boost:", classes="form-label")
+                    yield Switch(
+                        id="elevenlabs-speaker-boost-switch",
+                        value=get_cli_setting("app_tts", "ELEVENLABS_USE_SPEAKER_BOOST", True)
                     )
             
             # Kokoro settings
@@ -753,14 +1441,250 @@ class TTSSettingsWidget(Widget):
                     yield Label("Use ONNX:", classes="form-label")
                     yield Switch(
                         id="kokoro-use-onnx-switch",
-                        value=get_cli_setting("app_tts", "kokoro_use_onnx", True)
-                )
+                        value=get_cli_setting("app_tts", "KOKORO_USE_ONNX", True)
+                    )
                 
                 with Horizontal(classes="form-row"):
                     yield Label("Model Path:", classes="form-label")
+                    yield Button(
+                        "📁 Select model file",
+                        id="kokoro-browse-model-btn",
+                        variant="default"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Voices JSON:", classes="form-label")
+                    yield Button(
+                        "📁 Select voices.json",
+                        id="kokoro-browse-voices-btn",
+                        variant="default"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Max Tokens:", classes="form-label")
                     yield Input(
-                        id="kokoro-model-path-input",
-                        placeholder="Path to Kokoro model"
+                        id="kokoro-max-tokens-input",
+                        value=str(get_cli_setting("app_tts", "KOKORO_MAX_TOKENS", "500")),
+                        placeholder="Max tokens per chunk",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Voice Mixing:", classes="form-label")
+                    yield Switch(
+                        id="kokoro-voice-mixing-switch",
+                        value=get_cli_setting("app_tts", "KOKORO_ENABLE_VOICE_MIXING", False)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Performance Tracking:", classes="form-label")
+                    yield Switch(
+                        id="kokoro-performance-switch",
+                        value=get_cli_setting("app_tts", "KOKORO_TRACK_PERFORMANCE", True)
+                    )
+                
+                # Voice blends section
+                yield Label("Voice Blends:", classes="form-label")
+                with ScrollableContainer(classes="voice-blends-container"):
+                    yield Static(id="kokoro-voice-blends-list", classes="voice-blends-list")
+                with Horizontal(classes="form-row"):
+                    yield Button("➕ Add Blend", id="add-voice-blend-btn", variant="default")
+                    yield Button("📥 Import", id="import-blends-btn", variant="default")
+                    yield Button("📤 Export", id="export-blends-btn", variant="default")
+            
+            # Chatterbox settings
+            with Collapsible(title="Chatterbox Settings", classes="settings-section"):
+                with Horizontal(classes="form-row"):
+                    yield Label("Device:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("cpu", "CPU"),
+                            ("cuda", "CUDA (GPU)"),
+                        ],
+                        id="chatterbox-device-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Voice Directory:", classes="form-label")
+                    yield Button(
+                        "📁 Select voice directory",
+                        id="chatterbox-browse-voice-dir-btn",
+                        variant="default"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Emotion Exaggeration:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-exaggeration-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_EXAGGERATION", "0.5")),
+                        placeholder="0.0-1.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("CFG Weight:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-cfg-weight-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_CFG_WEIGHT", "0.5")),
+                        placeholder="0.0-1.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Temperature:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-temperature-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_TEMPERATURE", "0.5")),
+                        placeholder="0.0-2.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Chunk Size:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-chunk-size-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_CHUNK_SIZE", "1024")),
+                        placeholder="Audio chunk size",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Random Seed:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-seed-input",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_RANDOM_SEED", ""),
+                        placeholder="Random seed (optional)"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Number of Candidates:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-candidates-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_NUM_CANDIDATES", "1")),
+                        placeholder="1-5",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Whisper Validation:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-whisper-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_VALIDATE_WHISPER", False)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Text Preprocessing:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-preprocess-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_PREPROCESS_TEXT", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Audio Normalization:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-normalize-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_NORMALIZE_AUDIO", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Target dB:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-target-db-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_TARGET_DB", "-20.0")),
+                        placeholder="-40 to 0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Max Text Chunk:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-max-chunk-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_MAX_CHUNK_SIZE", "500")),
+                        placeholder="Max characters per chunk",
+                        type="number"
+                    )
+                
+                # Streaming settings subsection
+                yield Label("Streaming Settings:", classes="subsection-label")
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Streaming:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-streaming-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_STREAMING", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Stream Chunk Size:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-stream-chunk-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_STREAM_CHUNK_SIZE", "4096")),
+                        placeholder="Stream chunk size",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Crossfade:", classes="form-label")
+                    yield Switch(
+                        id="chatterbox-crossfade-switch",
+                        value=get_cli_setting("app_tts", "CHATTERBOX_ENABLE_CROSSFADE", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Crossfade Duration:", classes="form-label")
+                    yield Input(
+                        id="chatterbox-crossfade-ms-input",
+                        value=str(get_cli_setting("app_tts", "CHATTERBOX_CROSSFADE_MS", "50")),
+                        placeholder="Duration in ms",
+                        type="number"
+                    )
+            
+            # AllTalk settings
+            with Collapsible(title="AllTalk Settings", classes="settings-section"):
+                with Horizontal(classes="form-row"):
+                    yield Label("Server URL:", classes="form-label")
+                    yield Input(
+                        id="alltalk-url-input",
+                        value=get_cli_setting("app_tts", "ALLTALK_TTS_URL_DEFAULT", "http://127.0.0.1:7851"),
+                        placeholder="AllTalk server URL"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Voice:", classes="form-label")
+                    yield Input(
+                        id="alltalk-voice-input",
+                        value=get_cli_setting("app_tts", "ALLTALK_TTS_VOICE_DEFAULT", "female_01.wav"),
+                        placeholder="Voice file name"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Language:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("en", "English"),
+                            ("es", "Spanish"),
+                            ("fr", "French"),
+                            ("de", "German"),
+                            ("it", "Italian"),
+                            ("pt", "Portuguese"),
+                            ("ru", "Russian"),
+                            ("zh", "Chinese"),
+                            ("ja", "Japanese"),
+                            ("ko", "Korean"),
+                        ],
+                        id="alltalk-language-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Output Format:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("wav", "WAV"),
+                            ("mp3", "MP3"),
+                            ("opus", "Opus"),
+                            ("flac", "FLAC"),
+                        ],
+                        id="alltalk-format-select"
                     )
             
             # Save button
@@ -772,8 +1696,43 @@ class TTSSettingsWidget(Widget):
             # Set default provider
             provider_select = self.query_one("#default-provider-select", Select)
             default_provider = get_cli_setting("app_tts", "default_provider", "openai")
-            if default_provider in ["openai", "elevenlabs", "kokoro"]:
+            if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox", "alltalk"]:
                 provider_select.value = default_provider
+            
+            # Load voice blends
+            self._load_kokoro_voice_blends()
+            
+            # Load and display file paths
+            self.kokoro_model_path = get_cli_setting("app_tts", "KOKORO_ONNX_MODEL_PATH_DEFAULT", "")
+            self.kokoro_voices_path = get_cli_setting("app_tts", "KOKORO_ONNX_VOICES_JSON_DEFAULT", "")
+            self.chatterbox_voice_dir = get_cli_setting("app_tts", "CHATTERBOX_VOICE_DIR", "~/.config/tldw_cli/chatterbox_voices")
+            
+            # Update button labels
+            self._update_file_button_labels()
+            
+            # Update voice and model options based on default provider
+            self._update_default_voice_options(default_provider)
+            self._update_default_model_options(default_provider)
+            
+            # Set default voice and model
+            default_voice = get_cli_setting("app_tts", "default_voice", "alloy")
+            default_model = get_cli_setting("app_tts", "default_model", "tts-1")
+            
+            voice_select = self.query_one("#default-voice-select", Select)
+            model_select = self.query_one("#default-model-select", Select)
+            
+            # Try to set the values if they exist in options
+            try:
+                if any(opt[0] == default_voice for opt in voice_select._options):
+                    voice_select.value = default_voice
+            except:
+                pass
+                
+            try:
+                if any(opt[0] == default_model for opt in model_select._options):
+                    model_select.value = default_model
+            except:
+                pass
             
             # Set default format
             format_select = self.query_one("#default-format-select", Select)
@@ -783,16 +1742,240 @@ class TTSSettingsWidget(Widget):
             
             # Set Kokoro device
             device_select = self.query_one("#kokoro-device-select", Select)
-            kokoro_device = get_cli_setting("app_tts", "kokoro_device", "cpu")
+            kokoro_device = get_cli_setting("app_tts", "KOKORO_DEVICE_DEFAULT", "cpu")
             if kokoro_device in ["cpu", "cuda"]:
                 device_select.value = kokoro_device
+            
+            # Set Chatterbox device
+            chatterbox_device_select = self.query_one("#chatterbox-device-select", Select)
+            chatterbox_device = get_cli_setting("app_tts", "CHATTERBOX_DEVICE", "cpu")
+            if chatterbox_device in ["cpu", "cuda"]:
+                chatterbox_device_select.value = chatterbox_device
+            
+            # Set ElevenLabs model
+            elevenlabs_model_select = self.query_one("#elevenlabs-model-select", Select)
+            elevenlabs_model = get_cli_setting("app_tts", "ELEVENLABS_DEFAULT_MODEL", "eleven_multilingual_v2")
+            if elevenlabs_model in ["eleven_multilingual_v2", "eleven_turbo_v2", "eleven_multilingual_v1", "eleven_monolingual_v1"]:
+                elevenlabs_model_select.value = elevenlabs_model
+            
+            # Set ElevenLabs format
+            elevenlabs_format_select = self.query_one("#elevenlabs-format-select", Select)
+            elevenlabs_format = get_cli_setting("app_tts", "ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_192")
+            if elevenlabs_format in ["mp3_44100_192", "mp3_44100_128", "mp3_44100_96", "mp3_44100_64", "mp3_44100_32", "pcm_44100", "pcm_24000", "pcm_16000", "ulaw_8000"]:
+                elevenlabs_format_select.value = elevenlabs_format
+            
+            # Set AllTalk language
+            alltalk_language_select = self.query_one("#alltalk-language-select", Select)
+            alltalk_language = get_cli_setting("app_tts", "ALLTALK_TTS_LANGUAGE_DEFAULT", "en")
+            if alltalk_language in ["en", "es", "fr", "de", "it", "pt", "ru", "zh", "ja", "ko"]:
+                alltalk_language_select.value = alltalk_language
+            
+            # Set AllTalk format
+            alltalk_format_select = self.query_one("#alltalk-format-select", Select)
+            alltalk_format = get_cli_setting("app_tts", "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT", "wav")
+            if alltalk_format in ["wav", "mp3", "opus", "flac"]:
+                alltalk_format_select.value = alltalk_format
+            
+            # Load and display Kokoro voice blends
+            self._load_kokoro_voice_blends()
+            
         except Exception as e:
             logger.warning(f"Failed to set initial values: {e}")
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle save button press"""
+        """Handle button presses"""
         if event.button.id == "save-settings-btn":
             self._save_settings()
+        elif event.button.id == "add-voice-blend-btn":
+            self.run_worker(self._show_add_voice_blend_dialog)
+        elif event.button.id == "import-blends-btn":
+            self._import_voice_blends()
+        elif event.button.id == "export-blends-btn":
+            self._export_voice_blends()
+        elif event.button.id == "kokoro-browse-model-btn":
+            self._browse_kokoro_model()
+        elif event.button.id == "kokoro-browse-voices-btn":
+            self._browse_kokoro_voices()
+        elif event.button.id == "chatterbox-browse-voice-dir-btn":
+            self._browse_chatterbox_voice_dir()
+    
+    def _is_valid_voice(self, voice: str) -> bool:
+        """Check if a voice value is valid (not a separator)"""
+        return bool(voice) and not str(voice).startswith("_separator")
+    
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle select widget changes"""
+        if event.select.id == "default-provider-select":
+            # Update voice and model options when provider changes
+            self._update_default_voice_options(event.value)
+            self._update_default_model_options(event.value)
+        elif event.select.id == "default-voice-select":
+            # Validate voice selection (prevent selecting separators)
+            if not self._is_valid_voice(event.value):
+                # Find and select the first valid voice
+                voice_select = event.select
+                for value, _ in voice_select._options:
+                    if self._is_valid_voice(value):
+                        voice_select.value = value
+                        break
+    
+    def _update_default_voice_options(self, provider: str) -> None:
+        """Update default voice options based on provider"""
+        voice_select = self.query_one("#default-voice-select", Select)
+        
+        if provider == "openai":
+            voice_select.set_options([
+                ("alloy", "Alloy"),
+                ("ash", "Ash"),
+                ("ballad", "Ballad"),
+                ("coral", "Coral"),
+                ("echo", "Echo"),
+                ("fable", "Fable"),
+                ("nova", "Nova"),
+                ("onyx", "Onyx"),
+                ("sage", "Sage"),
+                ("shimmer", "Shimmer"),
+                ("verse", "Verse"),
+            ])
+            # Set the saved default or fallback to alloy
+            default_voice = get_cli_setting("app_tts", "default_voice", "alloy")
+            if default_voice in [v[0] for v in voice_select._options if v[0] != Select.BLANK]:
+                voice_select.value = default_voice
+            else:
+                voice_select.value = "alloy"
+        elif provider == "elevenlabs":
+            voice_select.set_options([
+                ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
+                ("AZnzlk1XvdvUeBnXmlld", "Domi"),
+                ("EXAVITQu4vr4xnSDxMaL", "Bella"),
+                ("ErXwobaYiN019PkySvjV", "Antoni"),
+                ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
+                ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
+                ("VR6AewLTigWG4xSOukaG", "Arnold"),
+                ("pNInz6obpgDQGcFmaJgB", "Adam"),
+                ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
+            ])
+            voice_select.value = "21m00Tcm4TlvDq8ikWAM"
+        elif provider == "kokoro":
+            logger.info(f"Setting up Kokoro voices for provider: {provider}")
+            voice_options = [
+                # American Female voices
+                ("af_alloy", "Alloy (US Female)"),
+                ("af_aoede", "Aoede (US Female)"),
+                ("af_bella", "Bella (US Female)"),
+                ("af_heart", "Heart (US Female)"),
+                ("af_jessica", "Jessica (US Female)"),
+                ("af_kore", "Kore (US Female)"),
+                ("af_nicole", "Nicole (US Female)"),
+                ("af_nova", "Nova (US Female)"),
+                ("af_river", "River (US Female)"),
+                ("af_sarah", "Sarah (US Female)"),
+                ("af_sky", "Sky (US Female)"),
+                # American Male voices
+                ("am_adam", "Adam (US Male)"),
+                ("am_michael", "Michael (US Male)"),
+                # British Female voices
+                ("bf_emma", "Emma (UK Female)"),
+                ("bf_isabella", "Isabella (UK Female)"),
+                # British Male voices
+                ("bm_george", "George (UK Male)"),
+                ("bm_lewis", "Lewis (UK Male)"),
+            ]
+            
+            # Add saved voice blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                try:
+                    import json
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                        if blends:
+                            # Add separator
+                            voice_options.append(("_separator", "──── Voice Blends ────"))
+                            # Add each blend
+                            for blend_name, blend_data in blends.items():
+                                display_name = f"🎭 {blend_name}"
+                                if blend_data.get('description'):
+                                    display_name += f" - {blend_data['description'][:30]}"
+                                voice_options.append((f"blend:{blend_name}", display_name))
+                except Exception as e:
+                    logger.error(f"Failed to load voice blends: {e}")
+            
+            voice_select.set_options(voice_options)
+            
+            # Find first valid voice option (skip separators)
+            valid_voice = None
+            for value, _ in voice_options:
+                if self._is_valid_voice(value):
+                    valid_voice = value
+                    break
+            
+            if valid_voice:
+                voice_select.value = valid_voice
+            else:
+                voice_select.value = "af_bella"  # Fallback
+        elif provider == "chatterbox":
+            voice_select.set_options([
+                ("default", "Default Voice"),
+                ("custom", "Custom (Upload Reference)"),
+            ])
+            voice_select.value = "default"
+        elif provider == "alltalk":
+            voice_select.set_options([
+                ("female_01.wav", "Female 01"),
+                ("female_02.wav", "Female 02"),
+                ("female_03.wav", "Female 03"),
+                ("female_04.wav", "Female 04"),
+                ("male_01.wav", "Male 01"),
+                ("male_02.wav", "Male 02"),
+                ("male_03.wav", "Male 03"),
+                ("male_04.wav", "Male 04"),
+            ])
+            voice_select.value = "female_01.wav"
+    
+    def _update_default_model_options(self, provider: str) -> None:
+        """Update default model options based on provider"""
+        model_select = self.query_one("#default-model-select", Select)
+        
+        if provider == "openai":
+            model_select.set_options([
+                ("tts-1", "TTS-1 (Standard)"),
+                ("tts-1-hd", "TTS-1-HD (High Quality)"),
+            ])
+            # Set the saved default or fallback
+            default_model = get_cli_setting("app_tts", "default_model", "tts-1")
+            if default_model in ["tts-1", "tts-1-hd"]:
+                model_select.value = default_model
+            else:
+                model_select.value = "tts-1"
+        elif provider == "elevenlabs":
+            model_select.set_options([
+                ("eleven_monolingual_v1", "Eleven Monolingual v1"),
+                ("eleven_multilingual_v1", "Eleven Multilingual v1"),
+                ("eleven_multilingual_v2", "Eleven Multilingual v2 (Default)"),
+                ("eleven_turbo_v2", "Eleven Turbo v2"),
+                ("eleven_turbo_v2_5", "Eleven Turbo v2.5"),
+                ("eleven_flash_v2", "Eleven Flash v2 (Low Latency)"),
+                ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
+            ])
+            model_select.value = "eleven_multilingual_v2"
+        elif provider == "kokoro":
+            logger.info("Setting Kokoro model options")
+            model_select.set_options([
+                ("kokoro", "Kokoro 82M"),
+            ])
+            model_select.value = "kokoro"
+            logger.info("Kokoro model set successfully")
+        elif provider == "chatterbox":
+            model_select.set_options([
+                ("chatterbox", "Chatterbox 0.5B"),
+            ])
+            model_select.value = "chatterbox"
+        elif provider == "alltalk":
+            model_select.set_options([
+                ("alltalk", "AllTalk TTS"),
+            ])
+            model_select.value = "alltalk"
     
     def _save_settings(self) -> None:
         """Save TTS settings"""
@@ -802,50 +1985,580 @@ class TTSSettingsWidget(Widget):
             
             # Default settings
             settings["default_provider"] = self.query_one("#default-provider-select", Select).value
-            settings["default_voice"] = self.query_one("#default-voice-input", Input).value
-            settings["default_model"] = self.query_one("#default-model-input", Input).value
+            settings["default_voice"] = self.query_one("#default-voice-select", Select).value
+            settings["default_model"] = self.query_one("#default-model-select", Select).value
             settings["default_format"] = self.query_one("#default-format-select", Select).value
-            settings["default_speed"] = float(self.query_one("#default-speed-input", Input).value or "1.0")
+            settings["default_speed"] = self._validate_numeric_input(
+                self.query_one("#default-speed-input", Input).value, 0.25, 4.0, 1.0
+            )
             
             # OpenAI settings
             openai_key = self.query_one("#openai-api-key-input", Input).value
             if openai_key:
                 settings["openai_api_key"] = openai_key
             
+            base_url = self.query_one("#openai-base-url-input", Input).value
+            if base_url and base_url != "https://api.openai.com/v1/audio/speech":
+                settings["OPENAI_BASE_URL"] = base_url
+            
+            org_id = self.query_one("#openai-org-id-input", Input).value
+            if org_id:
+                settings["OPENAI_ORG_ID"] = org_id
+            
             # ElevenLabs settings
             elevenlabs_key = self.query_one("#elevenlabs-api-key-input", Input).value
             if elevenlabs_key:
                 settings["elevenlabs_api_key"] = elevenlabs_key
             
-            stability = self.query_one("#elevenlabs-stability-input", Input).value
-            if stability:
-                settings["elevenlabs_voice_stability"] = float(stability)
-            
-            similarity = self.query_one("#elevenlabs-similarity-input", Input).value
-            if similarity:
-                settings["elevenlabs_similarity_boost"] = float(similarity)
+            settings["ELEVENLABS_DEFAULT_MODEL"] = self.query_one("#elevenlabs-model-select", Select).value
+            settings["ELEVENLABS_OUTPUT_FORMAT"] = self.query_one("#elevenlabs-format-select", Select).value
+            settings["ELEVENLABS_VOICE_STABILITY"] = self._validate_numeric_input(
+                self.query_one("#elevenlabs-stability-input", Input).value, 0.0, 1.0, 0.5
+            )
+            settings["ELEVENLABS_SIMILARITY_BOOST"] = self._validate_numeric_input(
+                self.query_one("#elevenlabs-similarity-input", Input).value, 0.0, 1.0, 0.8
+            )
+            settings["ELEVENLABS_STYLE"] = self._validate_numeric_input(
+                self.query_one("#elevenlabs-style-input", Input).value, 0.0, 1.0, 0.0
+            )
+            settings["ELEVENLABS_USE_SPEAKER_BOOST"] = self.query_one("#elevenlabs-speaker-boost-switch", Switch).value
             
             # Kokoro settings
-            settings["kokoro_device"] = self.query_one("#kokoro-device-select", Select).value
-            settings["kokoro_use_onnx"] = self.query_one("#kokoro-use-onnx-switch", Switch).value
+            settings["KOKORO_DEVICE_DEFAULT"] = self.query_one("#kokoro-device-select", Select).value
+            settings["KOKORO_USE_ONNX"] = self.query_one("#kokoro-use-onnx-switch", Switch).value
             
-            model_path = self.query_one("#kokoro-model-path-input", Input).value
-            if model_path:
-                settings["kokoro_model_path"] = model_path
+            if self.kokoro_model_path:
+                settings["KOKORO_ONNX_MODEL_PATH_DEFAULT"] = self.kokoro_model_path
+            
+            if self.kokoro_voices_path:
+                settings["KOKORO_ONNX_VOICES_JSON_DEFAULT"] = self.kokoro_voices_path
+            
+            settings["KOKORO_MAX_TOKENS"] = int(self._validate_numeric_input(
+                self.query_one("#kokoro-max-tokens-input", Input).value, 1, 10000, 500
+            ))
+            settings["KOKORO_ENABLE_VOICE_MIXING"] = self.query_one("#kokoro-voice-mixing-switch", Switch).value
+            settings["KOKORO_TRACK_PERFORMANCE"] = self.query_one("#kokoro-performance-switch", Switch).value
+            
+            # Chatterbox settings
+            settings["CHATTERBOX_DEVICE"] = self.query_one("#chatterbox-device-select", Select).value
+            
+            if self.chatterbox_voice_dir:
+                settings["CHATTERBOX_VOICE_DIR"] = self.chatterbox_voice_dir
+                
+            settings["CHATTERBOX_EXAGGERATION"] = self._validate_numeric_input(
+                self.query_one("#chatterbox-exaggeration-input", Input).value, 0.0, 1.0, 0.5
+            )
+            settings["CHATTERBOX_CFG_WEIGHT"] = self._validate_numeric_input(
+                self.query_one("#chatterbox-cfg-weight-input", Input).value, 0.0, 1.0, 0.5
+            )
+            settings["CHATTERBOX_TEMPERATURE"] = self._validate_numeric_input(
+                self.query_one("#chatterbox-temperature-input", Input).value, 0.0, 2.0, 0.5
+            )
+            settings["CHATTERBOX_CHUNK_SIZE"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-chunk-size-input", Input).value, 256, 8192, 1024
+            ))
+            
+            seed = self.query_one("#chatterbox-seed-input", Input).value
+            if seed:
+                try:
+                    settings["CHATTERBOX_RANDOM_SEED"] = int(seed)
+                except ValueError:
+                    pass
+                    
+            settings["CHATTERBOX_NUM_CANDIDATES"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-candidates-input", Input).value, 1, 5, 1
+            ))
+            settings["CHATTERBOX_VALIDATE_WHISPER"] = self.query_one("#chatterbox-whisper-switch", Switch).value
+            settings["CHATTERBOX_PREPROCESS_TEXT"] = self.query_one("#chatterbox-preprocess-switch", Switch).value
+            settings["CHATTERBOX_NORMALIZE_AUDIO"] = self.query_one("#chatterbox-normalize-switch", Switch).value
+            settings["CHATTERBOX_TARGET_DB"] = self._validate_numeric_input(
+                self.query_one("#chatterbox-target-db-input", Input).value, -40, 0, -20
+            )
+            settings["CHATTERBOX_MAX_CHUNK_SIZE"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-max-chunk-input", Input).value, 50, 5000, 500
+            ))
+            settings["CHATTERBOX_STREAMING"] = self.query_one("#chatterbox-streaming-switch", Switch).value
+            settings["CHATTERBOX_STREAM_CHUNK_SIZE"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-stream-chunk-input", Input).value, 512, 16384, 4096
+            ))
+            settings["CHATTERBOX_ENABLE_CROSSFADE"] = self.query_one("#chatterbox-crossfade-switch", Switch).value
+            settings["CHATTERBOX_CROSSFADE_MS"] = int(self._validate_numeric_input(
+                self.query_one("#chatterbox-crossfade-ms-input", Input).value, 10, 500, 50
+            ))
+            
+            # AllTalk settings
+            url = self.query_one("#alltalk-url-input", Input).value
+            if url:
+                settings["ALLTALK_TTS_URL_DEFAULT"] = url
+            
+            voice = self.query_one("#alltalk-voice-input", Input).value
+            if voice:
+                settings["ALLTALK_TTS_VOICE_DEFAULT"] = voice
+                
+            settings["ALLTALK_TTS_LANGUAGE_DEFAULT"] = self.query_one("#alltalk-language-select", Select).value
+            settings["ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT"] = self.query_one("#alltalk-format-select", Select).value
             
             # Post save event
             self.app.post_message(STTSSettingsSaveEvent(settings))
+            self.app.notify("TTS settings saved successfully", severity="information")
             
         except Exception as e:
             logger.error(f"Failed to collect settings: {e}")
             self.app.notify(f"Failed to save settings: {e}", severity="error")
+    
+    def _validate_numeric_input(self, value: str, min_val: float, max_val: float, default: float) -> float:
+        """Validate and convert numeric input"""
+        try:
+            if not value:
+                return default
+            num_val = float(value)
+            return max(min_val, min(max_val, num_val))
+        except ValueError:
+            return default
+    
+    def _load_kokoro_voice_blends(self) -> None:
+        """Load and display Kokoro voice blends"""
+        try:
+            # Get voice blends from stored config
+            blend_list = self.query_one("#kokoro-voice-blends-list", Static)
+            
+            # Load blends from config file
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                with open(blend_file, 'r') as f:
+                    blends = json.load(f)
+                
+                if blends:
+                    # Format blends for display
+                    blend_text = ""
+                    for blend_name, blend_data in blends.items():
+                        voices_str = ", ".join([f"{v[0]} ({v[1]:.2f})" for v in blend_data.get("voices", [])])
+                        blend_text += f"[bold]{blend_name}[/bold]: {voices_str}\n"
+                        if blend_data.get("description"):
+                            blend_text += f"  [dim]{blend_data['description']}[/dim]\n"
+                    blend_list.update(blend_text.strip())
+                else:
+                    blend_list.update("[dim]No voice blends configured[/dim]")
+            else:
+                blend_list.update("[dim]No voice blends configured[/dim]")
+            
+        except Exception as e:
+            logger.error(f"Failed to load voice blends: {e}")
+            blend_list.update("[red]Error loading voice blends[/red]")
+    
+    async def _show_add_voice_blend_dialog(self) -> None:
+        """Show dialog to add a new voice blend"""
+        try:
+            # Show the voice blend dialog
+            result = await self.app.push_screen_wait(VoiceBlendDialog())
+            
+            if result:
+                # Save the blend
+                blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+                blend_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Load existing blends
+                if blend_file.exists():
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                else:
+                    blends = {}
+                
+                # Add new blend
+                blends[result['name']] = result
+                
+                # Save back
+                with open(blend_file, 'w') as f:
+                    json.dump(blends, f, indent=2)
+                
+                # Refresh display
+                self._load_kokoro_voice_blends()
+                self.app.notify(f"Voice blend '{result['name']}' created successfully", severity="success")
+                
+        except Exception as e:
+            logger.error(f"Failed to create voice blend: {e}")
+            self.app.notify(f"Error creating voice blend: {e}", severity="error")
+    
+    def _import_voice_blends(self) -> None:
+        """Import voice blends from file"""
+        try:
+            filters = Filters(
+                ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                ("All Files", lambda p: True)
+            )
+            
+            file_picker = FileOpen(
+                title="Import Voice Blends",
+                filters=filters,
+                context="voice_blends_import"
+            )
+            
+            self.app.push_screen(file_picker, self._handle_import_file)
+            
+        except Exception as e:
+            logger.error(f"Failed to show import dialog: {e}")
+            self.app.notify(f"Error showing import dialog: {e}", severity="error")
+    
+    def _handle_import_file(self, path: str | None) -> None:
+        """Handle the imported file"""
+        if not path:
+            return
+        
+        try:
+            import_path = Path(path)
+            
+            # Load the import file
+            with open(import_path, 'r') as f:
+                imported_blends = json.load(f)
+            
+            # Load existing blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            blend_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            if blend_file.exists():
+                with open(blend_file, 'r') as f:
+                    existing_blends = json.load(f)
+            else:
+                existing_blends = {}
+            
+            # Merge blends (imported overwrites existing with same name)
+            existing_blends.update(imported_blends)
+            
+            # Save merged blends
+            with open(blend_file, 'w') as f:
+                json.dump(existing_blends, f, indent=2)
+            
+            # Refresh display
+            self._load_kokoro_voice_blends()
+            self.app.notify(
+                f"Imported {len(imported_blends)} voice blend(s) successfully",
+                severity="success"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to import voice blends: {e}")
+            self.app.notify(f"Error importing voice blends: {e}", severity="error")
+    
+    def _export_voice_blends(self) -> None:
+        """Export voice blends to file"""
+        try:
+            # Load existing blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            
+            if not blend_file.exists():
+                self.app.notify("No voice blends to export", severity="warning")
+                return
+            
+            with open(blend_file, 'r') as f:
+                blends = json.load(f)
+            
+            if not blends:
+                self.app.notify("No voice blends to export", severity="warning")
+                return
+            
+            # Store blends temporarily for export
+            self._export_blends = blends
+            
+            filters = Filters(
+                ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                ("All Files", lambda p: True)
+            )
+            
+            file_picker = FileSave(
+                title="Export Voice Blends",
+                filters=filters,
+                default_filename="kokoro_voice_blends_export.json",
+                context="voice_blends_export"
+            )
+            
+            self.app.push_screen(file_picker, self._handle_export_file)
+            
+        except Exception as e:
+            logger.error(f"Failed to export voice blends: {e}")
+            self.app.notify(f"Error exporting voice blends: {e}", severity="error")
+    
+    def _handle_export_file(self, path: str | None) -> None:
+        """Handle the export file location"""
+        if not path or not hasattr(self, '_export_blends'):
+            return
+        
+        try:
+            export_path = Path(path)
+            
+            # Write the blends to the selected file
+            with open(export_path, 'w') as f:
+                json.dump(self._export_blends, f, indent=2)
+            
+            self.app.notify(
+                f"Exported {len(self._export_blends)} voice blend(s) to: {export_path.name}",
+                severity="success"
+            )
+            
+            # Clean up temporary storage
+            del self._export_blends
+            
+        except Exception as e:
+            logger.error(f"Failed to export voice blends: {e}")
+            self.app.notify(f"Error exporting voice blends: {e}", severity="error")
+    
+    def _browse_kokoro_model(self) -> None:
+        """Browse for Kokoro model file"""
+        # Create file picker for model files
+        filters = Filters(
+            ("ONNX Models", lambda p: p.suffix.lower() in [".onnx"]),
+            ("All Files", lambda p: True)
+        )
+        
+        # Get current value as starting path
+        current_value = self.kokoro_model_path
+        location = Path(current_value).parent if current_value and Path(current_value).parent.exists() else Path.home()
+        
+        file_picker = FileOpen(
+            location=str(location),
+            title="Select Kokoro Model File",
+            filters=filters,
+            context="kokoro_model"
+        )
+        
+        # Mount the file picker
+        self.app.push_screen(file_picker, self._handle_kokoro_model_selection)
+    
+    def _handle_kokoro_model_selection(self, path: Path | None) -> None:
+        """Handle Kokoro model file selection"""
+        if path:
+            # Update the stored path
+            self.kokoro_model_path = str(path)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Kokoro model selected: {path}")
+    
+    def _browse_kokoro_voices(self) -> None:
+        """Browse for Kokoro voices JSON file"""
+        # Create file picker for JSON files
+        filters = Filters(
+            ("JSON Files", lambda p: p.suffix.lower() in [".json"]),
+            ("All Files", lambda p: True)
+        )
+        
+        # Get current value as starting path
+        current_value = self.kokoro_voices_path
+        location = Path(current_value).parent if current_value and Path(current_value).parent.exists() else Path.home()
+        
+        file_picker = FileOpen(
+            location=str(location),
+            title="Select Voices Configuration File",
+            filters=filters,
+            context="kokoro_voices"
+        )
+        
+        # Mount the file picker
+        self.app.push_screen(file_picker, self._handle_kokoro_voices_selection)
+    
+    def _handle_kokoro_voices_selection(self, path: Path | None) -> None:
+        """Handle Kokoro voices file selection"""
+        if path:
+            # Update the stored path
+            self.kokoro_voices_path = str(path)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Kokoro voices config selected: {path}")
+    
+    def _browse_chatterbox_voice_dir(self) -> None:
+        """Browse for Chatterbox voice directory"""
+        # For directory selection, we'll use the file picker and guide user to select a file in the target directory
+        # then extract the directory path
+        
+        # Get current value as starting path
+        current_value = self.chatterbox_voice_dir
+        if current_value.startswith("~"):
+            current_value = str(Path(current_value).expanduser())
+        location = Path(current_value) if current_value and Path(current_value).exists() else Path.home()
+        
+        # Create a filter that shows directories prominently
+        filters = Filters(
+            ("Directories", lambda p: p.is_dir() if p.exists() else False),
+            ("All Files", lambda p: True)
+        )
+        
+        file_picker = FileOpen(
+            location=str(location),
+            title="Select Voice Directory (choose any file in target directory)",
+            filters=filters,
+            context="chatterbox_voices_dir"
+        )
+        
+        # Mount the file picker
+        self.app.push_screen(file_picker, self._handle_chatterbox_voice_dir_selection)
+    
+    def _handle_chatterbox_voice_dir_selection(self, path: Path | None) -> None:
+        """Handle Chatterbox voice directory selection"""
+        if path:
+            # Get the directory from the selected path
+            directory = path if path.is_dir() else path.parent
+            # Update the stored path
+            self.chatterbox_voice_dir = str(directory)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Chatterbox voice directory selected: {directory}")
+    
+    def _update_file_button_labels(self) -> None:
+        """Update file picker button labels based on selected paths"""
+        # Update Kokoro model button
+        model_btn = self.query_one("#kokoro-browse-model-btn", Button)
+        if self.kokoro_model_path:
+            model_btn.label = f"📁 {Path(self.kokoro_model_path).name}"
+        else:
+            model_btn.label = "📁 Select model file"
+        
+        # Update Kokoro voices button
+        voices_btn = self.query_one("#kokoro-browse-voices-btn", Button)
+        if self.kokoro_voices_path:
+            voices_btn.label = f"📁 {Path(self.kokoro_voices_path).name}"
+        else:
+            voices_btn.label = "📁 Select voices.json"
+        
+        # Update Chatterbox voice directory button
+        voice_dir_btn = self.query_one("#chatterbox-browse-voice-dir-btn", Button)
+        if self.chatterbox_voice_dir:
+            voice_dir_btn.label = f"📁 {Path(self.chatterbox_voice_dir).name}"
+        else:
+            voice_dir_btn.label = "📁 Select voice directory"
+    
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle select widget changes"""
+        if event.select.id == "default-provider-select":
+            # Update voice and model options when provider changes
+            self._update_default_voice_model_options(event.value)
+    
+    def _update_default_voice_model_options(self, provider: str) -> None:
+        """Update default voice and model options based on selected provider"""
+        voice_select = self.query_one("#default-voice-select", Select)
+        model_select = self.query_one("#default-model-select", Select)
+        
+        if provider == "openai":
+            voice_select.set_options([
+                ("alloy", "Alloy"),
+                ("ash", "Ash"),
+                ("ballad", "Ballad"),
+                ("coral", "Coral"),
+                ("echo", "Echo"),
+                ("fable", "Fable"),
+                ("onyx", "Onyx"),
+                ("nova", "Nova"),
+                ("sage", "Sage"),
+                ("shimmer", "Shimmer"),
+                ("verse", "Verse"),
+            ])
+            model_select.set_options([
+                ("tts-1", "TTS-1 (Standard)"),
+                ("tts-1-hd", "TTS-1-HD (High Quality)"),
+            ])
+        elif provider == "elevenlabs":
+            voice_select.set_options([
+                ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
+                ("AZnzlk1XvdvUeBnXmlld", "Domi"),
+                ("EXAVITQu4vr4xnSDxMaL", "Bella"),
+                ("ErXwobaYiN019PkySvjV", "Antoni"),
+                ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
+                ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
+                ("VR6AewLTigWG4xSOukaG", "Arnold"),
+                ("pNInz6obpgDQGcFmaJgB", "Adam"),
+                ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
+            ])
+            model_select.set_options([
+                ("eleven_monolingual_v1", "Eleven Monolingual v1"),
+                ("eleven_multilingual_v1", "Eleven Multilingual v1"),
+                ("eleven_multilingual_v2", "Eleven Multilingual v2 (Default)"),
+                ("eleven_turbo_v2", "Eleven Turbo v2"),
+                ("eleven_turbo_v2_5", "Eleven Turbo v2.5"),
+                ("eleven_flash_v2", "Eleven Flash v2 (Low Latency)"),
+                ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
+            ])
+        elif provider == "kokoro":
+            logger.info(f"Setting up Kokoro voices for provider: {provider}")
+            voice_options = [
+                ("af_alloy", "Alloy (US Female)"),
+                ("af_aoede", "Aoede (US Female)"),
+                ("af_bella", "Bella (US Female)"),
+                ("af_heart", "Heart (US Female)"),
+                ("af_jessica", "Jessica (US Female)"),
+                ("af_kore", "Kore (US Female)"),
+                ("af_nicole", "Nicole (US Female)"),
+                ("af_nova", "Nova (US Female)"),
+                ("af_river", "River (US Female)"),
+                ("af_sarah", "Sarah (US Female)"),
+                ("af_sky", "Sky (US Female)"),
+                ("am_adam", "Adam (US Male)"),
+                ("am_michael", "Michael (US Male)"),
+                ("bf_emma", "Emma (UK Female)"),
+                ("bf_isabella", "Isabella (UK Female)"),
+                ("bm_george", "George (UK Male)"),
+                ("bm_lewis", "Lewis (UK Male)"),
+            ]
+            
+            # Add saved voice blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                try:
+                    import json
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                        if blends:
+                            # Add separator
+                            voice_options.append(("_separator", "──── Voice Blends ────"))
+                            # Add each blend
+                            for blend_name, blend_data in blends.items():
+                                display_name = f"🎭 {blend_name}"
+                                if blend_data.get('description'):
+                                    display_name += f" - {blend_data['description'][:30]}"
+                                voice_options.append((f"blend:{blend_name}", display_name))
+                except Exception as e:
+                    logger.error(f"Failed to load voice blends: {e}")
+            
+            voice_select.set_options(voice_options)
+            
+            # Find first valid voice option (skip separators)
+            valid_voice = None
+            for value, _ in voice_options:
+                if self._is_valid_voice(value):
+                    valid_voice = value
+                    break
+            
+            if valid_voice:
+                voice_select.value = valid_voice
+            
+            model_select.set_options([
+                ("kokoro", "Kokoro 82M"),
+            ])
+        elif provider == "chatterbox":
+            voice_select.set_options([
+                ("default", "Default Voice"),
+                ("custom", "Custom (Upload Reference)"),
+            ])
+            model_select.set_options([
+                ("chatterbox", "Chatterbox 0.5B"),
+            ])
+        elif provider == "alltalk":
+            voice_select.set_options([
+                ("female_01.wav", "Female 01"),
+                ("female_02.wav", "Female 02"),
+                ("female_03.wav", "Female 03"),
+                ("female_04.wav", "Female 04"),
+                ("male_01.wav", "Male 01"),
+                ("male_02.wav", "Male 02"),
+                ("male_03.wav", "Male 03"),
+                ("male_04.wav", "Male 04"),
+            ])
+            model_select.set_options([
+                ("alltalk", "AllTalk TTS"),
+            ])
 
 
-class AudioBookPodcastWidget(Widget):
+class AudioBookGenerationWidget(Widget):
     """AudioBook/Podcast Generation widget"""
     
     DEFAULT_CSS = """
-    AudioBookPodcastWidget {
+    AudioBookGenerationWidget {
         height: 100%;
         width: 100%;
     }
@@ -859,8 +2572,25 @@ class AudioBookPodcastWidget(Widget):
         height: 20;
         border: solid $primary;
         margin: 1 0;
+        overflow-y: auto;
+    }
+    
+    #audiobook-generation-log {
+        height: 15;
+        border: solid $secondary;
+    }
+    
+    .cost-estimate {
+        color: $warning;
+        margin: 1 0;
     }
     """
+    
+    def __init__(self):
+        super().__init__()
+        self.content_text = ""
+        self.detected_chapters = []
+        self.generated_audiobook_path = None
     
     def compose(self) -> ComposeResult:
         """Compose the AudioBook/Podcast UI"""
@@ -927,14 +2657,28 @@ class AudioBookPodcastWidget(Widget):
             # Generation settings
             with Collapsible(title="Generation Settings", classes="settings-section"):
                 with Horizontal(classes="form-row"):
-                    yield Label("Output Format:", classes="form-label")
+                    yield Label("Provider:", classes="form-label")
                     yield Select(
                         options=[
-                            ("single", "Single File"),
-                            ("chapters", "Separate Chapters"),
-                            ("both", "Both"),
+                            ("openai", "OpenAI"),
+                            ("elevenlabs", "ElevenLabs"),
+                            ("kokoro", "Kokoro (Local)"),
+                            ("chatterbox", "Chatterbox (Local)"),
                         ],
-                        id="output-format-select"
+                        id="audiobook-provider-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Audio Format:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("mp3", "MP3"),
+                            ("m4b", "M4B (AudioBook)"),
+                            ("opus", "Opus"),
+                            ("aac", "AAC"),
+                            ("wav", "WAV"),
+                        ],
+                        id="audiobook-format-select"
                 )
                 
                 with Horizontal(classes="form-row"):
@@ -945,13 +2689,34 @@ class AudioBookPodcastWidget(Widget):
                     yield Label("Background Music:", classes="form-label")
                     yield Switch(id="background-music-switch", value=False)
             
+            # Cost estimate
+            yield Static("", id="cost-estimate", classes="cost-estimate")
+            
             # Generate button
             yield Button("🎙️ Generate AudioBook", id="generate-audiobook-btn", variant="primary")
+            
+            # Export button (initially disabled)
+            yield Button("💾 Export AudioBook", id="audiobook-export-btn", variant="success", disabled=True)
             
             # Progress section
             yield Rule()
             yield Label("Generation Progress:")
-            yield RichLog(id="generation-progress-log", highlight=True, markup=True)
+            yield RichLog(id="audiobook-generation-log", highlight=True, markup=True)
+    
+    def on_mount(self) -> None:
+        """Set initial values from config after mount"""
+        try:
+            # Set audiobook provider
+            provider_select = self.query_one("#audiobook-provider-select", Select)
+            default_provider = get_cli_setting("app_tts", "default_provider", "openai")
+            if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox"]:
+                provider_select.value = default_provider
+            
+            # Set default format to m4b
+            format_select = self.query_one("#audiobook-format-select", Select)
+            format_select.value = "m4b"
+        except Exception as e:
+            logger.warning(f"Failed to set audiobook defaults: {e}")
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
@@ -959,16 +2724,470 @@ class AudioBookPodcastWidget(Widget):
             self._import_content()
         elif event.button.id == "generate-audiobook-btn":
             self._generate_audiobook()
+        elif event.button.id == "audiobook-export-btn":
+            self._export_audiobook()
     
     def _import_content(self) -> None:
         """Import content for audiobook generation"""
-        # TODO: Implement content import
-        self.app.notify("Import functionality coming soon!", severity="information")
+        import_source = self.query_one("#import-source-select", Select).value
+        
+        if import_source == "file":
+            self._import_from_file()
+        elif import_source == "notes":
+            self._import_from_notes()
+        elif import_source == "conversation":
+            self._import_from_conversation()
+        elif import_source == "paste":
+            self._import_from_paste()
+    
+    def _import_from_file(self) -> None:
+        """Import content from a text file"""
+        try:
+            # Create file picker for text files using pre-imported FileOpen
+            filters = Filters(
+                ("Text Files", lambda p: p.suffix.lower() in [".txt", ".md", ".rst"]),
+                ("eBook Files", lambda p: p.suffix.lower() in [".epub", ".mobi"]),
+                ("All Files", lambda p: True)
+            )
+            
+            file_picker = FileOpen(
+                title="Select Text File for AudioBook",
+                filters=filters,
+                context="audiobook_text"
+            )
+            
+            # Mount the file picker
+            self.app.push_screen(file_picker, self._handle_file_selection)
+        except ImportError:
+            # Fallback to simple file input
+            self.app.notify("File picker not available. Please paste your text instead.", severity="warning")
+    
+    def _handle_file_selection(self, path: str | None) -> None:
+        """Handle file selection for audiobook content"""
+        if not path:
+            return
+        
+        try:
+            # Read the file content
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Update content preview
+            self.content_text = content
+            content_preview = self.query_one("#content-preview", TextArea)
+            content_preview.load_text(content[:1000] + "..." if len(content) > 1000 else content)
+            content_preview.disabled = False
+            
+            # Detect chapters if enabled
+            if self.query_one("#auto-chapters-switch", Switch).value:
+                self._detect_chapters()
+            
+            self.app.notify(f"Imported {len(content)} characters from {Path(path).name}", severity="information")
+            
+        except Exception as e:
+            logger.error(f"Failed to import file: {e}")
+            self.app.notify(f"Failed to import file: {e}", severity="error")
+    
+    def _import_from_notes(self) -> None:
+        """Import content from notes"""
+        from tldw_chatbook.Widgets.note_selection_dialog import NoteSelectionDialog
+        from tldw_chatbook.DB.ChaChaNotes_DB import fetch_all_notes
+        
+        try:
+            # Fetch all notes from database
+            notes = fetch_all_notes()
+            if not notes:
+                self.app.notify("No notes found in database", severity="warning")
+                return
+            
+            # Show note selection dialog
+            def handle_note_selection(selected_ids: Optional[List[int]]) -> None:
+                if selected_ids:
+                    # Fetch full content for selected notes
+                    from tldw_chatbook.DB.ChaChaNotes_DB import fetch_note_by_id
+                    combined_content = []
+                    
+                    for note_id in selected_ids:
+                        note = fetch_note_by_id(note_id)
+                        if note:
+                            # Add note title as chapter if it exists
+                            if note.get('title'):
+                                combined_content.append(f"# {note['title']}\n")
+                            combined_content.append(note.get('content', ''))
+                            combined_content.append("\n\n")  # Separator between notes
+                    
+                    # Load combined content
+                    self.content_text = "\n".join(combined_content)
+                    content_preview = self.query_one("#content-preview", TextArea)
+                    preview_text = self.content_text[:1000] + "..." if len(self.content_text) > 1000 else self.content_text
+                    content_preview.load_text(preview_text)
+                    content_preview.disabled = False
+                    
+                    # Detect chapters if enabled
+                    if self.query_one("#auto-chapters-switch", Switch).value:
+                        self._detect_chapters()
+                    
+                    self.app.notify(f"Imported {len(selected_ids)} note(s)", severity="information")
+            
+            self.app.push_screen(NoteSelectionDialog(notes), handle_note_selection)
+            
+        except Exception as e:
+            logger.error(f"Failed to import from notes: {e}")
+            self.app.notify(f"Failed to import notes: {e}", severity="error")
+    
+    def _import_from_conversation(self) -> None:
+        """Import content from conversation"""
+        from tldw_chatbook.Widgets.conversation_selection_dialog import ConversationSelectionDialog
+        from tldw_chatbook.DB.ChaChaNotes_DB import fetch_all_conversations
+        
+        try:
+            # Fetch all conversations from database
+            conversations = fetch_all_conversations()
+            if not conversations:
+                self.app.notify("No conversations found in database", severity="warning")
+                return
+            
+            # Show conversation selection dialog
+            def handle_conversation_selection(selection: Optional[Dict[str, Any]]) -> None:
+                if selection:
+                    # Fetch messages for selected conversation
+                    from tldw_chatbook.DB.ChaChaNotes_DB import fetch_messages_by_conversation_id
+                    messages = fetch_messages_by_conversation_id(selection['conversation_id'])
+                    
+                    if not messages:
+                        self.app.notify("No messages found in conversation", severity="warning")
+                        return
+                    
+                    # Build content based on options
+                    content_parts = []
+                    for msg in messages:
+                        role = msg.get('role', 'unknown')
+                        content = msg.get('content', '')
+                        
+                        # Filter based on inclusion options
+                        if selection.get('include_all'):
+                            pass  # Include all messages
+                        elif selection.get('include_user') and role != 'user':
+                            continue
+                        elif selection.get('include_assistant') and role != 'assistant':
+                            continue
+                        
+                        # Format based on speaker option
+                        if selection.get('include_speakers'):
+                            speaker_name = "User" if role == "user" else "Assistant"
+                            content_parts.append(f"{speaker_name}: {content}")
+                        else:
+                            content_parts.append(content)
+                        
+                        content_parts.append("")  # Empty line between messages
+                    
+                    # Load combined content
+                    self.content_text = "\n".join(content_parts)
+                    content_preview = self.query_one("#content-preview", TextArea)
+                    preview_text = self.content_text[:1000] + "..." if len(self.content_text) > 1000 else self.content_text
+                    content_preview.load_text(preview_text)
+                    content_preview.disabled = False
+                    
+                    # Auto-detect chapters might not be suitable for conversations
+                    # but run it if enabled
+                    if self.query_one("#auto-chapters-switch", Switch).value:
+                        self._detect_chapters()
+                    
+                    self.app.notify(f"Imported conversation with {len(messages)} messages", severity="information")
+            
+            self.app.push_screen(ConversationSelectionDialog(conversations), handle_conversation_selection)
+            
+        except Exception as e:
+            logger.error(f"Failed to import from conversation: {e}")
+            self.app.notify(f"Failed to import conversation: {e}", severity="error")
+    
+    def _import_from_paste(self) -> None:
+        """Import content from clipboard paste"""
+        # Enable the content preview for editing
+        content_preview = self.query_one("#content-preview", TextArea)
+        content_preview.disabled = False
+        content_preview.focus()
+        self.app.notify("Paste your text into the content preview area", severity="information")
+    
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Handle text area content changes"""
+        if event.text_area.id == "content-preview":
+            self.content_text = event.text_area.text
+            # Detect chapters if auto-detect is enabled
+            if self.query_one("#auto-chapters-switch", Switch).value and self.content_text:
+                self._detect_chapters()
+    
+    def _detect_chapters(self) -> None:
+        """Detect chapters in the content"""
+        if not self.content_text:
+            return
+        
+        try:
+            from tldw_chatbook.TTS.audiobook_generator import ChapterDetector
+            
+            # Detect chapters
+            self.detected_chapters = ChapterDetector.detect_chapters(self.content_text)
+            
+            # Update chapter list display
+            chapter_list = self.query_one("#chapter-list", Static)
+            if self.detected_chapters:
+                chapter_display = []
+                for i, chapter in enumerate(self.detected_chapters):
+                    chapter_display.append(f"{i+1}. {chapter.title} ({len(chapter.content.split())} words)")
+                
+                chapter_list.update("\n".join(chapter_display))
+                self.app.notify(f"Detected {len(self.detected_chapters)} chapters", severity="information")
+            else:
+                chapter_list.update("No chapters detected")
+                
+        except Exception as e:
+            logger.error(f"Failed to detect chapters: {e}")
+            self.app.notify(f"Failed to detect chapters: {e}", severity="error")
     
     def _generate_audiobook(self) -> None:
         """Generate the audiobook"""
-        # TODO: Implement audiobook generation
-        self.app.notify("AudioBook generation coming soon!", severity="information")
+        # Validate content
+        if not self.content_text:
+            self.app.notify("Please import content first", severity="warning")
+            return
+        
+        # Get settings from UI
+        provider = self.query_one("#audiobook-provider-select", Select).value
+        audio_format = self.query_one("#audiobook-format-select", Select).value
+        narrator_voice = self.query_one("#narrator-voice-select", Select).value
+        
+        # Validate voice selection
+        if not self._is_valid_voice(narrator_voice):
+            self.app.notify("Please select a valid narrator voice", severity="warning")
+            return
+        
+        multi_voice = self.query_one("#multi-voice-switch", Switch).value
+        include_chapters = self.query_one("#chapter-markers-switch", Switch).value
+        background_music = self.query_one("#background-music-switch", Switch).value
+        
+        # Get title from first chapter or use default
+        title = "Untitled AudioBook"
+        if self.detected_chapters:
+            # Use book title if detected, otherwise use first chapter
+            for chapter in self.detected_chapters:
+                if "title" in chapter.title.lower() or chapter.number == 1:
+                    title = chapter.title
+                    break
+        
+        # Prepare options
+        options = {
+            "title": title,
+            "author": "Unknown",
+            "provider": provider,
+            "model": self._get_model_for_provider(provider),
+            "chapter_detection": include_chapters,
+            "multi_voice": multi_voice,
+            "background_music": None if not background_music else True,
+            "enable_ssml": provider in ["elevenlabs"],
+            "normalize_audio": True,
+        }
+        
+        # Log start
+        log = self.query_one("#audiobook-generation-log", RichLog)
+        log.clear()
+        log.write("[bold yellow]Starting audiobook generation...[/bold yellow]")
+        log.write(f"Provider: {provider}")
+        log.write(f"Format: {audio_format}")
+        log.write(f"Content length: {len(self.content_text)} characters")
+        
+        # Estimate cost
+        self._estimate_cost(provider, len(self.content_text))
+        
+        # Disable generate button
+        self.query_one("#generate-audiobook-btn", Button).disabled = True
+        
+        # Post event to generate audiobook
+        self.app.post_message(STTSAudioBookGenerateEvent(
+            content=self.content_text,
+            chapters=self.detected_chapters if include_chapters else [],
+            narrator_voice=narrator_voice,
+            output_format=audio_format,
+            options=options
+        ))
+    
+    def _get_model_for_provider(self, provider: str) -> str:
+        """Get default model for provider"""
+        models = {
+            "openai": "tts-1",
+            "elevenlabs": "eleven_multilingual_v2",
+            "kokoro": "kokoro-v0_19",
+            "chatterbox": "chatterbox-v1"
+        }
+        return models.get(provider, "tts-1")
+    
+    def _estimate_cost(self, provider: str, char_count: int) -> None:
+        """Estimate and display cost"""
+        # Simple cost estimation (prices per 1K characters)
+        costs_per_1k = {
+            "openai": 0.015,  # TTS-1 pricing
+            "elevenlabs": 0.13,  # Starter pricing
+            "kokoro": 0.0,  # Local
+            "chatterbox": 0.0,  # Local
+        }
+        
+        cost_per_1k = costs_per_1k.get(provider, 0.0)
+        estimated_cost = (char_count / 1000) * cost_per_1k
+        
+        cost_display = self.query_one("#cost-estimate", Static)
+        if estimated_cost > 0:
+            cost_display.update(f"Estimated cost: ${estimated_cost:.2f}")
+        else:
+            cost_display.update("Free (using local model)")
+    
+    def _is_valid_voice(self, voice: str) -> bool:
+        """Check if a voice value is valid (not a separator)"""
+        return bool(voice) and not str(voice).startswith("_separator")
+    
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle select changes"""
+        if event.select.id == "audiobook-provider-select":
+            # Update narrator voice options based on provider
+            self._update_voice_options(event.value)
+            # Update cost estimate
+            if self.content_text:
+                self._estimate_cost(event.value, len(self.content_text))
+        elif event.select.id == "narrator-voice-select":
+            # Validate voice selection (prevent selecting separators)
+            if not self._is_valid_voice(event.value):
+                # Find and select the first valid voice
+                voice_select = event.select
+                for value, _ in voice_select._options:
+                    if self._is_valid_voice(value):
+                        voice_select.value = value
+                        break
+    
+    def _update_voice_options(self, provider: str) -> None:
+        """Update voice options based on provider"""
+        voice_select = self.query_one("#narrator-voice-select", Select)
+        
+        if provider == "openai":
+            voice_select.set_options([
+                ("alloy", "Alloy"),
+                ("echo", "Echo"),
+                ("fable", "Fable"),
+                ("onyx", "Onyx"),
+                ("nova", "Nova"),
+                ("shimmer", "Shimmer"),
+            ])
+        elif provider == "elevenlabs":
+            voice_select.set_options([
+                ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
+                ("AZnzlk1XvdvUeBnXmlld", "Domi"),
+                ("EXAVITQu4vr4xnSDxMaL", "Bella"),
+                ("ErXwobaYiN019PkySvjV", "Antoni"),
+                ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
+            ])
+        elif provider == "kokoro":
+            logger.info(f"Setting up Kokoro voices for provider: {provider}")
+            voice_options = [
+                ("af_bella", "Bella (US Female)"),
+                ("af_nicole", "Nicole (US Female)"),
+                ("af_sarah", "Sarah (US Female)"),
+                ("am_adam", "Adam (US Male)"),
+                ("am_michael", "Michael (US Male)"),
+                ("bf_emma", "Emma (UK Female)"),
+                ("bm_george", "George (UK Male)"),
+            ]
+            
+            # Add saved voice blends
+            blend_file = Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            if blend_file.exists():
+                try:
+                    import json
+                    with open(blend_file, 'r') as f:
+                        blends = json.load(f)
+                        if blends:
+                            # Add separator
+                            voice_options.append(("_separator", "──── Voice Blends ────"))
+                            # Add each blend
+                            for blend_name, blend_data in blends.items():
+                                display_name = f"🎭 {blend_name}"
+                                if blend_data.get('description'):
+                                    display_name += f" - {blend_data['description'][:30]}"
+                                voice_options.append((f"blend:{blend_name}", display_name))
+                except Exception as e:
+                    logger.error(f"Failed to load voice blends: {e}")
+            
+            voice_select.set_options(voice_options)
+            
+            # Find first valid voice option (skip separators)
+            valid_voice = None
+            for value, _ in voice_options:
+                if self._is_valid_voice(value):
+                    valid_voice = value
+                    break
+            
+            if valid_voice:
+                voice_select.value = valid_voice
+                
+        elif provider == "chatterbox":
+            voice_select.set_options([
+                ("default", "Default"),
+                ("custom", "Custom Voice"),
+            ])
+    
+    def _export_audiobook(self) -> None:
+        """Export the generated audiobook"""
+        if not self.generated_audiobook_path:
+            self.app.notify("No audiobook to export", severity="warning")
+            return
+        
+        try:
+            # Create file picker for save location using pre-imported FileSave
+            filters = Filters(
+                ("AudioBook Files", lambda p: p.suffix.lower() in [".m4b", ".mp3"]),
+                ("All Files", lambda p: True)
+            )
+            
+            file_picker = FileSave(
+                title="Save AudioBook As",
+                filters=filters,
+                default_filename=self.generated_audiobook_path.name,
+                context="audiobook_save"
+            )
+            
+            # Mount the file picker
+            self.app.push_screen(file_picker, self._handle_export_location)
+        except ImportError:
+            # Fallback
+            self.app.notify(f"AudioBook saved to: {self.generated_audiobook_path}", severity="information")
+    
+    def _handle_export_location(self, path: str | None) -> None:
+        """Handle export location selection"""
+        if not path or not self.generated_audiobook_path:
+            return
+        
+        try:
+            import shutil
+            shutil.copy2(self.generated_audiobook_path, path)
+            self.app.notify(f"AudioBook exported to: {Path(path).name}", severity="information")
+        except Exception as e:
+            logger.error(f"Failed to export audiobook: {e}")
+            self.app.notify(f"Failed to export audiobook: {e}", severity="error")
+    
+    def audiobook_generation_complete(self, success: bool, path: Optional[Path] = None) -> None:
+        """Handle audiobook generation completion"""
+        # Re-enable generate button
+        self.query_one("#generate-audiobook-btn", Button).disabled = False
+        
+        if success and path:
+            self.generated_audiobook_path = path
+            # Enable export button
+            self.query_one("#audiobook-export-btn", Button).disabled = False
+            
+            # Update log
+            log = self.query_one("#audiobook-generation-log", RichLog)
+            log.write("[bold green]✓ AudioBook generation complete![/bold green]")
+            log.write(f"Output file: {path.name}")
+        else:
+            # Update log
+            log = self.query_one("#audiobook-generation-log", RichLog)
+            log.write("[bold red]✗ AudioBook generation failed![/bold red]")
 
 
 class STTSWindow(Container):
@@ -1041,7 +3260,7 @@ class STTSWindow(Container):
         elif new_view == "settings":
             content_container.mount(TTSSettingsWidget())
         elif new_view == "audiobook":
-            content_container.mount(AudioBookPodcastWidget())
+            content_container.mount(AudioBookGenerationWidget())
         
         # Update button variants
         for btn in self.query(".sidebar-button").results(Button):

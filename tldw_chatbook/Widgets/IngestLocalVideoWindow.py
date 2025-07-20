@@ -12,6 +12,7 @@ from textual.widgets import (
 from textual import on
 from ..config import get_media_ingestion_defaults
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
+from ..Widgets.prompt_selector import PromptSelector
 from ..Local_Ingestion.transcription_service import TranscriptionService
 
 if TYPE_CHECKING:
@@ -147,11 +148,16 @@ class IngestLocalVideoWindow(Vertical):
             )
             
             # --- Analysis Options ---
-            yield Label("Custom Prompt (for analysis):")
-            yield TextArea(id="local-custom-prompt-video", classes="ingest-textarea-medium")
-            yield Label("System Prompt (for analysis):")
-            yield TextArea(id="local-system-prompt-video", classes="ingest-textarea-medium")
             yield Checkbox("Perform Analysis (e.g., Summarization)", True, id="local-perform-analysis-video")
+            
+            # Prompt selector widget
+            yield PromptSelector(
+                self.app_instance,
+                system_prompt_id="local-system-prompt-video",
+                user_prompt_id="local-custom-prompt-video",
+                media_type="video",
+                id="local-prompt-selector-video"
+            )
             yield Label("Analysis API Provider (if analysis enabled):")
             yield Select(analysis_provider_options, id="local-analysis-api-name-video",
                          prompt="Select API for Analysis...")

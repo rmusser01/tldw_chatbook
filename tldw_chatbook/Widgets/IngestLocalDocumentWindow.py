@@ -10,6 +10,7 @@ from textual.widgets import (
     ListView, ListItem, LoadingIndicator, Collapsible
 )
 from ..config import get_media_ingestion_defaults
+from ..Widgets.prompt_selector import PromptSelector
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -69,11 +70,16 @@ class IngestLocalDocumentWindow(Vertical):
                         value="auto", prompt="Select processing method...")
             
             # --- Processing Options ---
-            yield Label("Custom Prompt (for analysis):")
-            yield TextArea(id="local-custom-prompt-document", classes="ingest-textarea-medium")
-            yield Label("System Prompt (for analysis):")
-            yield TextArea(id="local-system-prompt-document", classes="ingest-textarea-medium")
             yield Checkbox("Perform Analysis (e.g., Summarization)", True, id="local-perform-analysis-document")
+            
+            # Prompt selector widget
+            yield PromptSelector(
+                self.app_instance,
+                system_prompt_id="local-system-prompt-document",
+                user_prompt_id="local-custom-prompt-document",
+                media_type="document",
+                id="local-prompt-selector-document"
+            )
             yield Label("Analysis API Provider (if analysis enabled):")
             yield Select(analysis_provider_options, id="local-analysis-api-name-document",
                         prompt="Select API for Analysis...")

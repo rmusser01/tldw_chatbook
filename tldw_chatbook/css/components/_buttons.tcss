@@ -18,7 +18,7 @@
     color: $text;
 }
 .sidebar-toggle {
-    width: 2;                /* tiny square */
+    width: 1fr;              /* Equal flexible width */
     height: 3;
     /* margin-right: 1; Removed default margin, apply specific below */
     border: none;

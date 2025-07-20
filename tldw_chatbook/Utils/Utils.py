@@ -124,7 +124,7 @@ global_api_endpoints = ["anthropic", "cohere", "google", "groq", "openai", "hugg
 
 global_search_engines = ["baidu", "bing", "brave", "duckduckgo", "google", "kagi", "searx", "tavily", "yandex"]
 
-openai_tts_voices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+openai_tts_voices = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse"]
 
 
 def format_api_name(api):
