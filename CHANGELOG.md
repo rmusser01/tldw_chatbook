@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+## [0.1.3.1] - 2025-07-20
+- Numpy Bugfix
+
 ## [0.1.3.0] - 2025-07-20
 - TTS Bugfixes
 - Groundwork for future features.
