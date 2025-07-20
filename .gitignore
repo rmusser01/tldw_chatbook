@@ -198,3 +198,4 @@ cython_debug/
 *.onnx
 *.pth
 *.bin
+List.txt
