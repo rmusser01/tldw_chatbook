@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test script for the enhanced RAG implementation.
 
@@ -10,10 +9,20 @@ This script demonstrates the new features:
 5. Table serialization
 """
 
+import pytest
 import asyncio
 import logging
 from pathlib import Path
 from typing import List, Dict, Any
+
+# Import optional dependency checker
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+# Skip all tests in this module if embeddings dependencies are not available
+pytestmark = pytest.mark.skipif(
+    not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False),
+    reason="RAG tests require embeddings dependencies: pip install tldw_chatbook[embeddings_rag]"
+)
 
 # Configure logging
 logging.basicConfig(
@@ -111,6 +120,7 @@ success in 2025 and beyond.
 """
 
 
+@pytest.mark.asyncio
 async def test_enhanced_chunking():
     """Test enhanced chunking features."""
     from tldw_chatbook.RAG_Search.enhanced_chunking_service import EnhancedChunkingService
@@ -164,6 +174,7 @@ async def test_enhanced_chunking():
             logger.info(f"  Parent text: {parent_text[:150]}...")
 
 
+@pytest.mark.asyncio
 async def test_enhanced_rag_service():
     """Test the enhanced RAG service."""
     from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
@@ -238,6 +249,7 @@ async def test_enhanced_rag_service():
                 logger.info("✓ Context successfully expanded to parent chunk")
 
 
+@pytest.mark.asyncio
 async def test_table_serialization():
     """Test table serialization functionality."""
     from tldw_chatbook.RAG_Search.table_serializer import serialize_table, TableFormat
@@ -268,6 +280,7 @@ async def test_table_serialization():
         logger.info(f"  - {sentence}")
 
 
+@pytest.mark.asyncio
 async def test_pdf_artifact_cleaning():
     """Test PDF artifact cleaning."""
     from tldw_chatbook.RAG_Search.enhanced_chunking_service import DocumentStructureParser
@@ -297,6 +310,7 @@ Sometimes we see glyph<123> or /A.cap patterns/period
     logger.info(f"\nCleaned text preview:\n{cleaned_text[:200]}...")
 
 
+@pytest.mark.asyncio
 async def test_v2_full_features():
     """Test V2 service with all features enabled."""
     from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
@@ -349,6 +363,7 @@ async def test_v2_full_features():
             logger.info(f"    Preview: {result.content[:100]}...")
 
 
+@pytest.mark.asyncio
 async def test_profile_switching():
     """Test switching between different profiles."""
     from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
@@ -389,30 +404,4 @@ async def test_profile_switching():
         logger.info(f"  Search type: {search_type}, Results: {len(results)}")
 
 
-async def main():
-    """Run all tests."""
-    logger.info("Starting Enhanced RAG Implementation Tests\n")
-    
-    try:
-        # Test individual components
-        await test_enhanced_chunking()
-        await test_table_serialization()
-        await test_pdf_artifact_cleaning()
-        
-        # Test integrated service
-        await test_enhanced_rag_service()
-        
-        # Test V2 with full features
-        await test_v2_full_features()
-        
-        # Test profile switching
-        await test_profile_switching()
-        
-        logger.info("\n✅ All tests completed successfully!")
-        
-    except Exception as e:
-        logger.error(f"❌ Test failed: {e}", exc_info=True)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Remove main function and if __name__ block - pytest will find and run the tests automatically

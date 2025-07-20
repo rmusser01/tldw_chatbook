@@ -166,8 +166,9 @@ async def handle_add_subscription(app: 'TldwCli', event: Button.Pressed) -> None
         
         # Initialize database if needed
         if not hasattr(app, 'subscriptions_db'):
-            # This is placeholder - in real implementation, get proper DB path
-            app.subscriptions_db = SubscriptionsDB(":memory:", app.client_id)
+            from ..config import get_subscriptions_db_path
+            db_path = get_subscriptions_db_path()
+            app.subscriptions_db = SubscriptionsDB(db_path, app.client_id)
         
         # Add subscription to database
         try:
@@ -266,20 +267,28 @@ async def handle_subscription_item_action(app: 'TldwCli', event: Button.Pressed)
         success_count = 0
         error_count = 0
         
-        for item_id in selected_items:
+        if action_name == "accept":
+            # Import ingestion worker
+            from .subscription_ingest_worker import bulk_ingest_subscription_items
+            
+            # Ingest items
             try:
-                if action_name == "accept":
-                    # In real implementation, ingest the item
-                    pass
-                    
-                # Update item status
-                if hasattr(app, 'subscriptions_db'):
-                    app.subscriptions_db.mark_item_status(item_id, new_status)
-                    success_count += 1
-                    
+                success_count, error_count = await bulk_ingest_subscription_items(app, selected_items)
             except Exception as e:
-                logger.error(f"Error processing item {item_id}: {e}")
-                error_count += 1
+                logger.error(f"Error ingesting items: {e}")
+                app.notify(f"Error ingesting items: {str(e)}", severity="error")
+                return
+        else:
+            # For other actions, just update status
+            for item_id in selected_items:
+                try:
+                    if hasattr(app, 'subscriptions_db'):
+                        app.subscriptions_db.mark_item_status(item_id, new_status)
+                        success_count += 1
+                        
+                except Exception as e:
+                    logger.error(f"Error processing item {item_id}: {e}")
+                    error_count += 1
         
         # Post completion event
         app.post_message(BulkOperationComplete(
@@ -337,28 +346,39 @@ async def check_all_subscriptions_worker(app: 'TldwCli') -> None:
                     f"Checking {i+1}/{len(pending)}: {subscription['name']}"
                 )
                 
-                # This is where the actual check would happen
-                # For now, just simulate with a delay
-                await asyncio.sleep(0.5)
+                # Import monitoring engine components
+                from ..Subscriptions import FeedMonitor, URLMonitor, RateLimiter, SecurityValidator
                 
-                # Simulate finding some items
-                import random
-                new_items = random.randint(0, 5)
+                # Create monitors if not already created
+                if not hasattr(app, '_feed_monitor'):
+                    rate_limiter = RateLimiter()
+                    security_validator = SecurityValidator()
+                    app._feed_monitor = FeedMonitor(rate_limiter, security_validator)
+                    app._url_monitor = URLMonitor(app.subscriptions_db, rate_limiter)
+                
+                # Check subscription based on type
+                items = []
+                if subscription['type'] in ['rss', 'atom', 'json_feed', 'podcast']:
+                    items = await app._feed_monitor.check_feed(subscription)
+                elif subscription['type'] in ['url', 'url_list']:
+                    result = await app._url_monitor.check_url(subscription)
+                    if result:
+                        items = [result]
                 
                 # Record result
                 app.subscriptions_db.record_check_result(
                     subscription['id'],
-                    items=[],  # Would contain actual items
-                    stats={'new_items_found': new_items}
+                    items=items,
+                    stats={'new_items_found': len(items)}
                 )
                 
-                total_new_items += new_items
+                total_new_items += len(items)
                 
                 # Post event for UI update
-                if new_items > 0:
+                if len(items) > 0:
                     app.call_from_thread(
                         app.post_message,
-                        NewSubscriptionItems([], subscription['name'])
+                        NewSubscriptionItems(items, subscription['name'])
                     )
                 
             except Exception as e:

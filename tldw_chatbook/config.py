@@ -2251,6 +2251,72 @@ enable_binary_resources = false  # Allow serving binary resources (images, etc.)
 [mcp.prompts]
 enable_custom_prompts = true  # Allow custom prompt creation
 max_prompt_length = 10000  # Maximum prompt length in characters
+
+# Subscription system configuration
+[subscriptions]
+enabled = true
+default_check_interval = 3600  # 1 hour in seconds
+max_concurrent_checks = 10
+check_timeout_seconds = 30
+auto_pause_after_failures = 10
+enable_background_checking = true
+default_priority = 3  # 1-5, higher is more important
+
+# Security settings
+[subscriptions.security]
+enable_xxe_protection = true
+enable_ssrf_protection = true
+verify_ssl_certificates = true
+max_redirects = 5
+request_timeout = 30
+
+# Rate limiting
+[subscriptions.rate_limiting]
+global_requests_per_minute = 60
+per_domain_requests_per_minute = 10
+retry_after_rate_limit = true
+
+# Performance settings
+[subscriptions.performance]
+use_connection_pooling = true
+enable_response_caching = true
+cache_ttl_seconds = 300
+use_http2 = true
+enable_compression = true
+
+# Content processing
+[subscriptions.content_processing]
+default_analysis_prompt = "Summarize the key points and provide actionable insights."
+auto_analyze_new_items = false
+save_analysis_only = false
+extract_keywords = true
+max_keywords = 15
+
+# Briefing/newsletter generation
+[subscriptions.briefings]
+enabled = true
+default_format = "markdown"  # markdown, html, pdf
+save_to_notes = true
+email_notifications = false
+morning_digest_time = "06:00"  # 24-hour format
+
+# Default templates for common subscription types
+[subscriptions.templates.tech_news]
+name = "Tech News Feed"
+type = "rss"
+check_frequency = 1800  # 30 minutes
+priority = 4
+extraction_method = "auto"
+auto_ingest = true
+tags = ["tech", "news"]
+
+[subscriptions.templates.documentation]
+name = "Documentation Monitor"
+type = "url"
+check_frequency = 86400  # Daily
+change_threshold = 0.05  # 5% change threshold
+priority = 3
+tags = ["docs", "reference"]
 """
 
 try:
@@ -2813,6 +2879,18 @@ def get_media_db_path() -> Path:
         # Use user-specific folder
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_media_v2.db"
+    return db_path
+
+def get_subscriptions_db_path() -> Path:
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "subscriptions_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get("subscriptions_db_path"):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "tldw_chatbook_subscriptions.db"
     return db_path
 
 def get_cli_log_file_path() -> Path:

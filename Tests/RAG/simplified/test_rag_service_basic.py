@@ -568,51 +568,48 @@ class TestRAGProfiles:
         assert "high_accuracy" in profiles
         assert "technical_docs" in profiles
     
-    def test_profile_creation(self):
+    def test_profile_creation(self, memory_rag_config):
         """Test creating services with different profiles."""
         # Test each basic profile
         for profile in ["bm25_only", "vector_only", "hybrid_basic", "hybrid_enhanced", "hybrid_full"]:
-            service = create_rag_service(profile_name=profile)
+            service = create_rag_service(profile_name=profile, config=memory_rag_config)
             assert isinstance(service, EnhancedRAGServiceV2)
             assert service is not None
     
-    def test_default_profile(self):
+    def test_default_profile(self, memory_rag_config):
         """Test default profile is hybrid_basic."""
         # Create service without specifying profile
-        service = create_rag_service()
+        service = create_rag_service(config=memory_rag_config)
         assert isinstance(service, EnhancedRAGServiceV2)
         # Default should be hybrid_basic
         assert not service.enable_reranking  # hybrid_basic doesn't have reranking
     
-    def test_profile_features(self):
+    def test_profile_features(self, memory_rag_config):
         """Test that profiles enable correct features."""
         # Test bm25_only - should have minimal features
-        bm25_service = create_rag_service("bm25_only")
+        bm25_service = create_rag_service("bm25_only", config=memory_rag_config)
         assert not bm25_service.enable_parent_retrieval
         assert not bm25_service.enable_reranking
         assert not bm25_service.enable_parallel_processing
         
         # Test hybrid_enhanced - should have parent retrieval
-        enhanced_service = create_rag_service("hybrid_enhanced")
+        enhanced_service = create_rag_service("hybrid_enhanced", config=memory_rag_config)
         assert enhanced_service.enable_parent_retrieval
         assert not enhanced_service.enable_reranking
         assert not enhanced_service.enable_parallel_processing
         
         # Test hybrid_full - should have all features
-        full_service = create_rag_service("hybrid_full")
+        full_service = create_rag_service("hybrid_full", config=memory_rag_config)
         assert full_service.enable_parent_retrieval
         assert full_service.enable_reranking
         assert full_service.enable_parallel_processing
     
     @pytest.mark.asyncio
-    async def test_profile_search_behavior(self, temp_dir):
+    async def test_profile_search_behavior(self, memory_rag_config):
         """Test that profiles affect search behavior correctly."""
         # Create services with different profiles
-        config = RAGConfig()
-        config.vector_store.persist_directory = temp_dir
-        
-        # BM25 service
-        bm25_service = create_rag_service("bm25_only", config=config)
+        # BM25 service with memory config
+        bm25_service = create_rag_service("bm25_only", config=memory_rag_config)
         
         # Index a document
         await bm25_service.index_document(
@@ -630,10 +627,10 @@ class TestRAGProfiles:
         
         assert len(results) > 0
     
-    def test_invalid_profile(self):
+    def test_invalid_profile(self, memory_rag_config):
         """Test handling of invalid profile names."""
         # Should fall back to hybrid_basic
-        service = create_rag_service("non_existent_profile")
+        service = create_rag_service("non_existent_profile", config=memory_rag_config)
         assert isinstance(service, EnhancedRAGServiceV2)
     
     def test_profile_with_custom_config(self, test_rag_config):

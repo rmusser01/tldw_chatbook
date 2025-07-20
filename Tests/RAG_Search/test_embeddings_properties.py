@@ -18,10 +18,7 @@ from tldw_chatbook.RAG_Search.simplified import (
 )
 
 # Import test utilities from conftest
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from conftest import requires_numpy
+from .conftest import requires_numpy
 
 
 # Hypothesis settings for embeddings tests
@@ -263,7 +260,7 @@ class TestVectorStoreProperties:
     def test_search_result_bounds(self, texts, n_results):
         """Search should never return more than n_results"""
         # Import MockEmbeddingProvider from conftest
-        from conftest import MockEmbeddingProvider
+        from .conftest import MockEmbeddingProvider
         
         with patch('tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory') as mock_factory:
             # Use MockEmbeddingProvider for consistent behavior

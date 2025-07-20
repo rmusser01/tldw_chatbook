@@ -39,7 +39,9 @@ TEST_MODULES = {
     "Character_Chat": ["Character_Chat/"],
     "Database": ["DB/", "ChaChaNotesDB/", "Media_DB/", "Prompts_DB/"],
     "UI": ["UI/", "Widgets/"],
-    "RAG": ["RAG/", "RAG_Search/"],
+    "RAG_Simplified": ["RAG/simplified/"],
+    "RAG_Legacy": ["RAG_Search/"],
+    "RAG_Other": ["RAG/", "test_enhanced_rag.py"],
     "Notes": ["Notes/"],
     "Event_Handlers": ["Event_Handlers/"],
     "Evals": ["Evals/"],
@@ -252,9 +254,10 @@ class TestRunner:
 class ReportGenerator:
     """Generate test reports in various formats"""
     
-    def __init__(self, results: Dict[str, Dict[str, Any]]):
+    def __init__(self, results: Dict[str, Dict[str, Any]], rag_detailed: bool = False):
         self.results = results
         self.timestamp = datetime.now()
+        self.rag_detailed = rag_detailed
         
     def generate_summary(self) -> Dict[str, Any]:
         """Generate overall summary statistics"""
@@ -455,6 +458,141 @@ class ReportGenerator:
         
         print(f"Markdown report saved to: {report_file}")
         return report_file
+    
+    def print_rag_detailed_report(self):
+        """Print detailed RAG test report"""
+        if not RICH_AVAILABLE:
+            print("\nDetailed RAG report requires 'rich' library")
+            return
+            
+        console = Console()
+        console.print("\n[bold blue]Detailed RAG Test Report[/bold blue]")
+        console.print(f"Generated: {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+        console.print("")
+        
+        # Collect RAG-specific results
+        rag_modules = ['RAG_Simplified', 'RAG_Legacy', 'RAG_Other']
+        rag_results = {k: v for k, v in self.results.items() if k in rag_modules}
+        
+        if not rag_results:
+            console.print("[yellow]No RAG tests were found in the results[/yellow]")
+            return
+        
+        # RAG Summary Table
+        rag_table = Table(title="RAG Test Categories", show_header=True)
+        rag_table.add_column("Category", style="cyan")
+        rag_table.add_column("Description", style="white")
+        rag_table.add_column("Total", justify="right")
+        rag_table.add_column("Passed", justify="right", style="green")
+        rag_table.add_column("Failed", justify="right", style="red")
+        rag_table.add_column("Success Rate", justify="right")
+        
+        descriptions = {
+            "RAG_Simplified": "New simplified RAG implementation (V2)",
+            "RAG_Legacy": "Legacy RAG_Search tests",
+            "RAG_Other": "Other RAG tests (enhanced, UI integration)"
+        }
+        
+        total_rag_tests = 0
+        total_rag_passed = 0
+        total_rag_failed = 0
+        
+        for module_name in rag_modules:
+            if module_name in rag_results:
+                result = rag_results[module_name]
+                total = result["total"]
+                passed = result["passed"]
+                failed = result["failed"] + result["errors"]
+                success_rate = round(passed / total * 100, 2) if total > 0 else 0
+                
+                total_rag_tests += total
+                total_rag_passed += passed
+                total_rag_failed += failed
+                
+                rag_table.add_row(
+                    module_name,
+                    descriptions.get(module_name, ""),
+                    str(total),
+                    str(passed),
+                    str(failed),
+                    f"{success_rate}%"
+                )
+        
+        console.print(rag_table)
+        
+        # Overall RAG statistics
+        overall_success_rate = round(total_rag_passed / total_rag_tests * 100, 2) if total_rag_tests > 0 else 0
+        console.print(f"\n[bold]Overall RAG Statistics:[/bold]")
+        console.print(f"Total RAG Tests: {total_rag_tests}")
+        console.print(f"Total Passed: [green]{total_rag_passed}[/green]")
+        console.print(f"Total Failed: [red]{total_rag_failed}[/red]")
+        console.print(f"Overall Success Rate: {overall_success_rate}%")
+        
+        # Show specific test file breakdown for simplified RAG
+        if "RAG_Simplified" in rag_results:
+            console.print("\n[bold]Simplified RAG Test Breakdown:[/bold]")
+            simplified_tests = rag_results["RAG_Simplified"].get("tests", [])
+            
+            # Group by test file
+            test_files = defaultdict(lambda: {"passed": 0, "failed": 0, "skipped": 0})
+            for test in simplified_tests:
+                file_name = test.get("file", "unknown").split("/")[-1]
+                status = test.get("status", "unknown")
+                if status == "passed":
+                    test_files[file_name]["passed"] += 1
+                elif status == "failed" or status == "error":
+                    test_files[file_name]["failed"] += 1
+                elif status == "skipped":
+                    test_files[file_name]["skipped"] += 1
+            
+            file_table = Table(show_header=True)
+            file_table.add_column("Test File", style="cyan")
+            file_table.add_column("Passed", justify="right", style="green")
+            file_table.add_column("Failed", justify="right", style="red")
+            file_table.add_column("Skipped", justify="right", style="yellow")
+            
+            for file_name, stats in sorted(test_files.items()):
+                file_table.add_row(
+                    file_name,
+                    str(stats["passed"]),
+                    str(stats["failed"]),
+                    str(stats["skipped"])
+                )
+            
+            console.print(file_table)
+        
+        # Show RAG-specific failures
+        rag_failures = []
+        for module_name in rag_modules:
+            if module_name in rag_results:
+                failures = rag_results[module_name].get("failures", [])
+                for failure in failures:
+                    failure["module"] = module_name
+                    rag_failures.append(failure)
+        
+        if rag_failures:
+            console.print("\n[bold red]RAG Test Failures:[/bold red]")
+            
+            # Group failures by error type
+            error_types = defaultdict(list)
+            for failure in rag_failures:
+                message = failure.get("message", "")
+                if "persist_directory" in message:
+                    error_types["ChromaDB Configuration"].append(failure)
+                elif "import" in message.lower():
+                    error_types["Import Errors"].append(failure)
+                elif "api" in message.lower():
+                    error_types["API Changes"].append(failure)
+                else:
+                    error_types["Other"].append(failure)
+            
+            for error_type, failures in error_types.items():
+                if failures:
+                    console.print(f"\n[yellow]{error_type}:[/yellow]")
+                    for failure in failures[:5]:  # Show first 5 of each type
+                        console.print(f"  • [{failure['module']}] {failure['test']}")
+                        if failure.get('message'):
+                            console.print(f"    [dim]{failure['message'][:100]}...[/dim]")
 
 
 def main():
@@ -472,6 +610,9 @@ Examples:
   
   # Run specific modules
   python run_all_tests_with_report.py --modules Chat DB UI
+  
+  # Run all RAG tests with detailed report
+  python run_all_tests_with_report.py --modules RAG_Simplified RAG_Legacy RAG_Other --rag-detailed
   
   # Run TTS and Transcription tests
   python run_all_tests_with_report.py --modules TTS Transcription
@@ -496,6 +637,8 @@ Examples:
                        choices=["console", "json", "markdown", "all"],
                        default=["console"],
                        help="Output format(s) for the report (default: console)")
+    parser.add_argument("--rag-detailed", action="store_true",
+                       help="Generate detailed RAG test report with subcategories")
     
     args = parser.parse_args()
     
@@ -556,6 +699,8 @@ Examples:
     try:
         if "console" in formats:
             generator.print_console_report()
+            if args.rag_detailed and any(m in results for m in ["RAG_Simplified", "RAG_Legacy", "RAG_Other"]):
+                generator.print_rag_detailed_report()
         
         if "json" in formats:
             generator.save_json_report()

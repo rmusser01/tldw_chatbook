@@ -68,7 +68,7 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_EMBEDDINGS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_EMBEDDINGS, TAB_STTS, TAB_SUBSCRIPTIONS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -91,7 +91,7 @@ from .Event_Handlers import (
     notes_events as notes_handlers,
     worker_events as worker_handlers, worker_events, ingest_events,
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
-    search_events, notes_sync_events, embeddings_events,
+    search_events, notes_sync_events, embeddings_events, subscription_events,
 )
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -136,6 +136,7 @@ from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow import MediaWindow
 from .UI.SearchWindow import SearchWindow
 from .UI.Embeddings_Window import EmbeddingsWindow
+from .UI.Subscription_Window import SubscriptionWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
@@ -1387,6 +1388,14 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "embeddings-nav-manage": functools.partial(_handle_nav, prefix="embeddings",
                                                            reactive_attr="embeddings_active_view"),
             },
+            TAB_STTS: {}, # STTS handles its own events
+            TAB_SUBSCRIPTIONS: {
+                "subscription-add-button": subscription_events.handle_add_subscription,
+                "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
+                "subscription-accept-button": subscription_events.handle_subscription_item_action,
+                "subscription-ignore-button": subscription_events.handle_subscription_item_action,
+                "subscription-mark-reviewed-button": subscription_events.handle_subscription_item_action,
+            },
         }
 
     def _setup_logging(self):
@@ -1505,6 +1514,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("evals", EvalsWindow, "evals-window"),
             ("embeddings", EmbeddingsWindow, "embeddings-window"),
             ("stts", STTSWindow, "stts-window"),
+            ("subscriptions", SubscriptionWindow, "subscriptions-window"),
         ]
         
         # Create window widgets and compose them into the container properly

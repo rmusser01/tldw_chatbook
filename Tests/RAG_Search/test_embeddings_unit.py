@@ -17,9 +17,7 @@ from tldw_chatbook.RAG_Search.simplified import (
 )
 
 # Import test utilities
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from conftest import requires_embeddings, requires_numpy
+from .conftest import requires_embeddings, requires_numpy
 
 
 class TestEmbeddingsServiceWrapper:

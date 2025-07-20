@@ -22,10 +22,7 @@ from tldw_chatbook.RAG_Search.simplified import (
 )
 
 # Import test utilities from conftest
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from conftest import (
+from .conftest import (
     requires_embeddings,
     requires_chromadb
 )

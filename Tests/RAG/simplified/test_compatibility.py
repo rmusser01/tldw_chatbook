@@ -41,10 +41,10 @@ class TestBackwardCompatibility:
         service = create_rag_service_from_config(config)
         assert isinstance(service, EnhancedRAGServiceV2)
         
-    def test_default_behavior_unchanged(self):
+    def test_default_behavior_unchanged(self, memory_rag_config):
         """Test that default behavior is unchanged."""
         # Creating service without any parameters should give hybrid_basic
-        service = create_rag_service()
+        service = create_rag_service(config=memory_rag_config)
         
         # Verify it's V2 with basic features
         assert isinstance(service, EnhancedRAGServiceV2)
@@ -145,9 +145,9 @@ class TestBackwardCompatibility:
         )
         assert result2.success
         
-    def test_api_surface_unchanged(self):
+    def test_api_surface_unchanged(self, memory_rag_config):
         """Test that the public API surface is unchanged."""
-        service = create_rag_service()
+        service = create_rag_service(config=memory_rag_config)
         
         # Check all expected methods exist
         expected_methods = [
@@ -210,8 +210,10 @@ class TestConfigCompatibility:
         service_config = rag_section.get("service", {})
         profile = service_config.get("profile", "hybrid_basic")
         
-        # Create service
-        service = create_rag_service(profile_name=profile)
+        # Create service with memory config
+        memory_config = RAGConfig()
+        memory_config.vector_store.type = "memory"
+        service = create_rag_service(profile_name=profile, config=memory_config)
         assert isinstance(service, EnhancedRAGServiceV2)
         assert service.enable_parent_retrieval  # enhanced feature
         
@@ -227,6 +229,7 @@ class TestConfigCompatibility:
         }):
             # Config should pick up env vars
             config = RAGConfig()
+            config.vector_store.type = "memory"  # Use in-memory to avoid persist_directory
             
             # These should be overridden by env vars if implemented
             # (This is a placeholder - actual env var support may vary)

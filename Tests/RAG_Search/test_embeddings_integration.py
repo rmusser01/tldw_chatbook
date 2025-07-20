@@ -34,13 +34,12 @@ def reset_circuit_breakers():
     yield
     # Clear again after test
     circuit_breaker._circuit_breakers.clear()
-from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
 # Import test markers from conftest
 import numpy as np
-# Import from the same directory using absolute import
-from Tests.RAG_Search.conftest import requires_embeddings, requires_chromadb, requires_numpy, create_mock_embedding_factory
+# Import from the same directory using relative import
+from .conftest import requires_embeddings, requires_chromadb, requires_numpy, create_mock_embedding_factory
 
 
 @pytest.mark.integration
@@ -76,8 +75,8 @@ class TestEndToEndWorkflow:
             # Create RAG config for testing
             config = create_config_for_testing(use_memory_store=True)
             
-            # Create RAG service
-            rag_service = RAGService(config=config)
+            # Create RAG service using factory
+            rag_service = create_rag_service(config=config)
             
             # Index documents
             results = []

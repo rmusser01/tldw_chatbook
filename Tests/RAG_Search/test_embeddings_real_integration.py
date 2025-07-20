@@ -128,10 +128,11 @@ def sample_texts():
 def real_rag_service(persist_dir):
     """Create a real RAG service for testing"""
     if DEPENDENCIES_AVAILABLE.get('sentence_transformers', False):
-        service = create_rag_service(
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-            vector_store="memory"
-        )
+        from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+        config = RAGConfig()
+        config.embedding.model = "sentence-transformers/all-MiniLM-L6-v2"
+        config.vector_store.type = "memory"
+        service = create_rag_service(config=config)
         return service
     else:
         pytest.skip("Real embedding models not available")
@@ -148,11 +149,13 @@ class TestRealEmbeddingsWorkflow:
     def test_full_rag_workflow_with_real_model(self, persist_dir, sample_texts):
         """Test complete RAG workflow with real sentence transformer model"""
         # Create RAG service with real embeddings
-        rag_service = create_rag_service(
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-            vector_store="chroma" if DEPENDENCIES_AVAILABLE.get('chromadb', False) else "memory",
-            persist_dir=str(persist_dir) if DEPENDENCIES_AVAILABLE.get('chromadb', False) else None
-        )
+        from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+        config = RAGConfig()
+        config.embedding.model = "sentence-transformers/all-MiniLM-L6-v2"
+        config.vector_store.type = "chromadb" if DEPENDENCIES_AVAILABLE.get('chromadb', False) else "memory"
+        if DEPENDENCIES_AVAILABLE.get('chromadb', False):
+            config.vector_store.persist_directory = str(persist_dir)
+        rag_service = create_rag_service(config=config)
         
         # Index documents
         collection_name = "real_documents"
