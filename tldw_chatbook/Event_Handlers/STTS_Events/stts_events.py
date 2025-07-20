@@ -162,6 +162,19 @@ class STTSEventHandler:
             
             # Map provider to internal model ID (handle case-insensitive)
             provider_lower = event.provider.lower() if event.provider else ""
+            
+            # Extract the actual provider key from display names
+            if "kokoro" in provider_lower:
+                provider_lower = "kokoro"
+            elif "elevenlabs" in provider_lower:
+                provider_lower = "elevenlabs"
+            elif "openai" in provider_lower:
+                provider_lower = "openai"
+            elif "chatterbox" in provider_lower:
+                provider_lower = "chatterbox"
+            elif "alltalk" in provider_lower:
+                provider_lower = "alltalk"
+            
             if provider_lower == "openai":
                 # Also convert model to lowercase
                 model_lower = event.model.lower().replace("-", "")  # Convert TTS-1 to tts1
@@ -169,7 +182,12 @@ class STTSEventHandler:
             elif provider_lower == "elevenlabs":
                 internal_model_id = f"elevenlabs_{event.model}"
             elif provider_lower == "kokoro":
-                internal_model_id = "local_kokoro_default_onnx"
+                # Check if ONNX or PyTorch should be used
+                use_onnx = event.extra_params.get("use_onnx", True)
+                if use_onnx:
+                    internal_model_id = "local_kokoro_default_onnx"
+                else:
+                    internal_model_id = "local_kokoro_default_pytorch"
                 # Handle Kokoro language code
                 if event.extra_params.get("language"):
                     # Kokoro voices include language code prefix

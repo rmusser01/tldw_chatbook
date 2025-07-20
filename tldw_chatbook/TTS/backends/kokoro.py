@@ -126,12 +126,38 @@ class KokoroTTSBackend(LocalTTSBackend):
     async def initialize(self):
         """Initialize the Kokoro backend"""
         logger.info(f"KokoroTTSBackend: Initializing (ONNX: {self.use_onnx}, Device: {self.device})")
+        
+        # Ensure paths are initialized regardless of backend
+        if not self.model_path:
+            from pathlib import Path
+            model_dir = Path.home() / ".config" / "tldw_cli" / "models" / "kokoro"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            # Default model based on backend type
+            if self.use_onnx:
+                self.model_path = str(model_dir / "kokoro-v0_19.onnx")
+            else:
+                self.model_path = str(model_dir / "kokoro-v1_0.pth")
+        
+        if not self.voice_dir:
+            from pathlib import Path
+            voice_dir = Path.home() / ".config" / "tldw_cli" / "models" / "kokoro" / "voices"
+            voice_dir.mkdir(parents=True, exist_ok=True)
+            self.voice_dir = str(voice_dir)
+        
         await self.load_model()
     
     async def load_model(self):
         """Load the TTS model into memory"""
         if self.use_onnx:
             await self._initialize_onnx()
+            # If ONNX initialization failed, try PyTorch
+            if not self.use_onnx:
+                logger.info("ONNX initialization failed, falling back to PyTorch")
+                # Update model path for PyTorch
+                from pathlib import Path
+                model_dir = Path.home() / ".config" / "tldw_cli" / "models" / "kokoro"
+                self.model_path = str(model_dir / "kokoro-v1_0.pth")
+                await self._initialize_pytorch()
         else:
             await self._initialize_pytorch()
         
@@ -308,20 +334,6 @@ class KokoroTTSBackend(LocalTTSBackend):
             AutoTokenizer = self.transformers.AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
             
-            # Model path setup
-            if not self.model_path:
-                # Use default path structure
-                import os
-                base_dir = os.getcwd()
-                model_dir = os.path.join(base_dir, "App_Function_Libraries", "models", "kokoro_models")
-                os.makedirs(model_dir, exist_ok=True)
-                self.model_path = os.path.join(model_dir, "kokoro-v0_19.pth")
-            
-            if not self.voice_dir:
-                # Default voice directory
-                self.voice_dir = os.path.join("App_Function_Libraries", "TTS", "Kokoro", "voices")
-                os.makedirs(self.voice_dir, exist_ok=True)
-            
             # Load model if it exists, otherwise mark for download
             if os.path.exists(self.model_path):
                 self._load_pytorch_model()
@@ -347,11 +359,22 @@ class KokoroTTSBackend(LocalTTSBackend):
         Yields:
             Audio bytes in the requested format
         """
+        # Ensure we're initialized
+        if not self.model_loaded:
+            await self.initialize()
+        
         if self.use_onnx and self.kokoro_instance:
             async for chunk in self._generate_onnx_stream(request):
                 yield chunk
         else:
             # PyTorch implementation
+            # Check if we have a model loaded
+            if not self.kokoro_model_pt and not self.kokoro_instance:
+                raise RuntimeError(
+                    "No Kokoro model loaded. Please either:\n"
+                    "1. Install kokoro-onnx: pip install kokoro-onnx\n"
+                    "2. Or provide PyTorch model files (.pth) and ensure PyTorch is installed"
+                )
             async for chunk in self._generate_pytorch_stream(request):
                 yield chunk
     
@@ -714,17 +737,20 @@ class KokoroTTSBackend(LocalTTSBackend):
     def _load_pytorch_model(self):
         """Load PyTorch model"""
         try:
-            # Import Kokoro modules dynamically
+            # Import Kokoro PyTorch modules dynamically
             if self._kokoro_pt_modules is None:
                 try:
-                    from App_Function_Libraries.TTS.Kokoro.models import build_model
-                    from App_Function_Libraries.TTS.Kokoro.kokoro import generate
+                    from tldw_chatbook.TTS import kokoro_pytorch
                     self._kokoro_pt_modules = {
-                        'build_model': build_model,
-                        'generate': generate
+                        'build_model': kokoro_pytorch.build_model,
+                        'generate': kokoro_pytorch.generate,
+                        'load_voice': kokoro_pytorch.load_voice,
+                        'mix_voices': kokoro_pytorch.mix_voices,
+                        'parse_voice_mix': kokoro_pytorch.parse_voice_mix,
+                        'get_available_voices': kokoro_pytorch.get_available_voices,
                     }
-                except ImportError:
-                    logger.error("Kokoro PyTorch modules not found in App_Function_Libraries")
+                except ImportError as e:
+                    logger.error(f"Failed to import Kokoro PyTorch modules: {e}")
                     raise
             
             build_model = self._kokoro_pt_modules['build_model']
@@ -741,7 +767,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             try:
                 if not REQUESTS_AVAILABLE:
                     raise ImportError("requests library required for model download")
-                url = "https://huggingface.co/hexgrad/kLegacy/resolve/main/v0.19/kokoro-v0_19.pth?download=true"
+                url = "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth?download=true"
                 response = requests.get(url, stream=True)
                 response.raise_for_status()
                 
@@ -780,11 +806,16 @@ class KokoroTTSBackend(LocalTTSBackend):
     
     def _load_voice_pack(self, voice: str):
         """Load a voice pack for PyTorch"""
-        voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
-        if not os.path.exists(voice_path):
-            raise FileNotFoundError(f"Voice pack not found: {voice_path}")
-        
-        return self.torch.load(voice_path, weights_only=True).to(self.device)
+        if self._kokoro_pt_modules and 'load_voice' in self._kokoro_pt_modules:
+            load_voice = self._kokoro_pt_modules['load_voice']
+            voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
+            return load_voice(voice_path, self.device)
+        else:
+            # Fallback to direct torch load
+            voice_path = os.path.join(self.voice_dir, f"{voice}.pt")
+            if not os.path.exists(voice_path):
+                raise FileNotFoundError(f"Voice pack not found: {voice_path}")
+            return self.torch.load(voice_path, weights_only=True).to(self.device)
     
     async def _generate_pytorch_stream(
         self, request: OpenAISpeechRequest
@@ -856,7 +887,8 @@ class KokoroTTSBackend(LocalTTSBackend):
                     chunk, 
                     voice_pack, 
                     lang=lang, 
-                    speed=request.speed
+                    speed=request.speed,
+                    voice_dir=self.voice_dir
                 )
                 
                 # Convert to numpy

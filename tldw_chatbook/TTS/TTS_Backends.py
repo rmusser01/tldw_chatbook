@@ -167,10 +167,15 @@ class TTSBackendManager:
         elif backend_id.startswith("local_kokoro"):
             # Get Kokoro-specific paths from environment or config
             import os
+            
+            # Determine if this is PyTorch or ONNX variant
+            use_onnx = not backend_id.endswith("_pytorch")
+            
             kokoro_defaults = {
-                "KOKORO_USE_ONNX": True,
+                "KOKORO_USE_ONNX": use_onnx,
                 "KOKORO_MODEL_PATH": os.getenv("KOKORO_MODEL_PATH", 
-                    self.app_config.get("KOKORO_ONNX_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.onnx")),
+                    self.app_config.get("KOKORO_ONNX_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.onnx") if use_onnx
+                    else self.app_config.get("KOKORO_PT_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.pth")),
                 "KOKORO_VOICES_JSON_PATH": os.getenv("KOKORO_VOICES_PATH",
                     self.app_config.get("KOKORO_ONNX_VOICES_JSON_DEFAULT", "models/voices.json")),
                 "KOKORO_DEVICE": self.app_config.get("KOKORO_DEVICE_DEFAULT", "cpu"),
