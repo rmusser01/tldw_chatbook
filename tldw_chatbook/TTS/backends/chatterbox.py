@@ -116,10 +116,19 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 logger.warning("CUDA requested but not available. Falling back to CPU.")
                 self.device = "cpu"
             
-            # Load model
-            logger.info(f"Loading Chatterbox model on {self.device}...")
-            self.model = ChatterboxTTS.from_pretrained(device=self.device)
-            logger.info("Chatterbox model loaded successfully")
+            # Import protect_file_descriptors if available
+            try:
+                from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors
+                # Load model with file descriptor protection
+                logger.info(f"Loading Chatterbox model on {self.device}...")
+                with protect_file_descriptors():
+                    self.model = ChatterboxTTS.from_pretrained(device=self.device)
+                logger.info("Chatterbox model loaded successfully")
+            except ImportError:
+                # Fallback without protection if not available
+                logger.info(f"Loading Chatterbox model on {self.device} (without FD protection)...")
+                self.model = ChatterboxTTS.from_pretrained(device=self.device)
+                logger.info("Chatterbox model loaded successfully")
             
             # Initialize transcription service if validation is enabled
             if self.validate_with_whisper:

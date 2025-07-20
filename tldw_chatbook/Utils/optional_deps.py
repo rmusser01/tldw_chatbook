@@ -60,6 +60,7 @@ DEPENDENCIES_AVAILABLE = {
     # TTS
     'tts_processing': False,
     'kokoro_onnx': False,
+    'chatterbox': False,
     'pydub': False,
     'pyaudio': False,
     'av': False,
@@ -430,11 +431,12 @@ def check_local_llm_deps() -> bool:
 def check_tts_deps() -> bool:
     """Check dependencies needed for TTS functionality."""
     kokoro_available = check_dependency('kokoro_onnx', 'kokoro_onnx')
+    chatterbox_available = check_dependency('chatterbox')
     pydub_available = check_dependency('pydub')
     pyaudio_available = check_dependency('pyaudio')
     av_available = check_dependency('av')
     
-    tts_available = kokoro_available or (pydub_available and pyaudio_available)
+    tts_available = kokoro_available or chatterbox_available or (pydub_available and pyaudio_available)
     DEPENDENCIES_AVAILABLE['tts_processing'] = tts_available
     
     if tts_available:
@@ -442,6 +444,8 @@ def check_tts_deps() -> bool:
         available_features = []
         if kokoro_available:
             available_features.append("Kokoro TTS")
+        if chatterbox_available:
+            available_features.append("Chatterbox TTS")
         if pydub_available and pyaudio_available:
             available_features.append("Audio playback")
         if av_available:
@@ -593,6 +597,7 @@ def reset_dependency_checks():
         # TTS
         'tts_processing': False,
         'kokoro_onnx': False,
+        'chatterbox': False,
         'pydub': False,
         'pyaudio': False,
         'av': False,

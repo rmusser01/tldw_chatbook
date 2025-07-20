@@ -7,6 +7,7 @@
 # Imports
 from typing import TYPE_CHECKING, Optional, List, Dict, Any
 from datetime import datetime
+from pathlib import Path
 #
 # 3rd-Party Imports
 from textual.app import ComposeResult
@@ -19,12 +20,26 @@ from textual.widgets import (
 from textual.screen import Screen
 #
 # Local Imports
-from ..DB.Subscriptions_DB import SubscriptionsDB
-from ..Event_Handlers.subscription_events import (
-    NewSubscriptionItems, SubscriptionCheckComplete, SubscriptionError,
-    SubscriptionHealthUpdate, handle_add_subscription, handle_check_all_subscriptions
-)
+# TODO: Uncomment when SubscriptionsDB is implemented
+# from ..DB.Subscriptions_DB import SubscriptionsDB
+# from ..Event_Handlers.subscription_events import (
+#     NewSubscriptionItems, SubscriptionCheckComplete, SubscriptionError,
+#     SubscriptionHealthUpdate, handle_add_subscription, handle_check_all_subscriptions
+# )
 from ..Metrics.metrics_logger import log_counter
+
+# Stub classes/functions until proper implementation
+class SubscriptionsDB:
+    """Stub class for subscriptions database"""
+    pass
+
+async def handle_add_subscription(app_instance, event):
+    """Stub handler"""
+    app_instance.notify("Add subscription feature coming soon", severity="info")
+
+async def handle_check_all_subscriptions(app_instance, event):
+    """Stub handler"""
+    app_instance.notify("Check subscriptions feature coming soon", severity="info")
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -228,23 +243,23 @@ class SubscriptionWindow(Screen):
                 with TabbedContent():
                     # Add/Edit subscription tab
                     with TabPane("Add/Edit", id="tab-add-edit"):
-                        yield self._compose_add_edit_form()
+                        yield from self._compose_add_edit_form()
                     
                     # Review new items tab
                     with TabPane("New Items", id="tab-review-items"):
-                        yield self._compose_review_items()
+                        yield from self._compose_review_items()
                     
                     # Health monitoring tab
                     with TabPane("Health", id="tab-health"):
-                        yield self._compose_health_dashboard()
+                        yield from self._compose_health_dashboard()
                     
                     # Briefing configuration tab
                     with TabPane("Briefings", id="tab-briefings"):
-                        yield self._compose_briefing_config()
+                        yield from self._compose_briefing_config()
                     
                     # Settings tab
                     with TabPane("Settings", id="tab-settings"):
-                        yield self._compose_settings()
+                        yield from self._compose_settings()
     
     def _compose_add_edit_form(self) -> ComposeResult:
         """Build the add/edit subscription form."""
@@ -286,7 +301,7 @@ class SubscriptionWindow(Screen):
                 with Container(classes="form-group"):
                     yield Label("Priority", classes="form-label")
                     yield Select(
-                        [("1", "1 - Lowest"), ("2", "2"), ("3", "3 - Normal"), ("4", "4"), ("5", "5 - Highest")],
+                        [("1 - Lowest", "1"), ("2", "2"), ("3 - Normal", "3"), ("4", "4"), ("5 - Highest", "5")],
                         id="subscription-priority-select",
                         value="3"
                     )
@@ -295,14 +310,14 @@ class SubscriptionWindow(Screen):
                     yield Label("Check Frequency", classes="form-label")
                     yield Select(
                         [
-                            ("300", "5 minutes"),
-                            ("900", "15 minutes"),
-                            ("1800", "30 minutes"),
-                            ("3600", "1 hour"),
-                            ("7200", "2 hours"),
-                            ("21600", "6 hours"),
-                            ("43200", "12 hours"),
-                            ("86400", "24 hours")
+                            ("5 minutes", "300"),
+                            ("15 minutes", "900"),
+                            ("30 minutes", "1800"),
+                            ("1 hour", "3600"),
+                            ("2 hours", "7200"),
+                            ("6 hours", "21600"),
+                            ("12 hours", "43200"),
+                            ("24 hours", "86400")
                         ],
                         id="subscription-frequency-select",
                         value="3600"
@@ -324,7 +339,7 @@ class SubscriptionWindow(Screen):
                 with Container(classes="form-group"):
                     yield Label("Auth Type", classes="form-label")
                     yield Select(
-                        [("none", "None"), ("basic", "Basic"), ("bearer", "Bearer Token"), ("api_key", "API Key")],
+                        [("None", "none"), ("Basic", "basic"), ("Bearer Token", "bearer"), ("API Key", "api_key")],
                         id="subscription-auth-type",
                         value="none"
                     )
@@ -365,12 +380,12 @@ class SubscriptionWindow(Screen):
             # Filter controls
             with Horizontal(classes="action-buttons"):
                 yield Select(
-                    [("all", "All Subscriptions"), ("selected", "Selected Only")],
+                    [("All Subscriptions", "all"), ("Selected Only", "selected")],
                     id="items-filter-subscription",
                     value="all"
                 )
                 yield Select(
-                    [("new", "New"), ("reviewed", "Reviewed"), ("ingested", "Ingested"), ("ignored", "Ignored")],
+                    [("New", "new"), ("Reviewed", "reviewed"), ("Ingested", "ingested"), ("Ignored", "ignored")],
                     id="items-filter-status",
                     value="new"
                 )
@@ -456,7 +471,7 @@ class SubscriptionWindow(Screen):
                 with Container(classes="form-group"):
                     yield Label("Source Selection", classes="form-label")
                     yield Select(
-                        [("all", "All Active"), ("tags", "By Tags"), ("folders", "By Folders"), ("manual", "Manual Selection")],
+                        [("All Active", "all"), ("By Tags", "tags"), ("By Folders", "folders"), ("Manual Selection", "manual")],
                         id="briefing-source-type",
                         value="all"
                     )
@@ -475,7 +490,7 @@ class SubscriptionWindow(Screen):
                 with Container(classes="form-group"):
                     yield Label("Output Format", classes="form-label")
                     yield Select(
-                        [("markdown", "Markdown"), ("html", "HTML"), ("pdf", "PDF")],
+                        [("Markdown", "markdown"), ("HTML", "html"), ("PDF", "pdf")],
                         id="briefing-output-format",
                         value="markdown"
                     )
@@ -530,17 +545,20 @@ class SubscriptionWindow(Screen):
     async def on_mount(self) -> None:
         """Initialize the subscription window when mounted."""
         try:
-            # Initialize database connection
-            from ..config import get_subscriptions_db_path
-            db_path = get_subscriptions_db_path()
-            self.subscriptions_db = SubscriptionsDB(db_path, self.app_instance.client_id)
+            # TODO: Initialize database connection when SubscriptionsDB is implemented
+            # from ..config import get_subscriptions_db_path
+            # db_path = get_subscriptions_db_path()
+            # self.subscriptions_db = SubscriptionsDB(db_path, self.app_instance.client_id)
             
-            # Load initial data
-            await self._refresh_subscription_list()
-            await self._update_health_stats()
+            # TODO: Load initial data when database is available
+            # await self._refresh_subscription_list()
+            # await self._update_health_stats()
             
             # Log mounting
             log_counter("subscription_window_mounted", 1)
+            
+            # Notify user that subscriptions feature is under development
+            self.app_instance.notify("Subscriptions feature is under development", severity="warning")
             
         except Exception as e:
             self.app_instance.notify(f"Error initializing subscriptions: {e}", severity="error")
@@ -573,7 +591,8 @@ class SubscriptionWindow(Screen):
             return
             
         try:
-            subscriptions = self.subscriptions_db.get_all_subscriptions()
+            # TODO: Implement when database is available
+            subscriptions = []  # self.subscriptions_db.get_all_subscriptions()
             list_view = self.query_one("#subscription-list", ListView)
             
             await list_view.clear()
@@ -615,15 +634,16 @@ class SubscriptionWindow(Screen):
             return
             
         try:
+            # TODO: Implement when database is available
             # Get subscription counts
-            counts = self.subscriptions_db.get_subscription_count(active_only=False)
+            counts = {"active": 0, "paused": 0, "total": 0}  # self.subscriptions_db.get_subscription_count(active_only=False)
             total = sum(counts.values())
             
             # Update sidebar stats
             self.query_one("#stat-active-count").update(str(total))
             
             # Get failing subscriptions
-            failing = self.subscriptions_db.get_failing_subscriptions()
+            failing = []  # self.subscriptions_db.get_failing_subscriptions()
             self.query_one("#stat-error-count").update(str(len(failing)))
             
             # Update health dashboard
