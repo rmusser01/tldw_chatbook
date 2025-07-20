@@ -16,7 +16,11 @@ from dataclasses import dataclass
 import numpy as np
 
 # Import optional dependency checker
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_embeddings_rag_deps
+
+# Force check embeddings dependencies before tests run
+# This is a workaround for the dependency check bug where it returns cached False
+check_embeddings_rag_deps()
 
 
 # === Directory Fixtures ===
@@ -321,9 +325,9 @@ def memory_rag_config(request):
 @pytest.fixture
 def mock_rag_service(test_rag_config, mock_embeddings, mock_vector_store):
     """Create a mock RAG service."""
-    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+    from tldw_chatbook.RAG_Search.simplified import create_rag_service_from_config
     
-    service = RAGService(test_rag_config)
+    service = create_rag_service_from_config(test_rag_config)
     service.embeddings = mock_embeddings
     service.vector_store = mock_vector_store
     return service

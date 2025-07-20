@@ -100,6 +100,15 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
         feature_name = module_name
     
     try:
+        # For kokoro_onnx on Windows, also check if onnxruntime is available
+        if module_name == 'kokoro_onnx' and sys.platform == 'win32':
+            try:
+                __import__('onnxruntime')
+            except ImportError:
+                logger.warning("onnxruntime not found - required for kokoro_onnx on Windows")
+                DEPENDENCIES_AVAILABLE[feature_name] = False
+                return False
+        
         module = __import__(module_name)
         MODULES[module_name] = module
         DEPENDENCIES_AVAILABLE[feature_name] = True
@@ -112,9 +121,8 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
 
 def check_embeddings_rag_deps() -> bool:
     """Check all dependencies needed for embeddings and RAG functionality."""
-    # Check if already determined
-    if 'embeddings_rag' in DEPENDENCIES_AVAILABLE:
-        return DEPENDENCIES_AVAILABLE['embeddings_rag']
+    # Always recheck dependencies - don't return cached False value
+    # This ensures we actually check if dependencies are installed
     
     # Don't actually import heavy deps unless explicitly checking
     # Just check if they would be importable

@@ -166,16 +166,19 @@ async def test_enhanced_chunking():
 
 async def test_enhanced_rag_service():
     """Test the enhanced RAG service."""
-    from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service import create_enhanced_rag_service
+    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
     
     logger.info("\n=== Testing Enhanced RAG Service ===")
     
-    # Create service with in-memory vector store for testing
+    # Create service with enhanced profile for parent retrieval
     # Use a small embedding model for testing
-    service = create_enhanced_rag_service(
-        embedding_model="sentence-transformers/all-MiniLM-L6-v2",  # Small, fast model
-        vector_store="memory",
-        enable_parent_retrieval=True
+    config = RAGConfig()
+    config.embedding.model = "sentence-transformers/all-MiniLM-L6-v2"  # Small, fast model
+    config.vector_store.type = "in_memory"
+    
+    service = create_rag_service(
+        profile_name="hybrid_enhanced",  # This profile has parent retrieval
+        config=config
     )
     
     content = create_test_document()
@@ -214,12 +217,12 @@ async def test_enhanced_rag_service():
             search_type="semantic"
         )
         
-        # Search with expansion
-        results_expanded = await service.search_with_context_expansion(
+        # Search with expansion (enhanced service should expand context automatically)
+        # The hybrid_enhanced profile has parent retrieval enabled
+        results_expanded = await service.search(
             query=query,
             top_k=2,
-            search_type="semantic",
-            expand_to_parent=True
+            search_type="semantic"
         )
         
         logger.info(f"Basic results: {len(results_basic)} chunks")
@@ -294,6 +297,98 @@ Sometimes we see glyph<123> or /A.cap patterns/period
     logger.info(f"\nCleaned text preview:\n{cleaned_text[:200]}...")
 
 
+async def test_v2_full_features():
+    """Test V2 service with all features enabled."""
+    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
+    
+    logger.info("\n=== Testing V2 Service with Full Features ===")
+    
+    # Create service with full profile
+    config = RAGConfig()
+    config.embedding.model = "sentence-transformers/all-MiniLM-L6-v2"
+    config.vector_store.type = "in_memory"
+    
+    service = create_rag_service(
+        profile_name="hybrid_full",  # All features enabled
+        config=config
+    )
+    
+    # Verify all features are enabled
+    assert service.enable_parent_retrieval, "Parent retrieval should be enabled"
+    assert service.enable_reranking, "Reranking should be enabled"
+    assert service.enable_parallel_processing, "Parallel processing should be enabled"
+    
+    content = create_test_document()
+    
+    # Index document
+    result = await service.index_document(
+        doc_id="test_v2_001",
+        content=content,
+        title="Test Document for V2",
+        metadata={"test": "v2_features"}
+    )
+    
+    logger.info(f"Indexed document: {result}")
+    
+    # Test search with all features
+    queries = ["revenue growth", "customer satisfaction"]
+    
+    for query in queries:
+        logger.info(f"\nSearching with all features for: '{query}'")
+        
+        results = await service.search(
+            query=query,
+            top_k=5,
+            search_type="hybrid",  # Uses both keyword and semantic
+            rerank=True  # Should use reranking
+        )
+        
+        logger.info(f"Found {len(results)} results")
+        for i, result in enumerate(results[:2]):
+            logger.info(f"  Result {i+1}: Score={result.score:.3f}")
+            logger.info(f"    Preview: {result.content[:100]}...")
+
+
+async def test_profile_switching():
+    """Test switching between different profiles."""
+    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
+    
+    logger.info("\n=== Testing Profile Switching ===")
+    
+    config = RAGConfig()
+    config.embedding.model = "sentence-transformers/all-MiniLM-L6-v2"
+    config.vector_store.type = "in_memory"
+    
+    profiles = ["bm25_only", "vector_only", "hybrid_basic", "hybrid_enhanced", "hybrid_full"]
+    
+    for profile in profiles:
+        logger.info(f"\nTesting profile: {profile}")
+        service = create_rag_service(profile_name=profile, config=config)
+        
+        # Index a simple document
+        await service.index_document(
+            doc_id=f"test_{profile}",
+            content="This is a test document for profile testing.",
+            title=f"Test {profile}"
+        )
+        
+        # Search based on profile type
+        if profile == "bm25_only":
+            search_type = "keyword"
+        elif profile == "vector_only":
+            search_type = "semantic"
+        else:
+            search_type = "hybrid"
+            
+        results = await service.search(
+            query="test document",
+            search_type=search_type,
+            top_k=1
+        )
+        
+        logger.info(f"  Search type: {search_type}, Results: {len(results)}")
+
+
 async def main():
     """Run all tests."""
     logger.info("Starting Enhanced RAG Implementation Tests\n")
@@ -306,6 +401,12 @@ async def main():
         
         # Test integrated service
         await test_enhanced_rag_service()
+        
+        # Test V2 with full features
+        await test_v2_full_features()
+        
+        # Test profile switching
+        await test_profile_switching()
         
         logger.info("\n✅ All tests completed successfully!")
         

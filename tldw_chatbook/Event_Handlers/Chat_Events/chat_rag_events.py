@@ -19,7 +19,7 @@ logger = logger.bind(module="chat_rag_events_simplified")
 
 # Check if RAG dependencies are available
 try:
-    from ...RAG_Search.simplified import RAGService, create_config_for_collection
+    from ...RAG_Search.simplified import create_rag_service, create_config_for_collection
     RAG_SERVICES_AVAILABLE = True
 except ImportError:
     logger.warning("RAG services not available")
@@ -238,16 +238,18 @@ async def get_or_initialize_rag_service(app: "TldwCli") -> Optional[Any]:
         return app._rag_service
     
     try:
-        # Initialize RAG service
-        collections = {}
-        if app.media_db:
-            collections['media'] = create_config_for_collection(
-                'media',
-                app.media_db,
-                metadata_columns=['title', 'author', 'type']
-            )
+        # Initialize RAG service with profile based on config
+        # Default to hybrid_basic for semantic search in pipelines
+        profile_name = "hybrid_basic"
         
-        rag_service = RAGService(collections)
+        # Check if there's a profile preference in config
+        if hasattr(app, 'config') and app.config:
+            rag_config = app.config.get('rag', {})
+            service_config = rag_config.get('service', {})
+            profile_name = service_config.get('profile', 'hybrid_basic')
+        
+        # Create the service
+        rag_service = create_rag_service(profile_name=profile_name)
         app._rag_service = rag_service
         return rag_service
         

@@ -68,6 +68,18 @@ class KokoroTTSBackend(LocalTTSBackend):
             raise ImportError("numpy is required for Kokoro TTS backend but is not installed. "
                             "Install it with: pip install numpy")
         
+        # Check if we're on Windows and pre-validate ONNX dependencies
+        if sys.platform == "win32":
+            try:
+                import onnxruntime
+                logger.debug("onnxruntime available on Windows")
+            except ImportError:
+                logger.warning(
+                    "onnxruntime not available on Windows - Kokoro ONNX backend may not work. "
+                    "Install with: pip install onnxruntime\n"
+                    "If you continue to have issues, you may need to install the Microsoft Visual C++ Redistributable."
+                )
+        
         # Lazy-loaded heavy dependencies
         self._torch = None
         self._nltk = None
@@ -174,10 +186,15 @@ class KokoroTTSBackend(LocalTTSBackend):
         try:
             # Try to import kokoro_onnx
             try:
-                Kokoro = self.kokoro_onnx_module.Kokoro
-                EspeakConfig = self.kokoro_onnx_module.EspeakConfig
+                kokoro_module = self.kokoro_onnx_module
+                Kokoro = kokoro_module.Kokoro
+                EspeakConfig = kokoro_module.EspeakConfig
+            except ImportError as e:
+                logger.error(f"Failed to import kokoro_onnx: {e}")
+                self.use_onnx = False
+                return
             except Exception as e:
-                logger.error(f"Failed to load kokoro_onnx: {e}")
+                logger.error(f"Failed to load kokoro_onnx classes: {e}")
                 self.use_onnx = False
                 return
             
@@ -316,8 +333,26 @@ class KokoroTTSBackend(LocalTTSBackend):
             try:
                 import kokoro_onnx
                 self._kokoro_onnx = kokoro_onnx
-            except ImportError:
+                logger.info("Successfully imported kokoro_onnx module")
+            except ImportError as e:
+                logger.error(f"ImportError when loading kokoro_onnx: {e}")
                 raise ImportError("kokoro_onnx not installed. Please install with: pip install kokoro-onnx")
+            except Exception as e:
+                # On Windows, sometimes there are DLL or other loading issues
+                logger.error(f"Unexpected error loading kokoro_onnx: {type(e).__name__}: {e}")
+                import sys
+                if sys.platform == "win32":
+                    raise ImportError(
+                        "Failed to load kokoro_onnx on Windows. This may be due to missing dependencies. "
+                        "Please ensure you have installed ALL of the following:\n"
+                        "1. pip install kokoro-onnx\n"
+                        "2. pip install onnxruntime (or onnxruntime-gpu for GPU support)\n"
+                        "3. pip install numpy\n"
+                        "4. Microsoft Visual C++ Redistributable (if not already installed)\n"
+                        f"Error details: {type(e).__name__}: {e}"
+                    )
+                else:
+                    raise ImportError(f"Failed to load kokoro_onnx: {e}")
         return self._kokoro_onnx
     
     async def _initialize_pytorch(self):

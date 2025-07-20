@@ -276,20 +276,23 @@ class TTSEventHandler:
             provider = self._tts_config["default_provider"]
             logger.info(f"TTS config: provider={provider}, default_format={self._tts_config.get('default_format', 'N/A')}")
             
+            # Normalize provider name to lowercase for comparison
+            provider_lower = provider.lower() if isinstance(provider, str) else provider
+            
             # Set provider-specific defaults
-            if provider == "kokoro":
+            if provider_lower == "kokoro":
                 model = "kokoro"
                 format = "wav"  # Kokoro supports wav, pcm
-            elif provider == "openai":
+            elif provider_lower == "openai":
                 model = self._tts_config["default_model"]
                 format = self._tts_config["default_format"]
-            elif provider == "elevenlabs":
+            elif provider_lower == "elevenlabs":
                 model = "elevenlabs"
                 format = "mp3"  # ElevenLabs default
-            elif provider == "chatterbox":
+            elif provider_lower == "chatterbox":
                 model = "chatterbox"
                 format = "wav"
-            elif provider == "alltalk":
+            elif provider_lower == "alltalk":
                 model = "alltalk"
                 format = "wav"
             else:
