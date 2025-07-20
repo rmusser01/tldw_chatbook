@@ -24,7 +24,7 @@ from ..Event_Handlers.subscription_events import (
     NewSubscriptionItems, SubscriptionCheckComplete, SubscriptionError,
     SubscriptionHealthUpdate, handle_add_subscription, handle_check_all_subscriptions
 )
-from ..Metrics.metrics_logger import log_event
+from ..Metrics.metrics_logger import log_counter
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -540,7 +540,7 @@ class SubscriptionWindow(Screen):
             await self._update_health_stats()
             
             # Log mounting
-            log_event("subscription_window_mounted")
+            log_counter("subscription_window_mounted", 1)
             
         except Exception as e:
             self.app_instance.notify(f"Error initializing subscriptions: {e}", severity="error")
