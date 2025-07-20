@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from enum import Enum
-import numpy as np
 from loguru import logger
 from tldw_chatbook.Utils.path_validation import validate_path
 
