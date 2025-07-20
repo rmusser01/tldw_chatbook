@@ -8,8 +8,13 @@ from typing import Optional, Dict, Any, AsyncGenerator, List
 #
 # Third Party Libraries
 import httpx
-import numpy as np
 from loguru import logger
+try:
+    import numpy as np
+except ImportError:
+    np = None
+    logger.warning("numpy not available - some TTS features may be limited")
+
 #
 # Local Libraries
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
