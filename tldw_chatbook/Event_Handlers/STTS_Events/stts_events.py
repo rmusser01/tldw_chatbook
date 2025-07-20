@@ -7,16 +7,17 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 from loguru import logger
-
+import tempfile
+#
 # Third-party imports
 from textual.message import Message
 from textual.widgets import Button, TextArea, Select, Input, RichLog
-
+#
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent
 from tldw_chatbook.config import get_cli_setting
-
+#
 #######################################################################################################################
 #
 # Event Messages
@@ -170,8 +171,7 @@ class STTSEventHandler:
             requested_format = format_value
             
             # For non-WAV formats, generate WAV first to avoid choppiness
-            generation_format = "wav" if format_value != "wav" else "wav"
-            
+            generation_format = "wav"
             logger.debug(f"TTS Request - requested format: {requested_format}, generation format: {generation_format}, provider: {event.provider}")
             
             # Create TTS request with generation format (WAV for quality)
@@ -301,7 +301,8 @@ class STTSEventHandler:
                     # Delete the temporary WAV file
                     try:
                         wav_file.unlink()
-                    except Exception:
+                    except (FileNotFoundError, PermissionError) as e:
+                        logger.warning(f"Failed to delete temporary WAV file: {e}")
                         pass
                     self._current_audio_file = converted_file
                 else:
@@ -361,7 +362,7 @@ class STTSEventHandler:
             if playground:
                 try:
                     playground.query_one("#tts-generate-btn", Button).disabled = False
-                except Exception:
+                except (OSError, FileNotFoundError):
                     pass
     
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
@@ -419,9 +420,6 @@ class STTSEventHandler:
     async def _convert_audio_format(self, input_file: Path, output_format: str) -> Optional[Path]:
         """Convert audio file to a different format using ffmpeg"""
         try:
-            import subprocess
-            import tempfile
-            
             # Create output file with requested format
             output_file = input_file.with_suffix(f".{output_format}")
             
@@ -446,14 +444,22 @@ class STTSEventHandler:
             
             cmd.append(str(output_file))
             
-            # Run conversion
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Run conversion asynchronously
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
             
-            if result.returncode == 0:
+            # Wait for the process to complete
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
                 logger.info(f"Successfully converted audio to {output_format}")
                 return output_file
             else:
-                logger.error(f"ffmpeg conversion failed: {result.stderr}")
+                stderr_text = stderr.decode('utf-8') if stderr else "Unknown error"
+                logger.error(f"ffmpeg conversion failed: {stderr_text}")
                 return None
                 
         except FileNotFoundError:
