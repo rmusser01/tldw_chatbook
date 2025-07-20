@@ -1146,6 +1146,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.ccp_active_view = "conversation_details_view"  # Default view for CCP tab
         # else: it will default to "conversation_details_view" anyway
         self._ui_ready = False  # Track if UI is fully composed
+        self._shutting_down = False  # Track if app is shutting down
 
         # --- Assign DB instances for event handlers ---
         if self.prompts_service_initialized:
@@ -2959,6 +2960,22 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
+        
+        # Set shutdown flag to prevent new operations
+        self._shutting_down = True
+        
+        # Cancel all active workers first
+        try:
+            active_workers = [w for w in self.workers if not w.is_finished]
+            if active_workers:
+                self.loguru_logger.info(f"Cancelling {len(active_workers)} active workers")
+                for worker in active_workers:
+                    worker.cancel()
+                # Give workers a moment to cancel
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            self.loguru_logger.error(f"Error cancelling workers: {e}")
+        
         if self._rich_log_handler:
             await self._rich_log_handler.stop_processor()
             logging.info("RichLogHandler processor stopped.")
@@ -2973,6 +2990,69 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Clean up logging resources on application exit."""
         logging.info("--- App Unmounting ---")
         self._ui_ready = False
+        
+        # Stop all background services and threads
+        try:
+            # Stop audio player if it exists
+            if hasattr(self, 'audio_player'):
+                try:
+                    await self.audio_player.cleanup()
+                    self.loguru_logger.info("Audio player cleaned up")
+                except Exception as e:
+                    self.loguru_logger.error(f"Error cleaning up audio player: {e}")
+            
+            # Stop TTS service if initialized
+            if hasattr(self, '_tts_handler') and self._tts_handler:
+                try:
+                    if hasattr(self._tts_handler, '_stts_service') and self._tts_handler._stts_service:
+                        # Clean up any TTS resources
+                        self._tts_handler._stts_service = None
+                    self.loguru_logger.info("TTS service cleaned up")
+                except Exception as e:
+                    self.loguru_logger.error(f"Error cleaning up TTS service: {e}")
+            
+            # Stop STTS service if initialized
+            if hasattr(self, '_stts_handler') and self._stts_handler:
+                try:
+                    if hasattr(self._stts_handler, '_stts_service') and self._stts_handler._stts_service:
+                        # Clean up any STTS resources
+                        self._stts_handler._stts_service = None
+                    self.loguru_logger.info("STTS service cleaned up")
+                except Exception as e:
+                    self.loguru_logger.error(f"Error cleaning up STTS service: {e}")
+            
+            # Stop subscription scheduler if it exists
+            if hasattr(self, '_subscription_scheduler') and self._subscription_scheduler:
+                try:
+                    await self._subscription_scheduler.stop()
+                    self.loguru_logger.info("Subscription scheduler stopped")
+                except Exception as e:
+                    self.loguru_logger.error(f"Error stopping subscription scheduler: {e}")
+            
+            # Stop auto-sync manager if it exists
+            if hasattr(self, '_auto_sync_manager') and self._auto_sync_manager:
+                try:
+                    self._auto_sync_manager.stop()
+                    self.loguru_logger.info("Auto-sync manager stopped")
+                except Exception as e:
+                    self.loguru_logger.error(f"Error stopping auto-sync manager: {e}")
+            
+            # Cancel any pending workers
+            for worker in self.workers:
+                if not worker.is_finished:
+                    worker.cancel()
+            # Wait briefly for workers to complete
+            await asyncio.sleep(0.1)
+            
+            # Stop media cleanup timer
+            if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
+                self._media_cleanup_timer.stop()
+                self.loguru_logger.info("Media cleanup timer stopped")
+                
+        except Exception as e:
+            self.loguru_logger.error(f"Error during service cleanup: {e}")
+        
+        # Original cleanup code
         if self._rich_log_handler: # Ensure it's removed if it exists
             logging.getLogger().removeHandler(self._rich_log_handler)
             logging.info("RichLogHandler removed.")
@@ -2992,6 +3072,64 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     logging.info("RotatingFileHandler removed and closed.")
                 except Exception as e_fh_close:
                     logging.error(f"Error removing/closing file handler: {e_fh_close}")
+        
+        # Force cleanup of any remaining threads and processes
+        try:
+            import threading
+            import subprocess
+            import signal
+            import concurrent.futures
+            import asyncio
+            
+            # Shutdown thread pool executors
+            try:
+                # Get the default executor if it exists
+                loop = asyncio.get_event_loop()
+                if hasattr(loop, '_default_executor') and loop._default_executor:
+                    self.loguru_logger.info("Shutting down default executor")
+                    loop._default_executor.shutdown(wait=False)
+                    loop._default_executor = None
+            except Exception as e:
+                self.loguru_logger.error(f"Error shutting down executor: {e}")
+            
+            # Clean up any lingering subprocess
+            for proc in subprocess._active.copy():  # Make a copy to avoid modification during iteration
+                try:
+                    if proc.poll() is None:  # Process is still running
+                        self.loguru_logger.warning(f"Terminating lingering subprocess PID: {proc.pid}")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=1.0)  # Give it 1 second to terminate
+                        except subprocess.TimeoutExpired:
+                            proc.kill()  # Force kill if it doesn't terminate
+                            proc.wait()
+                except Exception as e:
+                    self.loguru_logger.error(f"Error terminating subprocess: {e}")
+            
+            # Force-set daemon flag on ThreadPoolExecutor threads
+            for thread in threading.enumerate():
+                if thread.name.startswith('ThreadPoolExecutor'):
+                    try:
+                        thread.daemon = True
+                        self.loguru_logger.info(f"Set daemon flag on {thread.name}")
+                    except Exception as e:
+                        self.loguru_logger.error(f"Could not set daemon flag on {thread.name}: {e}")
+            
+            # Log any remaining non-daemon threads
+            active_threads = [t for t in threading.enumerate() if t.is_alive() and not t.daemon and t != threading.main_thread()]
+            if active_threads:
+                self.loguru_logger.warning(f"Active non-daemon threads remaining: {[t.name for t in active_threads]}")
+                # Attempt to stop them if they have stop methods
+                for thread in active_threads:
+                    if hasattr(thread, 'stop') and callable(thread.stop):
+                        try:
+                            thread.stop()
+                            self.loguru_logger.info(f"Stopped thread: {thread.name}")
+                        except Exception as e:
+                            self.loguru_logger.error(f"Error stopping thread {thread.name}: {e}")
+        except Exception as e:
+            self.loguru_logger.error(f"Error checking active threads: {e}")
+        
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
 
@@ -3924,7 +4062,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 TAB_LOGS: "logs-window",
                 TAB_STATS: "stats-window",
                 TAB_EVALS: "evals-window",
-                TAB_CODING: "coding-window"
+                TAB_CODING: "coding-window",
+                TAB_STTS: "stts-window"
             }
 
             window_id = window_id_map.get(self.current_tab)
@@ -5359,6 +5498,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handle application quit - save persistent caches before exiting."""
         loguru_logger.info("Application quit initiated")
         
+        # Set flag to prevent new operations
+        self._shutting_down = True
+        
+        # Force stop any playing audio
+        if hasattr(self, 'audio_player'):
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(self.audio_player.stop())
+            except Exception as e:
+                loguru_logger.error(f"Error stopping audio during quit: {e}")
+        
         # Cancel media cleanup timer if it exists
         if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
             self._media_cleanup_timer.stop()
@@ -5608,6 +5760,21 @@ if __name__ == "__main__":
     app_instance._early_logging_initialized = True
     try:
         app_instance.run()
+    except KeyboardInterrupt:
+        loguru_logger.info("--- KeyboardInterrupt received ---")
+        # Force cleanup inline
+        import threading
+        import concurrent.futures
+        for thread in threading.enumerate():
+            if thread != threading.main_thread() and not thread.daemon:
+                try:
+                    thread.daemon = True
+                except Exception:
+                    pass
+        try:
+            concurrent.futures.thread._threads_queues.clear()
+        except Exception:
+            pass
     except Exception as e:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
@@ -5624,6 +5791,41 @@ def main_cli_runner():
     This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
     """
+    # Set up signal handlers for clean exit
+    import signal
+    import os
+    import atexit
+    
+    def force_cleanup():
+        """Force cleanup on exit"""
+        import threading
+        import concurrent.futures
+        
+        # Force daemon all threads
+        for thread in threading.enumerate():
+            if thread != threading.main_thread() and not thread.daemon:
+                try:
+                    thread.daemon = True
+                except Exception:
+                    pass
+        
+        # Clear thread pool queues
+        try:
+            concurrent.futures.thread._threads_queues.clear()
+        except Exception:
+            pass
+    
+    # Register cleanup
+    atexit.register(force_cleanup)
+    
+    def signal_handler(signum, frame):
+        loguru_logger.info(f"Received signal {signum}, forcing clean exit")
+        force_cleanup()
+        os._exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     # Initialize logging first
     early_logging_app = initialize_early_logging()
 
@@ -5699,6 +5901,21 @@ def main_cli_runner():
     app_instance._early_logging_initialized = True
     try:
         app_instance.run()
+    except KeyboardInterrupt:
+        loguru_logger.info("--- KeyboardInterrupt received ---")
+        # Force cleanup inline
+        import threading
+        import concurrent.futures
+        for thread in threading.enumerate():
+            if thread != threading.main_thread() and not thread.daemon:
+                try:
+                    thread.daemon = True
+                except Exception:
+                    pass
+        try:
+            concurrent.futures.thread._threads_queues.clear()
+        except Exception:
+            pass
     except Exception as e:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
