@@ -274,6 +274,7 @@ class TTSEventHandler:
                 )
             # Determine provider and format based on default_provider
             provider = self._tts_config["default_provider"]
+            logger.info(f"TTS config: provider={provider}, default_format={self._tts_config.get('default_format', 'N/A')}")
             
             # Set provider-specific defaults
             if provider == "kokoro":
@@ -296,11 +297,20 @@ class TTSEventHandler:
                 model = self._tts_config["default_model"]
                 format = self._tts_config["default_format"]
             
-            # Prepare request
+            # Ensure format is a string and valid
+            format = str(format).lower().strip()
+            valid_formats = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
+            if format not in valid_formats:
+                logger.warning(f"Invalid format '{format}', defaulting to 'wav'")
+                format = "wav"
+            
+            logger.info(f"Creating TTS request: model={model}, format={format}, voice={voice or self._tts_config['default_voice']}")
+            
+            # Prepare request - ensure model and voice are lowercase for consistency
             request = OpenAISpeechRequest(
-                model=model,
+                model=model.lower() if isinstance(model, str) else model,
                 input=text,
-                voice=voice or self._tts_config["default_voice"],
+                voice=(voice or self._tts_config["default_voice"]).lower() if isinstance(voice or self._tts_config["default_voice"], str) else (voice or self._tts_config["default_voice"]),
                 response_format=format,
                 speed=self._tts_config["default_speed"]
             )

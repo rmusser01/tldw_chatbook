@@ -1682,7 +1682,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             try:
                 if event.message_id:
                     # Find the message widget and update state
-                    for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                    for message_widget in list(self.query(ChatMessage)) + list(self.query(ChatMessageEnhanced)):
                         if getattr(message_widget, 'message_id_internal', None) == event.message_id:
                             # Update TTS state to idle on error
                             if hasattr(message_widget, 'update_tts_state'):
@@ -1699,7 +1699,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 try:
                     if event.message_id:
                         # Find the message widget and update state
-                        for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                        for message_widget in list(self.query(ChatMessage)) + list(self.query(ChatMessageEnhanced)):
                             if getattr(message_widget, 'message_id_internal', None) == event.message_id:
                                 # Update TTS state to ready with audio file
                                 if hasattr(message_widget, 'update_tts_state'):
@@ -1720,7 +1720,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Remove TTS generating class from message
             try:
                 if event.message_id:
-                    for message_widget in self.query(ChatMessage).union(self.query(ChatMessageEnhanced)):
+                    for message_widget in list(self.query(ChatMessage)) + list(self.query(ChatMessageEnhanced)):
                         if getattr(message_widget, 'message_id_internal', None) == event.message_id:
                             text_widget = message_widget.query_one(".message-text", Markdown)
                             text_widget.remove_class("tts-generating")

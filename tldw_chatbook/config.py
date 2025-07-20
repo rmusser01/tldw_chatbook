@@ -113,15 +113,24 @@ DEFAULT_RAG_SEARCH_CONFIG = {
         "cache_llm_responses": False
     },
     "service": {
-        "level": "base",  # Options: "base", "enhanced", "v2"
-        "enable_parent_retrieval": True,
-        "enable_reranking": False,
-        "enable_parallel_processing": True,
-        "parent_size_multiplier": 3,
-        "expand_context_on_retrieval": True,
-        "clean_pdf_artifacts": True,
-        "reranking_strategy": "cross_encoder",  # Options: "cross_encoder", "llm", "ensemble"
-        "profile_name": None  # Optional: use predefined profile
+        "profile": "hybrid_basic",  # Default profile: "bm25_only", "vector_only", "hybrid_basic", "hybrid_enhanced", "hybrid_full"
+        # Available profiles:
+        # - bm25_only: Pure keyword search
+        # - vector_only: Pure semantic search
+        # - hybrid_basic: Combined search without enhancements
+        # - hybrid_enhanced: Hybrid with parent retrieval
+        # - hybrid_full: All features enabled
+        # - fast_search, high_accuracy, balanced, long_context, technical_docs, research_papers, code_search
+        "custom_overrides": {
+            # Optional: Override specific settings from the profile
+            # "enable_parent_retrieval": True,
+            # "enable_reranking": False,
+            # "enable_parallel_processing": True,
+            # "parent_size_multiplier": 3,
+            # "expand_context_on_retrieval": True,
+            # "clean_pdf_artifacts": True,
+            # "reranking_strategy": "cross_encoder"
+        }
     },
     "memory_management": {
         "max_total_size_mb": 1024.0,

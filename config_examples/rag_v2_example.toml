@@ -1,0 +1,58 @@
+# Example configuration for Profile-Based RAG Service
+# Add these settings to your ~/.config/tldw_cli/config.toml
+
+[rag_search]
+# ... existing RAG settings ...
+
+[rag_search.service]
+# Select a configuration profile
+profile = "hybrid_basic"  # Default profile
+
+# Available profiles:
+# - "bm25_only" - Pure keyword/BM25 search (fastest)
+# - "vector_only" - Pure semantic/vector search
+# - "hybrid_basic" - Combined search without enhancements (default)
+# - "hybrid_enhanced" - Hybrid with parent document retrieval
+# - "hybrid_full" - All features enabled for maximum accuracy
+#
+# Specialized profiles:
+# - "fast_search" - Optimized for speed
+# - "high_accuracy" - Maximum retrieval accuracy
+# - "balanced" - Balance between speed and accuracy
+# - "long_context" - For documents requiring extended context
+# - "technical_docs" - Technical documentation with tables/code
+# - "research_papers" - Academic papers with citations
+# - "code_search" - Code repository search
+
+# Optional: Override specific settings from the profile
+[rag_search.service.custom_overrides]
+# enable_parent_retrieval = true
+# enable_reranking = true
+# enable_parallel_processing = true
+# parent_size_multiplier = 3
+# reranking_strategy = "cross_encoder"
+
+# Example configurations:
+
+# For pure keyword search (no embeddings)
+# [rag_search.service]
+# profile = "bm25_only"
+
+# For semantic search only
+# [rag_search.service]
+# profile = "vector_only"
+
+# For maximum accuracy with all features
+# [rag_search.service]
+# profile = "hybrid_full"
+
+# For technical documentation
+# [rag_search.service]
+# profile = "technical_docs"
+
+# For custom configuration based on a profile
+# [rag_search.service]
+# profile = "hybrid_enhanced"
+# [rag_search.service.custom_overrides]
+# enable_reranking = true
+# reranking_strategy = "llm"

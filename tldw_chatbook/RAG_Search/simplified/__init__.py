@@ -63,10 +63,10 @@ from .config import (
 )
 
 from .rag_factory import (
-    create_rag_service_with_level,
-    get_service_level_from_config,
+    create_rag_service,
+    create_rag_service_from_config,
     create_auto_rag_service,
-    ServiceLevel
+    get_available_profiles
 )
 
 __all__ = [
@@ -115,10 +115,10 @@ __all__ = [
     "create_config_for_testing",
     
     # Factory functions
-    "create_rag_service_with_level",
-    "get_service_level_from_config",
+    "create_rag_service",
+    "create_rag_service_from_config",
     "create_auto_rag_service",
-    "ServiceLevel",
+    "get_available_profiles",
 ]
 
 __version__ = "0.1.0"

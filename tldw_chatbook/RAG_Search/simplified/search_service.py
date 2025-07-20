@@ -10,7 +10,7 @@ from loguru import logger
 
 from ...DB.Client_Media_DB_v2 import MediaDatabase
 from ...config import load_settings
-from .rag_factory import create_rag_service_with_level
+from .rag_factory import create_rag_service
 from .config import RAGConfig
 
 
@@ -31,29 +31,17 @@ class SimplifiedRAGSearchService:
         rag_config = settings.get('rag_search', {})
         service_config = rag_config.get('service', {})
         
-        # Determine service level
-        service_level = service_config.get('level', 'base')
+        # Get profile name
+        profile_name = service_config.get('profile', 'hybrid_basic')
         
-        # Create appropriate RAG service
-        if service_level in ['enhanced', 'v2']:
-            # Create a basic RAG config from settings
-            config = RAGConfig()
-            
-            # Create the enhanced service
-            self.rag_service = create_rag_service_with_level(
-                level=service_level,
-                config=config,
-                enable_parent_retrieval=service_config.get('enable_parent_retrieval', True),
-                enable_reranking=service_config.get('enable_reranking', False),
-                enable_parallel_processing=service_config.get('enable_parallel_processing', True),
-                profile_name=service_config.get('profile_name')
-            )
-            
-            logger.info(f"Using {service_level} RAG service for MCP integration")
-        else:
-            # Fallback to simple search
+        # Create RAG service with profile
+        try:
+            self.rag_service = create_rag_service(profile_name=profile_name)
+            logger.info(f"Using profile '{profile_name}' for MCP integration")
+        except Exception as e:
+            logger.error(f"Failed to create RAG service: {e}")
             self.rag_service = None
-            logger.info("Using basic search for MCP integration")
+            logger.info("Falling back to basic search for MCP integration")
         
     async def semantic_search(
         self,

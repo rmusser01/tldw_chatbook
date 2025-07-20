@@ -59,7 +59,7 @@ except ImportError as e:
 try:
     from tldw_chatbook.RAG_Search.simplified import (
         RAGService, create_config_for_collection, RAGConfig, IndexingResult,
-        create_rag_service_with_level, ServiceLevel
+        create_rag_service, get_available_profiles
     )
     RAG_SERVICES_AVAILABLE = True
 except ImportError as e:
@@ -76,9 +76,10 @@ except ImportError as e:
             raise ImportError("RAGConfig not available - missing dependencies")
     class IndexingResult:
         pass
-    def create_rag_service_with_level(*args, **kwargs):
+    def create_rag_service(*args, **kwargs):
         raise ImportError("RAG service factory not available - missing dependencies")
-    ServiceLevel = str
+    def get_available_profiles():
+        return []
 
 try:
     from tldw_chatbook.RAG_Search.Services.embeddings_service import EmbeddingsService
@@ -1019,19 +1020,16 @@ class SearchRAGWindow(Container):
                 persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
             )
             
-            # Get service level from config
+            # Get profile from config
             settings = self.app_instance.load_settings()
             rag_config = settings.get('rag_search', {})
             service_config = rag_config.get('service', {})
-            service_level = service_config.get('level', 'base')
+            profile_name = service_config.get('profile', 'hybrid_basic')
             
-            # Create RAG service with appropriate level
-            rag_service = create_rag_service_with_level(
-                level=service_level,
-                config=config,
-                enable_parent_retrieval=service_config.get('enable_parent_retrieval', True),
-                enable_reranking=service_config.get('enable_reranking', False),
-                enable_parallel_processing=service_config.get('enable_parallel_processing', True)
+            # Create RAG service with profile
+            rag_service = create_rag_service(
+                profile_name=profile_name,
+                config=config
             )
             rag_service.clear_cache()
             rag_service.close()
@@ -1066,19 +1064,16 @@ class SearchRAGWindow(Container):
                 "media",  # Default collection, will be used for all types
                 persist_dir=Path.home() / ".local" / "share" / "tldw_cli" / "chromadb"
             )
-            # Get service level from config
+            # Get profile from config
             settings = self.app_instance.load_settings()
             rag_config = settings.get('rag_search', {})
             service_config = rag_config.get('service', {})
-            service_level = service_config.get('level', 'base')
+            profile_name = service_config.get('profile', 'hybrid_basic')
             
-            # Create RAG service with appropriate level
-            rag_service = create_rag_service_with_level(
-                level=service_level,
-                config=config,
-                enable_parent_retrieval=service_config.get('enable_parent_retrieval', True),
-                enable_reranking=service_config.get('enable_reranking', False),
-                enable_parallel_processing=service_config.get('enable_parallel_processing', True)
+            # Create RAG service with profile
+            rag_service = create_rag_service(
+                profile_name=profile_name,
+                config=config
             )
             
             # Index with progress updates

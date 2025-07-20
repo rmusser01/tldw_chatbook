@@ -146,11 +146,125 @@ class ConfigProfileManager:
     def _load_builtin_profiles(self):
         """Load predefined configuration profiles."""
         
-        # Fast Search Profile
+        # BM25 Only Profile (Pure keyword search)
+        bm25_rag = RAGConfig()
+        bm25_rag.vector_store.type = "in_memory"  # No vector DB needed
+        bm25_rag.embedding.model = "all-MiniLM-L6-v2"  # Still needed for interface
+        bm25_rag.chunking.size = 512
+        bm25_rag.chunking.overlap = 64
+        bm25_rag.search.default_type = "keyword"
+        bm25_rag.search.top_k = 20
+        bm25_rag.search.include_citations = True
+        
+        self._profiles["bm25_only"] = ProfileConfig(
+            name="BM25 Only",
+            description="Pure keyword/BM25 search without semantic vectors",
+            profile_type="fast_search",
+            rag_config=bm25_rag,
+            expected_latency_ms=50,
+            expected_accuracy=0.75,
+            tags=["keyword", "bm25", "fast"]
+        )
+        
+        # Vector Only Profile (Pure semantic search)
+        vector_rag = RAGConfig()
+        vector_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
+        vector_rag.embedding.batch_size = 32
+        vector_rag.chunking.size = 384
+        vector_rag.chunking.overlap = 64
+        vector_rag.search.default_type = "semantic"
+        vector_rag.search.top_k = 10
+        vector_rag.search.include_citations = True
+        
+        self._profiles["vector_only"] = ProfileConfig(
+            name="Vector Only",
+            description="Pure semantic/vector search without keyword matching",
+            profile_type="fast_search",
+            rag_config=vector_rag,
+            expected_latency_ms=150,
+            expected_accuracy=0.85,
+            tags=["semantic", "vector", "embedding"]
+        )
+        
+        # Hybrid Basic Profile (No enhanced features)
+        hybrid_basic_rag = RAGConfig()
+        hybrid_basic_rag.embedding.model = "all-MiniLM-L6-v2"
+        hybrid_basic_rag.embedding.batch_size = 32
+        hybrid_basic_rag.chunking.size = 384
+        hybrid_basic_rag.chunking.overlap = 64
+        hybrid_basic_rag.search.default_type = "hybrid"
+        hybrid_basic_rag.search.top_k = 15
+        hybrid_basic_rag.search.include_citations = True
+        
+        self._profiles["hybrid_basic"] = ProfileConfig(
+            name="Hybrid Basic",
+            description="Combined keyword and semantic search without enhancements",
+            profile_type="balanced",
+            rag_config=hybrid_basic_rag,
+            expected_latency_ms=200,
+            expected_accuracy=0.88,
+            tags=["hybrid", "basic", "balanced"]
+        )
+        
+        # Hybrid Enhanced Profile (With parent retrieval)
+        hybrid_enhanced_rag = RAGConfig()
+        hybrid_enhanced_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
+        hybrid_enhanced_rag.embedding.batch_size = 32
+        hybrid_enhanced_rag.chunking.size = 384
+        hybrid_enhanced_rag.chunking.overlap = 64
+        hybrid_enhanced_rag.chunking.enable_parent_retrieval = True
+        hybrid_enhanced_rag.chunking.parent_size_multiplier = 3
+        hybrid_enhanced_rag.search.default_type = "hybrid"
+        hybrid_enhanced_rag.search.top_k = 10
+        hybrid_enhanced_rag.search.include_citations = True
+        
+        self._profiles["hybrid_enhanced"] = ProfileConfig(
+            name="Hybrid Enhanced",
+            description="Hybrid search with parent document retrieval",
+            profile_type="balanced",
+            rag_config=hybrid_enhanced_rag,
+            expected_latency_ms=250,
+            expected_accuracy=0.92,
+            tags=["hybrid", "enhanced", "parent-retrieval"]
+        )
+        
+        # Hybrid Full Profile (All features)
+        hybrid_full_rag = RAGConfig()
+        hybrid_full_rag.embedding.model = "BAAI/bge-base-en-v1.5"
+        hybrid_full_rag.embedding.batch_size = 32
+        hybrid_full_rag.chunking.size = 512
+        hybrid_full_rag.chunking.overlap = 128
+        hybrid_full_rag.chunking.method = "hierarchical"
+        hybrid_full_rag.chunking.enable_parent_retrieval = True
+        hybrid_full_rag.chunking.parent_size_multiplier = 3
+        hybrid_full_rag.chunking.clean_artifacts = True
+        hybrid_full_rag.search.default_type = "hybrid"
+        hybrid_full_rag.search.top_k = 20
+        hybrid_full_rag.search.include_citations = True
+        
+        hybrid_full_rerank = RerankingConfig(
+            strategy="cross_encoder",
+            top_k_to_rerank=15,
+            include_reasoning=False
+        )
+        
+        self._profiles["hybrid_full"] = ProfileConfig(
+            name="Hybrid Full",
+            description="All features enabled for maximum accuracy",
+            profile_type="high_accuracy",
+            rag_config=hybrid_full_rag,
+            reranking_config=hybrid_full_rerank,
+            processing_config=ProcessingConfig(batch_size=32, num_workers=4),
+            expected_latency_ms=400,
+            expected_accuracy=0.95,
+            tags=["hybrid", "full", "maximum"]
+        )
+        
+        # Fast Search Profile (Legacy, kept for compatibility)
         fast_rag = RAGConfig()
-        fast_rag.embedding.model = "all-MiniLM-L6-v2"  # Smaller, faster model
+        fast_rag.embedding.model = "all-MiniLM-L6-v2"
         fast_rag.embedding.batch_size = 64
-        fast_rag.chunking.size = 256  # Smaller chunks
+        fast_rag.chunking.size = 256
         fast_rag.chunking.overlap = 32
         fast_rag.search.top_k = 5
         fast_rag.search.enable_cache = True
@@ -164,7 +278,7 @@ class ConfigProfileManager:
             processing_config=ProcessingConfig(batch_size=64, num_workers=None),
             expected_latency_ms=100,
             expected_accuracy=0.8,
-            tags=["speed", "low-latency"]
+            tags=["speed", "low-latency", "legacy"]
         )
         
         # High Accuracy Profile
