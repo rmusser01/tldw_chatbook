@@ -50,6 +50,16 @@ class MediaDetailsWidget(Container):
         self._original_data = None  # Store original data for cancel functionality
         self.chunking_service = None
         
+    def on_mount(self) -> None:
+        """Set default values after the widget is mounted."""
+        try:
+            # Set default chunking method value
+            chunk_method_select = self.query_one(f"#chunk-method-{self.type_slug}", Select)
+            if chunk_method_select and not chunk_method_select.value:
+                chunk_method_select.value = "words"
+        except Exception as e:
+            logger.debug(f"Could not set default chunk method: {e}")
+        
     def compose(self) -> ComposeResult:
         """Compose the widget's UI structure."""
         # Don't wrap in VerticalScroll - the container itself should handle layout

@@ -66,11 +66,14 @@ def create_form_field(
         elif field_type == "select":
             if options is None:
                 options = []
+            # Remove 'value' from kwargs if it exists to avoid conflicts
+            kwargs.pop('value', None)
+            
+            # Don't set value in constructor - let it be set after mounting
             yield Select(
                 options,
                 id=field_id,
                 classes="form-select",
-                value=default_value,
                 **kwargs
             )
 
