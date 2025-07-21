@@ -210,13 +210,16 @@ class ConfigProfileManager:
         hybrid_enhanced_rag = RAGConfig()
         hybrid_enhanced_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
         hybrid_enhanced_rag.embedding.batch_size = 32
-        hybrid_enhanced_rag.chunking.size = 384
-        hybrid_enhanced_rag.chunking.overlap = 64
+        hybrid_enhanced_rag.chunking.chunk_size = 384
+        hybrid_enhanced_rag.chunking.chunk_overlap = 64
         hybrid_enhanced_rag.chunking.enable_parent_retrieval = True
         hybrid_enhanced_rag.chunking.parent_size_multiplier = 3
-        hybrid_enhanced_rag.search.default_type = "hybrid"
-        hybrid_enhanced_rag.search.top_k = 10
+        hybrid_enhanced_rag.search.default_search_mode = "hybrid"
+        hybrid_enhanced_rag.search.default_top_k = 10
         hybrid_enhanced_rag.search.include_citations = True
+        hybrid_enhanced_rag.search.include_parent_docs = True
+        hybrid_enhanced_rag.search.parent_size_threshold = 5000
+        hybrid_enhanced_rag.search.parent_inclusion_strategy = "size_based"
         
         self._profiles["hybrid_enhanced"] = ProfileConfig(
             name="Hybrid Enhanced",
@@ -232,15 +235,21 @@ class ConfigProfileManager:
         hybrid_full_rag = RAGConfig()
         hybrid_full_rag.embedding.model = "BAAI/bge-base-en-v1.5"
         hybrid_full_rag.embedding.batch_size = 32
-        hybrid_full_rag.chunking.size = 512
-        hybrid_full_rag.chunking.overlap = 128
-        hybrid_full_rag.chunking.method = "hierarchical"
+        hybrid_full_rag.chunking.chunk_size = 512
+        hybrid_full_rag.chunking.chunk_overlap = 128
+        hybrid_full_rag.chunking.chunking_method = "hierarchical"
         hybrid_full_rag.chunking.enable_parent_retrieval = True
         hybrid_full_rag.chunking.parent_size_multiplier = 3
         hybrid_full_rag.chunking.clean_artifacts = True
-        hybrid_full_rag.search.default_type = "hybrid"
-        hybrid_full_rag.search.top_k = 20
+        hybrid_full_rag.chunking.enable_late_chunking = True
+        hybrid_full_rag.chunking.preserve_structure = True
+        hybrid_full_rag.search.default_search_mode = "hybrid"
+        hybrid_full_rag.search.default_top_k = 20
         hybrid_full_rag.search.include_citations = True
+        hybrid_full_rag.search.include_parent_docs = True
+        hybrid_full_rag.search.parent_size_threshold = 8000
+        hybrid_full_rag.search.parent_inclusion_strategy = "size_based"
+        hybrid_full_rag.search.max_context_size = 32000
         
         hybrid_full_rerank = RerankingConfig(
             strategy="cross_encoder",
@@ -352,10 +361,11 @@ class ConfigProfileManager:
         # Technical Documentation Profile
         tech_rag = RAGConfig()
         tech_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
-        tech_rag.chunking.size = 512
-        tech_rag.chunking.method = "structural"  # Preserve document structure
+        tech_rag.chunking.chunk_size = 512
+        tech_rag.chunking.chunking_method = "structural"  # Preserve document structure
         tech_rag.chunking.clean_artifacts = True
         tech_rag.chunking.preserve_tables = True
+        tech_rag.chunking.preserve_structure = True
         tech_rag.search.include_citations = True
         
         self._profiles["technical_docs"] = ProfileConfig(
@@ -370,11 +380,15 @@ class ConfigProfileManager:
         # Research Papers Profile
         research_rag = RAGConfig()
         research_rag.embedding.model = "allenai-specter"  # Specialized for scientific text
-        research_rag.chunking.size = 512
-        research_rag.chunking.method = "hierarchical"
+        research_rag.chunking.chunk_size = 512
+        research_rag.chunking.chunking_method = "hierarchical"
         research_rag.chunking.clean_artifacts = True  # Clean PDF artifacts
+        research_rag.chunking.preserve_structure = True
         research_rag.search.include_citations = True
-        research_rag.search.top_k = 15
+        research_rag.search.default_top_k = 15
+        research_rag.search.include_parent_docs = True
+        research_rag.search.parent_size_threshold = 10000  # Larger for research papers
+        research_rag.search.parent_inclusion_strategy = "size_based"
         
         research_rerank = RerankingConfig(
             strategy="listwise",
@@ -395,9 +409,9 @@ class ConfigProfileManager:
         # Code Search Profile
         code_rag = RAGConfig()
         code_rag.embedding.model = "microsoft/codebert-base"  # Code-specific embeddings
-        code_rag.chunking.size = 256  # Smaller chunks for code
-        code_rag.chunking.method = "words"  # Preserve code structure
-        code_rag.search.top_k = 20  # More results for code search
+        code_rag.chunking.chunk_size = 256  # Smaller chunks for code
+        code_rag.chunking.chunking_method = "words"  # Preserve code structure
+        code_rag.search.default_top_k = 20  # More results for code search
         
         self._profiles["code_search"] = ProfileConfig(
             name="Code Search",

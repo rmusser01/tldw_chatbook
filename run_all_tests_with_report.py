@@ -9,12 +9,14 @@ import subprocess
 import json
 import time
 import argparse
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 from collections import defaultdict
 import xml.etree.ElementTree as ET
 import os
+import importlib.util
 
 # Try to import optional dependencies
 try:
@@ -32,16 +34,174 @@ PROJECT_ROOT = Path(__file__).parent
 TESTS_DIR = PROJECT_ROOT / "Tests"
 REPORTS_DIR = TESTS_DIR / "test_reports"
 
+# Required test dependencies
+REQUIRED_DEPENDENCIES = {
+    "pytest": "Core test framework",
+    "pytest-asyncio": "Async test support", 
+    "pytest-xdist": "Parallel test execution",
+    "pytest-timeout": "Test timeout handling",
+    "pytest-mock": "Mocking support"
+}
+
+# Optional but recommended dependencies
+OPTIONAL_DEPENDENCIES = {
+    "hypothesis": "Property-based testing",
+    "rich": "Better console output",
+    "pytest-cov": "Coverage reporting"
+}
+
+
+def check_dependency(package_name: str) -> bool:
+    """Check if a Python package is installed."""
+    # Handle special cases for package imports
+    import_name = package_name
+    
+    # Special mappings for packages where import name differs from package name
+    special_mappings = {
+        "pytest-asyncio": "pytest_asyncio",
+        "pytest-xdist": "xdist",
+        "pytest-timeout": "pytest_timeout",
+        "pytest-mock": "pytest_mock",
+        "pytest-cov": "pytest_cov"
+    }
+    
+    if package_name in special_mappings:
+        import_name = special_mappings[package_name]
+    else:
+        # Default: replace dashes with underscores
+        import_name = package_name.replace("-", "_")
+    
+    try:
+        spec = importlib.util.find_spec(import_name)
+        return spec is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        # Some packages might not be directly importable, try pytest plugins
+        if package_name.startswith("pytest-"):
+            try:
+                import pytest
+                # Check if plugin is registered
+                return package_name in str(pytest)
+            except:
+                pass
+        return False
+
+
+def check_dependencies() -> Tuple[Dict[str, bool], Dict[str, bool]]:
+    """Check which dependencies are installed."""
+    required_status = {}
+    optional_status = {}
+    
+    for pkg, desc in REQUIRED_DEPENDENCIES.items():
+        required_status[pkg] = check_dependency(pkg)
+    
+    for pkg, desc in OPTIONAL_DEPENDENCIES.items():
+        optional_status[pkg] = check_dependency(pkg)
+    
+    return required_status, optional_status
+
+
+def install_dependencies(packages: List[str], verbose: bool = False) -> bool:
+    """Install Python packages using pip."""
+    if not packages:
+        return True
+    
+    cmd = [sys.executable, "-m", "pip", "install"] + packages
+    if verbose:
+        print(f"Running: {' '.join(cmd)}")
+    
+    try:
+        result = subprocess.run(cmd, capture_output=not verbose, text=True)
+        return result.returncode == 0
+    except Exception as e:
+        print(f"Error installing packages: {e}")
+        return False
+
+
+def print_dependency_status(required_status: Dict[str, bool], optional_status: Dict[str, bool]):
+    """Print dependency status in a formatted way."""
+    if RICH_AVAILABLE:
+        console = Console()
+        
+        # Required dependencies table
+        req_table = Table(title="Required Dependencies", show_header=True)
+        req_table.add_column("Package", style="cyan")
+        req_table.add_column("Description", style="white")
+        req_table.add_column("Status", style="white")
+        
+        for pkg, desc in REQUIRED_DEPENDENCIES.items():
+            status = "[green]✓ Installed[/green]" if required_status[pkg] else "[red]✗ Missing[/red]"
+            req_table.add_row(pkg, desc, status)
+        
+        console.print(req_table)
+        console.print()
+        
+        # Optional dependencies table
+        opt_table = Table(title="Optional Dependencies", show_header=True)
+        opt_table.add_column("Package", style="cyan")
+        opt_table.add_column("Description", style="white")
+        opt_table.add_column("Status", style="white")
+        
+        for pkg, desc in OPTIONAL_DEPENDENCIES.items():
+            status = "[green]✓ Installed[/green]" if optional_status[pkg] else "[yellow]○ Not installed[/yellow]"
+            opt_table.add_row(pkg, desc, status)
+        
+        console.print(opt_table)
+    else:
+        print("\n=== Required Dependencies ===")
+        for pkg, desc in REQUIRED_DEPENDENCIES.items():
+            status = "✓ Installed" if required_status[pkg] else "✗ Missing"
+            print(f"{pkg:<20} {desc:<30} {status}")
+        
+        print("\n=== Optional Dependencies ===")
+        for pkg, desc in OPTIONAL_DEPENDENCIES.items():
+            status = "✓ Installed" if optional_status[pkg] else "○ Not installed"
+            print(f"{pkg:<20} {desc:<30} {status}")
+
+
+def validate_environment() -> bool:
+    """Validate the test environment and return True if ready to run tests."""
+    print("Checking test environment...")
+    
+    # Check Python version
+    if sys.version_info < (3, 11):
+        print(f"Error: Python 3.11+ required, but you have {sys.version}")
+        return False
+    
+    # Check if we're in the project directory
+    if not TESTS_DIR.exists():
+        print(f"Error: Tests directory not found at {TESTS_DIR}")
+        print("Please run this script from the project root directory.")
+        return False
+    
+    # Check dependencies
+    required_status, optional_status = check_dependencies()
+    
+    # Check if all required dependencies are installed
+    missing_required = [pkg for pkg, installed in required_status.items() if not installed]
+    
+    if missing_required:
+        print("\n⚠️  Missing required dependencies:")
+        for pkg in missing_required:
+            print(f"  - {pkg}: {REQUIRED_DEPENDENCIES[pkg]}")
+        print("\nInstall them with:")
+        print(f"  pip install {' '.join(missing_required)}")
+        print("\nOr run this script with --install-deps to install automatically.")
+        return False
+    
+    return True
+
+
 # Test module categories - map display names to actual test directories
+# Updated to match actual directory structure
 TEST_MODULES = {
-    "Core": ["test_smoke.py", "unit/"],
+    "Core": ["test_smoke.py", "unit/", "test_fts5_pattern.py", "test_model_capabilities.py"],
     "Chat": ["Chat/"],
     "Character_Chat": ["Character_Chat/"],
     "Database": ["DB/", "ChaChaNotesDB/", "Media_DB/", "Prompts_DB/"],
     "UI": ["UI/", "Widgets/"],
     "RAG_Simplified": ["RAG/simplified/"],
     "RAG_Legacy": ["RAG_Search/"],
-    "RAG_Other": ["RAG/", "test_enhanced_rag.py"],
+    "RAG_Other": ["RAG/test_rag_dependencies.py", "RAG/test_rag_ui_integration.py", "test_enhanced_rag.py"],
     "Notes": ["Notes/"],
     "Event_Handlers": ["Event_Handlers/"],
     "Evals": ["Evals/"],
@@ -54,6 +214,8 @@ TEST_MODULES = {
     "TTS": ["TTS/"],
     "API": ["tldw_api/"],
     "Integration": ["integration/"],
+    "Misc": ["test_autosave.py", "test_embeddings_datatable_fix.py", "test_enhanced_filepicker.py", 
+            "test_minimal_world_book.py", "test_splash_fullscreen.py"],
 }
 
 
@@ -76,7 +238,7 @@ class TestRunner:
         cmd.extend(["--junit-xml", str(report_file)])
         
         # Add standard options
-        cmd.extend(["-v", "--tb=short"])
+        cmd.extend(["-v", "--tb=short", "--continue-on-collection-errors"])
         
         # Add extra arguments
         if extra_args:
@@ -110,6 +272,11 @@ class TestRunner:
         test_results["stderr"] = result.stderr
         test_results["returncode"] = result.returncode
         
+        # Parse collection errors from stderr
+        if result.stderr:
+            collection_errors = self.parse_collection_errors(result.stderr)
+            test_results["collection_errors"] = collection_errors
+        
         return test_results
     
     def parse_junit_xml(self, xml_file: Path) -> Dict[str, Any]:
@@ -121,7 +288,8 @@ class TestRunner:
             "skipped": 0,
             "errors": 0,
             "tests": [],
-            "failures": []
+            "failures": [],
+            "collection_errors": []
         }
         
         if not xml_file.exists():
@@ -185,6 +353,49 @@ class TestRunner:
         
         return results
     
+    def parse_collection_errors(self, stderr: str) -> List[Dict[str, str]]:
+        """Parse collection errors from pytest stderr output"""
+        errors = []
+        lines = stderr.split('\n')
+        
+        # Look for import errors and collection failures
+        import_error_pattern = r"ImportError: (.+)"
+        module_not_found_pattern = r"ModuleNotFoundError: (.+)"
+        collection_error_pattern = r"ERROR collecting (.+)"
+        
+        current_file = None
+        current_error = []
+        
+        for line in lines:
+            # Check for collection error start
+            if "ERROR collecting" in line:
+                # Save previous error if exists
+                if current_file and current_error:
+                    errors.append({
+                        "file": current_file,
+                        "error": "\n".join(current_error).strip()
+                    })
+                # Start new error
+                match = re.search(collection_error_pattern, line)
+                if match:
+                    current_file = match.group(1).strip()
+                    current_error = []
+            # Check for import/module errors
+            elif any(pattern in line for pattern in ["ImportError:", "ModuleNotFoundError:"]):
+                current_error.append(line.strip())
+            # Continue collecting error details
+            elif current_file and line.strip() and not line.startswith("="):
+                current_error.append(line.strip())
+        
+        # Don't forget the last error
+        if current_file and current_error:
+            errors.append({
+                "file": current_file,
+                "error": "\n".join(current_error).strip()
+            })
+        
+        return errors
+    
     def run_all_tests(self) -> Dict[str, Dict[str, Any]]:
         """Run all tests organized by module"""
         all_results = {}
@@ -221,12 +432,21 @@ class TestRunner:
         """Run tests for a specific module"""
         # Collect test paths
         test_paths = []
+        missing_paths = []
+        
         for pattern in test_patterns:
             test_path = TESTS_DIR / pattern
             if test_path.exists():
                 test_paths.append(test_path)
+            else:
+                missing_paths.append(pattern)
+        
+        if missing_paths and self.verbose:
+            print(f"  Warning: Missing test paths for {module_name}: {', '.join(missing_paths)}")
         
         if not test_paths:
+            if self.verbose:
+                print(f"  Skipping {module_name}: No test files found")
             return {
                 "total": 0,
                 "passed": 0,
@@ -235,16 +455,34 @@ class TestRunner:
                 "errors": 0,
                 "duration": 0,
                 "tests": [],
-                "failures": []
+                "failures": [],
+                "skipped_reason": "No test files found"
             }
         
         # Run tests with XML output
         xml_file = REPORTS_DIR / f"{module_name}_junit.xml"
-        results = self.run_pytest_with_junit(test_paths, xml_file)
+        
+        try:
+            results = self.run_pytest_with_junit(test_paths, xml_file)
+        except Exception as e:
+            if self.verbose:
+                print(f"  Error running tests for {module_name}: {e}")
+            results = {
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "errors": 1,
+                "duration": 0,
+                "tests": [],
+                "failures": [{"test": module_name, "message": str(e)}],
+                "error_message": str(e)
+            }
         
         # Clean up XML file
         try:
-            xml_file.unlink()
+            if xml_file.exists():
+                xml_file.unlink()
         except:
             pass
         
@@ -368,6 +606,25 @@ class ReportGenerator:
                             console.print(f"  • {failure['test']}")
                             if failure.get('message'):
                                 console.print(f"    [dim]{failure['message']}[/dim]")
+            
+            # Collection errors
+            collection_error_count = 0
+            for module_name, result in self.results.items():
+                collection_errors = result.get("collection_errors", [])
+                collection_error_count += len(collection_errors)
+            
+            if collection_error_count > 0:
+                console.print("\n[bold yellow]Collection Errors:[/bold yellow]")
+                console.print(f"[yellow]{collection_error_count} file(s) could not be imported[/yellow]")
+                
+                for module_name, result in self.results.items():
+                    collection_errors = result.get("collection_errors", [])
+                    if collection_errors:
+                        console.print(f"\n[yellow]{module_name}:[/yellow]")
+                        for error in collection_errors[:5]:  # Show first 5 errors per module
+                            console.print(f"  • {error['file']}")
+                            error_msg = error['error'].split('\n')[0] if '\n' in error['error'] else error['error']
+                            console.print(f"    [dim]{error_msg}[/dim]")
         else:
             # Fallback to basic printing
             print("\n" + "="*80)
@@ -602,6 +859,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Check test environment without running tests
+  python run_all_tests_with_report.py --check
+  
+  # Install missing dependencies and run tests
+  python run_all_tests_with_report.py --install-deps
+  
+  # Setup complete test environment
+  python run_all_tests_with_report.py --setup
+  
   # Run all tests
   python run_all_tests_with_report.py
   
@@ -639,19 +905,72 @@ Examples:
                        help="Output format(s) for the report (default: console)")
     parser.add_argument("--rag-detailed", action="store_true",
                        help="Generate detailed RAG test report with subcategories")
+    parser.add_argument("--check", action="store_true",
+                       help="Check test environment without running tests")
+    parser.add_argument("--install-deps", action="store_true",
+                       help="Automatically install missing test dependencies")
+    parser.add_argument("--setup", action="store_true",
+                       help="Setup complete test environment (install all dependencies)")
     
     args = parser.parse_args()
     
     # Ensure we're in the project root
     os.chdir(PROJECT_ROOT)
     
-    # Check if pytest is available
-    try:
-        subprocess.run([sys.executable, "-m", "pytest", "--version"], 
-                      capture_output=True, check=True)
-    except subprocess.CalledProcessError:
-        print("Error: pytest is not installed!")
-        print("Install with: pip install pytest pytest-xdist")
+    # Handle --check command
+    if args.check:
+        print("Checking test environment...\n")
+        required_status, optional_status = check_dependencies()
+        print_dependency_status(required_status, optional_status)
+        
+        # Check if all required are installed
+        missing_required = [pkg for pkg, installed in required_status.items() if not installed]
+        if missing_required:
+            print("\n❌ Test environment is not ready.")
+            print(f"Missing required dependencies: {', '.join(missing_required)}")
+            sys.exit(1)
+        else:
+            print("\n✅ Test environment is ready!")
+            sys.exit(0)
+    
+    # Handle --setup command
+    if args.setup:
+        print("Setting up test environment...\n")
+        
+        # Install all required and optional dependencies
+        all_deps = list(REQUIRED_DEPENDENCIES.keys()) + list(OPTIONAL_DEPENDENCIES.keys())
+        print(f"Installing {len(all_deps)} packages: {', '.join(all_deps)}")
+        
+        if install_dependencies(all_deps, verbose=args.verbose):
+            print("\n✅ Test environment setup complete!")
+            sys.exit(0)
+        else:
+            print("\n❌ Failed to setup test environment.")
+            sys.exit(1)
+    
+    # Handle --install-deps command
+    if args.install_deps:
+        print("Checking and installing missing dependencies...\n")
+        required_status, optional_status = check_dependencies()
+        
+        # Find missing required dependencies
+        missing_required = [pkg for pkg, installed in required_status.items() if not installed]
+        
+        if missing_required:
+            print(f"Installing missing required dependencies: {', '.join(missing_required)}")
+            if not install_dependencies(missing_required, verbose=args.verbose):
+                print("\n❌ Failed to install dependencies.")
+                sys.exit(1)
+        
+        # Optionally install recommended dependencies
+        missing_optional = [pkg for pkg, installed in optional_status.items() if not installed]
+        if missing_optional and not args.verbose:
+            print(f"\nOptional dependencies not installed: {', '.join(missing_optional)}")
+            print("Use --setup to install all dependencies including optional ones.")
+    
+    # Validate environment before running tests
+    if not validate_environment():
+        print("\n❌ Test environment validation failed.")
         sys.exit(1)
     
     # Create test runner

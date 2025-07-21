@@ -52,6 +52,19 @@ class ChunkingConfig:
     chunking_method: str = "words"  # "words", "sentences", "paragraphs"
     min_chunk_size: int = 50  # minimum words per chunk
     max_chunk_size: int = 1000  # maximum words per chunk
+    
+    # Parent document retrieval settings
+    enable_parent_retrieval: bool = False
+    parent_size_multiplier: int = 3  # Parent chunks are this many times larger
+    
+    # Late chunking settings
+    enable_late_chunking: bool = False
+    late_chunking_cache_size: int = 100  # Number of documents to cache
+    
+    # Structural chunking settings
+    preserve_structure: bool = False
+    clean_artifacts: bool = False  # Clean PDF artifacts
+    preserve_tables: bool = False  # Serialize tables for better understanding
 
 
 @dataclass
@@ -80,6 +93,12 @@ class SearchConfig:
     hybrid_cache_ttl: Optional[float] = None    # TTL for hybrid search results
     # Database connection settings
     fts5_connection_pool_size: int = 3  # Connection pool size for FTS5 searches
+    
+    # Parent document inclusion settings (RAG pipeline feature)
+    include_parent_docs: bool = False
+    parent_size_threshold: int = 5000  # Maximum parent doc size in characters
+    parent_inclusion_strategy: str = "size_based"  # "always", "size_based", "never"
+    max_context_size: int = 16000  # Maximum total context size in characters
 
 
 @dataclass

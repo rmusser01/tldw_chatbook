@@ -4397,6 +4397,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif event.__class__.__name__ == 'BatchAnalysisStartEvent':
             from .Event_Handlers import multi_item_review_events
             await multi_item_review_events.handle_batch_analysis_start(self, event)
+        elif event.__class__.__name__ == 'TemplateDeleteConfirmationEvent':
+            from .Widgets.confirmation_dialog import ConfirmationDialog
+            from .Event_Handlers.template_events import TemplateDeleteConfirmationEvent
+            
+            if isinstance(event, TemplateDeleteConfirmationEvent):
+                # Show confirmation dialog
+                async def confirm_delete():
+                    # Find the widget and call delete
+                    try:
+                        from .Widgets.chunking_templates_widget import ChunkingTemplatesWidget
+                        # Find the templates widget in the current view
+                        for widget in self.query(ChunkingTemplatesWidget):
+                            widget.delete_template(event.template_id)
+                    except Exception as e:
+                        logger.error(f"Error deleting template: {e}")
+                        self.notify(f"Error deleting template: {str(e)}", severity="error")
+                
+                dialog = ConfirmationDialog(
+                    title="Delete Template",
+                    message=f"Are you sure you want to delete the template '{event.template_name}'?\n\nThis action cannot be undone.",
+                    confirm_label="Delete",
+                    cancel_label="Cancel",
+                    confirm_callback=confirm_delete
+                )
+                self.push_screen(dialog)
     
     @on(SplashScreenClosed)
     async def on_splash_screen_closed(self, event: SplashScreenClosed) -> None:

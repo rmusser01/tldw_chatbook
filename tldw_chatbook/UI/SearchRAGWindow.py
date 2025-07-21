@@ -473,6 +473,47 @@ class SearchRAGWindow(Container):
                                 with Vertical(classes="param-group"):
                                     yield Label("Overlap:", classes="param-label")
                                     yield Input(value="100", id="chunk-overlap-input", type="integer", classes="param-input", tooltip="Overlap between chunks")
+                        
+                        # Parent document inclusion settings
+                        with Collapsible(title="📚 Parent Document Inclusion", collapsed=True, id="parent-doc-settings", classes="parent-doc-section"):
+                            yield Checkbox(
+                                "Include parent documents when relevant",
+                                value=False,
+                                id="include-parent-docs",
+                                classes="parent-doc-checkbox",
+                                tooltip="Include full parent documents when they're small enough"
+                            )
+                            
+                            with Container(classes="parent-doc-options", id="parent-doc-options"):
+                                with Grid(classes="parameter-grid-enhanced"):
+                                    with Vertical(classes="param-group"):
+                                        yield Label("Parent Size Threshold (chars):", classes="param-label")
+                                        yield Input(
+                                            value="5000", 
+                                            id="parent-size-threshold", 
+                                            type="integer", 
+                                            classes="param-input",
+                                            tooltip="Maximum size for including parent documents"
+                                        )
+                                    
+                                    with Vertical(classes="param-group"):
+                                        yield Label("Inclusion Strategy:", classes="param-label")
+                                        yield Select(
+                                            [
+                                                ("Size Based", "size_based"),
+                                                ("Always Include", "always"),
+                                                ("Never Include", "never")
+                                            ],
+                                            id="parent-strategy",
+                                            classes="param-select",
+                                            value="size_based"
+                                        )
+                                
+                                yield Static(
+                                    "ℹ️ Parent documents provide additional context for better understanding",
+                                    id="parent-inclusion-preview",
+                                    classes="parent-doc-info"
+                                )
             
             # Status and progress area with better visibility
             with Container(id="status-container", classes="status-container-enhanced"):
@@ -614,6 +655,47 @@ class SearchRAGWindow(Container):
         self.search_input.focus()
         event.stop()
     
+    @on(Checkbox.Changed, "#include-parent-docs")
+    def handle_parent_docs_toggle(self, event: Checkbox.Changed) -> None:
+        """Handle parent documents inclusion toggle"""
+        parent_options = self.query_one("#parent-doc-options", Container)
+        if event.value:
+            parent_options.remove_class("hidden")
+            # Update preview
+            self._update_parent_inclusion_preview()
+        else:
+            parent_options.add_class("hidden")
+    
+    @on(Select.Changed, "#parent-strategy")
+    def handle_parent_strategy_change(self, event: Select.Changed) -> None:
+        """Handle parent inclusion strategy change"""
+        self._update_parent_inclusion_preview()
+    
+    @on(Input.Changed, "#parent-size-threshold")
+    def handle_parent_size_change(self, event: Input.Changed) -> None:
+        """Handle parent size threshold change"""
+        self._update_parent_inclusion_preview()
+    
+    def _update_parent_inclusion_preview(self) -> None:
+        """Update the parent inclusion preview message"""
+        try:
+            preview = self.query_one("#parent-inclusion-preview", Static)
+            strategy = self.query_one("#parent-strategy", Select).value
+            threshold = self.query_one("#parent-size-threshold", Input).value
+            
+            if strategy == "always":
+                preview.update("📚 All parent documents will be included regardless of size")
+            elif strategy == "never":
+                preview.update("❌ Parent documents will not be included")
+            else:  # size_based
+                try:
+                    size = int(threshold)
+                    preview.update(f"📏 Parent documents smaller than {size:,} characters will be included")
+                except ValueError:
+                    preview.update("⚠️ Please enter a valid size threshold")
+        except Exception as e:
+            logger.debug(f"Error updating parent inclusion preview: {e}")
+    
     @on(ListView.Selected, "#search-history-list")
     async def handle_history_selection(self, event: ListView.Selected) -> None:
         """Handle selection from search history"""
@@ -712,6 +794,9 @@ class SearchRAGWindow(Container):
                 "sources": sources,
                 "top_k": int(self.query_one("#top-k-input", Input).value or "10"),
                 "max_context": int(self.query_one("#max-context-input", Input).value or "10000"),
+                "include_parent_docs": self.query_one("#include-parent-docs", Checkbox).value,
+                "parent_size_threshold": int(self.query_one("#parent-size-threshold", Input).value or "5000"),
+                "parent_inclusion_strategy": self.query_one("#parent-strategy", Select).value,
                 "enable_rerank": self.query_one("#enable-rerank", Checkbox).value
             }
             
@@ -746,7 +831,10 @@ class SearchRAGWindow(Container):
                         "enable_rerank": self.current_search_config["enable_rerank"],
                         "reranker_model": "flashrank",
                         "bm25_weight": 0.5,
-                        "vector_weight": 0.5
+                        "vector_weight": 0.5,
+                        "include_parent_docs": self.current_search_config["include_parent_docs"],
+                        "parent_size_threshold": self.current_search_config["parent_size_threshold"],
+                        "parent_inclusion_strategy": self.current_search_config["parent_inclusion_strategy"]
                     }
                     
                     # Get pipeline default parameters and merge
