@@ -627,7 +627,10 @@ class TTSPlaygroundWidget(Widget):
                 ("pNInz6obpgDQGcFmaJgB", "Adam"),
                 ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
             ])
-            voice_select.value = "21m00Tcm4TlvDq8ikWAM"
+            try:
+                voice_select.value = "21m00Tcm4TlvDq8ikWAM"
+            except Exception as e:
+                logger.debug(f"Could not set default ElevenLabs voice value: {e}")
         elif provider == "kokoro":
             logger.info(f"Setting up Kokoro voices for provider: {provider}")
             logger.debug(f"Voice select widget state - value: {voice_select.value}, enabled: {not voice_select.disabled}")
@@ -983,6 +986,9 @@ class TTSPlaygroundWidget(Widget):
                     audio_path = self.current_audio_file
                     
                 if audio_path.exists():
+                    # Stop any existing playback first
+                    await self.app.audio_player.stop()
+                    
                     success = await self.app.audio_player.play(audio_path)
                     if success:
                         # Cancel any existing progress timer
@@ -1029,7 +1035,8 @@ class TTSPlaygroundWidget(Widget):
         logger.debug("_pause_audio called")
         if self._ensure_audio_player():
             logger.debug("Audio player available, running pause worker")
-            self.run_worker(self._pause_audio_async, exclusive=True)
+            # Don't use exclusive worker for pause - it needs to interrupt play
+            self.run_worker(self._pause_audio_async, exclusive=False)
         else:
             logger.debug("Audio player not available")
             self.app.notify("Audio player not available", severity="warning")
@@ -1077,7 +1084,8 @@ class TTSPlaygroundWidget(Widget):
         logger.debug("_stop_audio called")
         if self._ensure_audio_player():
             logger.debug("Audio player available, running stop worker")
-            self.run_worker(self._stop_audio_async, exclusive=True)
+            # Don't use exclusive worker for stop - it needs to interrupt play
+            self.run_worker(self._stop_audio_async, exclusive=False)
         else:
             logger.debug("Audio player not available")
             self.app.notify("Audio player not available", severity="warning")
@@ -1940,7 +1948,10 @@ class TTSSettingsWidget(Widget):
                 ("pNInz6obpgDQGcFmaJgB", "Adam"),
                 ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
             ])
-            voice_select.value = "21m00Tcm4TlvDq8ikWAM"
+            try:
+                voice_select.value = "21m00Tcm4TlvDq8ikWAM"
+            except Exception as e:
+                logger.debug(f"Could not set default ElevenLabs voice value: {e}")
         elif provider == "kokoro":
             logger.info(f"Setting up Kokoro voices for provider: {provider}")
             voice_options = [

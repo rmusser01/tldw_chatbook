@@ -139,14 +139,14 @@ class STTSEventHandler:
             logger.warning(f"Could not find TTSPlaygroundWidget: {e}")
             playground = None
         
-        # Run the generation in a worker thread to avoid blocking UI
+        # Run the generation in a worker to avoid blocking UI
         if playground and hasattr(playground, 'run_worker'):
             # Use the widget's worker to keep UI responsive
-            # Create a wrapper function that captures the needed variables
-            async def worker():
-                await self._generate_tts_worker(event, playground)
-            
-            playground.run_worker(worker, thread=True)
+            # Run async function in a worker (not in a thread)
+            playground.run_worker(
+                self._generate_tts_worker(event, playground),
+                exclusive=True
+            )
         else:
             # Fallback to direct async execution
             await self._generate_tts_worker(event, playground)

@@ -284,10 +284,20 @@ class SimpleAudioPlayer:
                     try:
                         # Check if process is still running
                         if self._current.process.poll() is None:
-                            self._current.process.terminate()
-                            self._current.process.wait(timeout=2)
+                            # For macOS afplay, use kill directly as terminate doesn't work well
+                            if self._system == "Darwin" and self._player_name == "afplay":
+                                self._current.process.kill()
+                                self._current.process.wait(timeout=1)
+                            else:
+                                self._current.process.terminate()
+                                self._current.process.wait(timeout=2)
                     except subprocess.TimeoutExpired:
+                        logger.debug("Process didn't terminate in time, force killing")
                         self._current.process.kill()
+                        try:
+                            self._current.process.wait(timeout=0.5)
+                        except subprocess.TimeoutExpired:
+                            logger.warning("Process kill timed out")
                     except Exception as e:
                         logger.error(f"Error stopping playback: {e}")
                 
@@ -348,11 +358,16 @@ class SimpleAudioPlayer:
     def _monitor_playback(self) -> None:
         """Monitor playback process"""
         if self._current.process:
-            self._current.process.wait()
-            with self._lock:
-                if self._current.state == PlaybackState.PLAYING:
-                    self._current.state = PlaybackState.FINISHED
-                    logger.debug("Playback finished")
+            try:
+                self._current.process.wait()
+                with self._lock:
+                    # Only mark as finished if we're still in playing state
+                    # (could have been stopped/paused)
+                    if self._current.state == PlaybackState.PLAYING:
+                        self._current.state = PlaybackState.FINISHED
+                        logger.debug("Playback finished naturally")
+            except Exception as e:
+                logger.debug(f"Monitor thread interrupted: {e}")
     
     def cleanup(self) -> None:
         """Clean up resources - call this before app exit."""
