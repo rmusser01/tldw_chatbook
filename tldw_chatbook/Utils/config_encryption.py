@@ -1,177 +1,87 @@
 """
 Config file encryption utilities for protecting sensitive data like API keys.
 
-Uses AES-256-CBC encryption with HMAC-SHA256 authentication and PBKDF2 key derivation.
+Uses AES-256-GCM encryption with scrypt key derivation for maximum security.
 Provides authenticated encryption to ensure both confidentiality and integrity.
 """
 import base64
-import hashlib
-import hmac
-import json
 import os
 import secrets
-import time
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Any, Optional
 
 from Cryptodome.Cipher import AES
-from Cryptodome.Protocol.KDF import PBKDF2
-from Cryptodome.Random import get_random_bytes
-from Cryptodome.Util.Padding import pad, unpad
+from Cryptodome.Protocol.KDF import scrypt
 from loguru import logger
-
-from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 class ConfigEncryption:
-    """Handles encryption/decryption of configuration values with authentication."""
+    """Handles encryption/decryption of configuration values with authenticated encryption."""
     
+    # Constants
+    VERSION = 1  # Clean start with new format
     ENCRYPTION_PREFIX = "enc:"
     SALT_SIZE = 32  # 256 bits
     KEY_SIZE = 32   # 256 bits for AES-256
-    HMAC_KEY_SIZE = 32  # 256 bits for HMAC-SHA256
-    BLOCK_SIZE = 16  # AES block size
-    ITERATIONS = 100000  # PBKDF2 iterations
-    VERSION = 2  # Encryption format version
+    NONCE_SIZE = 12  # 96 bits for GCM
+    TAG_SIZE = 16   # 128 bits for GCM
+    
+    # scrypt parameters (2^20 = 1048576)
+    SCRYPT_N = 1048576  # CPU/memory cost
+    SCRYPT_R = 8        # Block size
+    SCRYPT_P = 1        # Parallelization
     
     def __init__(self):
-        pass  # No state needed - all operations are stateless
+        """Initialize the encryption module."""
+        pass
     
-    def generate_salt(self) -> bytes:
-        """Generate a new random salt for key derivation."""
-        return get_random_bytes(self.SALT_SIZE)
-    
-    def derive_keys(self, password: str, salt: bytes) -> Tuple[bytes, bytes]:
-        """Derive encryption and HMAC keys from password and salt using PBKDF2."""
-        start_time = time.time()
-        log_counter("config_encryption_derive_key_attempt")
-        
-        # Derive a master key, then split it for encryption and HMAC
-        master_key = PBKDF2(
-            password.encode('utf-8'),
-            salt,
-            dkLen=self.KEY_SIZE + self.HMAC_KEY_SIZE,  # 64 bytes total
-            count=self.ITERATIONS,
-            hmac_hash_module=hashlib.sha256
-        )
-        
-        # Split the master key
-        encryption_key = master_key[:self.KEY_SIZE]
-        hmac_key = master_key[self.KEY_SIZE:]
-        
-        duration = time.time() - start_time
-        log_histogram("config_encryption_derive_key_duration", duration)
-        log_counter("config_encryption_derive_key_success")
-        
-        return encryption_key, hmac_key
-    
-    def create_password_verifier(self, password: str, salt: bytes) -> str:
-        """Create an encrypted test value for password verification."""
-        # Use a known test string that we can decrypt to verify the password
-        test_value = "CONFIG_ENCRYPTION_PASSWORD_VERIFICATION_V2"
-        encrypted_value, _ = self.encrypt_value(test_value, password, salt)
-        return encrypted_value
-    
-    def verify_password_with_verifier(self, password: str, verifier: str, salt: bytes) -> bool:
-        """Verify password by attempting to decrypt the test value."""
-        try:
-            decrypted = self.decrypt_value(verifier, password, salt)
-            # Check if we successfully decrypted the expected test value
-            return decrypted == "CONFIG_ENCRYPTION_PASSWORD_VERIFICATION_V2"
-        except ValueError:
-            # Decryption failed - wrong password
-            return False
-    
-    # Keep old methods for backward compatibility during migration
-    def hash_password(self, password: str, salt: bytes) -> str:
+    def encrypt_value(self, plaintext: str, password: str) -> str:
         """
-        DEPRECATED: Create a salted hash of the password for verification.
-        Use create_password_verifier instead.
-        """
-        hash_bytes = PBKDF2(
-            password.encode('utf-8'),
-            salt,
-            dkLen=32,  # 256 bits
-            count=self.ITERATIONS,
-            hmac_hash_module=hashlib.sha256
-        )
-        return base64.b64encode(hash_bytes).decode('utf-8')
-    
-    def verify_password(self, password: str, stored_hash: str, salt: bytes) -> bool:
-        """
-        DEPRECATED: Verify if the provided password matches the stored hash.
-        Use verify_password_with_verifier instead.
-        """
-        return self.hash_password(password, salt) == stored_hash
-    
-    def encrypt_value(self, value: str, password: str, salt: Optional[bytes] = None) -> Tuple[str, bytes]:
-        """
-        Encrypt a string value using AES-256-CBC with HMAC-SHA256 authentication.
+        Encrypt a string value using AES-256-GCM with scrypt key derivation.
         
-        Format: VERSION || IV || ENCRYPTED_DATA || HMAC
+        Format: Base64(VERSION || SALT || NONCE || CIPHERTEXT || TAG)
         
         Args:
-            value: The string to encrypt
+            plaintext: The string to encrypt
             password: The password to use for encryption
-            salt: Optional salt (will generate new one if not provided)
             
         Returns:
-            Tuple of (encrypted_base64_string, salt)
+            Encrypted string with prefix
         """
-        start_time = time.time()
-        log_counter("config_encryption_encrypt_value_attempt", labels={
-            "has_salt": str(salt is not None)
-        })
-        log_histogram("config_encryption_plaintext_length", len(value))
+        # Generate random salt and nonce
+        salt = os.urandom(self.SALT_SIZE)
+        nonce = os.urandom(self.NONCE_SIZE)
         
-        if salt is None:
-            salt = self.generate_salt()
+        # Derive key using scrypt
+        key = scrypt(
+            password.encode('utf-8'),
+            salt,
+            key_len=self.KEY_SIZE,
+            N=self.SCRYPT_N,
+            r=self.SCRYPT_R,
+            p=self.SCRYPT_P
+        )
         
-        # Derive keys from password
-        encryption_key, hmac_key = self.derive_keys(password, salt)
+        # Create cipher and encrypt
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        ciphertext, tag = cipher.encrypt_and_digest(plaintext.encode('utf-8'))
         
-        # Generate random IV
-        iv = get_random_bytes(self.BLOCK_SIZE)
-        
-        # Create cipher
-        cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
-        
-        # Pad and encrypt the data
-        padded_data = pad(value.encode('utf-8'), self.BLOCK_SIZE)
-        encrypted_data = cipher.encrypt(padded_data)
-        
-        # Build the complete message (without HMAC yet)
+        # Build complete message
         version_bytes = bytes([self.VERSION])
-        message = version_bytes + iv + encrypted_data
+        combined = version_bytes + salt + nonce + ciphertext + tag
         
-        # Calculate HMAC over the entire message
-        h = hmac.new(hmac_key, message, hashlib.sha256)
-        mac = h.digest()
-        
-        # Combine everything
-        combined = message + mac
-        
-        # Encode to base64 for storage
+        # Encode to base64
         encrypted_b64 = base64.b64encode(combined).decode('utf-8')
         
-        # Add prefix to indicate encrypted value
-        result = f"{self.ENCRYPTION_PREFIX}{encrypted_b64}", salt
-        
-        # Log success
-        duration = time.time() - start_time
-        log_histogram("config_encryption_encrypt_value_duration", duration)
-        log_histogram("config_encryption_ciphertext_length", len(encrypted_b64))
-        log_counter("config_encryption_encrypt_value_success")
-        
-        return result
+        # Return with prefix
+        return f"{self.ENCRYPTION_PREFIX}{encrypted_b64}"
     
-    def decrypt_value(self, encrypted_value: str, password: str, salt: bytes) -> str:
+    def decrypt_value(self, encrypted_value: str, password: str) -> str:
         """
-        Decrypt an encrypted string value with HMAC verification.
+        Decrypt an encrypted string value with authentication.
         
         Args:
             encrypted_value: The encrypted string (with or without prefix)
             password: The password to use for decryption
-            salt: The salt used during encryption
             
         Returns:
             The decrypted string
@@ -179,11 +89,6 @@ class ConfigEncryption:
         Raises:
             ValueError: If decryption or authentication fails
         """
-        start_time = time.time()
-        log_counter("config_encryption_decrypt_value_attempt", labels={
-            "has_prefix": str(encrypted_value.startswith(self.ENCRYPTION_PREFIX))
-        })
-        
         # Remove prefix if present
         if encrypted_value.startswith(self.ENCRYPTION_PREFIX):
             encrypted_value = encrypted_value[len(self.ENCRYPTION_PREFIX):]
@@ -192,214 +97,167 @@ class ConfigEncryption:
             # Decode from base64
             combined = base64.b64decode(encrypted_value)
             
-            # Check minimum length (version + IV + at least 1 block + HMAC)
-            min_length = 1 + self.BLOCK_SIZE + self.BLOCK_SIZE + 32
+            # Check minimum length
+            min_length = 1 + self.SALT_SIZE + self.NONCE_SIZE + self.TAG_SIZE
             if len(combined) < min_length:
                 raise ValueError("Invalid encrypted data length")
             
-            # Extract HMAC (last 32 bytes)
-            stored_mac = combined[-32:]
-            message = combined[:-32]
-            
-            # Derive keys from password
-            encryption_key, hmac_key = self.derive_keys(password, salt)
-            
-            # Verify HMAC first (fail fast if tampered)
-            h = hmac.new(hmac_key, message, hashlib.sha256)
-            expected_mac = h.digest()
-            
-            # Constant-time comparison to prevent timing attacks
-            if not hmac.compare_digest(stored_mac, expected_mac):
-                raise ValueError("HMAC verification failed")
-            
             # Extract components
-            version = message[0]
+            version = combined[0]
             if version != self.VERSION:
-                # Try legacy format for backward compatibility
-                return self._decrypt_legacy_format(encrypted_value, password, salt)
+                raise ValueError(f"Unsupported encryption version: {version}")
             
-            iv = message[1:1+self.BLOCK_SIZE]
-            encrypted_data = message[1+self.BLOCK_SIZE:]
+            offset = 1
+            salt = combined[offset:offset + self.SALT_SIZE]
+            offset += self.SALT_SIZE
             
-            # Create cipher and decrypt
-            cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
-            padded_plaintext = cipher.decrypt(encrypted_data)
+            nonce = combined[offset:offset + self.NONCE_SIZE]
+            offset += self.NONCE_SIZE
             
-            # Remove padding
-            plaintext = unpad(padded_plaintext, self.BLOCK_SIZE)
+            # Ciphertext is everything except the last TAG_SIZE bytes
+            ciphertext = combined[offset:-self.TAG_SIZE]
+            tag = combined[-self.TAG_SIZE:]
             
-            decrypted = plaintext.decode('utf-8')
-            
-            # Log success
-            duration = time.time() - start_time
-            log_histogram("config_encryption_decrypt_value_duration", duration)
-            log_counter("config_encryption_decrypt_value_success")
-            
-            return decrypted
-            
-        except Exception as e:
-            logger.error(f"Decryption failed: {e}")
-            log_counter("config_encryption_decrypt_value_error", labels={"error_type": type(e).__name__})
-            raise ValueError("Failed to decrypt value. Invalid password or corrupted data.")
-    
-    def _decrypt_legacy_format(self, encrypted_value: str, password: str, salt: bytes) -> str:
-        """
-        Decrypt legacy format (version 1) without HMAC for backward compatibility.
-        
-        This should only be used during migration to the new format.
-        """
-        try:
-            # Decode from base64
-            combined = base64.b64decode(encrypted_value)
-            
-            # Legacy format: IV || ENCRYPTED_DATA (no version, no HMAC)
-            iv = combined[:self.BLOCK_SIZE]
-            encrypted_data = combined[self.BLOCK_SIZE:]
-            
-            # Derive key from password (old method only derived encryption key)
-            key = PBKDF2(
+            # Derive key using scrypt
+            key = scrypt(
                 password.encode('utf-8'),
                 salt,
-                dkLen=self.KEY_SIZE,
-                count=self.ITERATIONS,
-                hmac_hash_module=hashlib.sha256
+                key_len=self.KEY_SIZE,
+                N=self.SCRYPT_N,
+                r=self.SCRYPT_R,
+                p=self.SCRYPT_P
             )
             
             # Create cipher and decrypt
-            cipher = AES.new(key, AES.MODE_CBC, iv)
-            padded_plaintext = cipher.decrypt(encrypted_data)
+            cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+            plaintext = cipher.decrypt_and_verify(ciphertext, tag)
             
-            # Remove padding
-            plaintext = unpad(padded_plaintext, self.BLOCK_SIZE)
-            
-            decrypted = plaintext.decode('utf-8')
-            
-            logger.warning("Decrypted value using legacy format. Please re-encrypt with new format.")
-            return decrypted
+            return plaintext.decode('utf-8')
             
         except Exception as e:
-            logger.error(f"Legacy decryption failed: {e}")
-            raise ValueError("Failed to decrypt legacy value.")
+            logger.error(f"Decryption failed: {type(e).__name__}")
+            raise ValueError("Failed to decrypt value. Invalid password or corrupted data.")
     
     def is_encrypted(self, value: str) -> bool:
         """Check if a value is encrypted based on its prefix."""
-        return value.startswith(self.ENCRYPTION_PREFIX)
+        return isinstance(value, str) and value.startswith(self.ENCRYPTION_PREFIX)
     
-    def encrypt_config_section(self, config_dict: Dict[str, Any], password: str, 
-                             salt: Optional[bytes] = None) -> Tuple[Dict[str, Any], bytes]:
+    def encrypt_config(self, config: Dict[str, Any], password: str) -> Dict[str, Any]:
         """
-        Encrypt all values in a configuration dictionary.
+        Encrypt all string values in a configuration dictionary.
         
         Args:
-            config_dict: Dictionary of configuration values
+            config: Dictionary of configuration values
             password: Password to use for encryption
-            salt: Optional salt (will generate new one if not provided)
             
         Returns:
-            Tuple of (encrypted_dict, salt)
+            Dictionary with encrypted values
         """
-        start_time = time.time()
-        log_counter("config_encryption_encrypt_section_attempt", labels={
-            "keys_count": str(len(config_dict))
-        })
+        encrypted_config = {}
         
-        if salt is None:
-            salt = self.generate_salt()
-        
-        encrypted_dict = {}
-        encrypted_count = 0
-        
-        for key, value in config_dict.items():
+        for key, value in config.items():
             if isinstance(value, str) and value and not self.is_encrypted(value):
-                # Only encrypt non-empty strings that aren't already encrypted
-                encrypted_value, _ = self.encrypt_value(value, password, salt)
-                encrypted_dict[key] = encrypted_value
-                encrypted_count += 1
+                # Encrypt non-empty strings that aren't already encrypted
+                encrypted_config[key] = self.encrypt_value(value, password)
+            elif isinstance(value, dict):
+                # Recursively encrypt nested dictionaries
+                encrypted_config[key] = self.encrypt_config(value, password)
             else:
                 # Keep non-string values as-is
-                encrypted_dict[key] = value
+                encrypted_config[key] = value
         
-        # Log completion
-        duration = time.time() - start_time
-        log_histogram("config_encryption_encrypt_section_duration", duration)
-        log_counter("config_encryption_encrypt_section_complete", labels={
-            "total_keys": str(len(config_dict)),
-            "encrypted_keys": str(encrypted_count)
-        })
-        
-        return encrypted_dict, salt
+        return encrypted_config
     
-    def decrypt_config_section(self, config_dict: Dict[str, Any], password: str, 
-                             salt: bytes) -> Dict[str, Any]:
+    def decrypt_config(self, config: Dict[str, Any], password: str) -> Dict[str, Any]:
         """
         Decrypt all encrypted values in a configuration dictionary.
         
         Args:
-            config_dict: Dictionary with potentially encrypted values
+            config: Dictionary with potentially encrypted values
             password: Password to use for decryption
-            salt: Salt used during encryption
             
         Returns:
             Dictionary with decrypted values
         """
-        start_time = time.time()
-        log_counter("config_encryption_decrypt_section_attempt", labels={
-            "keys_count": str(len(config_dict))
-        })
+        decrypted_config = {}
         
-        decrypted_dict = {}
-        decrypted_count = 0
-        failed_count = 0
-        
-        for key, value in config_dict.items():
-            if isinstance(value, str) and self.is_encrypted(value):
+        for key, value in config.items():
+            if self.is_encrypted(value):
                 try:
-                    decrypted_value = self.decrypt_value(value, password, salt)
-                    decrypted_dict[key] = decrypted_value
-                    decrypted_count += 1
+                    decrypted_config[key] = self.decrypt_value(value, password)
                 except ValueError:
-                    # If decryption fails, keep the encrypted value
                     logger.warning(f"Failed to decrypt value for key: {key}")
-                    decrypted_dict[key] = value
-                    failed_count += 1
+                    decrypted_config[key] = value  # Keep encrypted on failure
+            elif isinstance(value, dict):
+                # Recursively decrypt nested dictionaries
+                decrypted_config[key] = self.decrypt_config(value, password)
             else:
                 # Keep non-encrypted values as-is
-                decrypted_dict[key] = value
+                decrypted_config[key] = value
         
-        # Log completion
-        duration = time.time() - start_time
-        log_histogram("config_encryption_decrypt_section_duration", duration)
-        log_counter("config_encryption_decrypt_section_complete", labels={
-            "total_keys": str(len(config_dict)),
-            "decrypted_keys": str(decrypted_count),
-            "failed_keys": str(failed_count)
-        })
-        
-        return decrypted_dict
+        return decrypted_config
     
-    def detect_api_keys(self, config_dict: Dict[str, Any]) -> bool:
+    def create_password_verifier(self, password: str) -> str:
         """
-        Detect if there are API keys in the configuration.
+        Create an encrypted test value for password verification.
         
-        Looks for 'api_settings' sections with non-empty 'api_key' values.
+        Args:
+            password: The password to verify later
+            
+        Returns:
+            Encrypted verification token
         """
-        log_counter("config_encryption_detect_api_keys_attempt")
-        api_key_count = 0
-        
-        for section_name, section_value in config_dict.items():
-            if section_name.startswith('api_settings.') and isinstance(section_value, dict):
-                api_key = section_value.get('api_key', '')
-                # Check if API key exists and is not a placeholder
-                if api_key and not api_key.startswith('<') and not api_key.endswith('>'):
-                    api_key_count += 1
-        
-        log_counter("config_encryption_detect_api_keys_result", labels={
-            "has_api_keys": str(api_key_count > 0),
-            "api_key_count": str(api_key_count)
-        })
-        
-        return api_key_count > 0
+        # Use a known test string with timestamp for uniqueness
+        test_value = f"PASSWORD_VERIFICATION_TOKEN_{secrets.token_hex(16)}"
+        return self.encrypt_value(test_value, password)
     
+    def verify_password(self, password: str, verifier: str) -> bool:
+        """
+        Verify a password by attempting to decrypt a verification token.
+        
+        Args:
+            password: The password to verify
+            verifier: The encrypted verification token
+            
+        Returns:
+            True if password is correct, False otherwise
+        """
+        try:
+            decrypted = self.decrypt_value(verifier, password)
+            # Check if it's a valid verification token
+            return decrypted.startswith("PASSWORD_VERIFICATION_TOKEN_")
+        except ValueError:
+            return False
+    
+    def detect_api_keys(self, config: Dict[str, Any]) -> bool:
+        """
+        Detect if there are API keys in the configuration that should be encrypted.
+        
+        Args:
+            config: Configuration dictionary to check
+            
+        Returns:
+            True if unencrypted API keys are found
+        """
+        def check_dict_for_keys(d: Dict[str, Any], parent_key: str = "") -> bool:
+            for key, value in d.items():
+                full_key = f"{parent_key}.{key}" if parent_key else key
+                
+                # Check for API key patterns
+                if key.lower() in ['api_key', 'apikey', 'api-key', 'secret', 'token', 'password']:
+                    if isinstance(value, str) and value.strip() and not self.is_encrypted(value):
+                        # Skip placeholders
+                        if not (value.startswith('<') and value.endswith('>')):
+                            return True
+                
+                # Check nested dictionaries
+                if isinstance(value, dict):
+                    if check_dict_for_keys(value, full_key):
+                        return True
+            
+            return False
+        
+        return check_dict_for_keys(config)
 
 
 # Global instance for convenience

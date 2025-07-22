@@ -5817,8 +5817,8 @@ if __name__ == "__main__":
                     if password:
                         # Verify password
                         from tldw_chatbook.Utils.config_encryption import config_encryption
-                        stored_hash = encryption_config.get("password_hash", "")
-                        if config_encryption.verify_password(password, stored_hash):
+                        password_verifier = encryption_config.get("password_verifier", "")
+                        if password_verifier and config_encryption.verify_password(password, password_verifier):
                             self.password = password
                             self.exit()
                         else:

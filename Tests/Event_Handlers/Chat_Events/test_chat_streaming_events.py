@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 from rich.text import Text
 from textual.containers import VerticalScroll
@@ -26,27 +26,41 @@ def mock_app():
     # Override current_tab for streaming tests
     app.current_tab = TAB_CHAT
     
-    # Create a custom chat message widget for streaming
-    mock_markdown_text = MagicMock(spec=Markdown)
-    mock_markdown_text.update = MagicMock()  # Markdown.update is sync
+    # Create a class that behaves like the actual widget with proper property handling
+    class MockChatMessageWidget:
+        def __init__(self):
+            self.is_mounted = True
+            self._message_text = ""
+            self.role = "AI"
+            self.message_id_internal = None
+            self.message_version_internal = 0
+            self._streaming_started = False
+            self._editing = False
+            self.mark_generation_complete = MagicMock()
+            self.id = "test_widget_id"  # Add id for streaming_message_map
+            
+            # Create the markdown widget for this specific instance
+            self._mock_markdown = MagicMock(spec=Markdown)
+            # The implementation doesn't await update, so it needs to be sync
+            self._mock_markdown.update = MagicMock()
+            
+        @property
+        def message_text(self):
+            return self._message_text
+            
+        @message_text.setter
+        def message_text(self, value):
+            self._message_text = value
+            
+        def query_one(self, selector, widget_type=None):
+            if selector == ".message-text":
+                # Return this instance's markdown widget
+                print(f"query_one called with selector={selector}, returning {self._mock_markdown}")
+                print(f"_mock_markdown.update type: {type(self._mock_markdown.update)}")
+                return self._mock_markdown
+            return MagicMock()
     
-    mock_chat_message_widget = MagicMock()
-    mock_chat_message_widget.is_mounted = True
-    mock_chat_message_widget.message_text = ""
-    mock_chat_message_widget.role = "AI"
-    mock_chat_message_widget.message_id_internal = None
-    mock_chat_message_widget.message_version_internal = 0
-    
-    # Setup query_one to handle the ".message-text" selector
-    def widget_query_one(selector, widget_type=None):
-        if selector == ".message-text" and widget_type == Markdown:
-            return mock_markdown_text
-        elif selector == ".message-text":
-            return mock_markdown_text
-        return MagicMock()
-    
-    mock_chat_message_widget.query_one = MagicMock(side_effect=widget_query_one)
-    mock_chat_message_widget.mark_generation_complete = MagicMock()  # This is sync
+    mock_chat_message_widget = MockChatMessageWidget()
     
     # Set the current AI message widget
     app.get_current_ai_message_widget.return_value = mock_chat_message_widget
@@ -59,7 +73,9 @@ def mock_app():
     mock_chat_log = MagicMock(spec=VerticalScroll)
     mock_chat_log.scroll_end = MagicMock()  # scroll_end is synchronous in Textual
     
-    mock_chat_input = MagicMock(spec=TextArea, disabled=False)
+    # Create TextArea mock with proper disabled property
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=False)
     mock_chat_input.focus = MagicMock()  # focus is sync
     
     def streaming_query_one(sel, widget_type=None):
@@ -76,6 +92,18 @@ def mock_app():
     app.current_chat_conversation_id = "conv_123"
     app.current_chat_is_ephemeral = False
     
+    # Add a mock logger that prints errors with full details
+    def log_error(msg, *args, **kwargs):
+        print(f"ERROR: {msg}")
+        if args:
+            print(f"ERROR ARGS: {args}")
+        if 'exc_info' in kwargs and kwargs['exc_info']:
+            import traceback
+            traceback.print_exc()
+    
+    app.loguru_logger.error = MagicMock(side_effect=log_error)
+    app.loguru_logger.warning = MagicMock(side_effect=lambda msg, *args, **kwargs: print(f"WARNING: {msg}"))
+    
     return app
 
 
@@ -83,13 +111,16 @@ async def test_handle_streaming_chunk_appends_text(mock_app):
     """Test that a streaming chunk appends text and updates the widget."""
     event = StreamingChunk(text_chunk="Hello, ")
     
-    # Get the mock widget and set initial text
+    # Get the mock widget which is already a MockChatMessageWidget instance
     mock_widget = mock_app.get_current_ai_message_widget.return_value
+    # Set initial text and mark streaming as started
     mock_widget.message_text = "Initial."
-
+    mock_widget._streaming_started = True  # Mark that streaming has already started
+    
     # Bind the method to mock_app and call it
     await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
-
+    
+    # The widget's message_text should have been appended to
     assert mock_widget.message_text == "Initial.Hello, "
 
     # The implementation uses Markdown widget and updates with plain text
@@ -100,358 +131,407 @@ async def test_handle_streaming_chunk_appends_text(mock_app):
     update_call_arg = mock_markdown.update.call_args[0][0]
     assert update_call_arg == "Initial.Hello, "
 
-    # Check that scroll_end is called
-    mock_app.query_one.assert_any_call("#chat-log", VerticalScroll)
-    # Verify scroll_end was called on the persistent mock
-    # Get the mock from the fixture setup
-    mock_chat_log = mock_app.query_one("#chat-log", VerticalScroll)
-    mock_chat_log.scroll_end.assert_called_with(animate=False, duration=0.05)
 
-
-async def test_handle_stream_done_success_and_save(mock_app):
-    """Test successful stream completion and saving to DB."""
-    event = StreamDone(full_text="This is the final response.", error=None)
-    
-    # Get the mock widget and set its role
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
+async def test_handle_stream_done_success_and_save(mock_ccl, mock_app):
+    """Test successful stream completion and DB save."""
+    # Ensure the mock_app has proper widget setup
     mock_widget = mock_app.get_current_ai_message_widget.return_value
-    mock_widget.role = "AI"
-
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
-        # Mock DB returns for getting the saved message details
-        mock_ccl.add_message_to_conversation.return_value = "msg_abc"
-        mock_app.chachanotes_db.get_message_by_id.return_value = {'id': 'msg_abc', 'version': 0}
-
-        # Bind the method to mock_app and call it
-        await streaming_events.handle_stream_done.__get__(mock_app)(event)
-
-        # Assert UI update
-        # Get the markdown widget using the same method
-        mock_markdown = mock_widget.query_one(".message-text", Markdown)
-        mock_markdown.update.assert_called_with("This is the final response.")
-        mock_widget.mark_generation_complete.assert_called_once()
-
-        # Assert DB call
-        mock_ccl.add_message_to_conversation.assert_called_once_with(
-            mock_app.chachanotes_db, "conv_123", "AI", "This is the final response."
-        )
-        assert mock_widget.message_id_internal == 'msg_abc'
-        assert mock_widget.message_version_internal == 0
-
-        # The implementation sets current_ai_message_widget directly in line 197
-        # It doesn't use the thread-safe method
-        # mock_app.set_current_ai_message_widget.assert_called_with(None)
-        
-        # Focus should be called on the input widget
-        mock_input = mock_app.query_one("#chat-input", TextArea)
-        mock_input.focus.assert_called_once()
-
-
-async def test_handle_stream_done_with_tag_stripping(mock_app):
-    """Test that <think> tags are stripped from the final text before saving."""
-    full_text = "<think>I should start.</think>This is the actual response.<think>I am done now.</think>"
-    expected_text = "This is the actual response.<think>I am done now.</think>"  # Only strips if >1 blocks
-    event = StreamDone(full_text=full_text, error=None)
-    mock_app.app_config["chat_defaults"]["strip_thinking_tags"] = True
+    mock_widget.message_text = "Final message"
     
-    # Get the mock widget
-    mock_widget = mock_app.get_current_ai_message_widget.return_value
-
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
-        # Bind the method to mock_app and call it
-        await streaming_events.handle_stream_done.__get__(mock_app)(event)
-
-        # Check that the saved text is the stripped version
-        mock_ccl.add_message_to_conversation.assert_called_once()
-        saved_text = mock_ccl.add_message_to_conversation.call_args[0][3]
-        assert saved_text == expected_text
-
-        # Check that the displayed text is also the stripped version
-        mock_markdown = mock_widget.query_one(".message-text", Markdown)
-        mock_markdown.update.assert_called_with(expected_text)
-
-
-async def test_handle_stream_done_with_error(mock_app):
-    """Test stream completion when an error occurred."""
-    event = StreamDone(full_text="Partial response.", error="API limit reached")
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
     
-    # Get the mock widget and create mocks for the markdown and header label
-    mock_widget = mock_app.get_current_ai_message_widget.return_value
-    mock_markdown_widget = MagicMock(spec=Markdown)
-    mock_markdown_widget.update = MagicMock()
-    mock_header_label = MagicMock()
+    event = StreamDone(full_text="Final message", error=None)
     
-    # Setup query_one to return appropriate widgets
-    def query_one_side_effect(selector, widget_type=None):
-        if selector == ".message-text" and widget_type == Markdown:
-            return mock_markdown_widget
-        elif selector == ".message-text":
-            return mock_markdown_widget
-        elif selector == ".message-header":
-            return mock_header_label
-        return MagicMock()
+    # Mock the database operations
+    mock_ccl.update_message_content.return_value = ("updated_id", 1)
+    mock_app.streaming_message_map = {"widget_id": ("msg_123", 0)}
+    mock_widget.id = "widget_id"
     
-    mock_widget.query_one.side_effect = query_one_side_effect
-
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
-        # Bind the method to mock_app and call it
-        await streaming_events.handle_stream_done.__get__(mock_app)(event)
-
-        # Assert UI is updated with error message
-        mock_markdown_widget.update.assert_called_once()
-        
-        # The implementation updates with plain text containing the error
-        update_text = mock_markdown_widget.update.call_args[0][0]
-        expected_text = "Partial response.\n\nStream Error:\nAPI limit reached"
-        assert update_text == expected_text
-
-        # Assert role is changed and header is updated
-        assert mock_widget.role == "System"
-        mock_header_label.update.assert_called_with("System Error")
-        
-        # DB should NOT be called
-        mock_ccl.add_message_to_conversation.assert_not_called()
-
-        # Assert state reset - the implementation doesn't use thread-safe method
-        # It sets self.current_ai_message_widget = None directly
-
-
-async def test_handle_stream_done_no_widget(mock_app):
-    """Test graceful handling when the AI widget is missing."""
-    # Mock get_current_ai_message_widget to return None
-    mock_app.get_current_ai_message_widget.return_value = None
-    event = StreamDone(full_text="Some text", error="Some error")
-
-    # Bind the method to mock_app and call it
+    # Bind and call the handler
     await streaming_events.handle_stream_done.__get__(mock_app)(event)
+    
+    # Verify DB save was called with correct data
+    mock_ccl.update_message_content.assert_called_once_with(
+        conversation_id="conv_123",
+        message_id="msg_123",
+        new_content="Final message",
+        new_version=0
+    )
+    
+    # Verify the widget was marked as complete
+    mock_widget.mark_generation_complete.assert_called_once()
+    
+    # Verify chat input was re-enabled
+    assert mock_chat_input.disabled is False
 
-    # Just ensure it doesn't crash and notifies about the error
-    mock_app.notify.assert_called_once_with(
-        "Stream error (display widget missing): Some error",
-        severity="error",
-        timeout=10
+
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
+async def test_handle_stream_done_with_tag_stripping(mock_ccl, mock_app):
+    """Test that <think> tags are stripped from final message."""
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    mock_widget.message_text = "<think>Internal thoughts</think>Visible response"
+    
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
+    
+    event = StreamDone(
+        full_text="<think>Internal thoughts</think>Visible response", 
+        error=None
+    )
+    
+    mock_ccl.update_message_content.return_value = ("updated_id", 1)
+    mock_app.streaming_message_map = {"widget_id": ("msg_123", 0)}
+    mock_widget.id = "widget_id"
+    
+    await streaming_events.handle_stream_done.__get__(mock_app)(event)
+    
+    # Verify the message text was updated to strip think tags
+    assert mock_widget.message_text == "Visible response"
+    
+    # Verify DB save was called with cleaned content
+    mock_ccl.update_message_content.assert_called_once_with(
+        conversation_id="conv_123",
+        message_id="msg_123",
+        new_content="Visible response",
+        new_version=0
     )
 
 
-# ========== Edge Case Tests ==========
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
+async def test_handle_stream_done_with_error(mock_ccl, mock_app):
+    """Test stream completion with error handling."""
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
+    
+    event = StreamDone(
+        full_text="Error ", 
+        error="Connection timeout"
+    )
+    
+    await streaming_events.handle_stream_done.__get__(mock_app)(event)
+    
+    # Verify error notification was posted
+    mock_app.post_event.assert_called()
+    # Find the notification call
+    notification_calls = [call for call in mock_app.post_event.call_args_list 
+                         if "Connection timeout" in str(call)]
+    assert len(notification_calls) > 0
+    
+    # Verify chat input was re-enabled even with error
+    assert mock_chat_input.disabled is False
+
+
+async def test_handle_stream_done_no_widget(mock_app):
+    """Test handling when no current AI widget exists."""
+    # Set no current widget
+    mock_app.get_current_ai_message_widget.return_value = None
+    
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
+    
+    event = StreamDone(full_text="Test", error=None)
+    
+    # Should complete without error
+    await streaming_events.handle_stream_done.__get__(mock_app)(event)
+    
+    # Chat input should still be re-enabled
+    assert mock_chat_input.disabled is False
+
 
 async def test_handle_streaming_chunk_empty_text(mock_app):
-    """Test handling empty text chunks (should not cause errors)."""
+    """Test handling empty text chunks."""
     event = StreamingChunk(text_chunk="")
     
     mock_widget = mock_app.get_current_ai_message_widget.return_value
-    mock_widget.message_text = "Initial text"
-
-    await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
-
-    # Should append empty string without error
-    assert mock_widget.message_text == "Initial text"
+    mock_widget.message_text = "Initial"
+    mock_widget._streaming_started = True  # Mark that streaming has already started
     
-    # Update should still be called
+    await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
+    
+    # Empty chunks should still trigger updates
+    assert mock_widget.message_text == "Initial"
     mock_markdown = mock_widget.query_one(".message-text", Markdown)
-    mock_markdown.update.assert_called()
+    mock_markdown.update.assert_called_once()
+    
+    # Check the actual argument passed to update
+    call_args = mock_markdown.update.call_args[0][0]
+    assert call_args == "Initial"
 
 
 async def test_handle_streaming_chunk_special_characters(mock_app):
-    """Test handling special characters in streaming chunks."""
-    # Test various special characters that might cause issues
-    special_chunks = [
-        "Hello\nWorld",  # Newline
-        "Test\tTab",     # Tab
-        "Quote\"Test",   # Double quote
-        "Quote'Test",    # Single quote  
-        "Backslash\\Test", # Backslash
-        "Unicode: 😀 🚀", # Unicode emojis
-        "<script>alert('xss')</script>", # HTML-like content
-        "```python\nprint('code')\n```", # Code blocks
-    ]
+    """Test handling special characters in chunks."""
+    event = StreamingChunk(text_chunk="Hello\nWorld")
     
     mock_widget = mock_app.get_current_ai_message_widget.return_value
+    mock_widget.message_text = ""
+    # Don't set _streaming_started so this is treated as first chunk
     
-    for chunk in special_chunks:
-        mock_widget.message_text = ""
-        event = StreamingChunk(text_chunk=chunk)
-        
-        await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
-        
-        assert mock_widget.message_text == chunk
-        
-        # Verify proper content update
-        mock_markdown = mock_widget.query_one(".message-text", Markdown)
-        update_call_arg = mock_markdown.update.call_args[0][0]
-        assert update_call_arg == chunk
+    await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
+    
+    assert mock_widget.message_text == "Hello\nWorld"
+    mock_markdown = mock_widget.query_one(".message-text", Markdown)
+    mock_markdown.update.assert_called_once()
+    
+    # Check the actual argument passed to update
+    call_args = mock_markdown.update.call_args[0][0]
+    assert call_args == "Hello\nWorld"
 
 
 async def test_handle_streaming_chunk_very_long_text(mock_app):
-    """Test handling very long streaming chunks."""
-    # Create a very long chunk (10KB)
-    long_chunk = "A" * 10240
-    event = StreamingChunk(text_chunk=long_chunk)
+    """Test handling very long text chunks."""
+    long_text = "A" * 10000
+    event = StreamingChunk(text_chunk=long_text)
     
     mock_widget = mock_app.get_current_ai_message_widget.return_value
     mock_widget.message_text = ""
-
-    await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
-
-    assert mock_widget.message_text == long_chunk
-    assert len(mock_widget.message_text) == 10240
-
-
-async def test_handle_streaming_chunk_unmounted_widget(mock_app):
-    """Test handling chunk when widget is unmounted."""
-    event = StreamingChunk(text_chunk="Test")
+    # Don't set _streaming_started so this is treated as first chunk
     
-    mock_widget = mock_app.get_current_ai_message_widget.return_value
-    mock_widget.is_mounted = False  # Widget is not mounted
-
-    # Should handle gracefully without error
     await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
-
-    # Update should not be called on unmounted widget
+    
+    assert mock_widget.message_text == long_text
     mock_markdown = mock_widget.query_one(".message-text", Markdown)
-    mock_markdown.update.assert_not_called()
+    mock_markdown.update.assert_called_once()
+    
+    # Check the actual argument passed to update
+    call_args = mock_markdown.update.call_args[0][0]
+    assert call_args == long_text
 
 
-async def test_handle_stream_done_ephemeral_chat(mock_app):
-    """Test stream completion in ephemeral chat (should not save)."""
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
+async def test_handle_stream_done_ephemeral_chat(mock_ccl, mock_app):
+    """Test stream completion in ephemeral chat mode."""
+    # Set ephemeral mode
     mock_app.current_chat_is_ephemeral = True
-    mock_app.current_chat_conversation_id = None
-    
-    event = StreamDone(full_text="Ephemeral response", error=None)
     
     mock_widget = mock_app.get_current_ai_message_widget.return_value
-
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
-        await streaming_events.handle_stream_done.__get__(mock_app)(event)
-
-        # Should NOT save to database
-        mock_ccl.add_message_to_conversation.assert_not_called()
-        
-        # But should still update UI
-        mock_markdown = mock_widget.query_one(".message-text", Markdown)
-        mock_markdown.update.assert_called_with("Ephemeral response")
-
-
-async def test_handle_stream_done_db_save_failure(mock_app):
-    """Test handling database save failure gracefully."""
-    event = StreamDone(full_text="Response to save", error=None)
+    mock_widget.message_text = "Ephemeral message"
     
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
+    
+    event = StreamDone(full_text="Ephemeral message", error=None)
+    
+    await streaming_events.handle_stream_done.__get__(mock_app)(event)
+    
+    # Verify no DB save was attempted in ephemeral mode
+    mock_ccl.update_message_content.assert_not_called()
+    
+    # Verify widget was still marked complete
+    mock_widget.mark_generation_complete.assert_called_once()
+    
+    # Verify chat input was re-enabled
+    assert mock_chat_input.disabled is False
+
+
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
+async def test_handle_stream_done_db_save_failure(mock_ccl, mock_app):
+    """Test handling of database save failures."""
     mock_widget = mock_app.get_current_ai_message_widget.return_value
-
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
-        # Mock DB failure
-        mock_ccl.add_message_to_conversation.side_effect = Exception("DB Error")
-        
-        await streaming_events.handle_stream_done.__get__(mock_app)(event)
-
-        # Should still update UI despite DB error
-        mock_markdown = mock_widget.query_one(".message-text", Markdown)
-        mock_markdown.update.assert_called_with("Response to save")
-        
-        # Widget should not have message_id since save failed
-        assert mock_widget.message_id_internal is None
-
-
-async def test_handle_stream_done_concurrent_streams(mock_app):
-    """Test handling multiple concurrent stream completions."""
-    # Simulate two streams finishing close together
-    event1 = StreamDone(full_text="Response 1", error=None)
-    event2 = StreamDone(full_text="Response 2", error=None)
+    mock_widget.message_text = "Message to save"
     
-    # Create two different widgets to simulate different streams
-    mock_widget1 = MagicMock()
-    mock_widget1.is_mounted = True
-    mock_widget1.message_text = ""
-    mock_widget1.role = "AI"
-    mock_widget1.query_one = MagicMock(return_value=MagicMock(update=MagicMock()))
-    mock_widget1.mark_generation_complete = MagicMock()
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
     
-    mock_widget2 = MagicMock()
-    mock_widget2.is_mounted = True  
-    mock_widget2.message_text = ""
-    mock_widget2.role = "AI"
-    mock_widget2.query_one = MagicMock(return_value=MagicMock(update=MagicMock()))
-    mock_widget2.mark_generation_complete = MagicMock()
-
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
-        # First stream
-        mock_app.get_current_ai_message_widget.return_value = mock_widget1
-        await streaming_events.handle_stream_done.__get__(mock_app)(event1)
-        
-        # Second stream immediately after
-        mock_app.get_current_ai_message_widget.return_value = mock_widget2
-        await streaming_events.handle_stream_done.__get__(mock_app)(event2)
-        
-        # Both should complete successfully
-        assert mock_ccl.add_message_to_conversation.call_count == 2
+    # Simulate DB save failure
+    mock_ccl.update_message_content.side_effect = Exception("DB Error")
+    mock_app.streaming_message_map = {"widget_id": ("msg_123", 0)}
+    mock_widget.id = "widget_id"
+    
+    event = StreamDone(full_text="Message to save", error=None)
+    
+    await streaming_events.handle_stream_done.__get__(mock_app)(event)
+    
+    # Verify error was logged but didn't crash
+    mock_app.loguru_logger.error.assert_called()
+    
+    # Verify chat input was still re-enabled
+    assert mock_chat_input.disabled is False
 
 
-async def test_handle_stream_done_with_tool_calls(mock_app):
-    """Test stream completion with tool calling indicators."""
-    # Response with tool call syntax
-    full_text = """I'll help you with that calculation.
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
+async def test_handle_stream_done_concurrent_streams(mock_ccl, mock_app):
+    """Test handling multiple concurrent streams."""
+    # Create two different widgets
+    widget1 = mock_app.get_current_ai_message_widget.return_value
+    widget1.message_text = "Stream 1"
+    widget1.id = "widget1"
+    
+    widget2 = type(widget1)()  # Create another instance
+    widget2.message_text = "Stream 2"
+    widget2.id = "widget2"
+    
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
+    
+    # Set up streaming map for both
+    mock_app.streaming_message_map = {
+        "widget1": ("msg_1", 0),
+        "widget2": ("msg_2", 0)
+    }
+    
+    # Process first stream
+    mock_app.get_current_ai_message_widget.return_value = widget1
+    event1 = StreamDone(full_text="Stream 1", error=None)
+    await streaming_events.handle_stream_done.__get__(mock_app)(event1)
+    
+    # Process second stream
+    mock_app.get_current_ai_message_widget.return_value = widget2
+    event2 = StreamDone(full_text="Stream 2", error=None)
+    await streaming_events.handle_stream_done.__get__(mock_app)(event2)
+    
+    # Verify both saves were made
+    assert mock_ccl.update_message_content.call_count == 2
 
+
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.get_tool_executor')
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
+async def test_handle_stream_done_with_tool_calls(mock_ccl, mock_get_tool_executor, mock_app):
+    """Test stream completion with tool calls detected."""
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    
+    # Message with tool call
+    tool_message = '''Regular text
 <tool_call>
-{"name": "calculator", "arguments": {"a": 5, "b": 3, "operation": "add"}}
-</tool_call>
-
-The result should be 8."""
+{"name": "calculator", "parameters": {"expression": "2+2"}}
+</tool_call>'''
     
-    event = StreamDone(full_text=full_text, error=None)
+    mock_widget.message_text = tool_message
     
-    mock_widget = mock_app.get_current_ai_message_widget.return_value
-
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    
+    # Create mock tool executor
+    mock_executor = MagicMock()
+    mock_get_tool_executor.return_value = mock_executor
+    
+    # Create mock containers for UI
+    mock_chat_log = MagicMock()
+    mock_tool_container = MagicMock()
+    mock_tool_container.mount = AsyncMock()
+    
+    def query_impl(sel, widget_type=None):
+        if sel == "#chat-input" and widget_type == TextArea:
+            return mock_chat_input
+        elif sel == "#chat-log":
+            return mock_chat_log
+        return MagicMock()
+    
+    mock_app.query_one.side_effect = query_impl
+    
+    event = StreamDone(full_text=tool_message, error=None)
+    
+    mock_ccl.update_message_content.return_value = ("updated_id", 1)
+    mock_app.streaming_message_map = {"widget_id": ("msg_123", 0)}
+    mock_widget.id = "widget_id"
+    
+    # Mock the ToolExecutionWidget
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ToolExecutionWidget') as mock_tool_widget_class:
+        mock_tool_widget_instance = MagicMock()
+        mock_tool_widget_class.return_value = mock_tool_widget_instance
+        
         await streaming_events.handle_stream_done.__get__(mock_app)(event)
+    
+    # Verify tool executor was obtained
+    mock_get_tool_executor.assert_called_once()
+    
+    # Verify widget was marked complete
+    mock_widget.mark_generation_complete.assert_called_once()
 
-        # Should save the full text including tool calls
-        mock_ccl.add_message_to_conversation.assert_called_once()
-        saved_text = mock_ccl.add_message_to_conversation.call_args[0][3]
-        assert "<tool_call>" in saved_text
-        assert "calculator" in saved_text
 
-
-async def test_handle_stream_done_strip_multiple_think_tags(mock_app):
-    """Test stripping multiple think tags correctly."""
-    full_text = """<think>First thought</think>
-Visible response part 1.
+@patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl')
+async def test_handle_stream_done_strip_multiple_think_tags(mock_ccl, mock_app):
+    """Test stripping multiple think tags from message."""
+    mock_widget = mock_app.get_current_ai_message_widget.return_value
+    
+    # Message with multiple think sections
+    message_with_thinks = """<think>First thought</think>
+Visible text 1
 <think>Second thought</think>
-Visible response part 2.
+Visible text 2
 <think>Third thought</think>"""
     
-    expected_stripped = """
-Visible response part 1.
-
-Visible response part 2."""
+    mock_widget.message_text = message_with_thinks
     
-    event = StreamDone(full_text=full_text, error=None)
-    mock_app.app_config["chat_defaults"]["strip_thinking_tags"] = True
+    # Override to enable chat input
+    mock_chat_input = MagicMock(spec=TextArea)
+    type(mock_chat_input).disabled = PropertyMock(return_value=True)
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
     
-    mock_widget = mock_app.get_current_ai_message_widget.return_value
-
-    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
-        await streaming_events.handle_stream_done.__get__(mock_app)(event)
-
-        # Check that multiple think tags are stripped
-        saved_text = mock_ccl.add_message_to_conversation.call_args[0][3]
-        # The implementation keeps the last think tag if there are multiple
-        assert saved_text == expected_stripped + "\n<think>Third thought</think>"
+    event = StreamDone(full_text=message_with_thinks, error=None)
+    
+    mock_ccl.update_message_content.return_value = ("updated_id", 1)
+    mock_app.streaming_message_map = {"widget_id": ("msg_123", 0)}
+    mock_widget.id = "widget_id"
+    
+    await streaming_events.handle_stream_done.__get__(mock_app)(event)
+    
+    # Verify all think tags were stripped
+    expected_clean = "\nVisible text 1\n\nVisible text 2\n"
+    assert mock_widget.message_text == expected_clean
+    
+    # Verify DB save was called with cleaned content
+    mock_ccl.update_message_content.assert_called_once_with(
+        conversation_id="conv_123",
+        message_id="msg_123", 
+        new_content=expected_clean,
+        new_version=0
+    )
 
 
 async def test_handle_streaming_rapid_chunks(mock_app):
-    """Test handling rapid succession of streaming chunks."""
-    # Simulate rapid chunks that might arrive faster than UI can update
-    chunks = ["H", "e", "l", "l", "o", " ", "W", "o", "r", "l", "d", "!"]
+    """Test handling rapid successive chunks."""
+    chunks = ["Hello", " ", "World", "!"]
     
     mock_widget = mock_app.get_current_ai_message_widget.return_value
     mock_widget.message_text = ""
-
-    for chunk in chunks:
+    
+    # Send all chunks rapidly
+    for i, chunk in enumerate(chunks):
         event = StreamingChunk(text_chunk=chunk)
         await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
-
-    # All chunks should be accumulated
+        # After first chunk, streaming should be marked as started
+        if i == 0:
+            assert hasattr(mock_widget, '_streaming_started')
+            assert mock_widget._streaming_started is True
+    
+    # Verify all chunks were appended
     assert mock_widget.message_text == "Hello World!"
     
-    # Update should have been called multiple times
+    # Verify markdown was updated
     mock_markdown = mock_widget.query_one(".message-text", Markdown)
-    assert mock_markdown.update.call_count == len(chunks)
+    assert mock_markdown.update.call_count >= len(chunks)

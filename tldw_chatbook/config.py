@@ -368,21 +368,14 @@ def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
         logger.warning("Encryption is enabled but no password is set. Cannot decrypt config.")
         return config_data
     
-    salt_b64 = encryption_config.get("salt")
-    if not salt_b64:
-        logger.error("Encryption is enabled but no salt found in config.")
-        return config_data
-    
     try:
-        import base64
-        salt = base64.b64decode(salt_b64)
         enc_module = get_encryption_module()
         
         # Decrypt api_settings sections
         decrypted_config = copy.deepcopy(config_data)
         for section_name, section_value in config_data.items():
             if section_name.startswith('api_settings.') and isinstance(section_value, dict):
-                decrypted_section = enc_module.decrypt_config_section(section_value, password, salt)
+                decrypted_section = enc_module.decrypt_config(section_value, password)
                 decrypted_config[section_name] = decrypted_section
         
         return decrypted_config
@@ -405,30 +398,19 @@ def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Di
     enc_module = get_encryption_module()
     encrypted_config = copy.deepcopy(config_data)
     
-    # Generate salt if not present
-    encryption_config = encrypted_config.get("encryption", {})
-    if not encryption_config.get("salt"):
-        salt = enc_module.generate_salt()
-        import base64
-        encryption_config["salt"] = base64.b64encode(salt).decode('utf-8')
-    else:
-        import base64
-        salt = base64.b64decode(encryption_config["salt"])
-    
     # Set encryption metadata
+    encryption_config = encrypted_config.get("encryption", {})
     encryption_config["enabled"] = True
-    encryption_config["method"] = "AES-256-CBC-HMAC"
-    encryption_config["version"] = 2
-    # Use password verifier instead of hash for better security
-    encryption_config["password_verifier"] = enc_module.create_password_verifier(password, salt)
-    # Keep old hash for backward compatibility during migration
-    encryption_config["password_hash"] = enc_module.hash_password(password, salt)
+    encryption_config["method"] = "AES-256-GCM-scrypt"
+    encryption_config["version"] = 1  # New clean version
+    # Create password verifier for authentication
+    encryption_config["password_verifier"] = enc_module.create_password_verifier(password)
     encrypted_config["encryption"] = encryption_config
     
     # Encrypt api_settings sections
     for section_name, section_value in config_data.items():
         if section_name.startswith('api_settings.') and isinstance(section_value, dict):
-            encrypted_section, _ = enc_module.encrypt_config_section(section_value, password, salt)
+            encrypted_section = enc_module.encrypt_config(section_value, password)
             encrypted_config[section_name] = encrypted_section
     
     return encrypted_config
@@ -2489,13 +2471,9 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
         if password:
             try:
                 enc_module = get_encryption_module()
-                salt_b64 = encryption_config.get("salt")
-                if salt_b64:
-                    import base64
-                    salt = base64.b64decode(salt_b64)
-                    encrypted_value, _ = enc_module.encrypt_value(value, password, salt)
-                    current_level[key] = encrypted_value
-                    logger.info(f"Encrypted API key for {section}")
+                encrypted_value = enc_module.encrypt_value(value, password)
+                current_level[key] = encrypted_value
+                logger.info(f"Encrypted API key for {section}")
             except Exception as e:
                 logger.error(f"Failed to encrypt value: {e}")
                 # Continue with unencrypted value
@@ -2735,28 +2713,15 @@ def disable_config_encryption(password: str) -> bool:
         if encryption_config.get("enabled", False):
             enc_module = get_encryption_module()
             
-            # Get salt
-            salt_b64 = encryption_config.get("salt", "")
-            if not salt_b64:
-                logger.error("No salt found in encryption config")
+            # Verify using password verifier
+            password_verifier = encryption_config.get("password_verifier", "")
+            if not password_verifier:
+                logger.error("No password verifier found in encryption config")
                 return False
             
-            import base64
-            salt = base64.b64decode(salt_b64)
-            
-            # Try new password verifier first, then fall back to legacy hash
-            password_verifier = encryption_config.get("password_verifier", "")
-            if password_verifier:
-                # Use new secure method
-                if not enc_module.verify_password_with_verifier(password, password_verifier, salt):
-                    logger.error("Invalid password provided")
-                    return False
-            else:
-                # Fall back to legacy method for backward compatibility
-                stored_hash = encryption_config.get("password_hash", "")
-                if not stored_hash or not enc_module.verify_password(password, stored_hash, salt):
-                    logger.error("Invalid password provided")
-                    return False
+            if not enc_module.verify_password(password, password_verifier):
+                logger.error("Invalid password provided")
+                return False
         
         # Set password temporarily for decryption
         set_encryption_password(password)
@@ -2811,28 +2776,15 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
         if encryption_config.get("enabled", False):
             enc_module = get_encryption_module()
             
-            # Get salt
-            salt_b64 = encryption_config.get("salt", "")
-            if not salt_b64:
-                logger.error("No salt found in encryption config")
+            # Verify using password verifier
+            password_verifier = encryption_config.get("password_verifier", "")
+            if not password_verifier:
+                logger.error("No password verifier found in encryption config")
                 return False
             
-            import base64
-            salt = base64.b64decode(salt_b64)
-            
-            # Try new password verifier first, then fall back to legacy hash
-            password_verifier = encryption_config.get("password_verifier", "")
-            if password_verifier:
-                # Use new secure method
-                if not enc_module.verify_password_with_verifier(old_password, password_verifier, salt):
-                    logger.error("Invalid current password provided")
-                    return False
-            else:
-                # Fall back to legacy method for backward compatibility
-                stored_hash = encryption_config.get("password_hash", "")
-                if not stored_hash or not enc_module.verify_password(old_password, stored_hash, salt):
-                    logger.error("Invalid current password provided")
-                    return False
+            if not enc_module.verify_password(old_password, password_verifier):
+                logger.error("Invalid current password provided")
+                return False
         else:
             logger.error("Encryption is not enabled")
             return False
