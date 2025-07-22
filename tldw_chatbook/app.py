@@ -93,7 +93,8 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, notes_sync_events, embeddings_events, subscription_events,
 )
-from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
+from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
+    chat_events_dictionaries
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSProgressEvent, TTSEventHandler
@@ -3535,8 +3536,35 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 view_container.display = is_target
                 if is_target:
                     self.log.info(f"Displaying ingest view: #{view_id}")
+                    # Initialize models for video/audio windows when they become visible
+                    if view_id == "ingest-view-local-video":
+                        self._initialize_video_models()
+                    elif view_id == "ingest-view-local-audio":
+                        self._initialize_audio_models()
             except QueryError:
                 self.log.warning(f"Ingest view container '#{view_id}' not found during show_ingest_view.")
+
+    def _initialize_video_models(self) -> None:
+        """Initialize models for the video ingestion window."""
+        try:
+            from .UI.Ingest_Window import IngestWindow
+            ingest_window = self.query_one("#ingest-window", IngestWindow)
+            if ingest_window._local_video_window:
+                self.log.debug("Initializing video window models")
+                ingest_window._local_video_window._try_initialize_models()
+        except Exception as e:
+            self.log.debug(f"Could not initialize video models: {e}")
+
+    def _initialize_audio_models(self) -> None:
+        """Initialize models for the audio ingestion window."""
+        try:
+            from .UI.Ingest_Window import IngestWindow
+            ingest_window = self.query_one("#ingest-window", IngestWindow)
+            if ingest_window._local_audio_window:
+                self.log.debug("Initializing audio window models")
+                ingest_window._local_audio_window._try_initialize_models()
+        except Exception as e:
+            self.log.debug(f"Could not initialize audio models: {e}")
 
     async def save_current_note(self) -> bool:
         """Saves the currently selected note's title and content to the database."""
@@ -5598,6 +5626,41 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e:
             loguru_logger.error(f"Error in quit handler: {e}")
         
+        # Save encrypted config if encryption is enabled
+        try:
+            from tldw_chatbook.config import (
+                load_cli_config_and_ensure_existence, 
+                get_encryption_password,
+                encrypt_api_keys_in_config,
+                DEFAULT_CONFIG_PATH
+            )
+            from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
+            import toml
+            
+            config_data = load_cli_config_and_ensure_existence()
+            encryption_config = config_data.get("encryption", {})
+            
+            if encryption_config.get("enabled", False):
+                password = get_encryption_password()
+                if password:
+                    loguru_logger.info("Encrypting configuration before exit...")
+                    try:
+                        # Encrypt the config
+                        encrypted_config = encrypt_api_keys_in_config(config_data, password)
+                        
+                        # Save the encrypted config
+                        config_text = toml.dumps(encrypted_config)
+                        atomic_write_text(DEFAULT_CONFIG_PATH, config_text)
+                        
+                        loguru_logger.info("Configuration encrypted and saved successfully")
+                    except Exception as e:
+                        loguru_logger.error(f"Failed to encrypt config on exit: {e}")
+                        # Continue with exit even if encryption fails
+                else:
+                    loguru_logger.warning("Encryption enabled but no password available - config not encrypted")
+        except Exception as e:
+            loguru_logger.error(f"Error during config encryption on exit: {e}")
+        
         # Always call the parent quit method
         self.exit()
 
@@ -5754,8 +5817,8 @@ if __name__ == "__main__":
                     if password:
                         # Verify password
                         from tldw_chatbook.Utils.config_encryption import config_encryption
-                        stored_hash = encryption_config.get("password_hash", "")
-                        if config_encryption.verify_password(password, stored_hash):
+                        password_verifier = encryption_config.get("password_verifier", "")
+                        if password_verifier and config_encryption.verify_password(password, password_verifier):
                             self.password = password
                             self.exit()
                         else:

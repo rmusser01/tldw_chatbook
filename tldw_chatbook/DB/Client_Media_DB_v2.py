@@ -98,7 +98,27 @@ class MediaDatabase:
     handling sync metadata and FTS updates internally via Python code.
     Requires client_id on initialization. Includes schema versioning.
     """
-    _CURRENT_SCHEMA_VERSION = 1  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 2  # Define the version this code supports
+    
+    # Migration registry - maps from_version to migration details
+    _MIGRATIONS = {
+        0: {
+            'to_version': 1,
+            'function': '_apply_schema_v1',
+            'description': 'Initial schema creation'
+        },
+        1: {
+            'to_version': 2,
+            'function': '_apply_migration_v1_to_v2',
+            'description': 'Add chunking configuration support'
+        },
+        # Future migrations: just add new entries here
+        # 2: {
+        #     'to_version': 3,
+        #     'function': '_apply_migration_v2_to_v3',
+        #     'description': 'Description of v3 changes'
+        # },
+    }
 
     # <<< Schema Definition (Version 1) >>>
 
@@ -748,6 +768,195 @@ class MediaDatabase:
         except Exception as e:
             logging.error(f"[Schema V1] Unexpected error during schema V1 application: {e}", exc_info=True)
             raise DatabaseError(f"Unexpected error applying schema V1: {e}") from e
+    
+    # Default chunking templates as Python data structures for easier maintenance
+    _DEFAULT_CHUNKING_TEMPLATES = [
+        {
+            'name': 'general',
+            'description': 'Default balanced chunking approach',
+            'template_json': {
+                'name': 'general',
+                'description': 'Default balanced chunking approach',
+                'base_method': 'words',
+                'pipeline': [
+                    {
+                        'stage': 'chunk',
+                        'method': 'words',
+                        'options': {'max_size': 400, 'overlap': 100}
+                    }
+                ],
+                'metadata': {'version': '1.0'}
+            },
+            'is_system': 1
+        },
+        {
+            'name': 'academic_paper',
+            'description': 'Structural chunking for academic papers with section preservation',
+            'template_json': {
+                'name': 'academic_paper',
+                'description': 'Structural chunking for academic papers',
+                'base_method': 'structural',
+                'pipeline': [
+                    {
+                        'stage': 'preprocess',
+                        'operations': [
+                            {
+                                'type': 'section_detection',
+                                'params': {
+                                    'headers': ['Abstract', 'Introduction', 'Methods', 'Results', 'Discussion', 'Conclusion', 'References']
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        'stage': 'chunk',
+                        'method': 'structural',
+                        'options': {'max_size': 500, 'overlap': 50, 'preserve_sections': True}
+                    }
+                ],
+                'metadata': {'version': '1.0', 'preserve_structure': True}
+            },
+            'is_system': 1
+        },
+        {
+            'name': 'code_documentation',
+            'description': 'Code-aware chunking for technical documentation',
+            'template_json': {
+                'name': 'code_documentation',
+                'description': 'Code-aware chunking',
+                'base_method': 'hierarchical',
+                'pipeline': [
+                    {
+                        'stage': 'preprocess',
+                        'operations': [
+                            {
+                                'type': 'code_block_detection',
+                                'params': {}
+                            }
+                        ]
+                    },
+                    {
+                        'stage': 'chunk',
+                        'method': 'hierarchical',
+                        'options': {'max_size': 600, 'overlap': 150, 'preserve_code_blocks': True}
+                    }
+                ],
+                'metadata': {'version': '1.0'}
+            },
+            'is_system': 1
+        },
+        {
+            'name': 'conversational',
+            'description': 'Semantic chunking for chat logs and conversations',
+            'template_json': {
+                'name': 'conversational',
+                'description': 'Semantic chunking for conversations',
+                'base_method': 'sentences',
+                'pipeline': [
+                    {
+                        'stage': 'chunk',
+                        'method': 'sentences',
+                        'options': {'max_size': 300, 'overlap': 50, 'sentence_grouping': True}
+                    }
+                ],
+                'metadata': {'version': '1.0', 'optimize_for': 'dialogue'}
+            },
+            'is_system': 1
+        },
+        {
+            'name': 'contextual',
+            'description': 'Enhanced chunking with surrounding context preservation',
+            'template_json': {
+                'name': 'contextual',
+                'description': 'Enhanced chunking with context',
+                'base_method': 'contextual',
+                'pipeline': [
+                    {
+                        'stage': 'chunk',
+                        'method': 'contextual',
+                        'options': {'max_size': 400, 'overlap': 100}
+                    },
+                    {
+                        'stage': 'postprocess',
+                        'operations': [
+                            {
+                                'type': 'add_context',
+                                'params': {'context_size': 2}
+                            }
+                        ]
+                    }
+                ],
+                'metadata': {'version': '1.0'}
+            },
+            'is_system': 1
+        }
+    ]
+    
+    def _apply_migration_v1_to_v2(self, conn: sqlite3.Connection):
+        """Applies migration from schema version 1 to version 2 (adds chunking support)."""
+        logging.info(f"Applying migration from version 1 to 2 (chunking support) to DB: {self.db_path_str}...")
+        try:
+            # Migration SQL for v1 to v2
+            migration_sql = """
+            -- Add chunking_config column to Media table
+            ALTER TABLE Media ADD COLUMN chunking_config TEXT;
+            
+            -- Create ChunkingTemplates table for reusable chunking configurations
+            CREATE TABLE IF NOT EXISTS ChunkingTemplates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT,
+                template_json TEXT NOT NULL,
+                is_system BOOLEAN DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            -- Add indexes for efficient lookups
+            CREATE INDEX IF NOT EXISTS idx_chunking_templates_name ON ChunkingTemplates(name);
+            CREATE INDEX IF NOT EXISTS idx_chunking_templates_is_system ON ChunkingTemplates(is_system);
+            
+            
+            -- Add trigger to update updated_at timestamp
+            CREATE TRIGGER update_chunking_templates_timestamp 
+            AFTER UPDATE ON ChunkingTemplates
+            BEGIN
+                UPDATE ChunkingTemplates SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+            END;
+            
+            -- Add column to track which template was used for existing chunks
+            ALTER TABLE MediaChunks ADD COLUMN chunking_template TEXT;
+            ALTER TABLE UnvectorizedMediaChunks ADD COLUMN chunking_template TEXT;
+            
+            -- Add column to track chunking method parameters for reproducibility
+            ALTER TABLE MediaChunks ADD COLUMN chunking_params TEXT;
+            ALTER TABLE UnvectorizedMediaChunks ADD COLUMN chunking_params TEXT;
+            
+            -- Update schema version to 2
+            UPDATE schema_version SET version = 2;
+            """
+            
+            # Apply migration in a transaction
+            with self.transaction():
+                logging.debug("[Migration v1->v2] Applying chunking configuration migration...")
+                conn.executescript(migration_sql)
+                
+                # Insert default templates using parameterized queries
+                insert_sql = "INSERT INTO ChunkingTemplates (name, description, template_json, is_system) VALUES (?, ?, ?, ?)"
+                template_params = [
+                    (t['name'], t['description'], json.dumps(t['template_json']), t['is_system'])
+                    for t in self._DEFAULT_CHUNKING_TEMPLATES
+                ]
+                conn.executemany(insert_sql, template_params)
+                
+                logging.info("[Migration v1->v2] Chunking configuration migration applied successfully.")
+                
+        except sqlite3.Error as e:
+            logging.error(f"[Migration v1->v2] Failed during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Migration v1->v2 failed: {e}") from e
+        except Exception as e:
+            logging.error(f"[Migration v1->v2] Unexpected error during migration: {e}", exc_info=True)
+            raise DatabaseError(f"Unexpected error during migration v1->v2: {e}") from e
 
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
@@ -772,18 +981,36 @@ class MediaDatabase:
             if current_db_version > target_version:
                 raise SchemaError(f"Database schema version ({current_db_version}) is newer than supported by code ({target_version}).")
 
-            # --- Apply Migrations ---
-            if current_db_version == 0:
-                self._apply_schema_v1(conn)  # Call the updated method
-                # Verify version update AFTER _apply_schema_v1 has committed
-                final_db_version = self._get_db_version(conn)
-                if final_db_version != target_version:
-                    # If this fails now, it means the commit didn't work or the read is stale
-                    raise SchemaError(f"Schema migration applied, but final DB version is {final_db_version}, expected {target_version}. Manual check required.")
-                logging.info(f"Database schema initialized/migrated to version {target_version}.")
-
-            else:
-                raise SchemaError(f"Migration needed from version {current_db_version} to {target_version}, but no migration path is defined in the code.")
+            # Apply migrations sequentially using the migration registry
+            while current_db_version < target_version:
+                migration = self._MIGRATIONS.get(current_db_version)
+                if not migration:
+                    raise SchemaError(f"No migration path defined from version {current_db_version}")
+                
+                next_version = migration['to_version']
+                migration_func_name = migration['function']
+                description = migration['description']
+                
+                # Get the migration function
+                migration_func = getattr(self, migration_func_name, None)
+                if not migration_func:
+                    raise SchemaError(f"Migration function {migration_func_name} not found")
+                
+                logging.info(f"Applying migration: {description} (v{current_db_version} → v{next_version})")
+                migration_func(conn)
+                
+                # Verify the migration updated the version correctly
+                new_db_version = self._get_db_version(conn)
+                if new_db_version != next_version:
+                    raise SchemaError(
+                        f"Migration {migration_func_name} failed to update version. "
+                        f"Expected {next_version}, got {new_db_version}"
+                    )
+                
+                current_db_version = new_db_version
+                logging.info(f"Successfully migrated to version {current_db_version}")
+            
+            logging.info(f"Database schema fully migrated to version {target_version}")
 
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             logging.error(f"Schema initialization/migration failed: {e}", exc_info=True)

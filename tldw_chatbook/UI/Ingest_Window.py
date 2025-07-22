@@ -99,6 +99,8 @@ class IngestWindow(Container):
         self._current_media_type_for_file_dialog = None # Stores the media_type for the active file dialog
         self._failed_urls_for_retry = []  # Store failed URLs for retry
         self._retry_attempts = {}  # Track retry attempts per URL
+        self._local_video_window = None
+        self._local_audio_window = None
         logger.debug("IngestWindow initialized.")
     
     def get_default_model_for_provider(self, provider: str) -> str:
@@ -721,14 +723,36 @@ class IngestWindow(Container):
 
     # --- Local Media Tab Composition Methods ---
     
+    @on(Select.Changed, "#local-transcription-provider-video")
+    def on_video_provider_changed(self, event: Select.Changed) -> None:
+        """Update available models when video provider changes."""
+        if event.value and event.value != Select.BLANK and self._local_video_window:
+            provider = str(event.value)
+            logger.info(f"[IngestWindow] Video transcription provider changed to: {provider}")
+            model_select = self.query_one("#local-transcription-model-video", Select)
+            self._local_video_window._update_models_for_provider(provider, model_select)
+    
+    @on(Select.Changed, "#local-transcription-provider-audio")
+    def on_audio_provider_changed(self, event: Select.Changed) -> None:
+        """Update available models when audio provider changes."""
+        if event.value and event.value != Select.BLANK and self._local_audio_window:
+            provider = str(event.value)
+            logger.info(f"[IngestWindow] Audio transcription provider changed to: {provider}")
+            model_select = self.query_one("#local-transcription-model-audio", Select)
+            self._local_audio_window._update_models_for_provider(provider, model_select)
+    
     def compose_local_video_tab(self) -> ComposeResult:
         """Composes the Video tab content for local media ingestion."""
         window = IngestLocalVideoWindow(self.app_instance)
+        # Store reference to initialize models later
+        self._local_video_window = window
         yield from window.compose()
 
     def compose_local_audio_tab(self) -> ComposeResult:
         """Composes the Audio tab content for local media ingestion."""
         window = IngestLocalAudioWindow(self.app_instance)
+        # Store reference to initialize models later
+        self._local_audio_window = window
         yield from window.compose()
 
     def compose_local_document_tab(self) -> ComposeResult:
@@ -2904,6 +2928,7 @@ class IngestWindow(Container):
             
             # Get transcription options
             transcription_provider = self.query_one("#local-transcription-provider-audio", Select).value
+            # Get the model ID directly from the Select widget
             transcription_model = self.query_one("#local-transcription-model-audio", Select).value
             transcription_language = self.query_one("#local-transcription-language-audio", Input).value.strip() or "en"
             # Get translation target if available
@@ -3120,6 +3145,7 @@ class IngestWindow(Container):
                 
                 # Transcription options
                 "transcription_provider": self.query_one("#local-transcription-provider-video", Select).value,
+                # Get the model ID directly from the Select widget
                 "transcription_model": self.query_one("#local-transcription-model-video", Select).value,
                 "transcription_language": self.query_one("#local-transcription-language-video", Input).value.strip(),
                 "translation_target": self.query_one("#local-translation-target-video", Input).value.strip(),

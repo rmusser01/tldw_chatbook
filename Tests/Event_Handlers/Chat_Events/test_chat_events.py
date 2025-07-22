@@ -204,7 +204,7 @@ async def test_handle_chat_action_button_pressed_edit_and_save(mock_ccl, mock_te
     
     # Create mock for the markdown text widget
     mock_markdown_widget = MagicMock(spec=Markdown)
-    mock_markdown_widget.update = MagicMock()  # update is sync
+    mock_markdown_widget.update = AsyncMock()  # update is async in this codebase
     mock_markdown_widget.display = True
     mock_action_widget.query_one = MagicMock(return_value=mock_markdown_widget)
 

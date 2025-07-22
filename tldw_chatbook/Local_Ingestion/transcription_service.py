@@ -1670,6 +1670,7 @@ class TranscriptionService:
             ]
         
         if FASTER_WHISPER_AVAILABLE:
+            logger.debug("FASTER_WHISPER_AVAILABLE is True, adding faster-whisper models")
             models['faster-whisper'] = [
                 'tiny', 'tiny.en', 'base', 'base.en',
                 'small', 'small.en', 'medium', 'medium.en',

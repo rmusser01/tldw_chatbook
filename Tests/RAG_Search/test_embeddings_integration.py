@@ -277,10 +277,16 @@ class TestRAGServiceIntegration:
                     # Replace the factory with our mock
                     mock_factory.return_value = mock_instance
                     
+                    # Create config for testing with specified embedding model
+                    config = create_config_for_testing(
+                        use_memory_store=True,
+                        embedding_model="sentence-transformers/all-MiniLM-L6-v2"
+                    )
+                    
                     # Create RAG service
                     rag_service = create_rag_service(
-                        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-                        vector_store="memory"
+                        profile_name="hybrid_basic",
+                        config=config
                     )
                     
                     # Index documents

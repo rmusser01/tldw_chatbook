@@ -3,7 +3,7 @@ Test streaming state management to ensure it's properly set and reset.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events, chat_streaming_events
@@ -112,16 +112,25 @@ async def test_streaming_state_reset_on_stream_done(mock_app):
     mock_widget.role = "AI"
     mock_widget.query_one = MagicMock()
     mock_widget.mark_generation_complete = MagicMock()
+    mock_widget.id = "widget_id"
     
     mock_app.get_current_ai_message_widget.return_value = mock_widget
     mock_app.current_ai_message_widget = mock_widget
     mock_app.current_tab = "Chat"
+    mock_app.streaming_message_map = {}
     
     # Create StreamDone event
     event = StreamDone(full_text="Test response complete", error=None)
     
-    # Execute
-    await chat_streaming_events.handle_stream_done(mock_app, event)
+    # Create mock TextArea for chat input focus
+    mock_chat_input = MagicMock(spec=TextArea)
+    mock_chat_input.focus = MagicMock()
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
+    
+    # Execute - bind the method to mock_app
+    await chat_streaming_events.handle_stream_done.__get__(mock_app)(event)
     
     # Verify streaming state was reset
     mock_app.set_current_chat_is_streaming.assert_called_with(False)
@@ -136,16 +145,25 @@ async def test_streaming_state_reset_on_stream_error(mock_app):
     mock_widget.role = "AI"
     mock_widget.query_one = MagicMock()
     mock_widget.mark_generation_complete = MagicMock()
+    mock_widget.id = "widget_id"
     
     mock_app.get_current_ai_message_widget.return_value = mock_widget
     mock_app.current_ai_message_widget = mock_widget
     mock_app.current_tab = "Chat"
+    mock_app.streaming_message_map = {}
     
     # Create StreamDone event with error
     event = StreamDone(full_text="Partial response", error="API Error occurred")
     
-    # Execute
-    await chat_streaming_events.handle_stream_done(mock_app, event)
+    # Create mock TextArea for chat input focus
+    mock_chat_input = MagicMock(spec=TextArea)
+    mock_chat_input.focus = MagicMock()
+    mock_app.query_one.side_effect = lambda sel, widget_type=None: (
+        mock_chat_input if sel == "#chat-input" and widget_type == TextArea else MagicMock()
+    )
+    
+    # Execute - bind the method to mock_app
+    await chat_streaming_events.handle_stream_done.__get__(mock_app)(event)
     
     # Verify streaming state was reset even with error
     mock_app.set_current_chat_is_streaming.assert_called_with(False)

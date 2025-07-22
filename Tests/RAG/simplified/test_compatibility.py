@@ -81,7 +81,7 @@ class TestBackwardCompatibility:
         
         assert isinstance(results, list)
         
-    def test_config_migration(self):
+    def test_config_migration(self, memory_rag_config):
         """Test migration from old config to new profile-based config."""
         # Simulate old config with service level
         old_config = {
@@ -99,20 +99,18 @@ class TestBackwardCompatibility:
         old_level = old_config.get("service_level", "base")
         profile = level_to_profile.get(old_level, "hybrid_basic")
         
-        # Create service with mapped profile
-        service = create_rag_service(profile_name=profile)
+        # Create service with mapped profile and memory config
+        service = create_rag_service(profile_name=profile, config=memory_rag_config)
         
         # Should create enhanced service
         assert isinstance(service, EnhancedRAGServiceV2)
         assert service.enable_parent_retrieval  # enhanced has parent retrieval
         
-    def test_feature_flags_compatibility(self):
+    def test_feature_flags_compatibility(self, memory_rag_config):
         """Test that old feature flags still work."""
         # Old code might have used feature flags directly
-        config = RAGConfig()
-        
         # Create service and manually set feature flags (old pattern)
-        service = create_rag_service_from_config(config)
+        service = create_rag_service_from_config(memory_rag_config)
         
         # These attributes should still exist and be settable
         assert hasattr(service, 'enable_parent_retrieval')

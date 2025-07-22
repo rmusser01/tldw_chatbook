@@ -9,7 +9,7 @@ from textual.widgets import (
     Static, Button, Input, Select, Checkbox, TextArea, Label, 
     ListView, ListItem, LoadingIndicator, Collapsible
 )
-from textual import on
+from textual import on, work
 from ..config import get_media_ingestion_defaults
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from ..Widgets.prompt_selector import PromptSelector
@@ -26,7 +26,8 @@ class IngestLocalAudioWindow(Vertical):
         self.app_instance = app_instance
         self.selected_local_files = []
         self.transcription_service = TranscriptionService()
-        logger.debug("IngestLocalAudioWindow initialized.")
+        self._current_model_list = []  # Store the actual model IDs
+        logger.debug("[Audio] IngestLocalAudioWindow initialized.")
     
     def compose(self) -> ComposeResult:
         """Compose the audio ingestion form."""
@@ -198,42 +199,37 @@ class IngestLocalAudioWindow(Vertical):
             
             # --- Submit Button ---
             yield Button("Submit", id="local-submit-audio", variant="primary")
+        
     
-    def on_mount(self) -> None:
-        """Called when widget is mounted. Initialize model options for default provider."""
-        try:
-            # Get the provider select widget
-            provider_select = self.query_one("#local-transcription-provider-audio", Select)
-            if provider_select.value and provider_select.value != Select.BLANK:
-                # Trigger the provider change handler to populate models
-                self._update_models_for_provider(str(provider_select.value))
-        except Exception as e:
-            logger.error(f"Error initializing model options: {e}")
-    
-    def _update_models_for_provider(self, provider: str) -> None:
+    def _update_models_for_provider(self, provider: str, model_select: Select) -> None:
         """Update model options for the given provider."""
         logger.debug(f"Updating models for provider: {provider}")
         
-        # Get model select widget
-        model_select = self.query_one("#local-transcription-model-audio", Select)
-        
         # Get available models for the selected provider
         models = self.transcription_service.list_available_models(provider)
+        logger.debug(f"Returned models dict: {models}")
         model_list = models.get(provider, [])
         
         logger.debug(f"Available models for {provider}: {model_list}")
         
         # Update model options
         if model_list:
+            # Store the actual model IDs
+            self._current_model_list = model_list
             # Create user-friendly display names for models
             model_options = self._get_model_display_options(provider, model_list)
-            model_select.set_options(model_options)
+            # Swap tuple order for Select widget: (value, label) where label is displayed
+            select_options = [(model_id, display_name) for model_id, display_name in model_options]
+            logger.debug(f"[Audio] Setting {len(select_options)} model options for {provider}")
+            model_select.set_options(select_options)
             model_select.prompt = "Select model..."
-            # The Select widget will automatically select the first option
-            logger.debug(f"Updated model options for {provider}, count: {len(model_options)}")
+            logger.info(f"[Audio] Successfully updated model dropdown with {len(select_options)} models for {provider}")
+            if select_options:
+                logger.debug(f"[Audio] First few models: {select_options[:3]}")
         else:
-            logger.warning(f"No models available for provider {provider}")
+            logger.warning(f"[Audio] No models available for provider {provider}")
             # Clear options when no models available
+            self._current_model_list = []
             model_select.set_options([])
             model_select.prompt = "No models available"
     
@@ -311,17 +307,12 @@ class IngestLocalAudioWindow(Vertical):
             # Default: use model name as-is
             return [(m, m) for m in model_list]
     
-    @on(Select.Changed, "#local-transcription-provider-audio")
-    def on_provider_changed(self, event: Select.Changed) -> None:
-        """Update available models when provider changes."""
-        if event.value and event.value != Select.BLANK:
-            provider = str(event.value)
-            logger.debug(f"Transcription provider changed to: {provider}")
-            self._update_models_for_provider(provider)
-            
-            # Show/hide translation options based on provider
-            translation_container = self.query_one("#local-translation-container-audio", Container)
-            if provider in ["faster-whisper", "canary"]:
-                translation_container.remove_class("hidden")
-            else:
-                translation_container.add_class("hidden")
+    def get_selected_model_id(self) -> str:
+        """Get the actual model ID for the selected model.
+        
+        Since we now store model IDs as the value in the Select widget,
+        we can simply return the selected value.
+        """
+        model_select = self.query_one("#local-transcription-model-audio", Select)
+        return str(model_select.value) if model_select.value else ""
+    
