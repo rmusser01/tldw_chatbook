@@ -7,6 +7,7 @@ import json
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 import uuid
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 #
@@ -943,7 +944,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 # When updating the Static widget, explicitly pass the new_text
                 # as a plain rich.text.Text object. This tells Textual
                 # to render it as is, without trying to parse for markup.
-                markdown_widget.update(new_text)
+                await markdown_widget.update(new_text)
                 # --- DO NOT REMOVE ---
                 #markdown_widget.update(escape_markup(new_text))  # Update display with escaped text
 
@@ -992,14 +993,14 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
 
             except QueryError:
                 loguru_logger.error("Edit TextArea not found when stopping edit. Restoring original.")
-                markdown_widget.update(message_text)  # Restore original text
+                await markdown_widget.update(message_text)  # Restore original text
                 markdown_widget.display = True
                 action_widget._editing = False
                 button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)
             except Exception as e_edit_stop:
                 loguru_logger.error(f"Error stopping edit: {e_edit_stop}", exc_info=True)
                 if 'markdown_widget' in locals() and markdown_widget.is_mounted:
-                    markdown_widget.update(message_text)  # Restore text
+                    await markdown_widget.update(message_text)  # Restore text
                     markdown_widget.display = True
                 if hasattr(action_widget, '_editing'): action_widget._editing = False
                 if 'button' in locals() and button.is_mounted: button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)
@@ -1050,7 +1051,7 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
                     )
                     
                     if note_id:
-                        app.notify("Note created from message", severity="success", timeout=3)
+                        app.notify("Note created from message", severity="information", timeout=3)
                         
                         # Expand notes section if collapsed
                         try:
@@ -1185,8 +1186,6 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
         
         # Import TTS events and Path
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSExportEvent
-        from pathlib import Path
-        from datetime import datetime
         
         # Get message ID and audio file
         message_id = getattr(action_widget, 'message_id_internal', None)
@@ -3611,120 +3610,72 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
 
 
     # --- 5. Streaming LLM Call & UI Update ---
-    current_full_text = original_message_text # Start with the original text
-    first_chunk_received_flag = False
-
+    # Store the message widget and markdown widget in app state for the worker to update
+    app.continue_message_widget = message_widget
+    app.continue_markdown_widget = markdown_widget
+    app.continue_original_text = original_message_text
+    app.continue_thinking_removed = False
+    
+    # Define the worker target
+    worker_target = lambda: app.chat_wrapper(
+        message=continuation_prompt_instruction, # The instruction for how to use the history
+        history=history_for_api,                 # Contains the actual message to be continued as the last item
+        api_endpoint=selected_provider,
+        api_key=api_key_for_call,
+        system_message=final_system_prompt_for_api,
+        temperature=temperature,
+        topp=top_p, minp=min_p, topk=top_k,
+        llm_max_tokens=llm_max_tokens_value,
+        llm_seed=llm_seed_value,
+        llm_stop=llm_stop_value,
+        llm_response_format=llm_response_format_value,
+        llm_n=llm_n_value,
+        llm_user_identifier=llm_user_identifier_value,
+        llm_logprobs=llm_logprobs_value,
+        llm_top_logprobs=llm_top_logprobs_value,
+        llm_logit_bias=llm_logit_bias_value,
+        llm_presence_penalty=llm_presence_penalty_value,
+        llm_frequency_penalty=llm_frequency_penalty_value,
+        llm_tools=llm_tools_value,
+        llm_tool_choice=llm_tool_choice_value,
+        llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value,
+        streaming=should_stream, # Forced True
+        # These are older/other params, ensure they are correctly defaulted or excluded if not needed
+        custom_prompt="", media_content={}, selected_parts=[], chatdict_entries=None, max_tokens=500, strategy="sorted_evenly"
+    )
+    
+    # Run the worker
     try:
-        async for chunk_data in app.chat_wrapper(
-            message=continuation_prompt_instruction, # The instruction for how to use the history
-            history=history_for_api,                 # Contains the actual message to be continued as the last item
-            api_endpoint=selected_provider,
-            api_key=api_key_for_call,
-            system_message=final_system_prompt_for_api,
-            temperature=temperature,
-            topp=top_p, minp=min_p, topk=top_k,
-            llm_max_tokens=llm_max_tokens_value,
-            llm_seed=llm_seed_value,
-            llm_stop=llm_stop_value,
-            llm_response_format=llm_response_format_value,
-            llm_n=llm_n_value,
-            llm_user_identifier=llm_user_identifier_value,
-            llm_logprobs=llm_logprobs_value,
-            llm_top_logprobs=llm_top_logprobs_value,
-            llm_logit_bias=llm_logit_bias_value,
-            llm_presence_penalty=llm_presence_penalty_value,
-            llm_frequency_penalty=llm_frequency_penalty_value,
-            llm_tools=llm_tools_value,
-            llm_tool_choice=llm_tool_choice_value,
-            llm_fixed_tokens_kobold=llm_fixed_tokens_kobold_value,
-            streaming=should_stream, # Forced True
-            # These are older/other params, ensure they are correctly defaulted or excluded if not needed
-            custom_prompt="", media_content={}, selected_parts=[], chatdict_entries=None, max_tokens=500, strategy="sorted_evenly"
-        ):
-            if not first_chunk_received_flag:
-                first_chunk_received_flag = True
-                # Remove thinking indicator from display.
-                # current_full_text already holds original_message_text.
-                # Static widget is updated with Text object to prevent markup issues.
-                if markdown_widget: markdown_widget.update(current_full_text)
-
-            if isinstance(chunk_data, str):
-                current_full_text += chunk_data
-                if markdown_widget: markdown_widget.update(current_full_text)
-            elif isinstance(chunk_data, dict) and 'error' in chunk_data:
-                error_detail = chunk_data['error']
-                loguru_logger.error(f"Error chunk received from LLM during continuation: {error_detail}")
-                app.notify(f"LLM Error: {str(error_detail)[:100]}", severity="error", timeout=7)
-                # Restore original state on error
-                message_widget.message_text = original_message_text # Restore internal text
-                if markdown_widget: markdown_widget.update(original_display_text_obj)
-                if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
-                for btn_id, was_disabled in original_button_states.items():
-                    try: message_widget.query_one(f"#{btn_id}", Button).disabled = was_disabled
-                    except QueryError: pass
-                return # Stop processing
-
-            if chat_log: chat_log.scroll_end(animate=False)
-
-        # After successful stream, update the ChatMessage's internal text
-        message_widget.message_text = current_full_text
-
-    except Exception as e_llm:
-        loguru_logger.error(f"Error during LLM call for continuation: {e_llm}", exc_info=True)
-        app.notify(f"LLM call failed: {str(e_llm)[:100]}", severity="error")
+        worker = app.run_worker(
+            worker_target,
+            name=f"API_Call_{prefix}_continue",
+            group="api_calls",
+            thread=True,
+            description=f"Continuing response for {selected_provider}"
+        )
+        app.set_current_chat_worker(worker)
+        loguru_logger.info(f"Continue worker started for message_id: {message_widget.message_id_internal}")
+        
+        # The worker will handle the streaming and update the UI through events
+        # We just need to return here - the rest of the processing will happen in event handlers
+        return
+        
+    except Exception as e_worker:
+        loguru_logger.error(f"Error starting continue worker: {e_worker}", exc_info=True)
+        app.notify(f"Failed to start continuation: {str(e_worker)[:100]}", severity="error")
+        
+        # Restore original state on error
         message_widget.message_text = original_message_text # Restore internal text
         if markdown_widget: markdown_widget.update(original_display_text_obj) # Restore display
-        if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
+        if continue_button_widget: 
+            continue_button_widget.disabled = False
+            continue_button_widget.label = original_button_label
         for btn_id, was_disabled in original_button_states.items():
-            try: message_widget.query_one(f"#{btn_id}", Button).disabled = was_disabled
-            except QueryError: pass
+            try: 
+                message_widget.query_one(f"#{btn_id}", Button).disabled = was_disabled
+            except QueryError: 
+                pass
         return
-
-    # --- 6. Post-Stream Processing (DB Update) ---
-    message_widget.generation_complete = True # Ensure it's marked complete
-
-    if db and message_widget.message_id_internal and original_message_version is not None:
-        try:
-            success = ccl.edit_message_content(
-                db,
-                message_widget.message_id_internal,
-                current_full_text, # The new, complete message text
-                original_message_version # Expected version before this edit
-            )
-            if success:
-                message_widget.message_version_internal = original_message_version + 1
-                loguru_logger.info(f"Continued message ID {message_widget.message_id_internal} updated in DB. New version: {message_widget.message_version_internal}")
-                app.notify("Message continuation saved to DB.", severity="information", timeout=2)
-            else: # edit_message_content returned False, but no exception
-                loguru_logger.error(f"ccl.edit_message_content returned False for continued message {message_widget.message_id_internal} without specific error.")
-                app.notify("Failed to save continuation to DB (operation indicated failure).", severity="error")
-                # Consider if UI should be reverted here if DB save is critical
-        except ccl.ConflictError as e_conflict:
-            loguru_logger.error(f"DB conflict updating continued message {message_widget.message_id_internal}: {e_conflict}", exc_info=True)
-            app.notify(f"Save conflict: {e_conflict}. Message may be out of sync.", severity="error", timeout=7)
-        except (ccl.CharactersRAGDBError, ccl.InputError) as e_db_update:
-            loguru_logger.error(f"DB/Input error updating continued message {message_widget.message_id_internal}: {e_db_update}", exc_info=True)
-            app.notify(f"Failed to save continuation to DB: {str(e_db_update)[:100]}", severity="error")
-        except Exception as e_db_generic:
-            loguru_logger.error(f"Unexpected DB error updating continued message {message_widget.message_id_internal}: {e_db_generic}", exc_info=True)
-            app.notify(f"Unexpected error saving continuation to DB: {str(e_db_generic)[:100]}", severity="error")
-
-    # --- 7. Button State (Re-enable/Finalize) ---
-    if continue_button_widget and original_button_label:
-        continue_button_widget.disabled = False # Re-enable for potential further continuation
-        continue_button_widget.label = original_button_label
-
-    # Re-enable other action buttons to their original state
-    for btn_id, was_disabled_originally in original_button_states.items():
-        try:
-            # Only re-enable if it was not disabled before we started
-            # However, typical flow is they are enabled, we disable, then re-enable.
-            # So, setting disabled to 'was_disabled_originally' covers this.
-             message_widget.query_one(f"#{btn_id}", Button).disabled = was_disabled_originally
-        except QueryError:
-            loguru_logger.warning(f"Could not restore state for button {btn_id} post-continuation.")
-
-    loguru_logger.info(f"Continuation process completed for message_id: {message_widget.message_id_internal}. Final text length: {len(current_full_text)}")
 
 
 async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:

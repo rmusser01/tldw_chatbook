@@ -3,15 +3,19 @@
 #
 # Imports
 import os
-import tempfile
+import sys
+import subprocess
 from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
 from pathlib import Path
 import asyncio
 import re
 import json
+import base64
 from datetime import datetime
 from difflib import SequenceMatcher
 from loguru import logger
+import tempfile  # Still needed for audio file handling
+import contextlib
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
@@ -19,6 +23,33 @@ from tldw_chatbook.TTS.TTS_Backends import TTSBackendBase
 from tldw_chatbook.TTS.audio_service import AudioService, get_audio_service
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.optional_deps import check_dependency
+
+#######################################################################################################################
+#
+# Utility Functions
+#
+
+@contextlib.contextmanager
+def suppress_output():
+    """
+    Context manager to suppress stdout and stderr at the file descriptor level.
+    
+    This is necessary to prevent libraries from writing directly to the terminal,
+    which can corrupt TUI applications.
+    """
+    stdout_fd = os.dup(1)
+    stderr_fd = os.dup(2)
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, 1)
+        os.dup2(devnull_fd, 2)
+        os.close(devnull_fd)
+        yield
+    finally:
+        os.dup2(stdout_fd, 1)
+        os.dup2(stderr_fd, 2)
+        os.close(stdout_fd)
+        os.close(stderr_fd)
 
 #######################################################################################################################
 #
@@ -100,12 +131,200 @@ class ChatterboxTTSBackend(TTSBackendBase):
         # Check dependencies
         self.deps_available = check_dependency("chatterbox", "chatterbox")
         
+        # Process management for isolated execution
+        self.process: Optional[subprocess.Popen] = None
+        self._process_lock = asyncio.Lock()
+        self._initialized = False
+        self._initializing = False
+        
     async def initialize(self):
-        """Initialize the Chatterbox backend"""
+        """Initialize the Chatterbox backend using isolated process"""
         if not self.deps_available:
             logger.warning("ChatterboxTTSBackend: Dependencies not available. Please install with: pip install chatterbox-tts torchaudio")
             return
+        
+        if self._initialized or self._initializing:
+            return
             
+        self._initializing = True
+        # Run initialization in background to avoid blocking UI
+        asyncio.create_task(self._initialize_isolated_process())
+    
+    async def _initialize_isolated_process(self):
+        """Initialize Chatterbox in an isolated subprocess"""
+        async with self._process_lock:
+            if self._initialized:
+                return
+                
+            try:
+                # Find the process wrapper script
+                wrapper_path = Path(__file__).parent / "chatterbox_process.py"
+                if not wrapper_path.exists():
+                    logger.error(f"Chatterbox process wrapper not found at {wrapper_path}")
+                    # Fall back to the old method in background
+                    asyncio.create_task(asyncio.to_thread(self._initialize_sync))
+                    return
+                
+                logger.info(f"Starting Chatterbox in isolated process on {self.device}...")
+                
+                # Start the subprocess with pipe for stdout
+                # Set a larger limit for the StreamReader to handle base64-encoded audio
+                # 10MB should handle most audio files even with base64 overhead
+                self.process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    str(wrapper_path),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,  # Use pipe for communication
+                    stderr=asyncio.subprocess.DEVNULL,  # Still suppress stderr
+                    limit=10 * 1024 * 1024,  # 10MB limit for StreamReader
+                    env={
+                        **os.environ, 
+                        "PYTHONUNBUFFERED": "1"  # Ensure unbuffered output
+                    }
+                )
+                
+                # Send initialization command
+                await self._send_command({
+                    "command": "initialize",
+                    "device": self.device
+                })
+                
+                # Start a background task to wait for initialization
+                asyncio.create_task(self._wait_for_initialization())
+                    
+            except Exception as e:
+                logger.error(f"Failed to initialize Chatterbox process: {e}")
+                logger.info("Falling back to in-process initialization")
+                # Fall back to the old method in background
+                asyncio.create_task(asyncio.to_thread(self._initialize_sync))
+    
+    async def _send_command(self, command: Dict[str, Any]):
+        """Send command to subprocess"""
+        if not self.process or self.process.returncode is not None:
+            raise Exception("Process not running")
+            
+        json_data = json.dumps(command) + '\n'
+        self.process.stdin.write(json_data.encode())
+        await self.process.stdin.drain()
+    
+    async def _wait_for_initialization(self):
+        """Wait for initialization response in background"""
+        try:
+            # Wait for multiple responses during initialization
+            while True:
+                try:
+                    response = await self._read_response(timeout=60)  # 60 second timeout for model loading
+                    
+                    if response.get("type") == "status":
+                        logger.info(f"Chatterbox init status: {response.get('message')}")
+                    elif response.get("type") == "warning":
+                        logger.warning(f"Chatterbox init warning: {response.get('message')}")
+                    elif response.get("type") == "success":
+                        logger.info("Chatterbox process initialized successfully")
+                        self._initialized = True
+                        self._initializing = False
+                        self.model = "process"  # Placeholder to indicate model is loaded
+                        break
+                    elif response.get("type") == "error":
+                        error_msg = response.get('message', 'Unknown error')
+                        if 'traceback' in response:
+                            logger.error(f"Chatterbox init traceback:\n{response['traceback']}")
+                        raise Exception(f"Initialization failed: {error_msg}")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    # Check if process is still alive
+                    if self.process and self.process.returncode is not None:
+                        raise Exception(f"Process died during initialization: {e}")
+                    raise
+        except Exception as e:
+            logger.error(f"Background initialization failed: {e}")
+            self._initialized = False
+            self._initializing = False
+            # Clean up the process
+            if self.process:
+                self.process.terminate()
+                self.process = None
+    
+    async def _read_response(self, timeout: float = 10) -> Dict[str, Any]:
+        """Read response from subprocess via stdout pipe"""
+        if not self.process or self.process.returncode is not None:
+            raise Exception("Process not running")
+        
+        try:
+            # Read line from stdout with timeout
+            line = await asyncio.wait_for(
+                self.process.stdout.readline(), 
+                timeout=timeout
+            )
+            
+            if not line:
+                raise Exception("Process closed stdout")
+            
+            # Decode and parse JSON
+            response = json.loads(line.decode().strip())
+            return response
+            
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"No response from subprocess within {timeout} seconds")
+        except json.JSONDecodeError as e:
+            raise Exception(f"Invalid JSON response: {e}")
+    
+    async def _read_chunked_audio(self, timeout: float = 60) -> bytes:
+        """Read chunked audio data from subprocess"""
+        chunks = {}
+        total_chunks = None
+        
+        while True:
+            response = await self._read_response(timeout)
+            msg_type = response.get("type")
+            
+            if msg_type == "audio":
+                # Single message with complete audio
+                return base64.b64decode(response["data"])
+                
+            elif msg_type == "audio_chunk":
+                # Part of a chunked transfer
+                chunk_id = response.get("chunk_id")
+                chunk_data = response.get("data")
+                
+                if chunk_id is not None and chunk_data:
+                    chunks[chunk_id] = chunk_data
+                    
+                    # Track total chunks from first message
+                    if total_chunks is None:
+                        total_chunks = response.get("total_chunks")
+                    
+                    logger.debug(f"Received audio chunk {chunk_id + 1}/{total_chunks}")
+                
+            elif msg_type == "audio_complete":
+                # All chunks received
+                expected_total = response.get("total_chunks", total_chunks)
+                
+                # Verify we have all chunks
+                if len(chunks) != expected_total:
+                    raise Exception(f"Missing audio chunks: got {len(chunks)}, expected {expected_total}")
+                
+                # Reassemble chunks in order
+                audio_data = ""
+                for i in range(expected_total):
+                    if i not in chunks:
+                        raise Exception(f"Missing chunk {i}")
+                    audio_data += chunks[i]
+                
+                # Decode base64 data
+                return base64.b64decode(audio_data)
+                
+            elif msg_type == "error":
+                error_msg = response.get("message", "Unknown error")
+                raise Exception(f"Audio generation error: {error_msg}")
+                
+            else:
+                # Unexpected message type during chunked transfer
+                logger.warning(f"Unexpected message type during chunked transfer: {msg_type}")
+    
+    def _initialize_sync(self):
+        """Synchronous initialization to run in a thread"""
         try:
             # Import Chatterbox
             from chatterbox.tts import ChatterboxTTS
@@ -119,16 +338,26 @@ class ChatterboxTTSBackend(TTSBackendBase):
             # Import protect_file_descriptors if available
             try:
                 from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors
-                # Load model with file descriptor protection
+                # Load model with file descriptor protection AND output capture
                 logger.info(f"Loading Chatterbox model on {self.device}...")
-                with protect_file_descriptors():
-                    self.model = ChatterboxTTS.from_pretrained(device=self.device)
+                
+                # Load model with both protections
+                with suppress_output():
+                    with protect_file_descriptors():
+                        self.model = ChatterboxTTS.from_pretrained(device=self.device)
+                    
                 logger.info("Chatterbox model loaded successfully")
             except ImportError:
                 # Fallback without protection if not available
                 logger.info(f"Loading Chatterbox model on {self.device} (without FD protection)...")
-                self.model = ChatterboxTTS.from_pretrained(device=self.device)
+                
+                # Still capture output even without protect_file_descriptors
+                with suppress_output():
+                    self.model = ChatterboxTTS.from_pretrained(device=self.device)
+                    
                 logger.info("Chatterbox model loaded successfully")
+            
+            self._initialized = True  # Mark as initialized
             
             # Initialize transcription service if validation is enabled
             if self.validate_with_whisper:
@@ -409,6 +638,43 @@ class ChatterboxTTSBackend(TTSBackendBase):
             logger.warning(f"Audio transcription failed: {e}")
             return ""
     
+    async def _generate_single_isolated(
+        self,
+        text: str,
+        reference_audio_path: Optional[str],
+        exaggeration: float,
+        cfg_weight: float,
+        temperature: Optional[float] = None
+    ) -> bytes:
+        """Generate audio using the isolated subprocess"""
+        try:
+            # Apply temperature variation if specified
+            if temperature is not None:
+                exaggeration = exaggeration * (1 + temperature * 0.1)
+                cfg_weight = cfg_weight * (1 - temperature * 0.05)
+            
+            # Prepare command
+            command = {
+                "command": "generate",
+                "text": text,
+                "exaggeration": exaggeration,
+                "cfg_weight": cfg_weight
+            }
+            
+            if reference_audio_path:
+                command["audio_prompt_path"] = reference_audio_path
+            
+            # Send generation command
+            await self._send_command(command)
+            
+            # Read response - now handles both single and chunked messages
+            audio_bytes = await self._read_chunked_audio(timeout=60)
+            return audio_bytes
+                
+        except Exception as e:
+            logger.error(f"Isolated generation failed: {e}")
+            raise
+    
     async def _generate_single(
         self, 
         text: str, 
@@ -423,6 +689,10 @@ class ChatterboxTTSBackend(TTSBackendBase):
         Returns:
             Audio bytes in WAV format
         """
+        # Check if we're using isolated process
+        if self._initialized and self.process and self.process.returncode is None:
+            return await self._generate_single_isolated(text, reference_audio_path, exaggeration, cfg_weight, temperature)
+        
         import torch
         
         # Set random seed if specified
@@ -435,22 +705,51 @@ class ChatterboxTTSBackend(TTSBackendBase):
             exaggeration = exaggeration * (1 + temperature * 0.1)
             cfg_weight = cfg_weight * (1 - temperature * 0.05)
         
-        # Generate audio
-        if reference_audio_path:
-            wav = await asyncio.to_thread(
-                self.model.generate,
-                text,
-                audio_prompt_path=reference_audio_path,
-                exaggeration=exaggeration,
-                cfg_weight=cfg_weight
-            )
-        else:
-            wav = await asyncio.to_thread(
-                self.model.generate,
-                text,
-                exaggeration=exaggeration,
-                cfg_weight=cfg_weight
-            )
+        # Generate audio with proper isolation to avoid file descriptor issues
+        def generate_with_isolation():
+            """Generate audio with complete isolation"""
+            # Import here to avoid issues
+            try:
+                from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors
+                has_protect_fd = True
+            except ImportError:
+                has_protect_fd = False
+            
+            # Generate with file descriptor protection if available
+            with suppress_output():
+                if has_protect_fd:
+                    with protect_file_descriptors():
+                        if reference_audio_path:
+                            return self.model.generate(
+                                text,
+                                audio_prompt_path=reference_audio_path,
+                                exaggeration=exaggeration,
+                                cfg_weight=cfg_weight
+                            )
+                        else:
+                            return self.model.generate(
+                                text,
+                                exaggeration=exaggeration,
+                                cfg_weight=cfg_weight
+                            )
+                else:
+                    # Generate without FD protection
+                    if reference_audio_path:
+                        return self.model.generate(
+                            text,
+                            audio_prompt_path=reference_audio_path,
+                            exaggeration=exaggeration,
+                            cfg_weight=cfg_weight
+                        )
+                    else:
+                        return self.model.generate(
+                            text,
+                            exaggeration=exaggeration,
+                            cfg_weight=cfg_weight
+                        )
+        
+        # Run in thread with isolation
+        wav = await asyncio.to_thread(generate_with_isolation)
         
         # Apply post-processing
         if self.normalize_audio_enabled:
@@ -526,8 +825,22 @@ class ChatterboxTTSBackend(TTSBackendBase):
         Yields:
             Audio bytes in the requested format
         """
-        if not self.model:
-            logger.error("ChatterboxTTSBackend: Model not initialized")
+        # If not initialized, start initialization and wait
+        if not self._initialized:
+            logger.info("Chatterbox not initialized, starting initialization...")
+            await self.initialize()
+            
+            # Now wait for initialization to complete
+            start_time = asyncio.get_event_loop().time()
+            while (self._initializing or not self._initialized) and (asyncio.get_event_loop().time() - start_time) < 60:
+                await asyncio.sleep(0.1)
+                # Check if process died
+                if hasattr(self, 'process') and self.process and self.process.returncode is not None:
+                    logger.error("Chatterbox process died during initialization")
+                    break
+        
+        if not self._initialized:
+            logger.error("ChatterboxTTSBackend: Model not initialized after waiting")
             raise ValueError("Chatterbox model not initialized. Please check installation.")
         
         # Validate input
@@ -636,13 +949,15 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 
         except Exception as e:
             logger.error(f"Chatterbox generation failed: {e}")
-            # Try fallback strategy if available
-            if hasattr(self, 'generate_speech_stream_with_fallback'):
+            # Don't try fallback if this is already a fallback attempt
+            if hasattr(request, '_is_fallback') and request._is_fallback:
+                raise ValueError(f"Failed to generate speech: {str(e)}")
+            else:
+                # Try fallback strategy only once
                 logger.info("Attempting fallback generation strategy...")
+                request._is_fallback = True
                 async for chunk in self.generate_speech_stream_with_fallback(request):
                     yield chunk
-            else:
-                raise ValueError(f"Failed to generate speech: {str(e)}")
     
     async def _generate_stream_async(self, text: str, audio_prompt_path: Optional[str], 
                                    exaggeration: float, cfg_weight: float) -> AsyncGenerator:
@@ -681,19 +996,46 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 else:
                     # Fallback: generate full audio and chunk it
                     logger.warning("Chatterbox model doesn't support streaming, using chunked output")
-                    if audio_prompt_path:
-                        full_audio = self.model.generate(
-                            text,
-                            audio_prompt_path=audio_prompt_path,
-                            exaggeration=exaggeration,
-                            cfg_weight=cfg_weight
-                        )
-                    else:
-                        full_audio = self.model.generate(
-                            text,
-                            exaggeration=exaggeration,
-                            cfg_weight=cfg_weight
-                        )
+                    
+                    # Run the blocking generate call with complete isolation
+                    # Try to import protect_file_descriptors
+                    try:
+                        from tldw_chatbook.Embeddings.Embeddings_Lib import protect_file_descriptors
+                        has_protect_fd = True
+                    except ImportError:
+                        has_protect_fd = False
+                    
+                    # Generate with protection if available
+                    with suppress_output():
+                        if has_protect_fd:
+                            with protect_file_descriptors():
+                                if audio_prompt_path:
+                                    full_audio = self.model.generate(
+                                        text,
+                                        audio_prompt_path=audio_prompt_path,
+                                        exaggeration=exaggeration,
+                                        cfg_weight=cfg_weight
+                                    )
+                                else:
+                                    full_audio = self.model.generate(
+                                        text,
+                                        exaggeration=exaggeration,
+                                        cfg_weight=cfg_weight
+                                    )
+                        else:
+                            if audio_prompt_path:
+                                full_audio = self.model.generate(
+                                    text,
+                                    audio_prompt_path=audio_prompt_path,
+                                    exaggeration=exaggeration,
+                                    cfg_weight=cfg_weight
+                                )
+                            else:
+                                full_audio = self.model.generate(
+                                    text,
+                                    exaggeration=exaggeration,
+                                    cfg_weight=cfg_weight
+                                )
                     
                     # Chunk the audio
                     import torch
@@ -1000,8 +1342,30 @@ class ChatterboxTTSBackend(TTSBackendBase):
     
     async def close(self):
         """Clean up resources"""
-        # Clean up model if needed
-        if self.model is not None:
+        # Clean up subprocess if running
+        if hasattr(self, 'process') and self.process:
+            try:
+                # Send shutdown command
+                await self._send_command({"command": "shutdown"})
+                # Give it time to shut down gracefully
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
+            
+            # Terminate if still running
+            if self.process.returncode is None:
+                self.process.terminate()
+                try:
+                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    self.process.kill()
+                    await self.process.wait()
+            
+            self.process = None
+            self._initialized = False
+        
+        # Clean up model if needed (only if not using process)
+        if self.model is not None and self.model != "process":
             del self.model
             self.model = None
         

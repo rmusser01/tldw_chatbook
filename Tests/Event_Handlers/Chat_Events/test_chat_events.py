@@ -148,11 +148,28 @@ async def test_handle_save_current_chat_button_pressed(mock_display_conv, mock_c
     mock_app.current_chat_conversation_id = None
 
     # Setup mock messages in the chat log
-    mock_msg1 = MagicMock(spec=ChatMessage, role="User", message_text="Hello", generation_complete=True,
-                          image_data=None, image_mime_type=None)
-    mock_msg2 = MagicMock(spec=ChatMessage, role="AI", message_text="Hi", generation_complete=True, image_data=None,
-                          image_mime_type=None)
-    mock_app.query_one("#chat-log").query.return_value = [mock_msg1, mock_msg2]
+    mock_msg1 = MagicMock(spec=ChatMessage)
+    mock_msg1.role = "User"
+    mock_msg1.message_text = "Hello"
+    mock_msg1.generation_complete = True
+    mock_msg1.image_data = None
+    mock_msg1.image_mime_type = None
+    
+    mock_msg2 = MagicMock(spec=ChatMessage)
+    mock_msg2.role = "AI"
+    mock_msg2.message_text = "Hi"
+    mock_msg2.generation_complete = True
+    mock_msg2.image_data = None
+    mock_msg2.image_mime_type = None
+    # Mock the query method to handle both ChatMessage and ChatMessageEnhanced queries
+    def mock_query(widget_type):
+        if widget_type == ChatMessage:
+            return [mock_msg1, mock_msg2]
+        elif widget_type == ChatMessageEnhanced:
+            return []  # No enhanced messages in this test
+        return []
+    
+    mock_app.query_one("#chat-log").query.side_effect = mock_query
 
     mock_ccl.create_conversation.return_value = "new_conv_id"
 

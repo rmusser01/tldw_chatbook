@@ -30,20 +30,44 @@ async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
     """Handles incoming chunks of text during streaming."""
     logger = getattr(self, 'loguru_logger', logging)
     
-    # Get current widget using thread-safe method
-    current_widget = self.get_current_ai_message_widget()
+    # Check if this is a continuation (has continue_message_widget) or a new message
+    current_widget = None
+    is_continuation = False
+    
+    if hasattr(self, 'continue_message_widget') and self.continue_message_widget:
+        # This is a continuation
+        current_widget = self.continue_message_widget
+        is_continuation = True
+    else:
+        # Get current widget using thread-safe method
+        current_widget = self.get_current_ai_message_widget()
+    
     if current_widget and current_widget.is_mounted:
         try:
             markdown_widget = current_widget.query_one(".message-text", Markdown)
             
             # Check if we need to clear the thinking emoji (first real chunk)
-            if not hasattr(current_widget, '_streaming_started'):
-                # This is the first chunk - replace any placeholder content
-                current_widget.message_text = event.text_chunk
-                current_widget._streaming_started = True
+            if is_continuation:
+                # For continuation, handle the first chunk differently
+                if not hasattr(self, 'continue_thinking_removed') or not self.continue_thinking_removed:
+                    # First chunk in continuation - append to existing text
+                    if hasattr(self, 'continue_original_text'):
+                        current_widget.message_text = self.continue_original_text + event.text_chunk
+                    else:
+                        current_widget.message_text += event.text_chunk
+                    self.continue_thinking_removed = True
+                else:
+                    # Subsequent chunks - append normally
+                    current_widget.message_text += event.text_chunk
             else:
-                # Subsequent chunks - append to internal state
-                current_widget.message_text += event.text_chunk
+                # Regular streaming (not continuation)
+                if not hasattr(current_widget, '_streaming_started'):
+                    # This is the first chunk - replace any placeholder content
+                    current_widget.message_text = event.text_chunk
+                    current_widget._streaming_started = True
+                else:
+                    # Subsequent chunks - append to internal state
+                    current_widget.message_text += event.text_chunk
             
             # Always update markdown widget with full text to prevent flickering
             markdown_widget.update(current_widget.message_text)
@@ -82,8 +106,17 @@ async def handle_stream_done(self, event: StreamDone) -> None:
     logger = getattr(self, 'loguru_logger', logging)
     logger.info(f"StreamDone received. Final text length: {len(event.full_text)}. Error: '{event.error}'")
 
-    # Get current widget using thread-safe method
-    ai_widget = self.get_current_ai_message_widget()
+    # Check if this is a continuation or a new message
+    ai_widget = None
+    is_continuation = False
+    
+    if hasattr(self, 'continue_message_widget') and self.continue_message_widget:
+        # This is a continuation
+        ai_widget = self.continue_message_widget
+        is_continuation = True
+    else:
+        # Get current widget using thread-safe method
+        ai_widget = self.get_current_ai_message_widget()
 
     if not ai_widget or not ai_widget.is_mounted:
         logger.warning("Received StreamDone but current_ai_message_widget is missing or not mounted.")
@@ -220,33 +253,58 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             # Save to DB if applicable (not ephemeral, not empty, and DB available)
             if self.chachanotes_db and self.current_chat_conversation_id and \
                     not self.current_chat_is_ephemeral and event.full_text.strip():
-                try:
-                    logger.debug(
-                        f"Attempting to save streamed AI message to DB. ConvID: {self.current_chat_conversation_id}, Sender: {ai_sender_name_for_db}")
-                    ai_msg_db_id = ccl.add_message_to_conversation(
-                        self.chachanotes_db,
-                        self.current_chat_conversation_id,
-                        ai_sender_name_for_db,
-                        event.full_text  # Save the clean, full text
-                    )
-                    if ai_msg_db_id:
-                        saved_ai_msg_details = self.chachanotes_db.get_message_by_id(ai_msg_db_id)
-                        if saved_ai_msg_details:
-                            ai_widget.message_id_internal = saved_ai_msg_details.get('id')
-                            ai_widget.message_version_internal = saved_ai_msg_details.get('version')
-                            logger.info(
-                                f"Streamed AI message saved to DB. ConvID: {self.current_chat_conversation_id}, MsgID: {saved_ai_msg_details.get('id')}")
+                
+                if is_continuation:
+                    # For continuation, update the existing message
+                    if ai_widget.message_id_internal and hasattr(ai_widget, 'message_version_internal'):
+                        try:
+                            logger.debug(
+                                f"Attempting to update continued message in DB. MsgID: {ai_widget.message_id_internal}, Version: {ai_widget.message_version_internal}")
+                            success = ccl.edit_message_content(
+                                self.chachanotes_db,
+                                ai_widget.message_id_internal,
+                                event.full_text,  # The complete continued text
+                                ai_widget.message_version_internal  # Expected version
+                            )
+                            if success:
+                                ai_widget.message_version_internal += 1
+                                logger.info(f"Continued message ID {ai_widget.message_id_internal} updated in DB. New version: {ai_widget.message_version_internal}")
+                                self.notify("Message continuation saved.", severity="information", timeout=2)
+                            else:
+                                logger.error(f"Failed to update continued message {ai_widget.message_id_internal} in DB")
+                                self.notify("Failed to save continuation to DB", severity="error")
+                        except Exception as e_update:
+                            logger.error(f"Error updating continued message: {e_update}", exc_info=True)
+                            self.notify(f"DB error saving continuation: {str(e_update)[:100]}", severity="error")
+                else:
+                    # For new messages, add to conversation
+                    try:
+                        logger.debug(
+                            f"Attempting to save streamed AI message to DB. ConvID: {self.current_chat_conversation_id}, Sender: {ai_sender_name_for_db}")
+                        ai_msg_db_id = ccl.add_message_to_conversation(
+                            self.chachanotes_db,
+                            self.current_chat_conversation_id,
+                            ai_sender_name_for_db,
+                            event.full_text  # Save the clean, full text
+                        )
+                        if ai_msg_db_id:
+                            saved_ai_msg_details = self.chachanotes_db.get_message_by_id(ai_msg_db_id)
+                            if saved_ai_msg_details:
+                                ai_widget.message_id_internal = saved_ai_msg_details.get('id')
+                                ai_widget.message_version_internal = saved_ai_msg_details.get('version')
+                                logger.info(
+                                    f"Streamed AI message saved to DB. ConvID: {self.current_chat_conversation_id}, MsgID: {saved_ai_msg_details.get('id')}")
+                            else:
+                                logger.error(
+                                    f"Failed to retrieve saved streamed AI message details (ID: {ai_msg_db_id}) from DB.")
                         else:
-                            logger.error(
-                                f"Failed to retrieve saved streamed AI message details (ID: {ai_msg_db_id}) from DB.")
-                    else:
-                        logger.error("Failed to save streamed AI message to DB (no ID returned).")
-                except (CharactersRAGDBError, InputError) as e_save_ai_stream:
-                    logger.error(f"DB Error saving streamed AI message: {e_save_ai_stream}", exc_info=True)
-                    self.notify(f"DB error saving message: {e_save_ai_stream}", severity="error")
-                except Exception as e_save_unexp:
-                    logger.error(f"Unexpected error saving streamed AI message: {e_save_unexp}", exc_info=True)
-                    self.notify("Unexpected error saving message.", severity="error")
+                            logger.error("Failed to save streamed AI message to DB (no ID returned).")
+                    except (CharactersRAGDBError, InputError) as e_save_ai_stream:
+                        logger.error(f"DB Error saving streamed AI message: {e_save_ai_stream}", exc_info=True)
+                        self.notify(f"DB error saving message: {e_save_ai_stream}", severity="error")
+                    except Exception as e_save_unexp:
+                        logger.error(f"Unexpected error saving streamed AI message: {e_save_unexp}", exc_info=True)
+                        self.notify("Unexpected error saving message.", severity="error")
             elif not event.full_text.strip() and not event.error:
                 logger.info("Stream finished with no error but content was empty/whitespace. Not saving to DB.")
 
@@ -274,8 +332,42 @@ async def handle_stream_done(self, event: StreamDone) -> None:
     finally:
         # This block executes regardless of exceptions in the try block above.
         # Crucial for resetting state and UI.
-        self.current_ai_message_widget = None  # Clear the reference to the AI message widget
-        logger.debug("Cleared current_ai_message_widget in on_stream_done's finally block.")
+        
+        # Handle continuation cleanup
+        if is_continuation:
+            # Clean up continuation-specific attributes
+            if hasattr(self, 'continue_message_widget'):
+                delattr(self, 'continue_message_widget')
+            if hasattr(self, 'continue_markdown_widget'):
+                delattr(self, 'continue_markdown_widget')
+            if hasattr(self, 'continue_original_text'):
+                delattr(self, 'continue_original_text')
+            if hasattr(self, 'continue_thinking_removed'):
+                delattr(self, 'continue_thinking_removed')
+            
+            # Re-enable continue button and other buttons
+            if ai_widget and ai_widget.is_mounted:
+                try:
+                    continue_button = ai_widget.query_one("#continue-response-button")
+                    continue_button.disabled = False
+                    continue_button.label = "↪️"  # Reset to original label
+                    
+                    # Re-enable other action buttons
+                    for btn_id in ["thumb-up", "thumb-down", "regenerate"]:
+                        try:
+                            button = ai_widget.query_one(f"#{btn_id}")
+                            button.disabled = False
+                        except QueryError:
+                            pass
+                            
+                except QueryError:
+                    logger.debug("Continue button not found during cleanup")
+            
+            logger.debug("Completed continuation cleanup")
+        else:
+            # Regular message cleanup
+            self.current_ai_message_widget = None  # Clear the reference to the AI message widget
+            logger.debug("Cleared current_ai_message_widget in on_stream_done's finally block.")
         
         # Reset streaming state using thread-safe method
         self.set_current_chat_is_streaming(False)

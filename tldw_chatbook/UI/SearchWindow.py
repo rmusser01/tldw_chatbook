@@ -163,7 +163,20 @@ class SearchWindow(Container):
                         classes="rag-unavailable-message"
                     )
             yield Container(id=SEARCH_VIEW_RAG_CHAT, classes="search-view-area")
-            yield Container(id=SEARCH_VIEW_RAG_MANAGEMENT, classes="search-view-area")
+            
+            # RAG Management view with chunking templates
+            with Container(id=SEARCH_VIEW_RAG_MANAGEMENT, classes="search-view-area"):
+                with VerticalScroll():
+                    try:
+                        from ..Widgets.chunking_templates_widget import ChunkingTemplatesWidget
+                        yield ChunkingTemplatesWidget(app_instance=self.app_instance)
+                    except ImportError as e:
+                        logger.warning(f"Could not import ChunkingTemplatesWidget: {e}")
+                        yield Static(
+                            "⚠️ Chunking Templates widget is not available.\n\n"
+                            f"Error: {str(e)}",
+                            classes="rag-unavailable-message"
+                        )
 
             if WEB_SEARCH_AVAILABLE:
                 with Container(id=SEARCH_VIEW_WEB_SEARCH, classes="search-view-area"):
