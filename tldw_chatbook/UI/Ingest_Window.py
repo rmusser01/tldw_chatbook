@@ -2928,8 +2928,8 @@ class IngestWindow(Container):
             
             # Get transcription options
             transcription_provider = self.query_one("#local-transcription-provider-audio", Select).value
-            # Use the window's method to get the actual model ID
-            transcription_model = self._local_audio_window.get_selected_model_id() if self._local_audio_window else self.query_one("#local-transcription-model-audio", Select).value
+            # Get the model ID directly from the Select widget
+            transcription_model = self.query_one("#local-transcription-model-audio", Select).value
             transcription_language = self.query_one("#local-transcription-language-audio", Input).value.strip() or "en"
             # Get translation target if available
             translation_target = None
@@ -3145,8 +3145,8 @@ class IngestWindow(Container):
                 
                 # Transcription options
                 "transcription_provider": self.query_one("#local-transcription-provider-video", Select).value,
-                # Use the window's method to get the actual model ID
-                "transcription_model": self._local_video_window.get_selected_model_id() if self._local_video_window else self.query_one("#local-transcription-model-video", Select).value,
+                # Get the model ID directly from the Select widget
+                "transcription_model": self.query_one("#local-transcription-model-video", Select).value,
                 "transcription_language": self.query_one("#local-transcription-language-video", Input).value.strip(),
                 "translation_target": self.query_one("#local-translation-target-video", Input).value.strip(),
                 
