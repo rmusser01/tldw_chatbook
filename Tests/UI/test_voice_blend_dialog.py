@@ -1,7 +1,6 @@
 """Test voice blend dialog functionality"""
 import pytest
 from textual.app import App
-from textual.testing import AppTest
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog, VoiceBlendEntry
 
 
