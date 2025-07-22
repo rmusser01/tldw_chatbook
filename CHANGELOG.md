@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Ingest Window Transcription model
 - Search Window
+- Refactor MediaDB version handling
+- Refactor encryption of config file + added setting in settings
 
 
 ## [0.1.3.5] - 2025-07-21

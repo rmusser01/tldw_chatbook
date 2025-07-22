@@ -108,6 +108,26 @@ class ToolsSettingsWindow(Container):
         margin-bottom: 1;
     }
     
+    .settings-checkbox {
+        margin-bottom: 1;
+    }
+    
+    .settings-subsection-title {
+        text-style: bold;
+        color: $primary;
+        margin-bottom: 1;
+    }
+    
+    .settings-separator {
+        height: 1;
+        margin: 1 0;
+    }
+    
+    .encryption-warning {
+        color: $warning;
+        margin-bottom: 1;
+    }
+    
     .settings-button-container, .form-actions {
         layout: horizontal;
         margin-top: 2;
@@ -505,6 +525,34 @@ class ToolsSettingsWindow(Container):
                 classes="settings-input",
                 placeholder="0.0 - 2.0"
             )
+            
+            # Config Encryption Section
+            yield Static("", classes="settings-separator")
+            yield Static("Config File Encryption", classes="settings-subsection-title")
+            
+            encryption_config = self.config_data.get("encryption", {})
+            encryption_enabled = encryption_config.get("enabled", False)
+            
+            yield Checkbox(
+                "Enable config file encryption",
+                value=encryption_enabled,
+                id="general-encryption-enabled",
+                classes="settings-checkbox"
+            )
+            
+            yield Static(
+                "When enabled, your API keys and sensitive settings will be encrypted when the app exits. "
+                "You'll need to enter a password each time you start the app.",
+                classes="help-text"
+            )
+            
+            # Show warning if API keys are detected and encryption is not enabled
+            if not encryption_enabled and check_encryption_needed():
+                detected_providers = get_detected_api_providers()
+                yield Static(
+                    f"⚠️ Detected unencrypted API keys for: {', '.join(detected_providers)}",
+                    classes="encryption-warning help-text"
+                )
             
             yield Static("For more detailed chat and character settings, visit the Configuration File Settings section.", 
                         classes="help-text settings-note")
@@ -2309,6 +2357,85 @@ Thank you for using tldw-chatbook! 🎉
             except ValueError:
                 self.app_instance.notify("Invalid character temperature value", severity="warning")
             
+            # Config Encryption
+            encryption_enabled = self.query_one("#general-encryption-enabled", Checkbox).value
+            current_encryption = self.config_data.get("encryption", {}).get("enabled", False)
+            
+            if encryption_enabled != current_encryption:
+                if encryption_enabled:
+                    # Enabling encryption - need to set up password
+                    from ..Widgets.password_dialog import PasswordDialog
+                    
+                    # Check if there are API keys to encrypt
+                    if check_encryption_needed():
+                        detected_providers = get_detected_api_providers()
+                        self.app_instance.notify(
+                            f"Setting up encryption for API keys: {', '.join(detected_providers)}",
+                            severity="information"
+                        )
+                    
+                    # Get password from user
+                    password = await self.app_instance.push_screen(
+                        PasswordDialog(
+                            mode="setup",
+                            title="Setup Config Encryption",
+                            message="Create a master password to encrypt your configuration file:",
+                            on_submit=lambda p: None,
+                            on_cancel=lambda: None
+                        ),
+                        wait_for_dismiss=True
+                    )
+                    
+                    if password:
+                        # Enable encryption
+                        if enable_config_encryption(password):
+                            saved_count += 1
+                            self.app_instance.notify(
+                                "✅ Config encryption enabled! Your settings will be encrypted when you exit the app.",
+                                severity="information",
+                                timeout=5
+                            )
+                        else:
+                            self.app_instance.notify("❌ Failed to enable encryption", severity="error")
+                            # Reset the checkbox since enabling failed
+                            self.query_one("#general-encryption-enabled", Checkbox).value = False
+                    else:
+                        # User cancelled - reset the checkbox
+                        self.query_one("#general-encryption-enabled", Checkbox).value = False
+                        self.app_instance.notify("Encryption setup cancelled", severity="warning")
+                else:
+                    # Disabling encryption - need current password
+                    from ..Widgets.password_dialog import PasswordDialog
+                    
+                    password = await self.app_instance.push_screen(
+                        PasswordDialog(
+                            mode="unlock",
+                            title="Disable Encryption",
+                            message="Enter your master password to disable encryption:",
+                            on_submit=lambda p: None,
+                            on_cancel=lambda: None
+                        ),
+                        wait_for_dismiss=True
+                    )
+                    
+                    if password:
+                        # Verify and disable encryption
+                        if disable_config_encryption(password):
+                            saved_count += 1
+                            self.app_instance.notify(
+                                "🔓 Config encryption disabled. Your settings are no longer encrypted.",
+                                severity="information",
+                                timeout=5
+                            )
+                        else:
+                            self.app_instance.notify("❌ Invalid password or failed to disable encryption", severity="error")
+                            # Reset the checkbox since disabling failed
+                            self.query_one("#general-encryption-enabled", Checkbox).value = True
+                    else:
+                        # User cancelled - reset the checkbox
+                        self.query_one("#general-encryption-enabled", Checkbox).value = True
+                        self.app_instance.notify("Encryption disable cancelled", severity="warning")
+            
             # Update internal config
             self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
             
@@ -2346,6 +2473,9 @@ Thank you for using tldw-chatbook! 🎉
             self.query_one("#general-character-provider", Select).value = default_char_provider
             self.query_one("#general-character-model", Input).value = "claude-3-haiku-20240307"
             self.query_one("#general-character-temperature", Input).value = "0.8"
+            
+            # Reset Encryption
+            self.query_one("#general-encryption-enabled", Checkbox).value = False
             
             self.app_instance.notify("General Settings reset to defaults!")
             

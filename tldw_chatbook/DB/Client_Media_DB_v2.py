@@ -99,6 +99,26 @@ class MediaDatabase:
     Requires client_id on initialization. Includes schema versioning.
     """
     _CURRENT_SCHEMA_VERSION = 2  # Define the version this code supports
+    
+    # Migration registry - maps from_version to migration details
+    _MIGRATIONS = {
+        0: {
+            'to_version': 1,
+            'function': '_apply_schema_v1',
+            'description': 'Initial schema creation'
+        },
+        1: {
+            'to_version': 2,
+            'function': '_apply_migration_v1_to_v2',
+            'description': 'Add chunking configuration support'
+        },
+        # Future migrations: just add new entries here
+        # 2: {
+        #     'to_version': 3,
+        #     'function': '_apply_migration_v2_to_v3',
+        #     'description': 'Description of v3 changes'
+        # },
+    }
 
     # <<< Schema Definition (Version 1) >>>
 
@@ -961,20 +981,36 @@ class MediaDatabase:
             if current_db_version > target_version:
                 raise SchemaError(f"Database schema version ({current_db_version}) is newer than supported by code ({target_version}).")
 
-            # --- Apply Migrations ---
-            if current_db_version == 0:
-                self._apply_schema_v1(conn)  # Call the updated method
-                current_db_version = 1  # Update local tracking
-            
-            if current_db_version == 1 and target_version >= 2:
-                self._apply_migration_v1_to_v2(conn)
-                current_db_version = 2  # Update local tracking
+            # Apply migrations sequentially using the migration registry
+            while current_db_version < target_version:
+                migration = self._MIGRATIONS.get(current_db_version)
+                if not migration:
+                    raise SchemaError(f"No migration path defined from version {current_db_version}")
                 
-            # Verify final version
-            final_db_version = self._get_db_version(conn)
-            if final_db_version != target_version:
-                raise SchemaError(f"Schema migration applied, but final DB version is {final_db_version}, expected {target_version}. Manual check required.")
-            logging.info(f"Database schema initialized/migrated to version {target_version}.")
+                next_version = migration['to_version']
+                migration_func_name = migration['function']
+                description = migration['description']
+                
+                # Get the migration function
+                migration_func = getattr(self, migration_func_name, None)
+                if not migration_func:
+                    raise SchemaError(f"Migration function {migration_func_name} not found")
+                
+                logging.info(f"Applying migration: {description} (v{current_db_version} → v{next_version})")
+                migration_func(conn)
+                
+                # Verify the migration updated the version correctly
+                new_db_version = self._get_db_version(conn)
+                if new_db_version != next_version:
+                    raise SchemaError(
+                        f"Migration {migration_func_name} failed to update version. "
+                        f"Expected {next_version}, got {new_db_version}"
+                    )
+                
+                current_db_version = new_db_version
+                logging.info(f"Successfully migrated to version {current_db_version}")
+            
+            logging.info(f"Database schema fully migrated to version {target_version}")
 
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             logging.error(f"Schema initialization/migration failed: {e}", exc_info=True)

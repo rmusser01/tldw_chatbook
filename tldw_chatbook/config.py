@@ -417,8 +417,12 @@ def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Di
     
     # Set encryption metadata
     encryption_config["enabled"] = True
-    encryption_config["method"] = "AES-256-CBC"
-    encryption_config["password_hash"] = enc_module.hash_password(password)
+    encryption_config["method"] = "AES-256-CBC-HMAC"
+    encryption_config["version"] = 2
+    # Use password verifier instead of hash for better security
+    encryption_config["password_verifier"] = enc_module.create_password_verifier(password, salt)
+    # Keep old hash for backward compatibility during migration
+    encryption_config["password_hash"] = enc_module.hash_password(password, salt)
     encrypted_config["encryption"] = encryption_config
     
     # Encrypt api_settings sections
@@ -2730,10 +2734,29 @@ def disable_config_encryption(password: str) -> bool:
         encryption_config = config_data.get("encryption", {})
         if encryption_config.get("enabled", False):
             enc_module = get_encryption_module()
-            stored_hash = encryption_config.get("password_hash", "")
-            if not enc_module.verify_password(password, stored_hash):
-                logger.error("Invalid password provided")
+            
+            # Get salt
+            salt_b64 = encryption_config.get("salt", "")
+            if not salt_b64:
+                logger.error("No salt found in encryption config")
                 return False
+            
+            import base64
+            salt = base64.b64decode(salt_b64)
+            
+            # Try new password verifier first, then fall back to legacy hash
+            password_verifier = encryption_config.get("password_verifier", "")
+            if password_verifier:
+                # Use new secure method
+                if not enc_module.verify_password_with_verifier(password, password_verifier, salt):
+                    logger.error("Invalid password provided")
+                    return False
+            else:
+                # Fall back to legacy method for backward compatibility
+                stored_hash = encryption_config.get("password_hash", "")
+                if not stored_hash or not enc_module.verify_password(password, stored_hash, salt):
+                    logger.error("Invalid password provided")
+                    return False
         
         # Set password temporarily for decryption
         set_encryption_password(password)
@@ -2787,10 +2810,29 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
         encryption_config = config_data.get("encryption", {})
         if encryption_config.get("enabled", False):
             enc_module = get_encryption_module()
-            stored_hash = encryption_config.get("password_hash", "")
-            if not enc_module.verify_password(old_password, stored_hash):
-                logger.error("Invalid current password provided")
+            
+            # Get salt
+            salt_b64 = encryption_config.get("salt", "")
+            if not salt_b64:
+                logger.error("No salt found in encryption config")
                 return False
+            
+            import base64
+            salt = base64.b64decode(salt_b64)
+            
+            # Try new password verifier first, then fall back to legacy hash
+            password_verifier = encryption_config.get("password_verifier", "")
+            if password_verifier:
+                # Use new secure method
+                if not enc_module.verify_password_with_verifier(old_password, password_verifier, salt):
+                    logger.error("Invalid current password provided")
+                    return False
+            else:
+                # Fall back to legacy method for backward compatibility
+                stored_hash = encryption_config.get("password_hash", "")
+                if not stored_hash or not enc_module.verify_password(old_password, stored_hash, salt):
+                    logger.error("Invalid current password provided")
+                    return False
         else:
             logger.error("Encryption is not enabled")
             return False

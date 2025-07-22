@@ -1,10 +1,12 @@
 """
 Config file encryption utilities for protecting sensitive data like API keys.
 
-Uses AES-256 encryption with PBKDF2 key derivation for secure password-based encryption.
+Uses AES-256-CBC encryption with HMAC-SHA256 authentication and PBKDF2 key derivation.
+Provides authenticated encryption to ensure both confidentiality and integrity.
 """
 import base64
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -21,54 +23,91 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
 class ConfigEncryption:
-    """Handles encryption/decryption of configuration values."""
+    """Handles encryption/decryption of configuration values with authentication."""
     
     ENCRYPTION_PREFIX = "enc:"
     SALT_SIZE = 32  # 256 bits
     KEY_SIZE = 32   # 256 bits for AES-256
+    HMAC_KEY_SIZE = 32  # 256 bits for HMAC-SHA256
     BLOCK_SIZE = 16  # AES block size
     ITERATIONS = 100000  # PBKDF2 iterations
+    VERSION = 2  # Encryption format version
     
     def __init__(self):
-        self._cached_key: Optional[bytes] = None
-        self._salt: Optional[bytes] = None
+        pass  # No state needed - all operations are stateless
     
     def generate_salt(self) -> bytes:
         """Generate a new random salt for key derivation."""
         return get_random_bytes(self.SALT_SIZE)
     
-    def derive_key(self, password: str, salt: bytes) -> bytes:
-        """Derive an encryption key from password and salt using PBKDF2."""
+    def derive_keys(self, password: str, salt: bytes) -> Tuple[bytes, bytes]:
+        """Derive encryption and HMAC keys from password and salt using PBKDF2."""
         start_time = time.time()
         log_counter("config_encryption_derive_key_attempt")
         
-        key = PBKDF2(
+        # Derive a master key, then split it for encryption and HMAC
+        master_key = PBKDF2(
             password.encode('utf-8'),
             salt,
-            dkLen=self.KEY_SIZE,
+            dkLen=self.KEY_SIZE + self.HMAC_KEY_SIZE,  # 64 bytes total
             count=self.ITERATIONS,
             hmac_hash_module=hashlib.sha256
         )
+        
+        # Split the master key
+        encryption_key = master_key[:self.KEY_SIZE]
+        hmac_key = master_key[self.KEY_SIZE:]
         
         duration = time.time() - start_time
         log_histogram("config_encryption_derive_key_duration", duration)
         log_counter("config_encryption_derive_key_success")
         
-        return key
+        return encryption_key, hmac_key
     
-    def hash_password(self, password: str) -> str:
-        """Create a hash of the password for verification (not for encryption)."""
-        # Use a simple SHA-256 hash for verification
-        # The actual encryption key is derived separately with PBKDF2
-        return hashlib.sha256(password.encode('utf-8')).hexdigest()
+    def create_password_verifier(self, password: str, salt: bytes) -> str:
+        """Create an encrypted test value for password verification."""
+        # Use a known test string that we can decrypt to verify the password
+        test_value = "CONFIG_ENCRYPTION_PASSWORD_VERIFICATION_V2"
+        encrypted_value, _ = self.encrypt_value(test_value, password, salt)
+        return encrypted_value
     
-    def verify_password(self, password: str, stored_hash: str) -> bool:
-        """Verify if the provided password matches the stored hash."""
-        return self.hash_password(password) == stored_hash
+    def verify_password_with_verifier(self, password: str, verifier: str, salt: bytes) -> bool:
+        """Verify password by attempting to decrypt the test value."""
+        try:
+            decrypted = self.decrypt_value(verifier, password, salt)
+            # Check if we successfully decrypted the expected test value
+            return decrypted == "CONFIG_ENCRYPTION_PASSWORD_VERIFICATION_V2"
+        except ValueError:
+            # Decryption failed - wrong password
+            return False
+    
+    # Keep old methods for backward compatibility during migration
+    def hash_password(self, password: str, salt: bytes) -> str:
+        """
+        DEPRECATED: Create a salted hash of the password for verification.
+        Use create_password_verifier instead.
+        """
+        hash_bytes = PBKDF2(
+            password.encode('utf-8'),
+            salt,
+            dkLen=32,  # 256 bits
+            count=self.ITERATIONS,
+            hmac_hash_module=hashlib.sha256
+        )
+        return base64.b64encode(hash_bytes).decode('utf-8')
+    
+    def verify_password(self, password: str, stored_hash: str, salt: bytes) -> bool:
+        """
+        DEPRECATED: Verify if the provided password matches the stored hash.
+        Use verify_password_with_verifier instead.
+        """
+        return self.hash_password(password, salt) == stored_hash
     
     def encrypt_value(self, value: str, password: str, salt: Optional[bytes] = None) -> Tuple[str, bytes]:
         """
-        Encrypt a string value using AES-256-CBC.
+        Encrypt a string value using AES-256-CBC with HMAC-SHA256 authentication.
+        
+        Format: VERSION || IV || ENCRYPTED_DATA || HMAC
         
         Args:
             value: The string to encrypt
@@ -87,21 +126,29 @@ class ConfigEncryption:
         if salt is None:
             salt = self.generate_salt()
         
-        # Derive key from password
-        key = self.derive_key(password, salt)
+        # Derive keys from password
+        encryption_key, hmac_key = self.derive_keys(password, salt)
         
         # Generate random IV
         iv = get_random_bytes(self.BLOCK_SIZE)
         
         # Create cipher
-        cipher = AES.new(key, AES.MODE_CBC, iv)
+        cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
         
         # Pad and encrypt the data
         padded_data = pad(value.encode('utf-8'), self.BLOCK_SIZE)
         encrypted_data = cipher.encrypt(padded_data)
         
-        # Combine IV and encrypted data
-        combined = iv + encrypted_data
+        # Build the complete message (without HMAC yet)
+        version_bytes = bytes([self.VERSION])
+        message = version_bytes + iv + encrypted_data
+        
+        # Calculate HMAC over the entire message
+        h = hmac.new(hmac_key, message, hashlib.sha256)
+        mac = h.digest()
+        
+        # Combine everything
+        combined = message + mac
         
         # Encode to base64 for storage
         encrypted_b64 = base64.b64encode(combined).decode('utf-8')
@@ -119,7 +166,7 @@ class ConfigEncryption:
     
     def decrypt_value(self, encrypted_value: str, password: str, salt: bytes) -> str:
         """
-        Decrypt an encrypted string value.
+        Decrypt an encrypted string value with HMAC verification.
         
         Args:
             encrypted_value: The encrypted string (with or without prefix)
@@ -130,7 +177,7 @@ class ConfigEncryption:
             The decrypted string
             
         Raises:
-            ValueError: If decryption fails
+            ValueError: If decryption or authentication fails
         """
         start_time = time.time()
         log_counter("config_encryption_decrypt_value_attempt", labels={
@@ -145,15 +192,37 @@ class ConfigEncryption:
             # Decode from base64
             combined = base64.b64decode(encrypted_value)
             
-            # Extract IV and encrypted data
-            iv = combined[:self.BLOCK_SIZE]
-            encrypted_data = combined[self.BLOCK_SIZE:]
+            # Check minimum length (version + IV + at least 1 block + HMAC)
+            min_length = 1 + self.BLOCK_SIZE + self.BLOCK_SIZE + 32
+            if len(combined) < min_length:
+                raise ValueError("Invalid encrypted data length")
             
-            # Derive key from password
-            key = self.derive_key(password, salt)
+            # Extract HMAC (last 32 bytes)
+            stored_mac = combined[-32:]
+            message = combined[:-32]
+            
+            # Derive keys from password
+            encryption_key, hmac_key = self.derive_keys(password, salt)
+            
+            # Verify HMAC first (fail fast if tampered)
+            h = hmac.new(hmac_key, message, hashlib.sha256)
+            expected_mac = h.digest()
+            
+            # Constant-time comparison to prevent timing attacks
+            if not hmac.compare_digest(stored_mac, expected_mac):
+                raise ValueError("HMAC verification failed")
+            
+            # Extract components
+            version = message[0]
+            if version != self.VERSION:
+                # Try legacy format for backward compatibility
+                return self._decrypt_legacy_format(encrypted_value, password, salt)
+            
+            iv = message[1:1+self.BLOCK_SIZE]
+            encrypted_data = message[1+self.BLOCK_SIZE:]
             
             # Create cipher and decrypt
-            cipher = AES.new(key, AES.MODE_CBC, iv)
+            cipher = AES.new(encryption_key, AES.MODE_CBC, iv)
             padded_plaintext = cipher.decrypt(encrypted_data)
             
             # Remove padding
@@ -172,6 +241,45 @@ class ConfigEncryption:
             logger.error(f"Decryption failed: {e}")
             log_counter("config_encryption_decrypt_value_error", labels={"error_type": type(e).__name__})
             raise ValueError("Failed to decrypt value. Invalid password or corrupted data.")
+    
+    def _decrypt_legacy_format(self, encrypted_value: str, password: str, salt: bytes) -> str:
+        """
+        Decrypt legacy format (version 1) without HMAC for backward compatibility.
+        
+        This should only be used during migration to the new format.
+        """
+        try:
+            # Decode from base64
+            combined = base64.b64decode(encrypted_value)
+            
+            # Legacy format: IV || ENCRYPTED_DATA (no version, no HMAC)
+            iv = combined[:self.BLOCK_SIZE]
+            encrypted_data = combined[self.BLOCK_SIZE:]
+            
+            # Derive key from password (old method only derived encryption key)
+            key = PBKDF2(
+                password.encode('utf-8'),
+                salt,
+                dkLen=self.KEY_SIZE,
+                count=self.ITERATIONS,
+                hmac_hash_module=hashlib.sha256
+            )
+            
+            # Create cipher and decrypt
+            cipher = AES.new(key, AES.MODE_CBC, iv)
+            padded_plaintext = cipher.decrypt(encrypted_data)
+            
+            # Remove padding
+            plaintext = unpad(padded_plaintext, self.BLOCK_SIZE)
+            
+            decrypted = plaintext.decode('utf-8')
+            
+            logger.warning("Decrypted value using legacy format. Please re-encrypt with new format.")
+            return decrypted
+            
+        except Exception as e:
+            logger.error(f"Legacy decryption failed: {e}")
+            raise ValueError("Failed to decrypt legacy value.")
     
     def is_encrypted(self, value: str) -> bool:
         """Check if a value is encrypted based on its prefix."""
@@ -292,10 +400,6 @@ class ConfigEncryption:
         
         return api_key_count > 0
     
-    def clear_cache(self):
-        """Clear any cached encryption keys from memory."""
-        self._cached_key = None
-        self._salt = None
 
 
 # Global instance for convenience

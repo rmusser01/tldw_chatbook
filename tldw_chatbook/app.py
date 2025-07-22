@@ -93,7 +93,8 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, notes_sync_events, embeddings_events, subscription_events,
 )
-from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar
+from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
+    chat_events_dictionaries
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent, TTSCompleteEvent, TTSPlaybackEvent, TTSProgressEvent, TTSEventHandler
@@ -5624,6 +5625,41 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 loguru_logger.warning("Cache save timed out - proceeding with quit")
         except Exception as e:
             loguru_logger.error(f"Error in quit handler: {e}")
+        
+        # Save encrypted config if encryption is enabled
+        try:
+            from tldw_chatbook.config import (
+                load_cli_config_and_ensure_existence, 
+                get_encryption_password,
+                encrypt_api_keys_in_config,
+                DEFAULT_CONFIG_PATH
+            )
+            from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
+            import toml
+            
+            config_data = load_cli_config_and_ensure_existence()
+            encryption_config = config_data.get("encryption", {})
+            
+            if encryption_config.get("enabled", False):
+                password = get_encryption_password()
+                if password:
+                    loguru_logger.info("Encrypting configuration before exit...")
+                    try:
+                        # Encrypt the config
+                        encrypted_config = encrypt_api_keys_in_config(config_data, password)
+                        
+                        # Save the encrypted config
+                        config_text = toml.dumps(encrypted_config)
+                        atomic_write_text(DEFAULT_CONFIG_PATH, config_text)
+                        
+                        loguru_logger.info("Configuration encrypted and saved successfully")
+                    except Exception as e:
+                        loguru_logger.error(f"Failed to encrypt config on exit: {e}")
+                        # Continue with exit even if encryption fails
+                else:
+                    loguru_logger.warning("Encryption enabled but no password available - config not encrypted")
+        except Exception as e:
+            loguru_logger.error(f"Error during config encryption on exit: {e}")
         
         # Always call the parent quit method
         self.exit()
