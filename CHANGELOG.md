@@ -10,27 +10,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+## [0.1.3.5] - 2025-07-21
+### Fixed
+- Chatterbox TTS generation
+- 'Continue' button
+- Datetime import in the chat window
+
+
 ## [0.1.3.4] - 2025-07-20
+### Added
 - New chat UI Screenshot + Custom Chunkning/RAG enhancements
 
+
 ## [0.1.3.3] - 2025-07-20
+### Fixed
 - TTS bugfixes (again)
 - Fix for background processes not being terminated properly (again)
+
+### Added
 - Groundwork for custom chunking
 
+
 ## [0.1.3.2] - 2025-07-20
+
+### Fixed
 - TTS bugfixes
 - Fix for background processes not being terminated properly
 
+
 ## [0.1.3.1] - 2025-07-20
+
+### Fixed
 - Numpy Bugfix
 
+
 ## [0.1.3.0] - 2025-07-20
+
+### Added & Fixed
 - TTS Bugfixes
 - Groundwork for future features.
 
+
 ## [0.1.2.0] - 2025- 07-18
+
+### Added
 - Added more TTS stuff.
+
 
 ## [0.1.1.1] - 2025-07-17
 
