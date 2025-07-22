@@ -76,6 +76,7 @@ chunker = [
     "jieba",
 ]
 embeddings_rag = [
+    "chromadb",
     "torch",
     "numpy",
     "pydantic",
