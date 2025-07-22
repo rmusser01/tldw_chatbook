@@ -54,20 +54,26 @@ def mock_app():
             
         def query_one(self, selector, widget_type=None):
             if selector == ".message-text":
-                # Return this instance's markdown widget
-                print(f"query_one called with selector={selector}, returning {self._mock_markdown}")
-                print(f"_mock_markdown.update type: {type(self._mock_markdown.update)}")
+                # Return this instance's markdown widget directly
+                # Make sure we're returning the actual mock, not a coroutine
                 return self._mock_markdown
             return MagicMock()
     
     mock_chat_message_widget = MockChatMessageWidget()
     
+    # IMPORTANT: Ensure query_one is not replaced by AsyncMock
+    # Store the original query_one method
+    widget_original_query_one = mock_chat_message_widget.query_one
+    
     # Set the current AI message widget
     app.get_current_ai_message_widget.return_value = mock_chat_message_widget
+    
+    # Ensure the widget's query_one doesn't get replaced
+    mock_chat_message_widget.query_one = widget_original_query_one
     app.current_ai_message_widget = mock_chat_message_widget  # For backward compatibility
     
-    # Override query_one for specific streaming needs
-    original_query_one = app.query_one.side_effect
+    # Override query_one for specific streaming needs  
+    app_original_query_one = app.query_one.side_effect
     
     # Create persistent mocks
     mock_chat_log = MagicMock(spec=VerticalScroll)
@@ -84,7 +90,7 @@ def mock_app():
         elif sel == "#chat-input" and widget_type == TextArea:
             return mock_chat_input
         else:
-            return original_query_one(sel, widget_type)
+            return app_original_query_one(sel, widget_type)
     
     app.query_one.side_effect = streaming_query_one
     
@@ -116,6 +122,17 @@ async def test_handle_streaming_chunk_appends_text(mock_app):
     # Set initial text and mark streaming as started
     mock_widget.message_text = "Initial."
     mock_widget._streaming_started = True  # Mark that streaming has already started
+    
+    # Debug: print what get_current_ai_message_widget returns when called
+    widget_from_method = mock_app.get_current_ai_message_widget()
+    print(f"DEBUG: widget_from_method = {widget_from_method}")
+    print(f"DEBUG: type(widget_from_method) = {type(widget_from_method)}")
+    print(f"DEBUG: widget_from_method is mock_widget = {widget_from_method is mock_widget}")
+    
+    # Now check what query_one returns
+    query_result = widget_from_method.query_one(".message-text", Markdown)
+    print(f"DEBUG: query_result = {query_result}")
+    print(f"DEBUG: type(query_result) = {type(query_result)}")
     
     # Bind the method to mock_app and call it
     await streaming_events.handle_streaming_chunk.__get__(mock_app)(event)
