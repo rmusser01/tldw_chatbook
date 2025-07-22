@@ -3535,8 +3535,35 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 view_container.display = is_target
                 if is_target:
                     self.log.info(f"Displaying ingest view: #{view_id}")
+                    # Initialize models for video/audio windows when they become visible
+                    if view_id == "ingest-view-local-video":
+                        self._initialize_video_models()
+                    elif view_id == "ingest-view-local-audio":
+                        self._initialize_audio_models()
             except QueryError:
                 self.log.warning(f"Ingest view container '#{view_id}' not found during show_ingest_view.")
+
+    def _initialize_video_models(self) -> None:
+        """Initialize models for the video ingestion window."""
+        try:
+            from .UI.Ingest_Window import IngestWindow
+            ingest_window = self.query_one("#ingest-window", IngestWindow)
+            if ingest_window._local_video_window:
+                self.log.debug("Initializing video window models")
+                ingest_window._local_video_window._try_initialize_models()
+        except Exception as e:
+            self.log.debug(f"Could not initialize video models: {e}")
+
+    def _initialize_audio_models(self) -> None:
+        """Initialize models for the audio ingestion window."""
+        try:
+            from .UI.Ingest_Window import IngestWindow
+            ingest_window = self.query_one("#ingest-window", IngestWindow)
+            if ingest_window._local_audio_window:
+                self.log.debug("Initializing audio window models")
+                ingest_window._local_audio_window._try_initialize_models()
+        except Exception as e:
+            self.log.debug(f"Could not initialize audio models: {e}")
 
     async def save_current_note(self) -> bool:
         """Saves the currently selected note's title and content to the database."""

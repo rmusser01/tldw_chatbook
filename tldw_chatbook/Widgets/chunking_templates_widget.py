@@ -195,18 +195,18 @@ class ChunkingTemplatesWidget(Container):
                 self.templates_cache[template['id']] = template
                 display_templates.append(template)
             
-            self.call_from_thread(self._update_table, display_templates)
+            self.app_instance.call_from_thread(self._update_table, display_templates)
             
         except ChunkingTemplateError as e:
             logger.error(f"Error refreshing templates: {e}")
-            self.call_from_thread(
+            self.app_instance.call_from_thread(
                 self.app_instance.notify,
                 f"Error loading templates: {str(e)}",
                 severity="error"
             )
         except Exception as e:
             logger.error(f"Unexpected error refreshing templates: {e}")
-            self.call_from_thread(
+            self.app_instance.call_from_thread(
                 self.app_instance.notify,
                 f"Unexpected error: {str(e)}",
                 severity="error"
