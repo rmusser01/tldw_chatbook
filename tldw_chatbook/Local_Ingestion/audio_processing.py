@@ -543,10 +543,13 @@ class LocalAudioProcessor:
                 chunk_text = chunk.get("text", "")
                 if chunk_text:
                     chunk_prompt = f"Summarize this section:\n\n{chunk_text}"
+                    messages_payload = [
+                        {"role": "user", "content": chunk_prompt}
+                    ]
                     summary = chat_api_call(
-                        api_name=api_name,
-                        input_data=chunk_prompt,
-                        prompt="",
+                        api_endpoint=api_name,
+                        messages_payload=messages_payload,
+                        api_key=None,
                         temp=0.7,
                         system_message=system_prompt
                     )
@@ -555,19 +558,26 @@ class LocalAudioProcessor:
             # Then summarize the summaries
             combined = "\n\n".join(chunk_summaries)
             final_prompt = f"Combine and summarize these section summaries:\n\n{combined}"
+            messages_payload = [
+                {"role": "user", "content": final_prompt}
+            ]
             return chat_api_call(
-                api_name=api_name,
-                input_data=final_prompt,
-                prompt="",
+                api_endpoint=api_name,
+                messages_payload=messages_payload,
+                api_key=None,
                 temp=0.7,
                 system_message=system_prompt
             )
         else:
             # Direct summarization
+            prompt_text = custom_prompt or "Please summarize this audio transcription."
+            messages_payload = [
+                {"role": "user", "content": content + "\n\n" + prompt_text}
+            ]
             return chat_api_call(
-                api_name=api_name,
-                input_data=content,
-                prompt=custom_prompt or "Please summarize this audio transcription.",
+                api_endpoint=api_name,
+                messages_payload=messages_payload,
+                api_key=None,
                 temp=0.7,
                 system_message=system_prompt
             )

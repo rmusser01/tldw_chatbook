@@ -1265,6 +1265,7 @@ auth_token = "default-secret-key-for-single-user"
 
 [splash_screen]
 # Splash screen configuration for startup animations
+# See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens
 enabled = true  # Enable/disable splash screen
 duration = 1.5  # Duration in seconds to display splash screen
 skip_on_keypress = true  # Allow users to skip with any keypress
@@ -1277,12 +1278,17 @@ card_selection = "random"
 
 show_progress = true  # Show initialization progress bar
 
-# All available splash cards are enabled by default for variety
-# To customize: Remove cards you don't want, or replace the entire list with your preferred cards
-# Static cards: default, classic, compact, minimal, blueprint
-# Animated cards: matrix, glitch, retro, tech_pulse, code_scroll, minimal_fade, arcade_high_score,
-#                digital_rain, loading_bar, starfield, terminal_boot, glitch_reveal, ascii_morph,
-#                game_of_life, scrolling_credits, spotlight_reveal, sound_bars
+# List of splash cards to use when card_selection is "random"
+# Full catalog of 40+ cards available - see documentation for descriptions
+# Categories:
+#   Static: default, classic, compact, minimal, blueprint
+#   Classic Animated: matrix, glitch, retro, typewriter
+#   Visual Effects: tech_pulse, code_scroll, arcade_high_score, digital_rain, loading_bar, starfield
+#   Interactive: terminal_boot, glitch_reveal, ascii_morph, game_of_life, scrolling_credits, spotlight_reveal
+#   Creative: sound_bars, raindrops_pond, pixel_zoom, text_explosion, old_film, maze_generator, dwarf_fortress
+#   Tech-Themed: neural_network, quantum_particles, ascii_wave, binary_matrix, constellation_map, circuit_trace
+#   More: typewriter_news, dna_sequence, plasma_field, ascii_fire, rubiks_cube, data_stream, fractal_zoom, 
+#         ascii_spinner, hacker_terminal
 active_cards = [
     "default", "matrix", "glitch", "retro", "classic", "compact", "minimal",
     "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",

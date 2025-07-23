@@ -48,6 +48,7 @@ from urllib.parse import urlparse, urlencode, unquote
 #
 # 3rd-Party Imports
 import requests
+from loguru._logger import start_time
 from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
@@ -289,6 +290,7 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
         ...     search_params
         ... )
     """
+    start_time = time.time()
     logger.info("Starting analyze_and_aggregate")
 
     # 4. Score/filter results
@@ -320,6 +322,12 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
 
     # 7. Return the final data
     logger.info("Returning final websearch results")
+    
+    # Define engine and all_queries for metrics logging
+    engine = search_params.get('engine', 'unknown')
+    main_goal = sub_query_dict.get("main_goal", "")
+    sub_questions = sub_query_dict.get("sub_questions", [])
+    all_queries = [main_goal] + sub_questions if main_goal else sub_questions
     
     # Log success metrics
     duration = time.time() - start_time
@@ -454,7 +462,10 @@ def analyze_question(question: str, api_endpoint) -> Dict:
         try:
             logger.info(f"Generating sub-questions (attempt {attempt + 1})")
 
-            response = chat_api_call(api_endpoint, None, input_data, sub_question_generation_prompt, temp=0.7, system_message=None, streaming=False, minp=None, maxp=None, model=None)
+            messages_payload = [
+                {"role": "user", "content": input_data + "\n\n" + sub_question_generation_prompt}
+            ]
+            response = chat_api_call(api_endpoint=api_endpoint, messages_payload=messages_payload, api_key=None, temp=0.7, system_message=None, streaming=False, minp=None, maxp=None, model=None)
             if response:
                 try:
                     # Try to parse as JSON first
@@ -582,11 +593,13 @@ async def search_result_relevance(
             await asyncio.sleep(sleep_time)
 
             # Evaluate relevance
+            messages_payload = [
+                {"role": "user", "content": input_data + "\n\n" + eval_prompt}
+            ]
             relevancy_result = chat_api_call(
                 api_endpoint=api_endpoint,
+                messages_payload=messages_payload,
                 api_key=None,
-                input_data=input_data,
-                prompt=eval_prompt,
                 temp=0.7,
                 system_message=None,
                 streaming=False,
@@ -860,11 +873,13 @@ def aggregate_results(
 
     try:
         logger.info("Generating the report")
+        messages_payload = [
+            {"role": "user", "content": input_data + "\n\n" + analyze_search_results_prompt_2}
+        ]
         returned_response = chat_api_call(
             api_endpoint=api_endpoint,
+            messages_payload=messages_payload,
             api_key=None,
-            input_data=input_data,
-            prompt=analyze_search_results_prompt_2,
             temp=0.7,
             system_message=None,
             streaming=False,

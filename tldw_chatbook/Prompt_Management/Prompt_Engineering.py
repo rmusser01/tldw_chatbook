@@ -409,7 +409,7 @@ def generate_prompt(api_endpoint, api_key, task, variables_str, temperature):
 
     <function_call>get_ticker_symbol(company_name="The General Motors Company LLC")</function_call>
 
-    <error>TickerNotFound: If no matching ticker symbol is found.</error>
+    <e>TickerNotFound: If no matching ticker symbol is found.</e>
 
     <scratchpad>The get_ticker_symbol(company_name="The General Motors Company LLC") call raised a TickerNotFound: If no matching ticker symbol is found error indicating that the provided str did not return a matching ticker symbol. I should retry the function using another name variation of the company.</scratchpad>
 
@@ -494,7 +494,8 @@ def generate_prompt(api_endpoint, api_key, task, variables_str, temperature):
     Note: If you want the AI to output its entire response or parts of its response inside certain tags, specify the name of these tags (e.g. "write your answer inside <answer> tags") but do not include closing tags or unnecessary open-and-close tag sections."""
 
     # Call chat API to generate the prompt
-    response = chat_api_call(api_endpoint=api_endpoint, api_key=api_key, input_data="", prompt=metaprompt,
+    messages_payload = [{"role": "user", "content": metaprompt}]
+    response = chat_api_call(api_endpoint=api_endpoint, messages_payload=messages_payload, api_key=api_key,
                              temp=temperature, streaming=False, minp=None, maxp=None, model=None)
     return response
 
@@ -546,11 +547,12 @@ def test_generated_prompt(api_endpoint, api_key, generated_prompt, variable_valu
             prompt_with_values = prompt_with_values.replace(placeholder, provided_values[i])
 
     # Send the filled-in prompt to the chat API
-    response = chat_api_call(api_endpoint=api_endpoint, api_key=api_key, input_data="", prompt=prompt_with_values, temp=temperature, system_message=None, streaming=False, minp=None, maxp=None, model=None)
+    messages_payload = [{"role": "user", "content": prompt_with_values}]
+    response = chat_api_call(api_endpoint=api_endpoint, messages_payload=messages_payload, api_key=api_key, 
+                             temp=temperature, system_message=None, streaming=False, minp=None, maxp=None, model=None)
     return response
 
 #
 # End of Function Definitions
 ########################################################################################################################
-
 

@@ -1,0 +1,30 @@
+# Animated Matrix Effect Custom Card
+# Place this file in ~/.config/tldw_cli/splash_cards/animated_matrix.toml
+
+[card]
+name = "animated_matrix"
+type = "animated"
+effect = "matrix_rain"
+
+# Customization for the matrix rain effect
+title = "SECURE SYSTEM v2.0"
+subtitle = "Authenticating quantum encryption..."
+
+# Visual style
+style = "bold red on black"  # Red matrix instead of green
+
+# Animation parameters
+animation_speed = 0.03  # Faster than default
+
+# You can override the default matrix characters
+# matrix_chars = "01"  # Binary only matrix
+
+# Optional: Control the reveal timing
+title_reveal_speed = 0.5
+subtitle_reveal_speed = 0.3
+
+[metadata]
+author = "Security Team"
+version = "2.0"
+description = "Red Matrix effect for security-focused applications"
+tags = ["security", "matrix", "animated"]
