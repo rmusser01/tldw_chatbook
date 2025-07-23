@@ -2121,6 +2121,37 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # default_provider = "google"
 # ...
 
+# ==========================================================
+# Search Engines Configuration
+# ==========================================================
+[SearchEngines]
+# API Keys for various search engines
+bing_search_api_key = ""
+google_search_api_key = ""
+brave_search_api_key = ""
+brave_search_ai_api_key = ""
+kagi_search_api_key = ""
+tavily_search_api_key = ""
+
+# API URLs
+bing_search_api_url = "https://api.bing.microsoft.com/v7.0/search"
+google_search_api_url = "https://www.googleapis.com/customsearch/v1"
+searx_search_api_url = "https://searx.example.com/search"
+
+# General search settings
+search_result_max = 10
+
+# Country and language settings
+bing_country_code = "US"
+search_engine_country_code_brave = "US"
+google_search_country = "US"
+google_search_engine_id = ""
+
+# Google-specific settings
+google_simp_trad_chinese = false
+limit_google_search_to_country = false
+google_safe_search = false
+
 # ============================================================================
 # Media Processing Configuration
 # ============================================================================

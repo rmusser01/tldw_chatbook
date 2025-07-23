@@ -69,6 +69,7 @@ from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.config import load_settings
 #
 #######################################################################################################################
 #
@@ -78,7 +79,44 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #######################################################################################################################
 #
 # Functions:
-loaded_config_data = "dummy data"
+
+# Initialize configuration data
+def initialize_config():
+    """
+    Initialize the configuration data from config.py.
+    
+    Returns:
+        Dict: A dictionary containing the configuration data.
+    """
+    config_data = load_settings()
+    
+    # Create a search_engines section that matches the expected structure
+    search_engines = {}
+    
+    # Copy settings from SearchEngines section
+    if 'SearchEngines' in config_data:
+        for key, value in config_data['SearchEngines'].items():
+            search_engines[key] = value
+    
+    # Copy settings from search_engine_specific_settings section
+    if 'search_engine_specific_settings' in config_data:
+        for key, value in config_data['search_engine_specific_settings'].items():
+            search_engines[key] = value
+    
+    # Copy settings from search_engines_keys section
+    if 'search_engines_keys' in config_data:
+        for key, value in config_data['search_engines_keys'].items():
+            search_engines[key] = value
+    
+    # Create a new config dictionary with the search_engines section
+    result = {
+        'search_engines': search_engines
+    }
+    
+    return result
+
+# Load configuration data
+loaded_config_data = initialize_config()
 ######################### Main Orchestration Workflow #########################
 #
 # FIXME - Add Logging
@@ -284,11 +322,12 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
             - web_search_results_dict: Original search results
             
     Example:
-        >>> final_results = await analyze_and_aggregate(
-        ...     phase1_results["web_search_results_dict"],
-        ...     phase1_results["sub_query_dict"],
-        ...     search_params
-        ... )
+        >>> # In an async function:
+        >>> # final_results = await analyze_and_aggregate(
+        >>> #     phase1_results["web_search_results_dict"],
+        >>> #     phase1_results["sub_query_dict"],
+        >>> #     search_params
+        >>> # )
     """
     start_time = time.time()
     logger.info("Starting analyze_and_aggregate")
@@ -1411,7 +1450,7 @@ def search_web_bing(search_query, bing_lang, bing_country, result_count=None, bi
 
     if not result_count:
         # Perform check in config file for default search result count
-        answer_count = loaded_config_data['search_engines']['search_result_max']
+        answer_count = loaded_config_data['search_engines'].get('search_result_max', 10)
     else:
         answer_count = result_count
 
