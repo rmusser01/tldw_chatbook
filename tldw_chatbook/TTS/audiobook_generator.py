@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS import get_tts_service
 from tldw_chatbook.TTS.audio_service import get_audio_service
-from tldw_chatbook.TTS.text_processing import normalize_text
+# Text processing is handled by AdvancedTextProcessor
 from tldw_chatbook.TTS.text_processor_advanced import AdvancedTextProcessor
 from tldw_chatbook.TTS.cost_tracker import CostTracker
 
