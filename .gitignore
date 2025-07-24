@@ -200,3 +200,4 @@ cython_debug/
 *.bin
 List.txt
 /pretrained_models/
+*.cpkt
