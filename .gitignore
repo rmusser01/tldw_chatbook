@@ -199,3 +199,4 @@ cython_debug/
 *.pth
 *.bin
 List.txt
+/pretrained_models/
