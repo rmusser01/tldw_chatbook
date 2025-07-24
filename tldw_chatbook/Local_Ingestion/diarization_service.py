@@ -67,12 +67,42 @@ _torchaudio = None
 from ..config import get_cli_setting
 
 
+def _sanitize_path_component(name: str) -> str:
+    """Sanitize a string to be safe for use as a directory/file name.
+    
+    Args:
+        name: The string to sanitize
+        
+    Returns:
+        A sanitized string safe for use in file paths
+    """
+    # Replace path separators and other unsafe characters
+    safe_name = name.replace('/', '_').replace('\\', '_').replace(':', '_')
+    safe_name = safe_name.replace('..', '_')  # Prevent directory traversal
+    
+    # Keep only alphanumeric, underscore, hyphen, and dot
+    safe_name = ''.join(c if c.isalnum() or c in ('_', '-', '.') else '_' for c in safe_name)
+    
+    # Remove leading/trailing dots and underscores
+    safe_name = safe_name.strip('._')
+    
+    # Ensure it's not empty
+    if not safe_name:
+        safe_name = 'model'
+    
+    return safe_name
+
+
 def _lazy_import_torch():
     """Lazy import torch."""
     global _torch
     if _torch is None and TORCH_AVAILABLE:
-        import torch
-        _torch = torch
+        try:
+            import torch
+            _torch = torch
+        except ImportError as e:
+            logger.warning(f"Failed to import torch: {e}")
+            _torch = None
     return _torch
 
 
@@ -90,25 +120,96 @@ def _lazy_import_numpy():
 
 
 def _lazy_import_silero_vad():
-    """Lazy import Silero VAD model."""
+    """Lazy import Silero VAD model.
+    
+    This function loads the Silero VAD model from torch hub.
+    The model returns a tuple of (model, utils) where utils is a tuple of functions.
+    
+    Returns:
+        tuple: (model, utils) or (None, None) if loading fails
+        
+    Note:
+        The utils tuple order is critical and can break between versions:
+        - utils[0]: get_speech_timestamps - Main VAD function
+        - utils[1]: save_audio - Save audio to file
+        - utils[2]: read_audio - Read audio from file  
+        - utils[3]: VADIterator - Class for streaming VAD
+        - utils[4]: collect_chunks - Collect speech chunks
+    """
     global _silero_vad_model, _silero_vad_utils
-    if _silero_vad_model is None and TORCH_AVAILABLE:
-        torch = _lazy_import_torch()
-        if torch:
-            try:
-                model, utils = torch.hub.load(
-                    repo_or_dir='snakers4/silero-vad',
-                    model='silero_vad',
-                    force_reload=False,
-                    trust_repo=True
-                )
-                _silero_vad_model = model
-                _silero_vad_utils = utils
-                logger.info("Silero VAD loaded successfully")
-            except Exception as e:
-                logger.warning(f"Failed to load Silero VAD: {e}")
-                return None, None
-    return _silero_vad_model, _silero_vad_utils
+    
+    # Check if already loaded
+    if _silero_vad_model is not None:
+        return _silero_vad_model, _silero_vad_utils
+    
+    # Check torch availability
+    if not TORCH_AVAILABLE:
+        logger.warning("PyTorch not available, cannot load Silero VAD")
+        return None, None
+    
+    torch = _lazy_import_torch()
+    if not torch:
+        logger.warning("Failed to import torch for Silero VAD")
+        return None, None
+    
+    try:
+        logger.info("Loading Silero VAD model from torch hub...")
+        
+        # Set torch hub directory if not set
+        default_hub_dir = str(Path.home() / '.cache' / 'torch' / 'hub')
+        hub_dir = Path(os.environ.get('TORCH_HUB', default_hub_dir))
+        hub_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load model with explicit parameters
+        result = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=False,  # Use cached version if available
+            trust_repo=True,     # Required for loading
+            verbose=False        # Reduce output noise
+        )
+        
+        # Validate the result format
+        if not isinstance(result, (tuple, list)) or len(result) != 2:
+            logger.error(
+                f"Unexpected Silero VAD return format. Expected (model, utils) tuple, "
+                f"got {type(result).__name__} with length {len(result) if hasattr(result, '__len__') else 'unknown'}"
+            )
+            return None, None
+        
+        model, utils = result
+        
+        # Validate model
+        if model is None:
+            logger.error("Silero VAD model is None")
+            return None, None
+        
+        # Validate utils format
+        if not isinstance(utils, (tuple, list)) or len(utils) < 5:
+            logger.error(
+                f"Unexpected Silero VAD utils format. Expected tuple/list with 5+ items, "
+                f"got {type(utils).__name__} with {len(utils) if hasattr(utils, '__len__') else 'unknown'} items"
+            )
+            return None, None
+        
+        # Store globally for future use
+        _silero_vad_model = model
+        _silero_vad_utils = utils
+        
+        logger.info("Silero VAD loaded successfully")
+        logger.debug(f"Silero VAD utils count: {len(utils)}")
+        
+        return model, utils
+        
+    except Exception as e:
+        logger.error(f"Failed to load Silero VAD: {type(e).__name__}: {e}")
+        logger.debug("Full error:", exc_info=True)
+        
+        # Reset globals on failure
+        _silero_vad_model = None
+        _silero_vad_utils = None
+        
+        return None, None
 
 
 def _lazy_import_speechbrain():
@@ -123,9 +224,9 @@ def _lazy_import_speechbrain():
                 # Fallback for older versions
                 from speechbrain.pretrained import EncoderClassifier
                 _speechbrain_encoder = EncoderClassifier
-            except ImportError:
-                logger.warning("Failed to import SpeechBrain EncoderClassifier")
-                return None
+            except ImportError as e:
+                logger.warning(f"Failed to import SpeechBrain EncoderClassifier: {e}")
+                _speechbrain_encoder = None
     return _speechbrain_encoder
 
 
@@ -145,7 +246,7 @@ def _lazy_import_sklearn():
             }
         except ImportError as e:
             logger.warning(f"Failed to import sklearn modules: {e}")
-            return None
+            _sklearn_modules = None
     return _sklearn_modules
 
 
@@ -156,9 +257,9 @@ def _lazy_import_torchaudio():
         try:
             import torchaudio
             _torchaudio = torchaudio
-        except ImportError:
-            logger.warning("Failed to import torchaudio")
-            return None
+        except ImportError as e:
+            logger.warning(f"Failed to import torchaudio: {e}")
+            _torchaudio = None
     return _torchaudio
 
 
@@ -177,6 +278,11 @@ class DiarizationService:
     3. Extract speaker embeddings for each segment
     4. Cluster embeddings to identify speakers
     5. Merge consecutive segments from same speaker
+    
+    Attributes:
+        is_available (bool): Whether all required dependencies are available.
+                           Can be accessed directly or via is_diarization_available().
+        config (dict): Configuration parameters for diarization.
     """
     
     def __init__(self):
@@ -220,6 +326,7 @@ class DiarizationService:
         self._model_lock = threading.RLock()
         
         # Check availability (without importing)
+        # Public attribute - can be accessed directly by callers
         self.is_available = self._check_availability()
         
     def _check_availability(self) -> bool:
@@ -241,10 +348,13 @@ class DiarizationService:
         """Determine the device to use for inference."""
         if self.config['embedding_device'] == 'auto':
             torch = _lazy_import_torch()
-            if torch and hasattr(torch, 'cuda') and torch.cuda.is_available():
-                return 'cuda'
-            else:
-                return 'cpu'
+            if torch:
+                try:
+                    if hasattr(torch, 'cuda') and torch.cuda.is_available():
+                        return 'cuda'
+                except (AttributeError, RuntimeError) as e:
+                    logger.debug(f"Error checking CUDA availability: {e}")
+            return 'cpu'
         return self.config['embedding_device']
     
     def _load_embedding_model(self):
@@ -258,9 +368,16 @@ class DiarizationService:
                         raise DiarizationError("SpeechBrain EncoderClassifier not available")
                     
                     device = self._get_device()
+                    # Sanitize model name for safe directory creation
+                    model_name = self.config['embedding_model']
+                    safe_model_name = _sanitize_path_component(model_name)
+                    
+                    # Use pathlib for path construction
+                    model_dir = Path('pretrained_models') / safe_model_name
+                    
                     self._embedding_model = EncoderClassifier.from_hparams(
                         source=self.config['embedding_model'],
-                        savedir=f"pretrained_models/{self.config['embedding_model']}",
+                        savedir=str(model_dir),
                         run_opts={"device": device}
                     )
                     logger.info(f"Embedding model loaded successfully on {device}")
@@ -269,20 +386,91 @@ class DiarizationService:
                     raise DiarizationError(f"Failed to load embedding model: {e}")
     
     def _load_vad_model(self):
-        """Load the VAD model (lazy loading)."""
+        """Load the VAD model (lazy loading).
+        
+        This method loads the Silero VAD model and its utility functions.
+        The VAD utilities are particularly brittle as they return as a tuple
+        in a specific order that can change between versions.
+        """
         if self._vad_model is None:
-            model, utils = _lazy_import_silero_vad()
-            if model and utils:
+            try:
+                model, utils = _lazy_import_silero_vad()
+                if not model or not utils:
+                    raise DiarizationError("Silero VAD model or utilities not available")
+                
+                # Validate that we have the expected utilities
+                # Silero returns (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks)
+                # but this order is not guaranteed and can break between versions
+                if not isinstance(utils, (list, tuple)) or len(utils) < 5:
+                    raise DiarizationError(
+                        f"Unexpected Silero VAD utils format. Expected tuple/list with 5+ items, "
+                        f"got {type(utils).__name__} with {len(utils) if hasattr(utils, '__len__') else 'unknown'} items"
+                    )
+                
+                # Store model
                 self._vad_model = model
-                self._vad_utils = {
-                    'get_speech_timestamps': utils[0],
-                    'save_audio': utils[1],
-                    'read_audio': utils[2],
-                    'VADIterator': utils[3],
-                    'collect_chunks': utils[4]
-                }
-            else:
-                raise DiarizationError("Failed to load Silero VAD model")
+                
+                # Map utilities with extensive validation
+                # NOTE: This mapping is fragile and depends on Silero's return order
+                try:
+                    self._vad_utils = {
+                        'get_speech_timestamps': utils[0],  # Main VAD function
+                        'save_audio': utils[1],             # Audio saving utility
+                        'read_audio': utils[2],             # Audio loading utility
+                        'VADIterator': utils[3],            # Streaming VAD class
+                        'collect_chunks': utils[4]          # Chunk collection utility
+                    }
+                    
+                    # Validate that each utility is callable (except VADIterator which is a class)
+                    for name, func in self._vad_utils.items():
+                        if name != 'VADIterator' and not callable(func):
+                            raise DiarizationError(f"VAD utility '{name}' is not callable")
+                    
+                    logger.debug("VAD utilities loaded and validated successfully")
+                    
+                except (IndexError, TypeError) as e:
+                    raise DiarizationError(
+                        f"Failed to map Silero VAD utilities. The utility order may have changed. Error: {e}"
+                    )
+                    
+            except Exception as e:
+                logger.error(f"Failed to load VAD model: {e}")
+                self._vad_model = None
+                self._vad_utils = None
+                raise DiarizationError(f"Failed to load Silero VAD model: {e}")
+    
+    def _get_vad_utility(self, name: str) -> Callable:
+        """Safely get a VAD utility function with validation.
+        
+        Args:
+            name: Name of the utility ('get_speech_timestamps', 'read_audio', etc.)
+            
+        Returns:
+            The utility function
+            
+        Raises:
+            DiarizationError: If utility is not available or not callable
+        """
+        if not self._vad_utils:
+            raise DiarizationError("VAD utilities not loaded")
+            
+        if name not in self._vad_utils:
+            raise DiarizationError(
+                f"VAD utility '{name}' not found. Available: {list(self._vad_utils.keys())}"
+            )
+            
+        utility = self._vad_utils[name]
+        
+        # Special case for VADIterator which is a class, not a function
+        if name == 'VADIterator':
+            return utility
+            
+        if not callable(utility):
+            raise DiarizationError(
+                f"VAD utility '{name}' is not callable. Got type: {type(utility).__name__}"
+            )
+            
+        return utility
     
     def diarize(
         self,
@@ -413,39 +601,116 @@ class DiarizationService:
         torch = _lazy_import_torch()
         
         if torchaudio and torch:
-            waveform, sample_rate = torchaudio.load(audio_path)
-            # Convert to mono if stereo
-            if waveform.shape[0] > 1:
-                waveform = torch.mean(waveform, dim=0, keepdim=True)
-            # Resample to 16kHz if needed
-            if sample_rate != 16000:
-                resampler = torchaudio.transforms.Resample(sample_rate, 16000)
-                waveform = resampler(waveform)
-            return waveform.squeeze()
+            try:
+                waveform, sample_rate = torchaudio.load(audio_path)
+                # Convert to mono if stereo
+                if waveform.shape[0] > 1:
+                    waveform = torch.mean(waveform, dim=0, keepdim=True)
+                # Resample to 16kHz if needed
+                if sample_rate != 16000:
+                    resampler = torchaudio.transforms.Resample(sample_rate, 16000)
+                    waveform = resampler(waveform)
+                return waveform.squeeze()
+            except Exception as e:
+                logger.warning(f"Failed to load audio with torchaudio: {e}")
+                # Fall through to Silero VAD fallback
         else:
-            # Fallback to read_audio from Silero
+            # Fallback to read_audio from Silero VAD utilities
+            logger.info("Falling back to Silero VAD read_audio function")
+            
+            # Ensure VAD utilities are loaded
             if not self._vad_utils:
-                self._load_vad_model()
-            if self._vad_utils and 'read_audio' in self._vad_utils:
-                return self._vad_utils['read_audio'](audio_path, sampling_rate=16000)
-            else:
-                raise DiarizationError("No audio loading method available")
+                try:
+                    self._load_vad_model()
+                except Exception as e:
+                    logger.error(f"Failed to load VAD model for audio reading: {e}")
+                    raise DiarizationError(f"Cannot load audio: VAD model load failed: {e}")
+            
+            # Validate read_audio function exists and is callable
+            if not self._vad_utils or 'read_audio' not in self._vad_utils:
+                raise DiarizationError(
+                    "VAD utilities missing 'read_audio' function. "
+                    "Neither torchaudio nor Silero VAD audio loading available."
+                )
+            
+            # Get read_audio function using safe getter
+            read_audio = self._get_vad_utility('read_audio')
+            
+            try:
+                # Call read_audio with proper parameters
+                # NOTE: Silero's read_audio expects 'sampling_rate' not 'sample_rate'
+                waveform = read_audio(audio_path, sampling_rate=16000)
+                
+                # Validate the loaded waveform
+                if waveform is None:
+                    raise DiarizationError("read_audio returned None")
+                    
+                return waveform
+                
+            except Exception as e:
+                logger.error(f"Failed to load audio with Silero read_audio: {e}")
+                raise DiarizationError(
+                    f"Failed to load audio file '{audio_path}': {str(e)}"
+                )
     
     def _detect_speech(self, waveform, sample_rate: int) -> List[Dict]:
-        """Detect speech segments using VAD."""
+        """Detect speech segments using VAD.
+        
+        Args:
+            waveform: Audio waveform tensor
+            sample_rate: Sample rate of the audio
+            
+        Returns:
+            List of speech segments with start/end times
+            
+        Raises:
+            DiarizationError: If VAD fails or utilities are not properly loaded
+        """
         # Ensure VAD model is loaded
         if not self._vad_model:
             self._load_vad_model()
         
-        get_speech_timestamps = self._vad_utils['get_speech_timestamps']
-        speech_timestamps = get_speech_timestamps(
-            waveform,
-            self._vad_model,
-            sampling_rate=sample_rate,
-            threshold=self.config['vad_threshold'],
-            min_speech_duration_ms=int(self.config['vad_min_speech_duration'] * 1000),
-            min_silence_duration_ms=int(self.config['vad_min_silence_duration'] * 1000)
-        )
+        # Validate VAD utilities are loaded
+        if not self._vad_utils or 'get_speech_timestamps' not in self._vad_utils:
+            raise DiarizationError(
+                "VAD utilities not properly loaded. Missing 'get_speech_timestamps' function."
+            )
+        
+        # Get the speech detection function using safe getter
+        get_speech_timestamps = self._get_vad_utility('get_speech_timestamps')
+        
+        try:
+            # Call the VAD function with proper parameters
+            # NOTE: Parameter names and order are critical for Silero VAD
+            speech_timestamps = get_speech_timestamps(
+                waveform,
+                self._vad_model,
+                sampling_rate=sample_rate,  # Must be 'sampling_rate', not 'sample_rate'
+                threshold=self.config['vad_threshold'],
+                min_speech_duration_ms=int(self.config['vad_min_speech_duration'] * 1000),
+                min_silence_duration_ms=int(self.config['vad_min_silence_duration'] * 1000)
+            )
+            
+            # Validate the output format
+            if not isinstance(speech_timestamps, list):
+                raise DiarizationError(
+                    f"Expected list of timestamps, got {type(speech_timestamps).__name__}"
+                )
+            
+            # Validate each timestamp has required fields
+            for i, ts in enumerate(speech_timestamps):
+                if not isinstance(ts, dict):
+                    raise DiarizationError(
+                        f"Timestamp {i} is not a dict: {type(ts).__name__}"
+                    )
+                if 'start' not in ts or 'end' not in ts:
+                    raise DiarizationError(
+                        f"Timestamp {i} missing 'start' or 'end' field: {ts.keys()}"
+                    )
+                    
+        except Exception as e:
+            logger.error(f"VAD detection failed: {e}")
+            raise DiarizationError(f"Speech detection failed: {str(e)}")
         
         # Convert to seconds
         for ts in speech_timestamps:
@@ -501,12 +766,21 @@ class DiarizationService:
             
             # Extract embedding
             torch = _lazy_import_torch()
-            if torch:
-                with torch.no_grad():
+            try:
+                if torch and hasattr(torch, 'no_grad'):
+                    try:
+                        with torch.no_grad():
+                            embedding = self._embedding_model.encode_batch(waveform)
+                    except (AttributeError, RuntimeError) as e:
+                        logger.debug(f"Failed to use torch.no_grad(): {e}")
+                        # Fallback without no_grad context
+                        embedding = self._embedding_model.encode_batch(waveform)
+                else:
+                    # No torch available or no_grad not available, run without context manager
                     embedding = self._embedding_model.encode_batch(waveform)
-            else:
-                # Fallback without no_grad context
-                embedding = self._embedding_model.encode_batch(waveform)
+            except Exception as e:
+                logger.error(f"Failed to extract embedding for segment {i}: {e}")
+                raise DiarizationError(f"Embedding extraction failed: {e}")
             
             # Convert to numpy and flatten
             embedding = embedding.squeeze().cpu().numpy()
@@ -524,7 +798,12 @@ class DiarizationService:
         np = _lazy_import_numpy()
         if not np:
             raise DiarizationError("NumPy not available for creating embedding array")
-        return np.array(embeddings)
+        
+        try:
+            return np.array(embeddings)
+        except Exception as e:
+            logger.error(f"Failed to create numpy array from embeddings: {e}")
+            raise DiarizationError(f"Failed to create embedding array: {e}")
     
     def _cluster_speakers(
         self, 
@@ -710,7 +989,15 @@ class DiarizationService:
         return speakers
     
     def is_diarization_available(self) -> bool:
-        """Check if diarization is available."""
+        """Check if diarization is available.
+        
+        Returns:
+            bool: True if all required dependencies are available
+            
+        Note:
+            You can also directly access the `is_available` attribute
+            for the same information.
+        """
         return self.is_available
     
     def get_requirements(self) -> Dict[str, bool]:
