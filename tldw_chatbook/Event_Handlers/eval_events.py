@@ -30,9 +30,16 @@ if TYPE_CHECKING:
 # Import evaluation components
 from tldw_chatbook.Evals import EvaluationOrchestrator
 from tldw_chatbook.Evals import TaskLoader, TaskLoadError
-from ..Widgets.file_picker_dialog import TaskFilePickerDialog, DatasetFilePickerDialog, ExportFilePickerDialog
 from ..Widgets.eval_config_dialogs import ModelConfigDialog, TaskConfigDialog, RunConfigDialog
-from ..Widgets.template_selector import TemplateSelectorDialog
+
+# File picker dialogs
+from ..Widgets.file_picker_dialog import TaskFilePickerDialog, DatasetFilePickerDialog, ExportFilePickerDialog
+
+# Template selector - might not exist
+try:
+    from ..Widgets.template_selector import TemplateSelectorDialog
+except ImportError:
+    TemplateSelectorDialog = None
 
 # Global orchestrator instance (will be initialized on first use)
 _orchestrator: Optional[EvaluationOrchestrator] = None
@@ -41,7 +48,21 @@ def get_orchestrator() -> EvaluationOrchestrator:
     """Get or create the global evaluation orchestrator."""
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = EvaluationOrchestrator()
+        # Initialize with proper database path
+        from pathlib import Path
+        from tldw_chatbook.config import load_settings
+        
+        settings = load_settings()
+        user_data_dir = Path(settings.get('user_data_dir', '~/.local/share/tldw_cli')).expanduser()
+        
+        # Use user ID from config instead of hardcoded 'default_user'
+        user_id = settings.get('user_id', settings.get('username', 'default_user'))
+        db_path = user_data_dir / user_id / 'evals.db'
+        
+        # Ensure directory exists
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        _orchestrator = EvaluationOrchestrator(db_path=str(db_path))
     return _orchestrator
 
 # === TASK MANAGEMENT EVENTS ===
@@ -569,6 +590,19 @@ async def update_results_table(app: 'TldwCli', run_id: str):
         results = orchestrator.get_run_results(run_id)
         
         if results:
+            # Process results to match the format expected by ResultsTable
+            processed_results = []
+            for result in results:
+                processed_result = {
+                    'sample_id': result.get('sample_id', 'Unknown'),
+                    'input_text': result.get('input_data', {}).get('input', ''),
+                    'expected_output': result.get('expected_output', ''),
+                    'actual_output': result.get('actual_output', ''),
+                    'metrics': result.get('metrics', {}),
+                    'metadata': result.get('metadata', {})
+                }
+                processed_results.append(processed_result)
+            
             # Try to find and update the ResultsTable widget
             try:
                 evals_window = app.query_one("EvalsWindow")
@@ -577,9 +611,23 @@ async def update_results_table(app: 'TldwCli', run_id: str):
                 
                 # Update the table on the main thread
                 def update_table():
-                    results_table.update_results(results)
+                    results_table.update_results(processed_results)
                 
                 app.call_from_thread(update_table)
+                
+                # Also update the metrics display with the run summary
+                run_summary = orchestrator.get_run_summary(run_id)
+                if run_summary and run_summary.get('metrics'):
+                    try:
+                        from ..Widgets.eval_results_widgets import MetricsDisplay
+                        metrics_display = evals_window.query_one(MetricsDisplay)
+                        
+                        def update_metrics():
+                            metrics_display.update_metrics(run_summary['metrics'])
+                        
+                        app.call_from_thread(update_metrics)
+                    except Exception as e:
+                        logger.warning(f"Could not update metrics display: {e}")
                 
             except Exception as e:
                 logger.error(f"Error finding or updating ResultsTable: {e}")
@@ -652,30 +700,113 @@ async def handle_export_results(app: 'TldwCli', format_type: str) -> None:
 
 async def _export_run_results(app: 'TldwCli', run_id: str, file_path: str, format_type: str):
     """Export results to file."""
+    start_time = time.time()
     try:
         app.notify("Exporting results...", severity="information")
         
         orchestrator = get_orchestrator()
-        orchestrator.export_results(run_id, file_path, format_type)
+        
+        # Ensure file has correct extension
+        file_path = Path(file_path)
+        if format_type == 'csv' and not file_path.suffix.lower() == '.csv':
+            file_path = file_path.with_suffix('.csv')
+        elif format_type == 'json' and not file_path.suffix.lower() == '.json':
+            file_path = file_path.with_suffix('.json')
+        
+        # Create parent directory if it doesn't exist
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Export based on format
+        if format_type == 'csv':
+            # Custom CSV export for better formatting
+            await _export_to_csv(orchestrator, run_id, str(file_path))
+        else:
+            # Use built-in JSON export
+            orchestrator.export_results(run_id, str(file_path), format_type)
         
         # Log successful export
+        duration = time.time() - start_time
+        log_histogram("eval_ui_export_duration", duration, labels={
+            "format_type": format_type,
+            "status": "success"
+        })
         log_counter("eval_ui_results_exported", labels={
             "format_type": format_type,
             "run_id": run_id
         })
         
-        app.notify(f"Results exported to: {Path(file_path).name}", severity="information")
+        app.notify(f"Results exported to: {file_path.name}", severity="information")
         
     except Exception as e:
+        duration = time.time() - start_time
         logger.error(f"Error exporting results: {e}")
         
         # Log export error
+        log_histogram("eval_ui_export_duration", duration, labels={
+            "format_type": format_type,
+            "status": "error"
+        })
         log_counter("eval_ui_export_error", labels={
             "format_type": format_type,
             "error_type": type(e).__name__
         })
         
         app.notify(f"Export failed: {str(e)}", severity="error")
+
+async def _export_to_csv(orchestrator, run_id: str, file_path: str):
+    """Export results to CSV format with proper formatting."""
+    import csv
+    
+    # Get run summary and results
+    run_summary = orchestrator.get_run_summary(run_id)
+    results = orchestrator.get_run_results(run_id)
+    
+    with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+        # Write run summary as header comments
+        csvfile.write(f"# Evaluation Run: {run_summary['run_info']['name']}\n")
+        csvfile.write(f"# Task: {run_summary['run_info'].get('task_name', 'Unknown')}\n")
+        csvfile.write(f"# Model: {run_summary['run_info'].get('model_name', 'Unknown')}\n")
+        csvfile.write(f"# Status: {run_summary['run_info']['status']}\n")
+        csvfile.write(f"# Samples: {run_summary['run_info']['completed_samples']}\n")
+        
+        # Write metrics summary
+        if run_summary.get('metrics'):
+            csvfile.write("# Metrics:\n")
+            for metric, value in run_summary['metrics'].items():
+                if isinstance(value, dict):
+                    value = value.get('value', 'N/A')
+                csvfile.write(f"#   {metric}: {value}\n")
+        csvfile.write("\n")
+        
+        # Write results table
+        if results:
+            # Determine columns from first result
+            fieldnames = ['sample_id', 'input', 'expected_output', 'actual_output']
+            
+            # Add metric columns
+            if results[0].get('metrics'):
+                metric_names = list(results[0]['metrics'].keys())
+                fieldnames.extend(metric_names)
+            
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for result in results:
+                row = {
+                    'sample_id': result.get('sample_id', ''),
+                    'input': result.get('input_data', {}).get('input', ''),
+                    'expected_output': result.get('expected_output', ''),
+                    'actual_output': result.get('actual_output', '')
+                }
+                
+                # Add metrics
+                if result.get('metrics'):
+                    for metric_name, metric_value in result['metrics'].items():
+                        if isinstance(metric_value, dict):
+                            metric_value = metric_value.get('value', '')
+                        row[metric_name] = metric_value
+                
+                writer.writerow(row)
 
 async def _auto_export_results(app: 'TldwCli', run_id: str):
     """Auto-export results after evaluation."""
@@ -898,7 +1029,7 @@ async def handle_compare_runs(app: 'TldwCli', event: Button.Pressed) -> None:
     log_counter("eval_ui_compare_runs_clicked")
     
     orchestrator = get_orchestrator()
-    runs = orchestrator.list_runs(status='completed')
+    runs = orchestrator.list_runs(status='completed', limit=10)
     
     if len(runs) < 2:
         log_counter("eval_ui_compare_runs_blocked", labels={
@@ -908,35 +1039,101 @@ async def handle_compare_runs(app: 'TldwCli', event: Button.Pressed) -> None:
         app.notify("Need at least 2 completed runs to compare", severity="error")
         return
     
-    # For now, compare the two most recent runs
-    run_ids = [runs[0]['id'], runs[1]['id']]
-    comparison = orchestrator.compare_runs(run_ids)
+    # Show run selection dialog if more than 2 runs available
+    if len(runs) > 2:
+        # Import here to avoid circular imports
+        try:
+            from ..Widgets.eval_additional_dialogs import RunSelectionDialog
+            
+            def on_runs_selected(selected_runs):
+                if selected_runs and len(selected_runs) >= 2:
+                    asyncio.create_task(_perform_comparison(app, selected_runs))
+            
+            dialog = RunSelectionDialog(
+                available_runs=runs,
+                callback=on_runs_selected,
+                min_selection=2,
+                max_selection=4
+            )
+            app.push_screen(dialog)
+            return
+        except ImportError:
+            # Fallback to comparing two most recent
+            pass
     
-    # Log successful comparison
-    log_counter("eval_ui_runs_compared", labels={
-        "num_runs": "2"
-    })
-    
-    # Update comparison display
+    # Compare the two most recent runs
+    await _perform_comparison(app, [runs[0], runs[1]])
+
+async def _perform_comparison(app: 'TldwCli', runs_to_compare: List[Dict[str, Any]]):
+    """Perform the actual comparison of runs."""
     try:
-        evals_window = app.query_one("EvalsWindow")
-        comparison_results = evals_window.query_one("#comparison-results")
+        orchestrator = get_orchestrator()
+        run_ids = [run['id'] for run in runs_to_compare]
         
-        content = "**Run Comparison:**\n\n"
-        for run_name, run_data in comparison.items():
-            content += f"**{run_name}:**\n"
-            for metric, data in run_data.get('metrics', {}).items():
-                if isinstance(data, dict):
-                    value = data.get('value', 'N/A')
-                else:
-                    value = data
-                content += f"  {metric}: {value}\n"
-            content += "\n"
+        # Get detailed summaries for each run
+        comparison_data = {}
+        for run in runs_to_compare:
+            run_id = run['id']
+            summary = orchestrator.get_run_summary(run_id)
+            comparison_data[run['name']] = summary
         
-        comparison_results.update(content)
+        # Log successful comparison
+        log_counter("eval_ui_runs_compared", labels={
+            "num_runs": str(len(run_ids))
+        })
         
+        # Update comparison display
+        try:
+            evals_window = app.query_one("EvalsWindow")
+            comparison_results = evals_window.query_one("#comparison-results")
+            
+            content = "**Run Comparison:**\n\n"
+            
+            # Create comparison table
+            metric_names = set()
+            for run_data in comparison_data.values():
+                if run_data.get('metrics'):
+                    metric_names.update(run_data['metrics'].keys())
+            
+            # Header
+            content += "| Metric | " + " | ".join(comparison_data.keys()) + " |\n"
+            content += "|--------|" + "|".join(["---------"] * len(comparison_data)) + "|\n"
+            
+            # Metrics rows
+            for metric in sorted(metric_names):
+                row = f"| {metric} |"
+                for run_name, run_data in comparison_data.items():
+                    value = run_data.get('metrics', {}).get(metric, 'N/A')
+                    if isinstance(value, dict):
+                        value = value.get('value', 'N/A')
+                    if isinstance(value, float):
+                        row += f" {value:.3f} |"
+                    else:
+                        row += f" {value} |"
+                content += row + "\n"
+            
+            # Add run metadata
+            content += "\n**Run Details:**\n\n"
+            for run_name, run_data in comparison_data.items():
+                run_info = run_data.get('run_info', {})
+                content += f"**{run_name}:**\n"
+                content += f"  - Task: {run_info.get('task_name', 'Unknown')}\n"
+                content += f"  - Model: {run_info.get('model_name', 'Unknown')}\n"
+                content += f"  - Samples: {run_info.get('completed_samples', 0)}\n"
+                content += f"  - Status: {run_info.get('status', 'Unknown')}\n"
+                if run_data.get('duration'):
+                    content += f"  - Duration: {run_data['duration']:.1f}s\n"
+                content += "\n"
+            
+            comparison_results.update(content)
+            
+        except Exception as e:
+            logger.error(f"Error updating comparison display: {e}")
+            app.notify(f"Error displaying comparison: {str(e)}", severity="error")
+            
     except Exception as e:
-        logger.error(f"Error updating comparison display: {e}")
+        logger.error(f"Error performing comparison: {e}")
+        app.notify(f"Error comparing runs: {str(e)}", severity="error")
 
 # === INITIALIZATION ===
 

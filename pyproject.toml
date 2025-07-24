@@ -198,6 +198,13 @@ debugging = [
     "opentelemetry-exporter-prometheus",  # Export metrics to Prometheus
     "opentelemetry-instrumentation-system-metrics",  # System metrics collection
 ]
+diarization = [
+    "torch",  # PyTorch for neural models
+    "torchaudio",  # Audio processing utilities
+    "speechbrain",  # Speaker embedding models
+    "scikit-learn",  # For clustering algorithms (already in chunker deps)
+    "numpy",  # Numerical operations (already in base deps)
+]
 
 
 [project.urls]

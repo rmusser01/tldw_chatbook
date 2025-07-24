@@ -121,16 +121,7 @@ class ChunkingTemplatesWidget(Container):
         
         # Templates table
         with Container(classes="templates-table-container"):
-            table = DataTable(id="templates-table", zebra_stripes=True)
-            table.add_columns(
-                ("Name", 25),
-                ("Description", 40),
-                ("Type", 10),
-                ("Method", 15),
-                ("Created", 20),
-                ("ID", 8)
-            )
-            yield table
+            yield DataTable(id="templates-table", zebra_stripes=True)
         
         # Template details preview
         with VerticalScroll(classes="template-details"):
@@ -138,6 +129,17 @@ class ChunkingTemplatesWidget(Container):
     
     def on_mount(self) -> None:
         """Initialize the widget when mounted."""
+        # Setup the table columns
+        table = self.query_one("#templates-table", DataTable)
+        table.add_columns(
+            "Name",
+            "Description",
+            "Type",
+            "Method",
+            "Created",
+            "ID"
+        )
+        
         # Initialize the chunking service
         if hasattr(self.app_instance, 'media_db') and self.app_instance.media_db:
             self.chunking_service = get_chunking_service(self.app_instance.media_db)

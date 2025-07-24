@@ -43,6 +43,240 @@ class EvalsWindow(Container):
     sidebar and content areas for evaluation-related functionality.
     Enhanced with better UX, real-time updates, and improved feedback.
     """
+    
+    DEFAULT_CSS = """
+    /* Evals Navigation Pane */
+    .evals-nav-pane {
+        dock: left;
+        width: 25%;
+        min-width: 25;
+        max-width: 50;
+        height: 100%;
+        background: $boost;
+        padding: 1;
+        border-right: thick $background-darken-1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        transition: width 200ms;
+    }
+    
+    .evals-nav-pane.collapsed {
+        width: 0 !important;
+        min-width: 0 !important;
+        border-right: none !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        display: none !important;
+    }
+    
+    /* Navigation Buttons */
+    .evals-nav-button {
+        width: 100%;
+        height: 3;
+        margin-bottom: 1;
+        border: none;
+        background: $surface;
+    }
+    
+    .evals-nav-button:hover {
+        background: $accent 50%;
+    }
+    
+    .evals-nav-button.active {
+        background: $accent;
+        color: $text;
+        text-style: bold;
+    }
+    
+    /* Content Pane */
+    .evals-content-pane {
+        width: 1fr;
+        height: 100%;
+        padding: 1 2;
+        overflow-y: auto;
+    }
+    
+    /* View Areas */
+    .evals-view-area {
+        width: 100%;
+        height: 100%;
+        padding: 1;
+    }
+    
+    /* Titles */
+    .sidebar-title, .pane-title {
+        text-style: bold underline;
+        width: 100%;
+        text-align: center;
+        margin-bottom: 2;
+        color: $text;
+    }
+    
+    .section-title {
+        text-style: bold;
+        margin: 1 0;
+        color: $text;
+    }
+    
+    .subsection-title {
+        text-style: italic;
+        margin: 1 0;
+        color: $text-muted;
+    }
+    
+    /* Containers */
+    .section-container {
+        border: round $surface;
+        padding: 1;
+        margin-bottom: 2;
+        background: $panel;
+    }
+    
+    /* Buttons */
+    .action-button {
+        margin: 0 1 1 0;
+        min-width: 15;
+        height: 3;
+    }
+    
+    .action-button.primary {
+        background: $accent;
+        color: $text;
+    }
+    
+    .action-button.danger {
+        background: $error;
+        color: $text;
+    }
+    
+    /* Status Text */
+    .status-text {
+        width: 100%;
+        margin-top: 1;
+        color: $text-muted;
+        text-style: italic;
+    }
+    
+    .status-text.success {
+        color: $success;
+    }
+    
+    .status-text.error {
+        color: $error;
+    }
+    
+    .status-text.warning {
+        color: $warning;
+    }
+    
+    .status-text.info {
+        color: $primary;
+    }
+    
+    /* Results Container */
+    .results-container, .models-container, .datasets-container {
+        border: round $surface;
+        padding: 1;
+        margin-top: 1;
+        background: $surface-darken-1;
+        min-height: 10;
+    }
+    
+    /* Button Rows */
+    .button-row {
+        layout: horizontal;
+        height: auto;
+        margin-bottom: 1;
+    }
+    
+    /* Provider Grid */
+    .provider-grid {
+        layout: grid;
+        grid-size: 4;
+        grid-gutter: 1;
+        margin-top: 1;
+    }
+    
+    .provider-button {
+        height: 5;
+        text-align: center;
+    }
+    
+    /* Template Buttons */
+    .template-button {
+        margin: 0 1 1 0;
+        min-width: 20;
+        height: 3;
+    }
+    
+    /* Help Text */
+    .help-text {
+        color: $text-muted;
+        text-style: italic;
+        margin-bottom: 1;
+    }
+    
+    /* Configuration Rows */
+    .config-row {
+        layout: horizontal;
+        height: 3;
+        margin-bottom: 1;
+        align: left middle;
+    }
+    
+    .config-label {
+        width: 15;
+        text-align: right;
+        margin-right: 1;
+    }
+    
+    .config-input, .config-select {
+        width: 30;
+    }
+    
+    /* Quick Config Container */
+    .quick-config-container {
+        border: round $surface;
+        padding: 1;
+        margin: 1 0;
+        background: $surface-darken-1;
+    }
+    
+    /* Footer */
+    .footer-container {
+        dock: bottom;
+        height: auto;
+        width: 100%;
+        padding: 1;
+        background: $surface-darken-2;
+        border-top: solid $surface;
+    }
+    
+    .tip-text {
+        color: $text-muted;
+        text-style: italic;
+        margin: 0;
+    }
+    
+    /* Sidebar Toggle */
+    .sidebar-toggle {
+        width: 3;
+        height: 3;
+        margin-right: 1;
+        border: none;
+        background: $surface-darken-1;
+        color: $text;
+    }
+    
+    .sidebar-toggle:hover {
+        background: $surface;
+    }
+    
+    .sidebar-toggle.collapsed {
+        margin-left: 0;
+    }
+    """
+    
     # --- STATE LIVES HERE NOW ---
     evals_sidebar_collapsed: reactive[bool] = reactive(False)
     evals_active_view: reactive[Optional[str]] = reactive(None)

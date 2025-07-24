@@ -265,6 +265,10 @@ class TranscriptionService:
         available_providers = self.get_available_providers()
         logger.info(f"TranscriptionService initialized with {len(available_providers)} available providers")
         
+        # Initialize diarization service (lazy loaded)
+        self._diarization_service = None
+        self._diarization_lock = threading.RLock()
+        
     def transcribe(
         self,
         audio_path: str,
@@ -289,7 +293,7 @@ class TranscriptionService:
             source_lang: Explicit source language for transcription
             target_lang: Target language for translation (if supported)
             vad_filter: Apply voice activity detection
-            diarize: Perform speaker diarization (placeholder)
+            diarize: Perform speaker diarization to identify different speakers
             progress_callback: Optional callback for progress updates (progress: 0-100, status: str, data: dict)
             
         Returns:
@@ -412,6 +416,54 @@ class TranscriptionService:
             logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
             logger.info(f"Result: {len(result.get('text', ''))} characters, {len(result.get('segments', []))} segments")
             logger.debug(f"First 200 chars of transcription: {result.get('text', '')[:200]}...")
+            
+            # Apply diarization if requested and segments exist
+            if diarize and result.get('segments'):
+                logger.info("Applying speaker diarization...")
+                diarization_start_time = time.time()
+                
+                try:
+                    # Load diarization service if needed
+                    if self._diarization_service is None:
+                        with self._diarization_lock:
+                            if self._diarization_service is None:
+                                logger.debug("Loading diarization service...")
+                                from .diarization_service import DiarizationService
+                                self._diarization_service = DiarizationService()
+                    
+                    # Check if diarization is available
+                    if not self._diarization_service.is_diarization_available():
+                        logger.warning("Diarization requested but not available due to missing dependencies")
+                        result['diarization_performed'] = False
+                        result['diarization_error'] = "Missing dependencies for diarization"
+                    else:
+                        # Get number of speakers from kwargs if provided
+                        num_speakers = kwargs.get('num_speakers')
+                        diarization_config = kwargs.get('diarization_config', {})
+                        
+                        # Perform diarization
+                        diarization_result = self._diarization_service.diarize(
+                            audio_path=wav_path,
+                            transcription_segments=result['segments'],
+                            num_speakers=num_speakers,
+                            progress_callback=progress_callback
+                        )
+                        
+                        # Update segments with speaker information
+                        result['segments'] = diarization_result['segments']
+                        result['speakers'] = diarization_result['speakers']
+                        result['num_speakers'] = diarization_result['num_speakers']
+                        result['diarization_performed'] = True
+                        
+                        diarization_time = time.time() - diarization_start_time
+                        logger.info(f"Diarization completed in {diarization_time:.2f} seconds")
+                        logger.info(f"Identified {result['num_speakers']} speakers")
+                        
+                except Exception as e:
+                    logger.error(f"Diarization failed: {e}", exc_info=True)
+                    result['diarization_performed'] = False
+                    result['diarization_error'] = str(e)
+                    # Continue with transcription result even if diarization fails
             
             return result
                 
@@ -1737,12 +1789,42 @@ class TranscriptionService:
         logger.debug(f"Device info: {info}")
         return info
     
+    def is_diarization_available(self) -> bool:
+        """Check if speaker diarization is available."""
+        if self._diarization_service is None:
+            try:
+                from .diarization_service import DiarizationService
+                temp_service = DiarizationService()
+                return temp_service.is_diarization_available()
+            except Exception as e:
+                logger.warning(f"Failed to check diarization availability: {e}")
+                return False
+        else:
+            return self._diarization_service.is_diarization_available()
+    
+    def get_diarization_requirements(self) -> Dict[str, bool]:
+        """Get the status of diarization dependencies."""
+        try:
+            from .diarization_service import DiarizationService
+            temp_service = DiarizationService()
+            return temp_service.get_requirements()
+        except Exception as e:
+            logger.warning(f"Failed to get diarization requirements: {e}")
+            return {
+                'torch': False,
+                'silero_vad': False,
+                'speechbrain': False,
+                'sklearn': False,
+                'torchaudio': False
+            }
+    
     def format_segments_with_timestamps(
         self,
         segments: List[Dict[str, Any]],
-        include_timestamps: bool = True
+        include_timestamps: bool = True,
+        include_speakers: bool = True
     ) -> str:
-        """Format segments with optional timestamps."""
+        """Format segments with optional timestamps and speaker labels."""
         
         if not segments:
             return ""
@@ -1750,19 +1832,30 @@ class TranscriptionService:
         lines = []
         
         for segment in segments:
+            parts = []
+            
+            # Add timestamp if requested
             if include_timestamps:
                 start = segment.get('start', segment.get('Time_Start', 0))
                 end = segment.get('end', segment.get('Time_End', 0))
-                text = segment.get('text', segment.get('Text', ''))
                 
                 # Format timestamps as HH:MM:SS
                 start_str = time.strftime('%H:%M:%S', time.gmtime(start))
                 end_str = time.strftime('%H:%M:%S', time.gmtime(end))
                 
-                lines.append(f"[{start_str} - {end_str}] {text}")
-            else:
-                text = segment.get('text', segment.get('Text', ''))
-                lines.append(text)
+                parts.append(f"[{start_str} - {end_str}]")
+            
+            # Add speaker label if available and requested
+            if include_speakers and 'speaker_label' in segment:
+                parts.append(f"[{segment['speaker_label']}]")
+            elif include_speakers and 'speaker_id' in segment:
+                parts.append(f"[SPEAKER_{segment['speaker_id']}]")
+            
+            # Add the text
+            text = segment.get('text', segment.get('Text', ''))
+            parts.append(text)
+            
+            lines.append(' '.join(parts))
         
         return '\n'.join(lines)
     

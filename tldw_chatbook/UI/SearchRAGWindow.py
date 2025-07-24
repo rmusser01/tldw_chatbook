@@ -29,6 +29,27 @@ from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from ..DB.search_history_db import SearchHistoryDB
 from ..Utils.paths import get_user_data_dir
 
+# Conditionally import web search functionality
+WEB_SEARCH_AVAILABLE = DEPENDENCIES_AVAILABLE.get('websearch', False)
+if WEB_SEARCH_AVAILABLE:
+    try:
+        from ..Web_Scraping.WebSearch_APIs import search_web_bing, parse_bing_results
+        logger.info("✅ Web Search dependencies found. Feature is enabled.")
+    except (ImportError, ModuleNotFoundError) as e:
+        WEB_SEARCH_AVAILABLE = False
+        logger.warning(f"⚠️ Web Search dependencies not found, feature will be disabled. Reason: {e}")
+        # Define placeholders so the rest of the file doesn't crash if they are referenced.
+        def search_web_bing(*args, **kwargs):
+            raise ImportError("Web search not available - missing dependencies")
+        def parse_bing_results(*args, **kwargs):
+            raise ImportError("Web search not available - missing dependencies")
+else:
+    # Define placeholders so the rest of the file doesn't crash if they are referenced.
+    def search_web_bing(*args, **kwargs):
+        raise ImportError("Web search not available - missing dependencies")
+    def parse_bing_results(*args, **kwargs):
+        raise ImportError("Web search not available - missing dependencies")
+
 # Conditionally import RAG-related modules
 try:
     from ..Event_Handlers.Chat_Events.chat_rag_events import (
@@ -263,12 +284,40 @@ class SavedSearchesPanel(Container):
         return {}
     
     def save_search(self, name: str, config: Dict[str, Any]) -> None:
-        """Save a search configuration"""
-        self.saved_searches[name] = {
-            "config": config,
-            "created_at": datetime.now().isoformat(),
-            "last_used": datetime.now().isoformat()
-        }
+        """Save a search configuration with validation and overwrite protection"""
+        # Sanitize the name to prevent issues with invalid characters
+        sanitized_name = name.strip()
+        if not sanitized_name:
+            logger.warning("Cannot save search with empty name")
+            return
+            
+        # Check if this name already exists
+        if sanitized_name in self.saved_searches:
+            # Update the existing search with new config
+            self.saved_searches[sanitized_name]["config"] = config
+            self.saved_searches[sanitized_name]["last_used"] = datetime.now().isoformat()
+            self.saved_searches[sanitized_name]["updated_at"] = datetime.now().isoformat()
+            logger.info(f"Updated existing saved search: {sanitized_name}")
+        else:
+            # Create a new saved search
+            self.saved_searches[sanitized_name] = {
+                "config": config,
+                "created_at": datetime.now().isoformat(),
+                "last_used": datetime.now().isoformat(),
+                "updated_at": None
+            }
+            logger.info(f"Created new saved search: {sanitized_name}")
+            
+        # Limit the number of saved searches to prevent performance issues
+        if len(self.saved_searches) > 50:  # Arbitrary limit
+            # Remove the oldest saved search
+            oldest_name = min(
+                self.saved_searches.keys(),
+                key=lambda k: datetime.fromisoformat(self.saved_searches[k]["last_used"])
+            )
+            del self.saved_searches[oldest_name]
+            logger.info(f"Removed oldest saved search to maintain limit: {oldest_name}")
+            
         self._persist_saved_searches()
         self.refresh_list()
     
@@ -340,6 +389,10 @@ class SearchRAGWindow(Container):
         # Search configuration state
         self.current_search_config: Dict[str, Any] = {}
         
+        # Conversation context
+        self.conversation_context: List[Dict[str, Any]] = []
+        self.previous_context: str = ""
+        
     def compose(self) -> ComposeResult:
         """Create the enhanced UI layout"""
         with Container(classes="rag-search-main-wrapper"):
@@ -368,6 +421,12 @@ class SearchRAGWindow(Container):
                             yield self.search_input
                             yield Button("×", id="clear-search-btn", classes="clear-button hidden", variant="default")
                             yield Button("Search", id="rag-search-btn", classes="primary search-button-enhanced", variant="primary")
+                        
+                        # Conversation mode toggle
+                        with Horizontal(classes="conversation-mode-toggle"):
+                            yield Checkbox("🔄 Conversation Mode", id="conversation-mode", classes="conversation-checkbox", value=False)
+                            yield Static("Keep context between searches", classes="conversation-hint")
+                        
                         yield LoadingIndicator(id="search-loading", classes="search-loading-indicator hidden")
                         
                         # Search history dropdown
@@ -384,12 +443,22 @@ class SearchRAGWindow(Container):
                             with Vertical(classes="setting-group"):
                                 yield Label("Search Mode:", classes="setting-label")
                                 
-                                # Build pipeline options dynamically
+                                # Build pipeline options dynamically with clear requirement indicators
                                 pipeline_options = [
-                                    ("📊 Plain RAG (Fast)", "plain"),
-                                    ("🧠 Semantic" if self.embeddings_available else "🧠 Semantic (Unavailable)", "full"),
-                                    ("🔀 Hybrid" if self.embeddings_available else "🔀 Hybrid (Unavailable)", "hybrid")
+                                    ("📊 Plain RAG (Fast) - No embeddings required", "plain")
                                 ]
+                                
+                                # Add semantic search with clear status
+                                if self.embeddings_available:
+                                    pipeline_options.append(("🧠 Semantic Search - Uses embeddings", "full"))
+                                else:
+                                    pipeline_options.append(("🧠 Semantic Search - ⚠️ Requires embeddings (not available)", "full"))
+                                
+                                # Add hybrid search with clear status
+                                if self.embeddings_available:
+                                    pipeline_options.append(("🔀 Hybrid Search - Uses embeddings + keywords", "hybrid"))
+                                else:
+                                    pipeline_options.append(("🔀 Hybrid Search - ⚠️ Requires embeddings (not available)", "hybrid"))
                                 
                                 # Add custom pipelines if available
                                 if PIPELINE_INTEGRATION_AVAILABLE:
@@ -767,12 +836,28 @@ class SearchRAGWindow(Container):
         progress_bar.remove_class("hidden")
         progress_bar.update(progress=0)
         
-        # Clear previous results
-        self.all_results = []
-        self.current_results = []
-        self.current_page = 1
-        results_container = self.query_one("#results-container", Container)
-        await results_container.remove_children()
+        # Check if conversation mode is enabled
+        conversation_mode = self.query_one("#conversation-mode", Checkbox).value
+        
+        # Only clear previous results if not in conversation mode
+        if not conversation_mode:
+            self.all_results = []
+            self.current_results = []
+            self.current_page = 1
+            self.conversation_context = []
+            self.previous_context = ""
+            results_container = self.query_one("#results-container", Container)
+            await results_container.remove_children()
+        else:
+            # In conversation mode, we keep the results but still update the container
+            results_container = self.query_one("#results-container", Container)
+            await results_container.remove_children()
+            
+            # Add a separator to indicate a new search in conversation mode
+            if self.all_results:
+                await results_container.mount(
+                    Static(f"--- Continued conversation: {query} ---", classes="conversation-separator")
+                )
         
         try:
             # Get search parameters
@@ -797,7 +882,8 @@ class SearchRAGWindow(Container):
                 "include_parent_docs": self.query_one("#include-parent-docs", Checkbox).value,
                 "parent_size_threshold": int(self.query_one("#parent-size-threshold", Input).value or "5000"),
                 "parent_inclusion_strategy": self.query_one("#parent-strategy", Select).value,
-                "enable_rerank": self.query_one("#enable-rerank", Checkbox).value
+                "enable_rerank": self.query_one("#enable-rerank", Checkbox).value,
+                "conversation_mode": conversation_mode
             }
             
             # Update status with more descriptive message
@@ -806,7 +892,12 @@ class SearchRAGWindow(Container):
             active_sources = [k for k, v in sources.items() if v]
             sources_display = ", ".join(s.capitalize() for s in active_sources)
             
-            await status_elem.update(f"🔍 Searching {sources_display} using {mode_display} mode...")
+            # Update status message based on conversation mode
+            if conversation_mode:
+                await status_elem.update(f"🔄 Continuing conversation using {mode_display} mode...")
+            else:
+                await status_elem.update(f"🔍 Searching {sources_display} using {mode_display} mode...")
+            
             await progress_bar.update(progress=20)
             
             # Perform search based on mode
@@ -836,6 +927,12 @@ class SearchRAGWindow(Container):
                         "parent_size_threshold": self.current_search_config["parent_size_threshold"],
                         "parent_inclusion_strategy": self.current_search_config["parent_inclusion_strategy"]
                     }
+                    
+                    # Add conversation context if in conversation mode
+                    if conversation_mode and self.previous_context:
+                        pipeline_kwargs["previous_context"] = self.previous_context
+                        pipeline_kwargs["conversation_history"] = self.conversation_context
+                        logger.info(f"Using conversation context with {len(self.conversation_context)} previous exchanges")
                     
                     # Get pipeline default parameters and merge
                     default_params = pipeline_manager.get_pipeline_parameters(search_mode)
@@ -921,8 +1018,38 @@ class SearchRAGWindow(Container):
             await progress_bar.update(progress=80)
             
             # Store results
-            self.all_results = results
-            self.total_results = len(results)
+            if conversation_mode and self.all_results:
+                # In conversation mode, append new results to existing ones
+                self.all_results.extend(results)
+                self.total_results = len(self.all_results)
+                
+                # Update conversation context
+                self.conversation_context.append({
+                    "query": query,
+                    "response": context,
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+                # Store the context for future searches
+                self.previous_context = context
+                
+                # Log conversation update
+                logger.info(f"Updated conversation context with query: {query}")
+                logger.debug(f"Conversation context now has {len(self.conversation_context)} exchanges")
+            else:
+                # Normal mode or first search in conversation mode
+                self.all_results = results
+                self.total_results = len(results)
+                
+                # Initialize conversation context if this is the first search in conversation mode
+                if conversation_mode:
+                    self.conversation_context = [{
+                        "query": query,
+                        "response": context,
+                        "timestamp": datetime.now().isoformat()
+                    }]
+                    self.previous_context = context
+                    logger.info(f"Started new conversation with query: {query}")
             
             # Display results with pagination
             await self._display_results_page(context)
@@ -954,16 +1081,222 @@ class SearchRAGWindow(Container):
         except Exception as e:
             logger.error(f"Search error: {e}", exc_info=True)
             error_msg = str(e)
-            if "embeddings" in error_msg.lower():
+            error_lower = error_msg.lower()
+            
+            # Handle specific error types with tailored messages and recovery suggestions
+            if "embeddings" in error_lower:
                 await status_elem.update("❌ Embeddings not available - using plain search instead")
-                # Fallback to plain search
+                
+                # Show a more helpful message with recovery steps
+                if hasattr(self.app_instance, 'notify'):
+                    self.app_instance.notify(
+                        "Embeddings service is not available. Falling back to plain search mode.\n\n"
+                        "To enable semantic search: pip install -e '.[embeddings_rag]'",
+                        severity="warning",
+                        timeout=10
+                    )
+                
+                # Fallback to plain search automatically
                 if search_mode != "plain":
+                    logger.info(f"SearchRAGWindow: Falling back to plain search mode from {search_mode}")
                     self.query_one("#search-mode-select").value = "plain"
                     await self._perform_search(query)
                     return
+            
+            elif "pipeline" in error_lower or "invalid pipeline" in error_lower:
+                await status_elem.update("❌ Pipeline configuration error - check settings")
+                
+                # Show a more helpful message with recovery steps
+                if hasattr(self.app_instance, 'notify'):
+                    self.app_instance.notify(
+                        f"Pipeline error: {error_msg[:100]}...\n\n"
+                        f"Try selecting a different search mode or check pipeline configuration.",
+                        severity="error",
+                        timeout=10
+                    )
+                
+                # Suggest switching to plain mode
+                try:
+                    # Add a suggestion button to switch to plain mode
+                    results_container = self.query_one("#results-container")
+                    await results_container.mount(Static(
+                        "⚠️ Pipeline error detected. Try using Plain search mode instead:",
+                        classes="error-suggestion"
+                    ))
+                    
+                    # Add a button to switch to plain mode
+                    switch_btn = Button("Switch to Plain Search Mode", classes="recovery-button", variant="primary")
+                    await results_container.mount(switch_btn)
+                    
+                    # Add a handler for the button
+                    @on(Button.Pressed, switch_btn)
+                    async def switch_to_plain_mode(self, event: Button.Pressed) -> None:
+                        self.query_one("#search-mode-select").value = "plain"
+                        await self._perform_search(query)
+                except Exception as ui_error:
+                    logger.warning(f"Could not add recovery UI: {ui_error}")
+                
+            elif "connection" in error_lower or "timeout" in error_lower or "network" in error_lower:
+                await status_elem.update("❌ Connection error - check network settings")
+                
+                if hasattr(self.app_instance, 'notify'):
+                    self.app_instance.notify(
+                        f"Network error: {error_msg[:100]}...\n\n"
+                        f"Check your internet connection and try again. If the problem persists, "
+                        f"try using offline search sources only.",
+                        severity="error",
+                        timeout=10
+                    )
+                
+                # Suggest using offline sources only
+                try:
+                    results_container = self.query_one("#results-container")
+                    await results_container.mount(Static(
+                        "⚠️ Network error detected. Try searching offline sources only:",
+                        classes="error-suggestion"
+                    ))
+                    
+                    # Add buttons to select offline sources
+                    offline_btn = Button("Search Offline Sources Only", classes="recovery-button", variant="primary")
+                    await results_container.mount(offline_btn)
+                    
+                    # Add a handler for the button
+                    @on(Button.Pressed, offline_btn)
+                    async def search_offline_only(self, event: Button.Pressed) -> None:
+                        # Disable online sources
+                        self.query_one("#source-media").value = True
+                        self.query_one("#source-conversations").value = True
+                        self.query_one("#source-notes").value = True
+                        # Retry the search
+                        await self._perform_search(query)
+                except Exception as ui_error:
+                    logger.warning(f"Could not add recovery UI: {ui_error}")
+                
+            elif "permission" in error_lower or "access" in error_lower:
+                await status_elem.update("❌ Permission error - check file access")
+                
+                if hasattr(self.app_instance, 'notify'):
+                    self.app_instance.notify(
+                        f"Permission error: {error_msg[:100]}...\n\n"
+                        f"Check file permissions and try again. You may need to restart the application "
+                        f"with appropriate permissions.",
+                        severity="error",
+                        timeout=10
+                    )
+                
+            elif "memory" in error_lower or "out of memory" in error_lower:
+                await status_elem.update("❌ Memory error - try reducing context size")
+                
+                if hasattr(self.app_instance, 'notify'):
+                    self.app_instance.notify(
+                        "Out of memory error.\n\n"
+                        "Try reducing the context length or number of results in Advanced Settings.",
+                        severity="error",
+                        timeout=10
+                    )
+                
+                # Suggest reducing context size
+                try:
+                    results_container = self.query_one("#results-container")
+                    await results_container.mount(Static(
+                        "⚠️ Memory error detected. Try reducing context size and results count:",
+                        classes="error-suggestion"
+                    ))
+                    
+                    # Add a button to reduce context size
+                    reduce_btn = Button("Reduce Context Size & Try Again", classes="recovery-button", variant="primary")
+                    await results_container.mount(reduce_btn)
+                    
+                    # Add a handler for the button
+                    @on(Button.Pressed, reduce_btn)
+                    async def reduce_context_size(self, event: Button.Pressed) -> None:
+                        # Reduce context size and results count
+                        self.query_one("#max-context-input").value = "5000"
+                        self.query_one("#top-k-input").value = "5"
+                        # Retry the search
+                        await self._perform_search(query)
+                except Exception as ui_error:
+                    logger.warning(f"Could not add recovery UI: {ui_error}")
+                
+            elif conversation_mode and "context" in error_lower:
+                await status_elem.update("❌ Conversation context error - resetting conversation")
+                
+                if hasattr(self.app_instance, 'notify'):
+                    self.app_instance.notify(
+                        "Error with conversation context. Resetting conversation mode.\n\n"
+                        "Your search will continue in standard mode.",
+                        severity="warning",
+                        timeout=10
+                    )
+                
+                # Reset conversation context
+                self.conversation_context = []
+                self.previous_context = ""
+                self.query_one("#conversation-mode").value = False
+                
+                # Try again without conversation mode
+                try:
+                    results_container = self.query_one("#results-container")
+                    await results_container.mount(Static(
+                        "⚠️ Conversation context error. Conversation mode has been reset.",
+                        classes="error-suggestion"
+                    ))
+                    
+                    # Add a button to retry without conversation mode
+                    retry_btn = Button("Retry Search Without Conversation Mode", classes="recovery-button", variant="primary")
+                    await results_container.mount(retry_btn)
+                    
+                    # Add a handler for the button
+                    @on(Button.Pressed, retry_btn)
+                    async def retry_without_conversation(self, event: Button.Pressed) -> None:
+                        # Retry the search
+                        await self._perform_search(query)
+                except Exception as ui_error:
+                    logger.warning(f"Could not add recovery UI: {ui_error}")
+                
             else:
+                # Generic error handling with more helpful message
                 await status_elem.update(f"❌ Search error: {error_msg[:100]}...")
-            self.app_instance.notify(f"Search error: {error_msg[:100]}...", severity="error")
+                
+                if hasattr(self.app_instance, 'notify'):
+                    self.app_instance.notify(
+                        f"Search error: {error_msg[:100]}...\n\n"
+                        f"Try a different search query or check the logs for details. "
+                        f"You can also try using Plain search mode which has fewer dependencies.",
+                        severity="error",
+                        timeout=10
+                    )
+                
+                # Add a generic retry button
+                try:
+                    results_container = self.query_one("#results-container")
+                    await results_container.mount(Static(
+                        "⚠️ Search error. You can try these recovery options:",
+                        classes="error-suggestion"
+                    ))
+                    
+                    # Add buttons for common recovery options
+                    with Container(classes="recovery-options"):
+                        # Button to retry with plain mode
+                        plain_btn = Button("Try Plain Search Mode", classes="recovery-button", variant="primary")
+                        await results_container.mount(plain_btn)
+                        
+                        # Button to retry with fewer results
+                        fewer_btn = Button("Try Fewer Results", classes="recovery-button", variant="primary")
+                        await results_container.mount(fewer_btn)
+                        
+                        # Add handlers for the buttons
+                        @on(Button.Pressed, plain_btn)
+                        async def try_plain_mode(self, event: Button.Pressed) -> None:
+                            self.query_one("#search-mode-select").value = "plain"
+                            await self._perform_search(query)
+                            
+                        @on(Button.Pressed, fewer_btn)
+                        async def try_fewer_results(self, event: Button.Pressed) -> None:
+                            self.query_one("#top-k-input").value = "5"
+                            await self._perform_search(query)
+                except Exception as ui_error:
+                    logger.warning(f"Could not add recovery UI: {ui_error}")
             
         finally:
             self.is_searching = False
@@ -1025,12 +1358,50 @@ class SearchRAGWindow(Container):
                 result_widget = SearchResult(result, i)
                 await results_container.mount(result_widget)
         else:
-            # Show empty state
-            empty_msg = Static(
-                "No results to display. Try a different search query or check your filters.",
-                classes="empty-results-message"
-            )
-            await results_container.mount(empty_msg)
+            # Show empty state with example searches
+            if self.all_results:
+                # No results for the current search
+                empty_msg = Static(
+                    "No results to display. Try a different search query or check your filters.",
+                    classes="empty-results-message"
+                )
+                await results_container.mount(empty_msg)
+            else:
+                # No search performed yet - show example searches
+                await results_container.mount(Static(
+                    "✨ Try one of these example searches to get started:",
+                    classes="example-searches-title"
+                ))
+                
+                # Create container for example search buttons
+                example_container = Container(classes="example-searches-container")
+                await results_container.mount(example_container)
+                
+                # Add example search buttons
+                example_searches = [
+                    ("🔍 Find recent conversations", "recent conversations"),
+                    ("📝 Search for notes", "important notes"),
+                    ("🎬 Find media about machine learning", "machine learning videos"),
+                    ("💡 Search for technical concepts", "technical explanation"),
+                    ("📊 Find data analysis content", "data analysis"),
+                    ("🧠 Search for AI topics", "artificial intelligence")
+                ]
+                
+                for label, query in example_searches:
+                    example_btn = Button(label, classes="example-search-button", variant="primary")
+                    example_btn.query = query  # Store the query as an attribute
+                    await example_container.mount(example_btn)
+                
+                # Add tips for effective searching
+                tips_md = """
+                ### 📋 Search Tips:
+                
+                - Use **specific terms** for better results
+                - Try **different search modes** for different types of queries
+                - Enable **conversation mode** to build on previous searches
+                - Use **filters** to narrow down results by source
+                """
+                await results_container.mount(Markdown(tips_md, classes="search-tips"))
         
         # Update context preview
         context_preview = self.query_one("#context-preview", Markdown)
@@ -1059,18 +1430,57 @@ class SearchRAGWindow(Container):
     
     @on(Button.Pressed, "#save-search-btn")
     async def handle_save_search(self, event: Button.Pressed) -> None:
-        """Save current search configuration"""
+        """Save current search configuration with custom name prompt"""
         if not self.current_search_config:
             self.app_instance.notify("⚠️ No search to save", severity="warning")
             return
         
-        # Generate a more descriptive name
+        # Generate a default descriptive name
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        save_name = f"{self.current_search_config['query'][:30]} - {timestamp}"
+        default_name = f"{self.current_search_config['query'][:30]} - {timestamp}"
         
-        saved_searches = self.query_one(SavedSearchesPanel)
-        saved_searches.save_search(save_name, self.current_search_config)
-        self.app_instance.notify(f"✅ Search saved successfully", severity="success")
+        # Prompt user for a custom name using app's input dialog
+        try:
+            # Use app's input dialog if available
+            if hasattr(self.app_instance, 'show_input_dialog'):
+                save_name = await self.app_instance.show_input_dialog(
+                    title="Save Search Configuration",
+                    message="Enter a name for this search configuration:",
+                    default_value=default_name
+                )
+                if not save_name:  # User cancelled
+                    return
+            else:
+                # Fallback to default name if dialog not available
+                save_name = default_name
+                
+            # Add search details to the configuration for better reference
+            search_config = self.current_search_config.copy()
+            search_config['saved_at'] = timestamp
+            
+            # Include search mode display name for better readability
+            mode = search_config.get('mode', 'plain')
+            mode_names = {"plain": "Plain", "full": "Semantic", "hybrid": "Hybrid"}
+            search_config['mode_display'] = mode_names.get(mode, mode)
+            
+            # Include source summary
+            sources = search_config.get('sources', {})
+            active_sources = [k.capitalize() for k, v in sources.items() if v]
+            search_config['sources_summary'] = ", ".join(active_sources) if active_sources else "None"
+            
+            # Save the search
+            saved_searches = self.query_one(SavedSearchesPanel)
+            saved_searches.save_search(save_name, search_config)
+            
+            # Show success notification with details
+            self.app_instance.notify(
+                f"✅ Search '{save_name}' saved successfully",
+                severity="success",
+                timeout=5
+            )
+        except Exception as e:
+            logger.error(f"Error saving search: {e}")
+            self.app_instance.notify(f"❌ Error saving search: {str(e)}", severity="error")
     
     @on(Button.Pressed, "#new-saved-search")
     async def handle_new_saved_search(self, event: Button.Pressed) -> None:
@@ -1086,6 +1496,33 @@ class SearchRAGWindow(Container):
         else:
             menu.add_class("hidden")
         event.stop()
+        
+    @on(Button.Pressed, ".example-search-button")
+    async def handle_example_search(self, event: Button.Pressed) -> None:
+        """Handle example search button clicks"""
+        # Get the query from the button's attribute
+        if hasattr(event.button, "query"):
+            query = event.button.query
+            logger.info(f"SearchRAGWindow: Example search clicked: {query}")
+            
+            # Set the query in the search input
+            self.search_input.value = query
+            
+            # Focus the search input
+            self.search_input.focus()
+            
+            # Perform the search
+            await self._perform_search(query)
+            
+            # Notify the user
+            if hasattr(self.app_instance, 'notify'):
+                self.app_instance.notify(
+                    f"Searching for: {query}",
+                    severity="information",
+                    timeout=2
+                )
+        else:
+            logger.warning("SearchRAGWindow: Example search button clicked but no query attribute found")
     
     @on(Button.Pressed, "#index-content-btn")
     async def handle_index_content(self, event: Button.Pressed) -> None:
@@ -1347,36 +1784,128 @@ class SearchRAGWindow(Container):
     
     @on(Button.Pressed, "#load-saved-search")
     async def handle_load_saved_search(self, event: Button.Pressed) -> None:
-        """Load a saved search configuration"""
+        """Load a saved search configuration with enhanced options"""
         saved_searches = self.query_one(SavedSearchesPanel)
-        if saved_searches.selected_search_name and saved_searches.selected_search_name in saved_searches.saved_searches:
-            config = saved_searches.saved_searches[saved_searches.selected_search_name]['config']
+        selected_name = saved_searches.selected_search_name
+        
+        if not selected_name or selected_name not in saved_searches.saved_searches:
+            self.app_instance.notify("⚠️ No saved search selected", severity="warning")
+            return
+            
+        try:
+            # Get the saved search data
+            saved_data = saved_searches.saved_searches[selected_name]
+            config = saved_data['config']
+            
+            # Update last_used timestamp
+            saved_data['last_used'] = datetime.now().isoformat()
+            saved_searches._persist_saved_searches()
             
             # Apply the saved configuration
             self.search_input.value = config.get('query', '')
             self.query_one("#search-mode-select").value = config.get('mode', 'plain')
             
+            # Apply sources
             sources = config.get('sources', {})
             self.query_one("#source-media").value = sources.get('media', True)
             self.query_one("#source-conversations").value = sources.get('conversations', True)
             self.query_one("#source-notes").value = sources.get('notes', True)
             
+            # Apply advanced settings
             self.query_one("#top-k-input").value = str(config.get('top_k', 10))
             self.query_one("#max-context-input").value = str(config.get('max_context', 10000))
             self.query_one("#enable-rerank").value = config.get('enable_rerank', False)
             
-            self.app_instance.notify("📥 Loaded saved search configuration", severity="success")
+            # Apply conversation mode if it was saved
+            if 'conversation_mode' in config:
+                self.query_one("#conversation-mode").value = config.get('conversation_mode', False)
+            
+            # Apply parent document settings if they were saved
+            if 'include_parent_docs' in config:
+                self.query_one("#include-parent-docs").value = config.get('include_parent_docs', False)
+            
+            if 'parent_size_threshold' in config:
+                self.query_one("#parent-size-threshold").value = str(config.get('parent_size_threshold', 5000))
+                
+            if 'parent_inclusion_strategy' in config:
+                self.query_one("#parent-strategy").value = config.get('parent_inclusion_strategy', 'size_based')
+            
+            # Show success notification with details
+            mode_display = config.get('mode_display', config.get('mode', 'plain'))
+            sources_summary = config.get('sources_summary', '')
+            
+            self.app_instance.notify(
+                f"📥 Loaded '{selected_name}' ({mode_display} search on {sources_summary})",
+                severity="success",
+                timeout=5
+            )
+            
+            # Ask if user wants to execute the search
+            if hasattr(self.app_instance, 'show_yes_no_dialog'):
+                execute_search = await self.app_instance.show_yes_no_dialog(
+                    title="Execute Search?",
+                    message=f"Do you want to execute the loaded search now?",
+                    yes_text="Search",
+                    no_text="Not Now"
+                )
+                
+                if execute_search:
+                    # Execute the search
+                    await self._perform_search(self.search_input.value)
+                    return
+            
+            # Focus the search input if not executing immediately
             self.search_input.focus()
+            
+        except Exception as e:
+            logger.error(f"Error loading saved search: {e}")
+            self.app_instance.notify(f"❌ Error loading search: {str(e)}", severity="error")
     
     @on(Button.Pressed, "#delete-saved-search")
     async def handle_delete_saved_search(self, event: Button.Pressed) -> None:
-        """Delete a saved search"""
+        """Delete a saved search with confirmation"""
         saved_searches = self.query_one(SavedSearchesPanel)
-        if saved_searches.selected_search_name and saved_searches.selected_search_name in saved_searches.saved_searches:
-            del saved_searches.saved_searches[saved_searches.selected_search_name]
-            saved_searches._persist_saved_searches()
-            await saved_searches.refresh_list()
-            self.app_instance.notify("🗑️ Deleted saved search", severity="success")
+        selected_name = saved_searches.selected_search_name
+        
+        if not selected_name or selected_name not in saved_searches.saved_searches:
+            self.app_instance.notify("⚠️ No saved search selected", severity="warning")
+            return
+            
+        try:
+            # Ask for confirmation before deleting
+            confirmed = True  # Default if dialog not available
+            
+            if hasattr(self.app_instance, 'show_yes_no_dialog'):
+                confirmed = await self.app_instance.show_yes_no_dialog(
+                    title="Confirm Deletion",
+                    message=f"Are you sure you want to delete the saved search '{selected_name}'?",
+                    yes_text="Delete",
+                    no_text="Cancel"
+                )
+            
+            if confirmed:
+                # Get details for notification before deleting
+                config = saved_searches.saved_searches[selected_name].get('config', {})
+                mode_display = config.get('mode_display', config.get('mode', 'plain'))
+                
+                # Delete the saved search
+                del saved_searches.saved_searches[selected_name]
+                saved_searches._persist_saved_searches()
+                await saved_searches.refresh_list()
+                
+                # Disable action buttons since nothing is selected now
+                self.query_one("#load-saved-search").disabled = True
+                self.query_one("#delete-saved-search").disabled = True
+                
+                # Show success notification with details
+                self.app_instance.notify(
+                    f"🗑️ Deleted saved search '{selected_name}' ({mode_display})",
+                    severity="success",
+                    timeout=5
+                )
+        except Exception as e:
+            logger.error(f"Error deleting saved search: {e}")
+            self.app_instance.notify(f"❌ Error deleting search: {str(e)}", severity="error")
     
     # Action methods
     def action_focus_search(self) -> None:
@@ -1421,6 +1950,60 @@ class SearchRAGWindow(Container):
     def action_index(self) -> None:
         """Trigger content indexing (Ctrl+I)"""
         self.query_one("#index-content-btn").press()
+    
+    def refresh(self, *regions, repaint: bool = True, layout: bool = False, recompose: bool = False) -> None:
+        """Refresh the search window state and UI elements.
+        
+        This method is called when the search window is displayed to ensure
+        it's properly initialized and up-to-date.
+        """
+        # Call parent refresh first
+        super().refresh(*regions, repaint=repaint, layout=layout, recompose=recompose)
+        
+        # Schedule async refresh operations using run_worker
+        self.run_worker(self._async_refresh_content)
+    
+    async def _async_refresh_content(self) -> None:
+        """Perform async refresh operations for search window content."""
+        logger.info("SearchRAGWindow._async_refresh_content: Refreshing search window state")
+        
+        try:
+            # Check index status
+            await self._check_index_status()
+            
+            # Reload search history
+            self._load_recent_search_history()
+            
+            # Update history table
+            self._update_history_table_async()
+            
+            # Refresh saved searches panel if it exists
+            try:
+                saved_searches_panel = self.query_one(SavedSearchesPanel)
+                await saved_searches_panel.refresh_list()
+                logger.debug("SearchRAGWindow._async_refresh_content: Refreshed saved searches panel")
+            except Exception as e:
+                logger.warning(f"SearchRAGWindow._async_refresh_content: Could not refresh saved searches panel: {e}")
+            
+            # Reset status message if no search is in progress
+            if not self.is_searching:
+                try:
+                    status_elem = self.query_one("#search-status")
+                    await status_elem.update("🟢 Ready to search")
+                    logger.debug("SearchRAGWindow._async_refresh_content: Reset status message")
+                except Exception as e:
+                    logger.warning(f"SearchRAGWindow._async_refresh_content: Could not update status message: {e}")
+            
+            # Focus search input
+            try:
+                self.search_input.focus()
+                logger.debug("SearchRAGWindow._async_refresh_content: Focused search input")
+            except Exception as e:
+                logger.warning(f"SearchRAGWindow._async_refresh_content: Could not focus search input: {e}")
+                
+            logger.info("SearchRAGWindow._async_refresh_content: Search window refreshed successfully")
+        except Exception as e:
+            logger.error(f"SearchRAGWindow._async_refresh_content: Error refreshing search window: {e}")
     
     def action_clear(self) -> None:
         """Clear search (Escape)"""

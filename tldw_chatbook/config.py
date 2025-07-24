@@ -271,6 +271,36 @@ DEFAULT_OCR_BACKEND_CONFIG = {
     }
 }
 
+DEFAULT_DIARIZATION_CONFIG = {
+    # Enable diarization by default
+    "enabled": False,
+    
+    # VAD settings
+    "vad_threshold": 0.5,
+    "vad_min_speech_duration": 0.25,
+    "vad_min_silence_duration": 0.25,
+    
+    # Segmentation settings
+    "segment_duration": 2.0,
+    "segment_overlap": 0.5,
+    "min_segment_duration": 1.0,
+    "max_segment_duration": 3.0,
+    
+    # Embedding model
+    "embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
+    "embedding_device": "auto",  # auto, cuda, cpu
+    
+    # Clustering settings
+    "clustering_method": "spectral",  # spectral, agglomerative
+    "similarity_threshold": 0.85,
+    "min_speakers": 1,
+    "max_speakers": 10,
+    
+    # Post-processing
+    "merge_threshold": 0.5,  # seconds between segments to merge
+    "min_speaker_duration": 3.0  # minimum total duration per speaker
+}
+
 def load_openai_mappings() -> Dict:
     current_file_path = Path(__file__).resolve()
     api_component_root = current_file_path.parent.parent.parent
@@ -2218,6 +2248,35 @@ use_diarization_by_default = false
 # Chunk length for long audio processing (in seconds)
 # Used by Canary model for efficient processing of long audio files
 chunk_length_seconds = 40.0
+
+[diarization]
+# Speaker diarization configuration
+enabled = false  # Enable/disable diarization by default
+
+# Voice Activity Detection (VAD) settings
+vad_threshold = 0.5  # Sensitivity for speech detection (0.0-1.0)
+vad_min_speech_duration = 0.25  # Minimum speech duration in seconds
+vad_min_silence_duration = 0.25  # Minimum silence duration in seconds
+
+# Segmentation settings for speaker analysis
+segment_duration = 2.0  # Duration of analysis segments in seconds
+segment_overlap = 0.5  # Overlap between segments in seconds
+min_segment_duration = 1.0  # Minimum segment duration
+max_segment_duration = 3.0  # Maximum segment duration
+
+# Speaker embedding model
+embedding_model = "speechbrain/spkrec-ecapa-voxceleb"  # Model for speaker embeddings
+embedding_device = "auto"  # Device: "auto", "cuda", "cpu"
+
+# Clustering settings
+clustering_method = "spectral"  # Method: "spectral" or "agglomerative"
+similarity_threshold = 0.85  # Threshold for speaker similarity (0.0-1.0)
+min_speakers = 1  # Minimum expected speakers
+max_speakers = 10  # Maximum expected speakers
+
+# Post-processing
+merge_threshold = 0.5  # Time gap in seconds to merge same-speaker segments
+min_speaker_duration = 3.0  # Minimum total duration per speaker in seconds
 
 [local_ingestion]
 # YouTube/URL download settings
