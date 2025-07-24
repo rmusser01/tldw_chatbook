@@ -92,6 +92,10 @@ class SegmentDict(TypedDict, total=False):
     is_padded: bool
     original_duration: float
     speech_region: Dict[str, Any]
+    # Memory-efficient fields
+    start_sample: Optional[int]
+    end_sample: Optional[int]
+    waveform_ref: Optional[Any]  # Reference to original waveform instead of copy
 
 
 class DiarizationResult(TypedDict):
@@ -113,6 +117,9 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.85
 DEFAULT_EMBEDDING_BATCH_SIZE = 32
 DEFAULT_EMBEDDING_MODEL = 'speechbrain/spkrec-ecapa-voxceleb'
 SPEAKER_LABEL_PREFIX = 'SPEAKER_'
+# Memory-efficient mode constants
+DEFAULT_MEMORY_EFFICIENT = False
+DEFAULT_MAX_MEMORY_MB = 2048  # 2GB default memory limit
 
 
 def _sanitize_path_component(name: str) -> str:
@@ -413,6 +420,14 @@ class DiarizationService:
             
             # Batch processing
             'embedding_batch_size': DEFAULT_EMBEDDING_BATCH_SIZE,
+            
+            # Memory-efficient mode
+            'memory_efficient': DEFAULT_MEMORY_EFFICIENT,
+            'max_memory_mb': DEFAULT_MAX_MEMORY_MB,
+            
+            # Overlapping speech detection
+            'detect_overlapping_speech': False,
+            'overlap_confidence_threshold': 0.7,
         }
     
     def _default_config_loader(self) -> Dict[str, Any]:
@@ -655,7 +670,9 @@ class DiarizationService:
             if progress_callback:
                 progress_callback(10, "Detecting speech segments...", None)
             
-            speech_timestamps = self._detect_speech(waveform, sample_rate)
+            # Use streaming VAD if memory-efficient mode is enabled
+            streaming_vad = self.config.get('memory_efficient', False)
+            speech_timestamps = self._detect_speech(waveform, sample_rate, streaming=streaming_vad)
             logger.info(f"Found {len(speech_timestamps)} speech segments")
             
             if not speech_timestamps:
@@ -698,6 +715,13 @@ class DiarizationService:
             for segment, label in zip(segments, speaker_labels):
                 segment['speaker_id'] = int(label)
                 segment['speaker_label'] = f"{SPEAKER_LABEL_PREFIX}{label}"
+            
+            # Step 5b: Detect overlapping speech (if configured)
+            if self.config.get('detect_overlapping_speech', False):
+                if progress_callback:
+                    progress_callback(75, "Detecting overlapping speech...", None)
+                
+                segments = self._detect_overlapping_speech(segments, embeddings, speaker_labels)
             
             # Step 6: Merge consecutive segments
             if progress_callback:
@@ -800,12 +824,13 @@ class DiarizationService:
                     f"Failed to load audio file '{audio_path}': {str(e)}"
                 ) from e
     
-    def _detect_speech(self, waveform, sample_rate: int) -> List[Dict]:
+    def _detect_speech(self, waveform, sample_rate: int, streaming: bool = False) -> List[Dict]:
         """Detect speech segments using VAD.
         
         Args:
             waveform: Audio waveform tensor
             sample_rate: Sample rate of the audio
+            streaming: If True, use streaming VAD for lower memory usage
             
         Returns:
             List of speech segments with start/end times
@@ -823,41 +848,77 @@ class DiarizationService:
                 "VAD utilities not properly loaded. Missing 'get_speech_timestamps' function."
             )
         
-        # Get the speech detection function using safe getter
-        get_speech_timestamps = self._get_vad_utility('get_speech_timestamps')
-        
-        try:
-            # Call the VAD function with proper parameters
-            # NOTE: Parameter names and order are critical for Silero VAD
-            speech_timestamps = get_speech_timestamps(
-                waveform,
-                self._vad_model,
-                sampling_rate=sample_rate,  # Must be 'sampling_rate', not 'sample_rate'
-                threshold=self.config['vad_threshold'],
-                min_speech_duration_ms=int(self.config['vad_min_speech_duration'] * 1000),
-                min_silence_duration_ms=int(self.config['vad_min_silence_duration'] * 1000)
-            )
-            
-            # Validate the output format
-            if not isinstance(speech_timestamps, list):
-                raise DiarizationError(
-                    f"Expected list of timestamps, got {type(speech_timestamps).__name__}"
+        if streaming and 'VADIterator' in self._vad_utils:
+            # Use streaming VAD for lower memory usage
+            try:
+                VADIterator = self._get_vad_utility('VADIterator')
+                vad_iterator = VADIterator(
+                    model=self._vad_model,
+                    threshold=self.config['vad_threshold'],
+                    sampling_rate=sample_rate,
+                    min_silence_duration_ms=int(self.config['vad_min_silence_duration'] * 1000),
+                    speech_pad_ms=int(self.config.get('vad_speech_pad_ms', 30))
                 )
-            
-            # Validate each timestamp has required fields
-            for i, ts in enumerate(speech_timestamps):
-                if not isinstance(ts, dict):
-                    raise DiarizationError(
-                        f"Timestamp {i} is not a dict: {type(ts).__name__}"
-                    )
-                if 'start' not in ts or 'end' not in ts:
-                    raise DiarizationError(
-                        f"Timestamp {i} missing 'start' or 'end' field: {ts.keys()}"
-                    )
+                
+                # Process in chunks for streaming
+                chunk_size = int(sample_rate * 10)  # 10 second chunks
+                speech_timestamps = []
+                
+                for i in range(0, len(waveform), chunk_size):
+                    chunk = waveform[i:i + chunk_size]
+                    speech_dict = vad_iterator(chunk, return_seconds=False)
                     
-        except Exception as e:
-            logger.error(f"VAD detection failed: {e}")
-            raise DiarizationError(f"Speech detection failed: {str(e)}") from e
+                    if speech_dict:
+                        # Adjust timestamps for chunk offset
+                        for ts in speech_dict.get('speech_timestamps', []):
+                            ts['start'] = ts['start'] + i
+                            ts['end'] = ts['end'] + i
+                            speech_timestamps.append(ts)
+                
+                # Reset iterator
+                vad_iterator.reset_states()
+                
+            except Exception as e:
+                logger.warning(f"Streaming VAD failed, falling back to standard VAD: {e}")
+                streaming = False
+        
+        if not streaming:
+            # Standard (non-streaming) VAD
+            # Get the speech detection function using safe getter
+            get_speech_timestamps = self._get_vad_utility('get_speech_timestamps')
+            
+            try:
+                # Call the VAD function with proper parameters
+                # NOTE: Parameter names and order are critical for Silero VAD
+                speech_timestamps = get_speech_timestamps(
+                    waveform,
+                    self._vad_model,
+                    sampling_rate=sample_rate,  # Must be 'sampling_rate', not 'sample_rate'
+                    threshold=self.config['vad_threshold'],
+                    min_speech_duration_ms=int(self.config['vad_min_speech_duration'] * 1000),
+                    min_silence_duration_ms=int(self.config['vad_min_silence_duration'] * 1000)
+                )
+                
+                # Validate the output format
+                if not isinstance(speech_timestamps, list):
+                    raise DiarizationError(
+                        f"Expected list of timestamps, got {type(speech_timestamps).__name__}"
+                    )
+                
+                # Validate each timestamp has required fields
+                for i, ts in enumerate(speech_timestamps):
+                    if not isinstance(ts, dict):
+                        raise DiarizationError(
+                            f"Timestamp {i} is not a dict: {type(ts).__name__}"
+                        )
+                    if 'start' not in ts or 'end' not in ts:
+                        raise DiarizationError(
+                            f"Timestamp {i} missing 'start' or 'end' field: {ts.keys()}"
+                        )
+                    
+            except Exception as e:
+                logger.error(f"VAD detection failed: {e}")
+                raise DiarizationError(f"Speech detection failed: {str(e)}") from e
         
         # Convert to seconds
         for ts in speech_timestamps:
@@ -872,7 +933,10 @@ class DiarizationService:
         speech_timestamps: List[Dict],
         sample_rate: int
     ) -> List[SegmentDict]:
-        """Create fixed-length overlapping segments from speech regions."""
+        """Create fixed-length overlapping segments from speech regions.
+        
+        In memory-efficient mode, stores segment indices instead of waveform copies.
+        """
         torch = _lazy_import_torch()
         if not torch:
             raise DiarizationError("PyTorch not available for segment creation")
@@ -883,6 +947,9 @@ class DiarizationService:
         overlap_samples = int(self.config['segment_overlap'] * sample_rate)
         step_samples = segment_samples - overlap_samples
         
+        # Check if memory-efficient mode is enabled
+        memory_efficient = self.config.get('memory_efficient', False)
+        
         for speech in speech_timestamps:
             start_sample = int(speech['start'] * sample_rate)
             end_sample = int(speech['end'] * sample_rate)
@@ -890,56 +957,99 @@ class DiarizationService:
             
             if speech_duration < min_segment_samples:
                 # Handle short segments by padding
-                segment_waveform = waveform[start_sample:end_sample]
-                # Pad to minimum length with silence
-                padding_needed = min_segment_samples - speech_duration
-                try:
-                    padded_waveform = torch.nn.functional.pad(segment_waveform, (0, padding_needed))
-                except Exception as e:
-                    logger.warning(f"Failed to pad short segment: {e}")
-                    continue  # Skip this segment if padding fails
-                
-                segments.append({
-                    'start': start_sample / sample_rate,
-                    'end': end_sample / sample_rate,
-                    'waveform': padded_waveform,
-                    'is_padded': True,
-                    'original_duration': speech_duration / sample_rate,
-                    'speech_region': speech  # Keep reference to original speech region
-                })
+                if memory_efficient:
+                    # Store indices instead of waveform copy
+                    segments.append({
+                        'start': start_sample / sample_rate,
+                        'end': end_sample / sample_rate,
+                        'start_sample': start_sample,
+                        'end_sample': end_sample,
+                        'waveform_ref': waveform,  # Reference to original
+                        'is_padded': True,
+                        'padding_needed': min_segment_samples - speech_duration,
+                        'original_duration': speech_duration / sample_rate,
+                        'speech_region': speech
+                    })
+                else:
+                    # Original behavior - copy waveform
+                    segment_waveform = waveform[start_sample:end_sample]
+                    # Pad to minimum length with silence
+                    padding_needed = min_segment_samples - speech_duration
+                    try:
+                        padded_waveform = torch.nn.functional.pad(segment_waveform, (0, padding_needed))
+                    except Exception as e:
+                        logger.warning(f"Failed to pad short segment: {e}")
+                        continue  # Skip this segment if padding fails
+                    
+                    segments.append({
+                        'start': start_sample / sample_rate,
+                        'end': end_sample / sample_rate,
+                        'waveform': padded_waveform,
+                        'is_padded': True,
+                        'original_duration': speech_duration / sample_rate,
+                        'speech_region': speech  # Keep reference to original speech region
+                    })
             else:
                 # Create overlapping segments within this speech region
                 for i in range(start_sample, end_sample - segment_samples + 1, step_samples):
-                    segment_waveform = waveform[i:i + segment_samples]
-                    
-                    segments.append({
-                        'start': i / sample_rate,
-                        'end': (i + segment_samples) / sample_rate,
-                        'waveform': segment_waveform,
-                        'is_padded': False,
-                        'speech_region': speech  # Keep reference to original speech region
-                    })
+                    if memory_efficient:
+                        # Store indices instead of waveform copy
+                        segments.append({
+                            'start': i / sample_rate,
+                            'end': (i + segment_samples) / sample_rate,
+                            'start_sample': i,
+                            'end_sample': i + segment_samples,
+                            'waveform_ref': waveform,  # Reference to original
+                            'is_padded': False,
+                            'speech_region': speech
+                        })
+                    else:
+                        # Original behavior - copy waveform
+                        segment_waveform = waveform[i:i + segment_samples]
+                        
+                        segments.append({
+                            'start': i / sample_rate,
+                            'end': (i + segment_samples) / sample_rate,
+                            'waveform': segment_waveform,
+                            'is_padded': False,
+                            'speech_region': speech  # Keep reference to original speech region
+                        })
                 
                 # Handle the last segment if it's shorter than segment_duration but longer than min_segment_duration
                 last_segment_start = start_sample + ((end_sample - start_sample - segment_samples) // step_samples) * step_samples + step_samples
                 if last_segment_start < end_sample:
                     remaining_samples = end_sample - last_segment_start
                     if remaining_samples >= min_segment_samples:
-                        segment_waveform = waveform[last_segment_start:end_sample]
-                        # Pad to segment_duration
-                        padding_needed = segment_samples - remaining_samples
-                        try:
-                            padded_waveform = torch.nn.functional.pad(segment_waveform, (0, padding_needed))
+                        if memory_efficient:
+                            # Store indices for last segment
                             segments.append({
                                 'start': last_segment_start / sample_rate,
                                 'end': end_sample / sample_rate,
-                                'waveform': padded_waveform,
+                                'start_sample': last_segment_start,
+                                'end_sample': end_sample,
+                                'waveform_ref': waveform,  # Reference to original
                                 'is_padded': True,
+                                'padding_needed': segment_samples - remaining_samples,
                                 'original_duration': remaining_samples / sample_rate,
                                 'speech_region': speech
                             })
-                        except Exception as e:
-                            logger.warning(f"Failed to pad last segment: {e}")
+                        else:
+                            # Original behavior - copy waveform
+                            segment_waveform = waveform[last_segment_start:end_sample]
+                            # Pad to segment_duration
+                            padding_needed = segment_samples - remaining_samples
+                            try:
+                                padded_waveform = torch.nn.functional.pad(segment_waveform, (0, padding_needed))
+                                segments.append({
+                                    'start': last_segment_start / sample_rate,
+                                    'end': end_sample / sample_rate,
+                                    'waveform': padded_waveform,
+                                    'is_padded': True,
+                                    'original_duration': remaining_samples / sample_rate,
+                                    'speech_region': speech
+                                })
+                            except Exception as e:
+                                logger.warning(f"Failed to pad last segment: {e}")
         
         return segments
     
@@ -948,13 +1058,17 @@ class DiarizationService:
         segments: List[SegmentDict],
         progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None
     ) -> "np.ndarray":
-        """Extract speaker embeddings for each segment using batch processing."""
+        """Extract speaker embeddings for each segment using batch processing.
+        
+        Supports memory-efficient mode by loading waveforms on-demand.
+        """
         # Load embedding model if not already loaded
         self._load_embedding_model()
         
         embeddings = []
         total_segments = len(segments)
         batch_size = self.config.get('embedding_batch_size', 32)
+        memory_efficient = self.config.get('memory_efficient', False)
         
         torch = _lazy_import_torch()
         if not torch:
@@ -966,7 +1080,29 @@ class DiarizationService:
             
             # Stack waveforms for batch processing
             try:
-                waveforms = torch.stack([seg['waveform'].unsqueeze(0) for seg in batch_segments])
+                if memory_efficient:
+                    # Load waveforms on-demand for memory-efficient mode
+                    batch_waveforms = []
+                    for seg in batch_segments:
+                        if 'waveform_ref' in seg and 'start_sample' in seg:
+                            # Extract waveform from reference
+                            start = seg['start_sample']
+                            end = seg['end_sample']
+                            waveform = seg['waveform_ref'][start:end]
+                            
+                            # Apply padding if needed
+                            if seg.get('is_padded', False) and 'padding_needed' in seg:
+                                waveform = torch.nn.functional.pad(waveform, (0, seg['padding_needed']))
+                            
+                            batch_waveforms.append(waveform.unsqueeze(0))
+                        else:
+                            # Fallback to stored waveform
+                            batch_waveforms.append(seg['waveform'].unsqueeze(0))
+                    
+                    waveforms = torch.stack(batch_waveforms)
+                else:
+                    # Original behavior - use stored waveforms
+                    waveforms = torch.stack([seg['waveform'].unsqueeze(0) for seg in batch_segments])
             except Exception as e:
                 logger.error(f"Failed to stack waveforms for batch {batch_idx}: {e}")
                 raise DiarizationError(f"Failed to prepare batch: {e}") from e
@@ -1257,6 +1393,113 @@ class DiarizationService:
         speakers.sort(key=lambda x: x['total_time'], reverse=True)
         
         return speakers
+    
+    def _detect_overlapping_speech(
+        self, 
+        segments: List[Dict], 
+        embeddings: "np.ndarray",
+        primary_labels: "np.ndarray",
+        confidence_threshold: float = 0.7
+    ) -> List[Dict]:
+        """Detect potential overlapping speech in segments.
+        
+        Args:
+            segments: List of segment dictionaries
+            embeddings: Speaker embeddings for each segment
+            primary_labels: Primary speaker labels from clustering
+            confidence_threshold: Minimum confidence for primary speaker
+            
+        Returns:
+            Updated segments with overlap information
+        """
+        sklearn_modules = _lazy_import_sklearn()
+        if not sklearn_modules:
+            logger.warning("scikit-learn not available for overlap detection")
+            return segments
+        
+        try:
+            # Get clustering model used
+            if self.config['clustering_method'] == ClusteringMethod.SPECTRAL.value:
+                SpectralClustering = sklearn_modules['SpectralClustering']
+                clustering = SpectralClustering(
+                    n_clusters=len(set(primary_labels)),
+                    affinity='cosine',
+                    assign_labels='kmeans',
+                    random_state=42
+                )
+            else:
+                AgglomerativeClustering = sklearn_modules['AgglomerativeClustering']
+                clustering = AgglomerativeClustering(
+                    n_clusters=len(set(primary_labels)),
+                    affinity='cosine',
+                    linkage='average'
+                )
+            
+            # Fit clustering to get affinity matrix
+            clustering.fit(embeddings)
+            
+            # Calculate distances to all cluster centers
+            from sklearn.metrics.pairwise import cosine_similarity
+            
+            # Get cluster centers (mean of embeddings per cluster)
+            unique_labels = sorted(set(primary_labels))
+            cluster_centers = []
+            for label in unique_labels:
+                mask = primary_labels == label
+                cluster_center = embeddings[mask].mean(axis=0)
+                cluster_centers.append(cluster_center)
+            
+            cluster_centers = np.array(cluster_centers)
+            
+            # Calculate similarity to all clusters for each segment
+            similarities = cosine_similarity(embeddings, cluster_centers)
+            
+            # Detect overlapping speech
+            for i, (segment, sim_scores) in enumerate(zip(segments, similarities)):
+                primary_speaker = primary_labels[i]
+                primary_confidence = sim_scores[primary_speaker]
+                
+                # Check if confidence is low (potential overlap)
+                if primary_confidence < confidence_threshold:
+                    # Find secondary speaker(s)
+                    secondary_speakers = []
+                    for speaker_id, confidence in enumerate(sim_scores):
+                        if speaker_id != primary_speaker and confidence > 0.3:
+                            secondary_speakers.append({
+                                'speaker_id': speaker_id,
+                                'confidence': float(confidence)
+                            })
+                    
+                    if secondary_speakers:
+                        segment['is_overlapping'] = True
+                        segment['primary_confidence'] = float(primary_confidence)
+                        segment['secondary_speakers'] = sorted(
+                            secondary_speakers, 
+                            key=lambda x: x['confidence'], 
+                            reverse=True
+                        )[:2]  # Keep top 2 secondary speakers
+                        logger.debug(
+                            f"Potential overlap detected at {segment['start']:.2f}s: "
+                            f"Primary speaker {primary_speaker} ({primary_confidence:.2f}), "
+                            f"Secondary: {secondary_speakers[0]}"
+                        )
+                else:
+                    segment['is_overlapping'] = False
+                    segment['primary_confidence'] = float(primary_confidence)
+            
+            # Log overlap statistics
+            overlapping_count = sum(1 for s in segments if s.get('is_overlapping', False))
+            if overlapping_count > 0:
+                logger.info(
+                    f"Detected {overlapping_count} segments ({overlapping_count/len(segments)*100:.1f}%) "
+                    f"with potential overlapping speech"
+                )
+            
+        except Exception as e:
+            logger.warning(f"Failed to detect overlapping speech: {e}")
+            # Don't fail the whole process, just skip overlap detection
+        
+        return segments
     
     def is_diarization_available(self) -> bool:
         """Check if diarization is available.
