@@ -1,0 +1,81 @@
+# Corporate Boot Sequence Splash Card
+# Place this file in ~/.config/tldw_cli/splash_cards/corporate_boot.toml
+
+[card]
+name = "corporate_boot"
+type = "animated"
+effect = "terminal_boot"
+
+# Main styling
+style = "white on rgb(0,43,54)"  # Solarized dark background
+cursor = "█"
+
+# Define the boot sequence with corporate messaging
+[[card.boot_sequence]]
+text = "ACME Corp System BIOS v5.2.1"
+type_speed = 0.02
+pause_after = 0.5
+style = "bold yellow"
+
+[[card.boot_sequence]]
+text = "Copyright (C) 2024 ACME Corporation. All rights reserved."
+type_speed = 0.01
+pause_after = 0.3
+style = "dim white"
+
+[[card.boot_sequence]]
+text = ""
+pause_after = 0.2
+
+[[card.boot_sequence]]
+text = "Initializing secure boot sequence..."
+type_speed = 0.02
+pause_after = 0.4
+
+[[card.boot_sequence]]
+text = "Loading kernel modules:"
+type_speed = 0.02
+pause_after = 0.2
+
+[[card.boot_sequence]]
+text = "  [OK] Network Security Layer"
+delay_before = 0.1
+type_speed = 0.01
+style = "green"
+
+[[card.boot_sequence]]
+text = "  [OK] Data Encryption Module"
+type_speed = 0.01
+style = "green"
+
+[[card.boot_sequence]]
+text = "  [OK] User Authentication Service"
+type_speed = 0.01
+style = "green"
+
+[[card.boot_sequence]]
+text = "  [OK] Compliance Monitor"
+type_speed = 0.01
+style = "green"
+
+[[card.boot_sequence]]
+text = ""
+pause_after = 0.3
+
+[[card.boot_sequence]]
+text = "System ready. Welcome to ACME Corp Secure Terminal."
+delay_before = 0.5
+type_speed = 0.03
+style = "bold cyan"
+pause_after = 0.5
+
+[[card.boot_sequence]]
+text = "This system is for authorized users only. All activity is monitored."
+type_speed = 0.02
+style = "yellow"
+
+[metadata]
+author = "IT Department"
+version = "1.0"
+description = "Corporate-themed boot sequence with security messaging"
+tags = ["corporate", "professional", "boot", "security"]

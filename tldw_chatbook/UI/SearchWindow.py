@@ -94,45 +94,88 @@ class SearchWindow(Container):
         """Called when the window is first mounted."""
         logger.info("SearchWindow.on_mount: Setting and initializing initial active sub-tab.")
 
+        # First, ensure all views are properly initialized but hidden
         for view in self.query(".search-view-area"):
+            # Hide the view
             view.display = False
-            logger.debug(f"SearchWindow.on_mount: Setting view {view.id} display to False")
-            # Ensure all children of the view are also hidden
+            logger.debug(f"SearchWindow.on_mount: Hiding view {view.id}")
+            
+            # Special handling for SearchRAGWindow to ensure it's properly initialized
             if view.id == SEARCH_VIEW_RAG_QA:
-                # Special handling for SearchRAGWindow
+                # Initialize children but don't hide them yet to allow proper initialization
                 for child in view.children:
-                    child.display = False
-                    logger.debug(f"SearchWindow.on_mount: Also hiding child {child.__class__.__name__} of {view.id}")
+                    logger.debug(f"SearchWindow.on_mount: Initializing child {child.__class__.__name__} of {view.id}")
 
-        # Default to a view based on available dependencies
+        # Default to RAG QA view unless web search is explicitly preferred
         default_view = SEARCH_VIEW_RAG_QA
-        if WEB_SEARCH_AVAILABLE:
+        
+        # Only default to web search if explicitly configured to do so
+        if WEB_SEARCH_AVAILABLE and hasattr(self.app_instance, 'get_setting') and self.app_instance.get_setting("search", "default_to_web_search", False):
             default_view = SEARCH_VIEW_WEB_SEARCH
         
         initial_sub_tab = self.app_instance.search_active_sub_tab or default_view
         self.app_instance.search_active_sub_tab = initial_sub_tab  # Ensure it's set
         logger.debug(f"SearchWindow.on_mount: Initial active sub-tab set to {initial_sub_tab}")
 
+        # Set active navigation button
         nav_button_id = initial_sub_tab.replace("-view-", "-nav-")
         try:
+            # Clear active class from all nav buttons first
+            for button in self.query(".search-nav-button"):
+                button.remove_class("-active-search-sub-view")
+                
+            # Set active class on the selected button
             nav_button = self.query_one(f"#{nav_button_id}")
             nav_button.add_class("-active-search-sub-view")
             logger.debug(f"SearchWindow.on_mount: Added active class to nav button {nav_button_id}")
         except Exception as e:
             logger.warning(f"SearchWindow.on_mount: Could not set active class for nav button {nav_button_id}: {e}")
 
+        # Show the active view
         try:
+            # Hide all views first
+            for view in self.query(".search-view-area"):
+                view.display = False
+                
+            # Show the active view
             active_view = self.query_one(f"#{initial_sub_tab}")
             active_view.display = True
-            # If it's the RAG QA view, also show its children
+            logger.debug(f"SearchWindow.on_mount: Set display=True for active view {initial_sub_tab}")
+            
+            # If it's the RAG QA view, ensure its children are properly displayed
             if initial_sub_tab == SEARCH_VIEW_RAG_QA:
                 for child in active_view.children:
+                    # Ensure the child is visible
                     child.display = True
-                    logger.debug(f"SearchWindow.on_mount: Also showing child {child.__class__.__name__} of {initial_sub_tab}")
-            logger.debug(f"SearchWindow.on_mount: Set display=True for active view {initial_sub_tab}")
+                    
+                    # Force a refresh of the child to ensure it's properly rendered
+                    if hasattr(child, "refresh"):
+                        try:
+                            await child.refresh()
+                            logger.debug(f"SearchWindow.on_mount: Refreshed child {child.__class__.__name__} of {initial_sub_tab}")
+                        except Exception as refresh_error:
+                            logger.warning(f"SearchWindow.on_mount: Could not refresh child {child.__class__.__name__}: {refresh_error}")
+                    
+                    # If it's a SearchRAGWindow, try to focus the search input
+                    if child.__class__.__name__ == "SearchRAGWindow":
+                        try:
+                            if hasattr(child, "search_input"):
+                                child.search_input.focus()
+                                logger.debug("SearchWindow.on_mount: Focused search input in SearchRAGWindow")
+                        except Exception as focus_error:
+                            logger.warning(f"SearchWindow.on_mount: Could not focus search input: {focus_error}")
+                    
+            logger.debug(f"SearchWindow.on_mount: Set active view {initial_sub_tab} to visible")
         except Exception as e:
             logger.error(f"SearchWindow.on_mount: Could not display initial active view {initial_sub_tab}: {e}")
-            return
+            # Try to show a fallback view instead of returning
+            try:
+                fallback_view = self.query_one(f"#{SEARCH_VIEW_WEB_SEARCH}")
+                fallback_view.display = True
+                logger.warning(f"SearchWindow.on_mount: Showing fallback view {SEARCH_VIEW_WEB_SEARCH} due to error")
+            except Exception as fallback_error:
+                logger.error(f"SearchWindow.on_mount: Could not show fallback view either: {fallback_error}")
+                return
 
         logger.info(f"SearchWindow.on_mount: Initialized view {initial_sub_tab}")
 
@@ -214,37 +257,78 @@ class SearchWindow(Container):
         """Handles all navigation button presses within the search tab."""
         event.stop()
         button_id = event.button.id
-        if not button_id or "-disabled" in button_id: return
+        if not button_id or "-disabled" in button_id: 
+            logger.debug(f"SearchWindow.handle_nav: Ignoring disabled button press: {button_id}")
+            return
 
-        logger.info(f"Search nav button '{button_id}' pressed.")
+        logger.info(f"SearchWindow.handle_nav: Search nav button '{button_id}' pressed.")
         target_view_id = button_id.replace("-nav-", "-view-")
         self.app_instance.search_active_sub_tab = target_view_id
 
+        # Update navigation buttons
         for button in self.query(".search-nav-button"):
             button.remove_class("-active-search-sub-view")
         event.button.add_class("-active-search-sub-view")
 
+        # Hide all views first
         for view in self.query(".search-view-area"):
             view.display = False
-            # Special handling for SearchRAGWindow container
-            if view.id == SEARCH_VIEW_RAG_QA:
-                for child in view.children:
-                    child.display = False
+            logger.debug(f"SearchWindow.handle_nav: Hiding view: {view.id}")
 
+        # Show the target view
         try:
             target_view = self.query_one(f"#{target_view_id}")
             target_view.display = True
-            # If showing the RAG QA view, also show its children
+            logger.debug(f"SearchWindow.handle_nav: Showing view: {target_view_id}")
+            
+            # Special handling for SearchRAGWindow
             if target_view_id == SEARCH_VIEW_RAG_QA:
                 for child in target_view.children:
+                    # Make sure the child is visible
                     child.display = True
+                    logger.debug(f"SearchWindow.handle_nav: Set child {child.__class__.__name__} display=True")
+                    
+                    # Force a refresh if the child supports it
+                    if hasattr(child, "refresh"):
+                        try:
+                            await child.refresh()
+                            logger.debug(f"SearchWindow.handle_nav: Refreshed child: {child.__class__.__name__}")
+                        except Exception as refresh_error:
+                            logger.warning(f"SearchWindow.handle_nav: Could not refresh child {child.__class__.__name__}: {refresh_error}")
+                    
+                    # If it's a SearchRAGWindow, try to focus the search input
+                    if child.__class__.__name__ == "SearchRAGWindow":
+                        try:
+                            if hasattr(child, "search_input"):
+                                child.search_input.focus()
+                                logger.debug("SearchWindow.handle_nav: Focused search input in SearchRAGWindow")
+                        except Exception as focus_error:
+                            logger.warning(f"SearchWindow.handle_nav: Could not focus search input: {focus_error}")
+            
+            # Notify the app that the view has changed
+            if hasattr(self.app_instance, 'notify'):
+                view_name = target_view_id.replace('search-view-', '').replace('-', ' ').title()
+                self.app_instance.notify(
+                    f"Switched to {view_name}", 
+                    severity="information", 
+                    timeout=2
+                )
+                                    
         except Exception as e:
-            logger.error(f"Failed to display target view {target_view_id}: {e}")
-            self.app_instance.notify(f"Error displaying view: {target_view_id}", severity="error")
+            logger.error(f"SearchWindow.handle_nav: Failed to display target view {target_view_id}: {e}")
+            if hasattr(self.app_instance, 'notify'):
+                self.app_instance.notify(f"Error displaying view: {target_view_id}", severity="error")
+            
+            # Try to show a fallback view
+            try:
+                fallback_view = self.query_one(f"#{SEARCH_VIEW_WEB_SEARCH}")
+                fallback_view.display = True
+                logger.warning(f"SearchWindow.handle_nav: Showing fallback view {SEARCH_VIEW_WEB_SEARCH} due to error")
+            except Exception as fallback_error:
+                logger.error(f"SearchWindow.handle_nav: Could not show fallback view either: {fallback_error}")
             return
 
-        # No need to initialize windows anymore - they handle their own initialization
-        logger.debug(f"Switched to view '{target_view_id}'")
+        logger.debug(f"SearchWindow.handle_nav: Successfully switched to view '{target_view_id}'")
 
 
 

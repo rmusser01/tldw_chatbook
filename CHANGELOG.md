@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+## [0.1.3.7] - 2025-07-21
+### Added
+- vibe-coded speaker diarization implementation (Un-tested, need to verify/wire up)
+- Audiobook UI that doesn't work
+- Improvements to RAG search and evals. Both still don't work.
+
+### Fixed
+- RAGSearchWindow.py - endless spiral
+- ?
+- Audiobook gen is not fixed
+- Improved WebSearch API and web scraping libraries. 
+
+
 ## [0.1.3.6] - 2025-07-21
 ### Fixed
 - Ingest Window Transcription model

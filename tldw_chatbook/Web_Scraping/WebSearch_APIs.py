@@ -48,9 +48,12 @@ from urllib.parse import urlparse, urlencode, unquote
 #
 # 3rd-Party Imports
 import requests
+from loguru._logger import start_time
 from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
+from functools import wraps
+import backoff
 
 # Handle optional lxml dependency
 try:
@@ -68,6 +71,116 @@ from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.config import load_settings
+
+# Common error handling and retry mechanisms
+def handle_search_error(error, search_engine_name):
+    """
+    Common error handling function for search engine errors.
+    
+    Args:
+        error: The exception that was raised
+        search_engine_name: Name of the search engine (e.g., 'Bing', 'Google')
+        
+    Returns:
+        Appropriate exception with detailed error message
+        
+    This function categorizes errors and provides consistent error handling
+    across all search engine implementations.
+    """
+    logger.error(f"{search_engine_name} search error: {error}")
+    
+    # Handle timeout errors
+    if isinstance(error, requests.exceptions.Timeout):
+        return TimeoutError(f"{search_engine_name} search request timed out. Please try again later.")
+    
+    # Handle connection errors
+    if isinstance(error, requests.exceptions.ConnectionError):
+        return ConnectionError(f"Network error while connecting to {search_engine_name}: {error}")
+    
+    # Handle HTTP errors
+    if isinstance(error, requests.exceptions.HTTPError):
+        status_code = error.response.status_code if hasattr(error, 'response') and error.response else "unknown"
+        
+        if status_code == 401:
+            return ValueError(f"Invalid {search_engine_name} API key. Please check your configuration.")
+        elif status_code == 403:
+            return ValueError(f"Access denied. Your {search_engine_name} API key may not have permission for this operation.")
+        elif status_code == 429:
+            return ValueError(f"{search_engine_name} API rate limit exceeded. Please try again later.")
+        else:
+            return RequestException(f"HTTP error during {search_engine_name} search: {error}")
+    
+    # Handle value errors
+    if isinstance(error, ValueError):
+        return ValueError(f"Invalid parameter for {search_engine_name} search: {error}")
+    
+    # Handle JSON decode errors
+    if isinstance(error, json.JSONDecodeError):
+        return ValueError(f"Invalid response from {search_engine_name} (not valid JSON): {error}")
+    
+    # Handle any other errors
+    return Exception(f"Error performing {search_engine_name} search: {error}")
+
+# Retry decorator for transient errors
+def retry_on_transient_error(max_tries=3, backoff_factor=1.5):
+    """
+    Decorator to retry functions on transient errors.
+    
+    Args:
+        max_tries: Maximum number of retry attempts
+        backoff_factor: Factor to increase delay between retries
+        
+    Returns:
+        Decorated function that will retry on transient errors
+        
+    This decorator will retry the function when it raises specific exceptions
+    that are likely to be transient (e.g., connection errors, timeouts).
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Define which exceptions should trigger a retry
+            retry_exceptions = (
+                requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.HTTPError
+            )
+            
+            # Define a function to determine if we should retry
+            def should_retry(exception):
+                if isinstance(exception, requests.exceptions.HTTPError):
+                    # Only retry on 5xx errors (server errors) and 429 (rate limit)
+                    if hasattr(exception, 'response') and exception.response:
+                        status_code = exception.response.status_code
+                        return status_code >= 500 or status_code == 429
+                    return False
+                return isinstance(exception, retry_exceptions)
+            
+            # Initialize retry count
+            retry_count = 0
+            
+            while True:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    retry_count += 1
+                    
+                    # Check if we should retry
+                    if retry_count >= max_tries or not should_retry(e):
+                        # We've reached max retries or this is not a retryable error
+                        raise
+                    
+                    # Calculate delay with exponential backoff
+                    delay = backoff_factor ** (retry_count - 1)
+                    logger.warning(f"Retrying {func.__name__} after error: {e} (attempt {retry_count}/{max_tries}, delay: {delay:.2f}s)")
+                    
+                    # Wait before retrying
+                    time.sleep(delay)
+        
+        return wrapper
+    
+    return decorator
 #
 #######################################################################################################################
 #
@@ -77,7 +190,44 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 #######################################################################################################################
 #
 # Functions:
-loaded_config_data = "dummy data"
+
+# Initialize configuration data
+def initialize_config():
+    """
+    Initialize the configuration data from config.py.
+    
+    Returns:
+        Dict: A dictionary containing the configuration data.
+    """
+    config_data = load_settings()
+    
+    # Create a search_engines section that matches the expected structure
+    search_engines = {}
+    
+    # Copy settings from SearchEngines section
+    if 'SearchEngines' in config_data:
+        for key, value in config_data['SearchEngines'].items():
+            search_engines[key] = value
+    
+    # Copy settings from search_engine_specific_settings section
+    if 'search_engine_specific_settings' in config_data:
+        for key, value in config_data['search_engine_specific_settings'].items():
+            search_engines[key] = value
+    
+    # Copy settings from search_engines_keys section
+    if 'search_engines_keys' in config_data:
+        for key, value in config_data['search_engines_keys'].items():
+            search_engines[key] = value
+    
+    # Create a new config dictionary with the search_engines section
+    result = {
+        'search_engines': search_engines
+    }
+    
+    return result
+
+# Load configuration data
+loaded_config_data = initialize_config()
 ######################### Main Orchestration Workflow #########################
 #
 # FIXME - Add Logging
@@ -283,12 +433,14 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
             - web_search_results_dict: Original search results
             
     Example:
-        >>> final_results = await analyze_and_aggregate(
-        ...     phase1_results["web_search_results_dict"],
-        ...     phase1_results["sub_query_dict"],
-        ...     search_params
-        ... )
+        >>> # In an async function:
+        >>> # final_results = await analyze_and_aggregate(
+        >>> #     phase1_results["web_search_results_dict"],
+        >>> #     phase1_results["sub_query_dict"],
+        >>> #     search_params
+        >>> # )
     """
+    start_time = time.time()
     logger.info("Starting analyze_and_aggregate")
 
     # 4. Score/filter results
@@ -320,6 +472,12 @@ async def analyze_and_aggregate(web_search_results_dict: Dict, sub_query_dict: D
 
     # 7. Return the final data
     logger.info("Returning final websearch results")
+    
+    # Define engine and all_queries for metrics logging
+    engine = search_params.get('engine', 'unknown')
+    main_goal = sub_query_dict.get("main_goal", "")
+    sub_questions = sub_query_dict.get("sub_questions", [])
+    all_queries = [main_goal] + sub_questions if main_goal else sub_questions
     
     # Log success metrics
     duration = time.time() - start_time
@@ -454,7 +612,10 @@ def analyze_question(question: str, api_endpoint) -> Dict:
         try:
             logger.info(f"Generating sub-questions (attempt {attempt + 1})")
 
-            response = chat_api_call(api_endpoint, None, input_data, sub_question_generation_prompt, temp=0.7, system_message=None, streaming=False, minp=None, maxp=None, model=None)
+            messages_payload = [
+                {"role": "user", "content": input_data + "\n\n" + sub_question_generation_prompt}
+            ]
+            response = chat_api_call(api_endpoint=api_endpoint, messages_payload=messages_payload, api_key=None, temp=0.7, system_message=None, streaming=False, minp=None, maxp=None, model=None)
             if response:
                 try:
                     # Try to parse as JSON first
@@ -582,11 +743,13 @@ async def search_result_relevance(
             await asyncio.sleep(sleep_time)
 
             # Evaluate relevance
+            messages_payload = [
+                {"role": "user", "content": input_data + "\n\n" + eval_prompt}
+            ]
             relevancy_result = chat_api_call(
                 api_endpoint=api_endpoint,
+                messages_payload=messages_payload,
                 api_key=None,
-                input_data=input_data,
-                prompt=eval_prompt,
                 temp=0.7,
                 system_message=None,
                 streaming=False,
@@ -860,11 +1023,13 @@ def aggregate_results(
 
     try:
         logger.info("Generating the report")
+        messages_payload = [
+            {"role": "user", "content": input_data + "\n\n" + analyze_search_results_prompt_2}
+        ]
         returned_response = chat_api_call(
             api_endpoint=api_endpoint,
+            messages_payload=messages_payload,
             api_key=None,
-            input_data=input_data,
-            prompt=analyze_search_results_prompt_2,
             temp=0.7,
             system_message=None,
             streaming=False,
@@ -1383,8 +1548,33 @@ def search_parse_baidu_results():
 # https://learn.microsoft.com/en-us/bing/search-apis/bing-web-search/reference/query-parameters
 # Country/Language code: https://learn.microsoft.com/en-us/bing/search-apis/bing-web-search/reference/market-codes#country-codes
 # https://github.com/Azure-Samples/cognitive-services-REST-api-samples/tree/master/python/Search
-def search_web_bing(search_query, bing_lang, bing_country, result_count=None, bing_api_key=None,
+@retry_on_transient_error(max_tries=3, backoff_factor=1.5)
+def search_web_bing(search_query, bing_lang=None, bing_country=None, result_count=None, bing_api_key=None,
                     date_range=None):
+    """
+    Perform a search using Bing Search API.
+    
+    Args:
+        search_query (str): The search query
+        bing_lang (str, optional): Language code (e.g., 'en', 'fr', 'de')
+        bing_country (str, optional): Country code (e.g., 'US', 'GB', 'FR')
+        result_count (int, optional): Number of results to return
+        bing_api_key (str, optional): Bing Search API key
+        date_range (str, optional): Date range for results ('day', 'week', 'month', or 'YYYY-MM-DD..YYYY-MM-DD')
+        
+    Returns:
+        dict: Raw Bing search results
+        
+    Raises:
+        ValueError: If API key is missing or invalid
+        RequestException: For HTTP errors
+        ConnectionError: For network issues
+        TimeoutError: If the request times out
+        
+    Note:
+        This function uses the retry_on_transient_error decorator to automatically
+        retry on transient errors like network issues or server errors.
+    """
     # Load Search API URL from config file
     search_url = loaded_config_data['search_engines']['bing_search_api_url']
 
@@ -1394,66 +1584,174 @@ def search_web_bing(search_query, bing_lang, bing_country, result_count=None, bi
         if not bing_api_key:
             raise ValueError("Please Configure a valid Bing Search API key")
 
+    # Get default result count from config if not provided
     if not result_count:
-        # Perform check in config file for default search result count
-        answer_count = loaded_config_data['search_engines']['search_result_max']
-    else:
-        answer_count = result_count
+        result_count = loaded_config_data['search_engines'].get('search_result_max', 10)
 
-    # date_range = "day", "week", "month", or `YYYY-MM-DD..YYYY-MM-DD`
-    if not date_range:
-         date_range = None
-
-    # Language settings
+    # Get default language from config if not provided
     if not bing_lang:
-        # do config check for default search language
-        setlang = bing_lang
+        bing_lang = loaded_config_data['search_engines'].get('bing_language_code', 'en')
 
-    # Returns content for this Country market code
+    # Get default country from config if not provided
     if not bing_country:
-        # do config check for default search country
-        bing_country = loaded_config_data['search_engines']['bing_country_code']
-    else:
-        setcountry = bing_country
-    # Construct a request
-    mkt = 'en-US'
-    params = {'q': search_query, 'mkt': mkt}
-#    params = {"q": search_query, "mkt": bing_country, "textDecorations": True, "textFormat": "HTML", "count": answer_count,
-#             "freshness": date_range, "promote": "webpages", "safeSearch": "Moderate"}
+        bing_country = loaded_config_data['search_engines'].get('bing_country_code', 'US')
+
+    # Construct market code (language-COUNTRY format)
+    mkt = f"{bing_lang}-{bing_country}"
+    
+    # Construct request parameters
+    params = {
+        "q": search_query,
+        "mkt": mkt,
+        "textDecorations": True,
+        "textFormat": "HTML",
+        "count": result_count,
+        "safeSearch": "Moderate"
+    }
+    
+    # Add optional parameters if provided
+    if date_range:
+        params["freshness"] = date_range
+    
     headers = {'Ocp-Apim-Subscription-Key': bing_api_key}
 
-    # Call the API
+    # Call the API with better error handling
     try:
-        response = requests.get(search_url, headers=headers, params=params)
+        logger.debug(f"Sending Bing search request: URL={search_url}, params={params}")
+        
+        # Create a session with retry capability
+        session = requests.Session()
+        retries = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[500, 502, 503, 504, 429],
+            allowed_methods=["GET"]
+        )
+        session.mount('https://', HTTPAdapter(max_retries=retries))
+        
+        # Send the request with the session
+        response = session.get(search_url, headers=headers, params=params, timeout=10)
         response.raise_for_status()
 
-        logger.debug("Headers:  ")
+        logger.debug("Bing search response headers:")
         logger.debug(response.headers)
 
-        logger.debug("JSON Response: ")
-        logger.debug(response.json())
-        bing_search_results = response.json()
-        return bing_search_results
+        try:
+            bing_search_results = response.json()
+            logger.debug("Bing search response received successfully")
+            
+            # Log metrics for successful search
+            log_counter("search.bing.success", 1)
+            log_histogram("search.bing.result_count", len(bing_search_results.get("webPages", {}).get("value", [])))
+            
+            return bing_search_results
+        except json.JSONDecodeError as jde:
+            # Handle invalid JSON response
+            logger.error(f"Invalid JSON response from Bing: {jde}")
+            raise ValueError(f"Invalid response from Bing (not valid JSON): {jde}")
+            
     except Exception as ex:
-        raise ex
+        # Use common error handling function
+        error = handle_search_error(ex, "Bing")
+        
+        # Log metrics for failed search
+        log_counter("search.bing.error", 1)
+        log_counter(f"search.bing.error.{error.__class__.__name__}", 1)
+        
+        raise error
 
 
 def test_search_web_bing():
-    search_query = "How can I get started learning machine learning?"
-    bing_lang = "en"
-    bing_country = "US"
-    result_count = 10
-    bing_api_key = None
-    date_range = None
-    result = search_web_bing(search_query, bing_lang, bing_country, result_count, bing_api_key, date_range)
-    # Unparsed results
-    print("Bing Search Results:")
-    print(result)
-    # Parsed results
-    output_dict = {"results": []}
-    parse_bing_results(result, output_dict)
-    print("Parsed Bing Results:")
-    print(json.dumps(output_dict, indent=2))
+    """
+    Test function for Bing search with different scenarios.
+    This function tests the search_web_bing function with various parameters
+    and validates the results.
+    """
+    try:
+        logger.info("Testing Bing search with default parameters...")
+        search_query = "How can I get started learning machine learning?"
+        
+        # Test with default parameters
+        result = search_web_bing(search_query)
+        
+        # Validate the result structure
+        if not isinstance(result, dict):
+            logger.error(f"Expected dict result, got {type(result)}")
+            return
+            
+        # Check if we got any results
+        if "webPages" not in result:
+            logger.warning("No web pages found in results")
+        else:
+            web_pages = result["webPages"]
+            logger.info(f"Found {len(web_pages.get('value', []))} web page results")
+            
+        # Parse the results
+        output_dict = {"results": []}
+        parse_bing_results(result, output_dict)
+        logger.info(f"Parsed {len(output_dict['results'])} results")
+        
+        # Test with different language and country
+        logger.info("Testing Bing search with different language and country...")
+        try:
+            result_fr = search_web_bing(
+                search_query,
+                bing_lang="fr",
+                bing_country="FR",
+                result_count=5
+            )
+            
+            # Parse the French results
+            output_dict_fr = {"results": []}
+            parse_bing_results(result_fr, output_dict_fr)
+            logger.info(f"Parsed {len(output_dict_fr['results'])} French results")
+            
+        except Exception as e:
+            logger.error(f"Error testing French search: {e}")
+        
+        # Test with date range
+        logger.info("Testing Bing search with date range...")
+        try:
+            result_recent = search_web_bing(
+                search_query,
+                date_range="month"
+            )
+            
+            # Parse the recent results
+            output_dict_recent = {"results": []}
+            parse_bing_results(result_recent, output_dict_recent)
+            logger.info(f"Parsed {len(output_dict_recent['results'])} recent results")
+            
+        except Exception as e:
+            logger.error(f"Error testing date range search: {e}")
+        
+        # Print the original results for reference
+        logger.info("Original Bing search results:")
+        logger.info(json.dumps(result, indent=2))
+        
+        # Print the parsed results
+        logger.info("Parsed Bing search results:")
+        logger.info(json.dumps(output_dict, indent=2))
+        
+        return output_dict
+        
+    except ValueError as ve:
+        logger.error(f"Value error in Bing search test: {ve}")
+        print(f"Value error: {ve}")
+        
+    except ConnectionError as ce:
+        logger.error(f"Connection error in Bing search test: {ce}")
+        print(f"Connection error: {ce}")
+        
+    except TimeoutError as te:
+        logger.error(f"Timeout error in Bing search test: {te}")
+        print(f"Timeout error: {te}")
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in Bing search test: {e}")
+        print(f"Error: {e}")
+        
+    return None
 
 
 def parse_bing_results(raw_results: Dict, output_dict: Dict) -> None:

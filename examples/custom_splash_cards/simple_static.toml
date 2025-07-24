@@ -1,0 +1,38 @@
+# Simple Static Splash Card Example
+# Place this file in ~/.config/tldw_cli/splash_cards/simple_static.toml
+
+[card]
+name = "simple_static"
+type = "static"
+effect = null  # No animation for static cards
+
+# The ASCII art content to display
+content = """
+    ╔═══════════════════════════════════════════╗
+    ║                                           ║
+    ║         WELCOME TO MY CUSTOM APP          ║
+    ║                                           ║
+    ║              ▄▄▄▄▄▄▄▄▄▄▄                 ║
+    ║             ▐░░░░░░░░░░░▌                ║
+    ║              ▀▀▀▀█░█▀▀▀▀                 ║
+    ║                  ▐░▌                      ║
+    ║                  ▐░▌                      ║
+    ║                  ▐░▌                      ║
+    ║                  ▐░▌                      ║
+    ║                  ▐░▌                      ║
+    ║                  ▐░▌                      ║
+    ║                   ▀                       ║
+    ║                                           ║
+    ║          Press any key to continue        ║
+    ║                                           ║
+    ╚═══════════════════════════════════════════╝
+"""
+
+# Style for the content (Rich style format)
+style = "bold cyan on rgb(0,0,40)"
+
+# Optional metadata
+[metadata]
+author = "Your Name"
+version = "1.0"
+description = "A simple static splash screen with custom branding"

@@ -1,0 +1,41 @@
+# Holiday Theme Splash Card with Snow Effect
+# Place this file in ~/.config/tldw_cli/splash_cards/holiday_theme.toml
+
+[card]
+name = "holiday_theme"
+type = "animated"
+effect = "raindrops"  # Repurposed as snowfall
+
+# Winter theme customization
+title = "❄️  Happy Holidays!  ❄️"
+style = "bold white on rgb(0,30,60)"  # Dark winter sky
+
+# Snowfall parameters
+animation_speed = 0.08
+spawn_rate = 3.0  # More frequent snow
+ripple_chars = ["*", "❄", "·", " "]  # Snowflake characters
+ripple_styles = ["bold white", "white", "dim white", "on rgb(0,30,60)"]
+max_concurrent_ripples = 30  # More snowflakes
+base_water_char = "_"  # Ground/snow accumulation
+water_style = "white on rgb(0,30,60)"
+title_style = "bold yellow on rgb(0,30,60)"
+
+# ASCII art overlay (would need to be added to the effect)
+# This is conceptual - actual implementation would need effect modification
+overlay_art = """
+        🎄
+       🎄🎄🎄
+      🎄🎄🎄🎄🎄
+     🎄🎄🎄🎄🎄🎄🎄
+    🎄🎄🎄🎄🎄🎄🎄🎄🎄
+         |||
+         |||
+"""
+
+[metadata]
+author = "Holiday Committee"
+version = "1.0"
+description = "Festive holiday splash screen with falling snow"
+tags = ["holiday", "seasonal", "winter", "festive"]
+seasonal = true
+active_dates = ["2024-12-01", "2025-01-05"]  # Conceptual - not implemented

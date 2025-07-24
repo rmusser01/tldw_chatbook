@@ -41,10 +41,13 @@ class EvaluationOrchestrator:
         """
         if db_path is None:
             # Use default path in user data directory
-            from ...config import load_settings
+            from tldw_chatbook.config import load_settings
             settings = load_settings()
             user_data_dir = Path(settings.get('user_data_dir', '~/.local/share/tldw_cli')).expanduser()
-            db_path = user_data_dir / 'default_user' / 'evals.db'
+            
+            # Use user ID from config instead of hardcoded 'default_user'
+            user_id = settings.get('user_id', settings.get('username', 'default_user'))
+            db_path = user_data_dir / user_id / 'evals.db'
         
         self.db = EvalsDB(db_path=str(db_path), client_id=client_id)
         self.task_loader = TaskLoader()

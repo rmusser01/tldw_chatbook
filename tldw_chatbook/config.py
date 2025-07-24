@@ -271,6 +271,36 @@ DEFAULT_OCR_BACKEND_CONFIG = {
     }
 }
 
+DEFAULT_DIARIZATION_CONFIG = {
+    # Enable diarization by default
+    "enabled": False,
+    
+    # VAD settings
+    "vad_threshold": 0.5,
+    "vad_min_speech_duration": 0.25,
+    "vad_min_silence_duration": 0.25,
+    
+    # Segmentation settings
+    "segment_duration": 2.0,
+    "segment_overlap": 0.5,
+    "min_segment_duration": 1.0,
+    "max_segment_duration": 3.0,
+    
+    # Embedding model
+    "embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
+    "embedding_device": "auto",  # auto, cuda, cpu
+    
+    # Clustering settings
+    "clustering_method": "spectral",  # spectral, agglomerative
+    "similarity_threshold": 0.85,
+    "min_speakers": 1,
+    "max_speakers": 10,
+    
+    # Post-processing
+    "merge_threshold": 0.5,  # seconds between segments to merge
+    "min_speaker_duration": 3.0  # minimum total duration per speaker
+}
+
 def load_openai_mappings() -> Dict:
     current_file_path = Path(__file__).resolve()
     api_component_root = current_file_path.parent.parent.parent
@@ -371,12 +401,8 @@ def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         enc_module = get_encryption_module()
         
-        # Decrypt api_settings sections
-        decrypted_config = copy.deepcopy(config_data)
-        for section_name, section_value in config_data.items():
-            if section_name.startswith('api_settings.') and isinstance(section_value, dict):
-                decrypted_section = enc_module.decrypt_config(section_value, password)
-                decrypted_config[section_name] = decrypted_section
+        # Decrypt all sections recursively
+        decrypted_config = enc_module.decrypt_config(config_data, password)
         
         return decrypted_config
     except Exception as e:
@@ -407,13 +433,49 @@ def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Di
     encryption_config["password_verifier"] = enc_module.create_password_verifier(password)
     encrypted_config["encryption"] = encryption_config
     
-    # Encrypt api_settings sections
-    for section_name, section_value in config_data.items():
-        if section_name.startswith('api_settings.') and isinstance(section_value, dict):
-            encrypted_section = enc_module.encrypt_config(section_value, password)
-            encrypted_config[section_name] = encrypted_section
+    # Encrypt all sensitive fields in all sections
+    def encrypt_sensitive_fields(d: Dict[str, Any]) -> Dict[str, Any]:
+        result = {}
+        for key, value in d.items():
+            # Skip the encryption section itself
+            if key == "encryption":
+                result[key] = value
+                continue
+                
+            if isinstance(value, dict):
+                # Recursively encrypt nested dictionaries
+                result[key] = encrypt_sensitive_fields(value)
+            elif isinstance(value, str) and value.strip():
+                # Check if this is a sensitive field
+                key_lower = key.lower()
+                # Check exact matches and also patterns
+                sensitive_exact = ['api_key', 'apikey', 'api-key', 'secret', 'token', 'password', 
+                                  'auth_token', 'api_token', 'access_token', 'secret_key',
+                                  'refresh_token', 'client_secret']
+                # Also check if key contains these patterns
+                sensitive_patterns = ['api_key', 'apikey', 'api-key', '_key', '_token', '_secret', '_password']
+                
+                is_sensitive = key_lower in sensitive_exact
+                if not is_sensitive:
+                    # Check if key contains any sensitive pattern
+                    for pattern in sensitive_patterns:
+                        if pattern in key_lower:
+                            is_sensitive = True
+                            break
+                
+                if is_sensitive:
+                    # Skip if already encrypted or is a placeholder
+                    if not (enc_module.is_encrypted(value) or (value.startswith('<') and value.endswith('>'))):
+                        result[key] = enc_module.encrypt_value(value, password)
+                    else:
+                        result[key] = value
+                else:
+                    result[key] = value
+            else:
+                result[key] = value
+        return result
     
-    return encrypted_config
+    return encrypt_sensitive_fields(encrypted_config)
 
 
 def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type = str) -> Any:
@@ -1265,6 +1327,7 @@ auth_token = "default-secret-key-for-single-user"
 
 [splash_screen]
 # Splash screen configuration for startup animations
+# See Docs/Examples/SPLASH_SCREENS_CATALOG.md for all available splash screens
 enabled = true  # Enable/disable splash screen
 duration = 1.5  # Duration in seconds to display splash screen
 skip_on_keypress = true  # Allow users to skip with any keypress
@@ -1277,12 +1340,17 @@ card_selection = "random"
 
 show_progress = true  # Show initialization progress bar
 
-# All available splash cards are enabled by default for variety
-# To customize: Remove cards you don't want, or replace the entire list with your preferred cards
-# Static cards: default, classic, compact, minimal, blueprint
-# Animated cards: matrix, glitch, retro, tech_pulse, code_scroll, minimal_fade, arcade_high_score,
-#                digital_rain, loading_bar, starfield, terminal_boot, glitch_reveal, ascii_morph,
-#                game_of_life, scrolling_credits, spotlight_reveal, sound_bars
+# List of splash cards to use when card_selection is "random"
+# Full catalog of 40+ cards available - see documentation for descriptions
+# Categories:
+#   Static: default, classic, compact, minimal, blueprint
+#   Classic Animated: matrix, glitch, retro, typewriter
+#   Visual Effects: tech_pulse, code_scroll, arcade_high_score, digital_rain, loading_bar, starfield
+#   Interactive: terminal_boot, glitch_reveal, ascii_morph, game_of_life, scrolling_credits, spotlight_reveal
+#   Creative: sound_bars, raindrops_pond, pixel_zoom, text_explosion, old_film, maze_generator, dwarf_fortress
+#   Tech-Themed: neural_network, quantum_particles, ascii_wave, binary_matrix, constellation_map, circuit_trace
+#   More: typewriter_news, dna_sequence, plasma_field, ascii_fire, rubiks_cube, data_stream, fractal_zoom, 
+#         ascii_spinner, hacker_terminal
 active_cards = [
     "default", "matrix", "glitch", "retro", "classic", "compact", "minimal",
     "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
@@ -2115,6 +2183,37 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # default_provider = "google"
 # ...
 
+# ==========================================================
+# Search Engines Configuration
+# ==========================================================
+[SearchEngines]
+# API Keys for various search engines
+bing_search_api_key = ""
+google_search_api_key = ""
+brave_search_api_key = ""
+brave_search_ai_api_key = ""
+kagi_search_api_key = ""
+tavily_search_api_key = ""
+
+# API URLs
+bing_search_api_url = "https://api.bing.microsoft.com/v7.0/search"
+google_search_api_url = "https://www.googleapis.com/customsearch/v1"
+searx_search_api_url = "https://searx.example.com/search"
+
+# General search settings
+search_result_max = 10
+
+# Country and language settings
+bing_country_code = "US"
+search_engine_country_code_brave = "US"
+google_search_country = "US"
+google_search_engine_id = ""
+
+# Google-specific settings
+google_simp_trad_chinese = false
+limit_google_search_to_country = false
+google_safe_search = false
+
 # ============================================================================
 # Media Processing Configuration
 # ============================================================================
@@ -2181,6 +2280,35 @@ use_diarization_by_default = false
 # Chunk length for long audio processing (in seconds)
 # Used by Canary model for efficient processing of long audio files
 chunk_length_seconds = 40.0
+
+[diarization]
+# Speaker diarization configuration
+enabled = false  # Enable/disable diarization by default
+
+# Voice Activity Detection (VAD) settings
+vad_threshold = 0.5  # Sensitivity for speech detection (0.0-1.0)
+vad_min_speech_duration = 0.25  # Minimum speech duration in seconds
+vad_min_silence_duration = 0.25  # Minimum silence duration in seconds
+
+# Segmentation settings for speaker analysis
+segment_duration = 2.0  # Duration of analysis segments in seconds
+segment_overlap = 0.5  # Overlap between segments in seconds
+min_segment_duration = 1.0  # Minimum segment duration
+max_segment_duration = 3.0  # Maximum segment duration
+
+# Speaker embedding model
+embedding_model = "speechbrain/spkrec-ecapa-voxceleb"  # Model for speaker embeddings
+embedding_device = "auto"  # Device: "auto", "cuda", "cpu"
+
+# Clustering settings
+clustering_method = "spectral"  # Method: "spectral" or "agglomerative"
+similarity_threshold = 0.85  # Threshold for speaker similarity (0.0-1.0)
+min_speakers = 1  # Minimum expected speakers
+max_speakers = 10  # Maximum expected speakers
+
+# Post-processing
+merge_threshold = 0.5  # Time gap in seconds to merge same-speaker segments
+min_speaker_duration = 3.0  # Minimum total duration per speaker in seconds
 
 [local_ingestion]
 # YouTube/URL download settings
@@ -2458,14 +2586,30 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
         return False
 
     # Step 3: Check if we need to encrypt the value
-    # If we're saving to an api_settings section and encryption is enabled, encrypt the value
+    # If encryption is enabled and this is a sensitive field, encrypt the value
     encryption_config = config_data.get("encryption", {})
+    key_lower = key.lower()
+    # Check exact matches and also patterns
+    sensitive_exact = ['api_key', 'apikey', 'api-key', 'secret', 'token', 'password', 
+                      'auth_token', 'api_token', 'access_token', 'secret_key',
+                      'refresh_token', 'client_secret']
+    # Also check if key contains these patterns
+    sensitive_patterns = ['api_key', 'apikey', 'api-key', '_key', '_token', '_secret', '_password']
+    
+    is_sensitive = key_lower in sensitive_exact
+    if not is_sensitive:
+        # Check if key contains any sensitive pattern
+        for pattern in sensitive_patterns:
+            if pattern in key_lower:
+                is_sensitive = True
+                break
+    
     if (encryption_config.get("enabled", False) and 
-        section.startswith("api_settings.") and 
-        key == "api_key" and 
+        is_sensitive and 
         isinstance(value, str) and 
         value and 
-        not value.startswith("enc:")):
+        not value.startswith("enc:") and
+        not (value.startswith('<') and value.endswith('>'))):
         
         password = get_encryption_password()
         if password:
@@ -2473,7 +2617,7 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
                 enc_module = get_encryption_module()
                 encrypted_value = enc_module.encrypt_value(value, password)
                 current_level[key] = encrypted_value
-                logger.info(f"Encrypted API key for {section}")
+                logger.info(f"Encrypted {key} in section {section}")
             except Exception as e:
                 logger.error(f"Failed to encrypt value: {e}")
                 # Continue with unencrypted value

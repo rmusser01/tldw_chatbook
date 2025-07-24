@@ -26,7 +26,8 @@ pip install -e .
 
 # Run the application
 tldw-cli
-# Or: python3 -m tldw_chatbook.app
+# Or: 
+python3 -m tldw_chatbook.app
 ```
 
 ### Installation with Optional Features
@@ -42,11 +43,8 @@ pip install -e ".[embeddings_rag,chunker]"
 # Web search and scraping capabilities
 pip install -e ".[websearch]"
 
-# Image display in TUI
-pip install -e ".[images]"
-
 # All optional features
-pip install -e ".[embeddings_rag,chunker,websearch,images,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,ocr_docext,debugging]"
+pip install -e ".[embeddings_rag,chunker,websearch,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,ocr_docext,debugging,mlx_whisper,diarization,coding_map,local_vllm,local_mlx,local_transformers]"
 
 # Common feature combinations
 pip install -e ".[audio,video]"  # Media transcription
@@ -54,6 +52,7 @@ pip install -e ".[pdf,ebook]"    # Document processing
 pip install -e ".[embeddings_rag,audio]"  # RAG + transcription
 pip install -e ".[local_tts,chatterbox]"  # Text-to-speech
 pip install -e ".[mcp]"  # Model Context Protocol integration
+pip install -e ".[mlx_whisper]"  # Apple Silicon optimized Whisper
 
 # Development installation
 pip install -e ".[dev]"
@@ -66,10 +65,10 @@ pip install -e ".[dev]"
 | `embeddings_rag`               | Vector search, semantic similarity, hybrid RAG | torch, transformers, sentence-transformers*, chromadb* |
 | `chunker`                      | Advanced text chunking, language detection | nltk, langdetect, jieba, fugashi |
 | `websearch`                    | Web scraping, content extraction | beautifulsoup4, playwright, trafilatura |
-| `images`                       | Image display in TUI | textual-image, rich-pixels |
 | `coding_map`                   | Code analysis features | grep_ast, pygments |
 | `local_vllm`                   | vLLM inference support | vllm |
 | `local_mlx`                    | MLX inference (Apple Silicon) | mlx-lm |
+| `mlx_whisper`                  | Apple Silicon optimized Whisper & ASR | lightning-whisper-mlx, parakeet-mlx |
 | `audio`                        | Audio transcription (Whisper) | faster-whisper, soundfile |
 | `video`                        | Video processing & transcription | faster-whisper, yt-dlp |
 | `pdf`                          | PDF text extraction | pymupdf, docling |
@@ -78,9 +77,10 @@ pip install -e ".[dev]"
 | `local_transformers`           | HuggingFace transformers | transformers |
 | `mcp`                          | Model Context Protocol integration | mcp |
 | `chatterbox`                   | Chatterbox TTS model support | chatterbox |
-| `local_tts`                    | Local TTS models (Kokoro ONNX) | kokoro-onnx, piper-phonemize |
-| `ocr_docext`                   | OCR and document extraction | docext, nanonetstts |
+| `local_tts`                    | Local TTS models (Kokoro ONNX) | kokoro-onnx, scipy, pyaudio |
+| `ocr_docext`                   | OCR and document extraction | docext, gradio_client |
 | `debugging`                    | Metrics and telemetry | prometheus-client, opentelemetry-api |
+| `diarization`                  | Speaker diarization for audio | torch, torchaudio, speechbrain |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
 
@@ -99,24 +99,28 @@ pip install -e ".[dev]"
   - Evals DB: LLM evaluation results and benchmarks
   - Subscriptions DB: Content subscription tracking
   - Default location: `~/.local/share/tldw_cli/`
+- **Image support**
+  - View images directly in terminal
+  - Screenshot viewing for debugging
+  - Vision model support for multimodal LLMs
 
 ### Main Application Tabs
 1. **Chat** - Advanced AI conversation interface with streaming support
 2. **Chat Tabs** - Multiple concurrent chat sessions (disabled by default)
-3. **Conversations** - Manage, search, and organize chat history
-4. **Character Chat** - Character-based interactions with imported personas
-5. **Notes** - Advanced note-taking with bidirectional file sync
+3. **Conversations, Characters & Prompts** - Manage conversations, character personas, and prompt templates
+4. **Notes** - Advanced note-taking with bidirectional file sync
+5. **Media** - Browse and manage ingested media content
 6. **Search/RAG** - Hybrid search across all content (FTS5 + optional vectors)
 7. **Media Ingestion** - Process documents, videos, audio, and web content
-8. **Prompts** - Template management with versioning
-9. **Coding** - AI-powered coding assistant
-10. **Embeddings** - Create and manage vector embeddings
-11. **Evaluations** - Comprehensive LLM benchmarking system
-12. **STTS** - Speech-to-Text and Text-to-Speech interface
+8. **Embeddings** - Create and manage vector embeddings
+9. **Evaluations** - Comprehensive LLM benchmarking system
+10. **LLM Management** - Local model server control
+11. **Tools & Settings** - Configuration and utilities
+12. **Stats** - Usage statistics and metrics
 13. **Logs** - Application logs and debugging
-14. **LLM Management** - Local model server control
-15. **Tools & Settings** - Configuration and utilities
-16. **Stats** - Usage statistics and metrics
+14. **Coding** - AI-powered coding assistant (WIP)
+15. **STTS** - Speech-to-Text and Text-to-Speech interface
+16. **Subscriptions** - Content subscription tracking and monitoring
 
 ### LLM Support
 - **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, HuggingFace
@@ -288,12 +292,6 @@ All chat features listed here work with the core installation:
 - **Integration with RAG**: Web content as knowledge source
 - **Multiple search providers**: Google, Bing, DuckDuckGo, Brave, Kagi, Tavily, SearX, Baidu, Yandex
 
-### Image Support (with `images`)
-- **Image display in TUI**: View images directly in terminal
-- **Rich visual output**: Using rich-pixels
-- **Screenshot viewing**: For debugging and documentation
-- **Vision model support**: For multimodal LLMs
-
 ### Media Processing Features
 
 #### Audio Transcription (with `audio` or `nemo`)
@@ -391,7 +389,7 @@ With the `mcp` optional dependency:
 - **Theme System**: Multiple themes with CSS customization
 
 ### Splash Screen System
-Customizable splash screens with 20+ animation effects:
+Customizable splash screens with 50+ animation effects:
 - **Built-in effects**: MatrixRain, Glitch, Typewriter, Fireworks, and more
 - **Custom splash cards**: Create your own with examples provided
 - **Configuration**: Via `[splash_screen]` section in config.toml

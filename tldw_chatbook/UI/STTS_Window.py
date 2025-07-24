@@ -2716,39 +2716,34 @@ class AudioBookGenerationWidget(Widget):
                 disabled=True
             )
             
-            # Chapter detection
-            with Collapsible(title="Chapter Settings", classes="settings-section"):
-                with Horizontal(classes="form-row"):
-                    yield Label("Auto-detect Chapters:", classes="form-label")
-                    yield Switch(id="auto-chapters-switch", value=True)
-                
-                with Horizontal(classes="form-row"):
-                    yield Label("Chapter Pattern:", classes="form-label")
-                    yield Input(
-                        id="chapter-pattern-input",
-                        value="Chapter \\d+",
-                        placeholder="Regex pattern for chapters"
-                    )
+            # Chapter Editor - Enhanced visual chapter editing
+            with Collapsible(title="📖 Chapter Editor", classes="settings-section", collapsed=False):
+                from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditorWidget
+                yield ChapterEditorWidget(id="chapter-editor-widget")
             
-            # Chapter list
-            yield Label("Detected Chapters:")
-            yield Static("No chapters detected yet", id="chapter-list", classes="chapter-list")
-            
-            # Voice assignment
-            with Collapsible(title="Voice Assignment", classes="settings-section"):
+            # Voice assignment - Enhanced character voice management
+            with Collapsible(title="🎭 Voice Assignment", classes="settings-section"):
                 with Horizontal(classes="form-row"):
                     yield Label("Narrator Voice:", classes="form-label")
                     yield Select(
-                        options=[("alloy", "Alloy")],
+                        options=[
+                            ("alloy", "Alloy"),
+                            ("echo", "Echo"),
+                            ("fable", "Fable"),
+                            ("onyx", "Onyx"),
+                            ("nova", "Nova"),
+                            ("shimmer", "Shimmer"),
+                        ],
                         id="narrator-voice-select"
-                )
+                    )
                 
                 with Horizontal(classes="form-row"):
                     yield Label("Enable Multi-voice:", classes="form-label")
                     yield Switch(id="multi-voice-switch", value=False)
                 
-                yield Label("Character Voices:")
-                yield Static("Configure character voices here", id="character-voices")
+                # Character voice widget
+                from tldw_chatbook.Widgets.character_voice_widget import CharacterVoiceWidget
+                yield CharacterVoiceWidget(id="character-voice-widget")
             
             # Generation settings
             with Collapsible(title="Generation Settings", classes="settings-section"):
@@ -2825,6 +2820,18 @@ class AudioBookGenerationWidget(Widget):
         elif event.button.id == "audiobook-export-btn":
             self._export_audiobook()
             event.stop()
+    
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle select widget changes"""
+        if event.select.id == "audiobook-provider-select":
+            # Update character voice widget provider
+            try:
+                from tldw_chatbook.Widgets.character_voice_widget import CharacterVoiceWidget
+                voice_widget = self.query_one("#character-voice-widget", CharacterVoiceWidget)
+                voice_widget.provider = event.value
+                logger.info(f"Updated voice widget provider to: {event.value}")
+            except Exception as e:
+                logger.debug(f"Could not update voice widget provider: {e}")
     
     def _import_content(self) -> None:
         """Import content for audiobook generation"""
@@ -3016,6 +3023,51 @@ class AudioBookGenerationWidget(Widget):
             if self.query_one("#auto-chapters-switch", Switch).value and self.content_text:
                 self._detect_chapters()
     
+    def on_chapter_edit_event(self, event) -> None:
+        """Handle chapter edit events from the chapter editor"""
+        from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditEvent
+        if isinstance(event, ChapterEditEvent):
+            # Update our internal chapter list
+            try:
+                from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditorWidget
+                chapter_editor = self.query_one("#chapter-editor-widget", ChapterEditorWidget)
+                self.detected_chapters = chapter_editor.get_chapters()
+                logger.info(f"Chapter {event.action}: {event.chapter.title}")
+            except Exception as e:
+                logger.error(f"Failed to handle chapter edit: {e}")
+    
+    def on_chapter_preview_event(self, event) -> None:
+        """Handle chapter preview requests"""
+        from tldw_chatbook.Widgets.chapter_editor_widget import ChapterPreviewEvent
+        if isinstance(event, ChapterPreviewEvent):
+            if event.preview_type == "audio":
+                self._preview_chapter_audio(event.chapter)
+    
+    def on_character_detection_event(self, event) -> None:
+        """Handle character detection requests"""
+        from tldw_chatbook.Widgets.character_voice_widget import CharacterDetectionEvent, CharacterVoiceWidget
+        if isinstance(event, CharacterDetectionEvent):
+            # Detect characters from current content
+            if self.content_text:
+                try:
+                    voice_widget = self.query_one("#character-voice-widget", CharacterVoiceWidget)
+                    characters = voice_widget.detect_characters_from_text(
+                        self.content_text, 
+                        event.auto_assign
+                    )
+                    self.app.notify(f"Detected {len(characters)} characters", severity="information")
+                except Exception as e:
+                    logger.error(f"Failed to detect characters: {e}")
+                    self.app.notify(f"Failed to detect characters: {e}", severity="error")
+            else:
+                self.app.notify("Please import content first", severity="warning")
+    
+    def on_character_voice_assign_event(self, event) -> None:
+        """Handle character voice assignments"""
+        from tldw_chatbook.Widgets.character_voice_widget import CharacterVoiceAssignEvent
+        if isinstance(event, CharacterVoiceAssignEvent):
+            logger.info(f"Voice assigned: {event.character_name} → {event.voice_id}")
+    
     def _detect_chapters(self) -> None:
         """Detect chapters in the content"""
         if not self.content_text:
@@ -3023,21 +3075,29 @@ class AudioBookGenerationWidget(Widget):
         
         try:
             from tldw_chatbook.TTS.audiobook_generator import ChapterDetector
+            from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditorWidget
             
             # Detect chapters
             self.detected_chapters = ChapterDetector.detect_chapters(self.content_text)
             
-            # Update chapter list display
-            chapter_list = self.query_one("#chapter-list", Static)
-            if self.detected_chapters:
-                chapter_display = []
-                for i, chapter in enumerate(self.detected_chapters):
-                    chapter_display.append(f"{i+1}. {chapter.title} ({len(chapter.content.split())} words)")
-                
-                chapter_list.update("\n".join(chapter_display))
+            # Update the chapter editor widget
+            try:
+                chapter_editor = self.query_one("#chapter-editor-widget", ChapterEditorWidget)
+                chapter_editor.set_chapters(self.detected_chapters)
                 self.app.notify(f"Detected {len(self.detected_chapters)} chapters", severity="information")
-            else:
-                chapter_list.update("No chapters detected")
+            except Exception as e:
+                logger.warning(f"Could not update chapter editor: {e}")
+                # Fall back to old display method if chapter editor not found
+                chapter_list = self.query_one("#chapter-list", Static)
+                if self.detected_chapters:
+                    chapter_display = []
+                    for i, chapter in enumerate(self.detected_chapters):
+                        chapter_display.append(f"{i+1}. {chapter.title} ({len(chapter.content.split())} words)")
+                    
+                    chapter_list.update("\n".join(chapter_display))
+                    self.app.notify(f"Detected {len(self.detected_chapters)} chapters", severity="information")
+                else:
+                    chapter_list.update("No chapters detected")
                 
         except Exception as e:
             logger.error(f"Failed to detect chapters: {e}")
@@ -3056,7 +3116,7 @@ class AudioBookGenerationWidget(Widget):
         narrator_voice = self.query_one("#narrator-voice-select", Select).value
         
         # Validate voice selection
-        if not self._is_valid_voice(narrator_voice):
+        if not narrator_voice or narrator_voice == Select.BLANK:
             self.app.notify("Please select a valid narrator voice", severity="warning")
             return
         
@@ -3064,14 +3124,34 @@ class AudioBookGenerationWidget(Widget):
         include_chapters = self.query_one("#chapter-markers-switch", Switch).value
         background_music = self.query_one("#background-music-switch", Switch).value
         
+        # Get chapters from the chapter editor widget
+        try:
+            from tldw_chatbook.Widgets.chapter_editor_widget import ChapterEditorWidget
+            chapter_editor = self.query_one("#chapter-editor-widget", ChapterEditorWidget)
+            chapters = chapter_editor.get_chapters()
+        except Exception as e:
+            logger.warning(f"Could not get chapters from editor: {e}")
+            chapters = self.detected_chapters
+        
         # Get title from first chapter or use default
         title = "Untitled AudioBook"
-        if self.detected_chapters:
+        if chapters:
             # Use book title if detected, otherwise use first chapter
-            for chapter in self.detected_chapters:
+            for chapter in chapters:
                 if "title" in chapter.title.lower() or chapter.number == 1:
                     title = chapter.title
                     break
+        
+        # Get character voice assignments if multi-voice is enabled
+        character_voices = {}
+        if multi_voice:
+            try:
+                from tldw_chatbook.Widgets.character_voice_widget import CharacterVoiceWidget
+                voice_widget = self.query_one("#character-voice-widget", CharacterVoiceWidget)
+                character_voices = voice_widget.get_voice_assignments()
+                logger.info(f"Using character voices: {character_voices}")
+            except Exception as e:
+                logger.warning(f"Could not get character voices: {e}")
         
         # Prepare options
         options = {
@@ -3081,6 +3161,7 @@ class AudioBookGenerationWidget(Widget):
             "model": self._get_model_for_provider(provider),
             "chapter_detection": include_chapters,
             "multi_voice": multi_voice,
+            "character_voices": character_voices,
             "background_music": None if not background_music else True,
             "enable_ssml": provider in ["elevenlabs"],
             "normalize_audio": True,
@@ -3287,6 +3368,55 @@ class AudioBookGenerationWidget(Widget):
             # Update log
             log = self.query_one("#audiobook-generation-log", RichLog)
             log.write("[bold red]✗ AudioBook generation failed![/bold red]")
+    
+    def _preview_chapter_audio(self, chapter) -> None:
+        """Generate audio preview for a single chapter"""
+        try:
+            # Get current settings
+            provider = self.query_one("#audiobook-provider-select", Select).value
+            narrator_voice = self.query_one("#narrator-voice-select", Select).value
+            
+            if not narrator_voice or narrator_voice == Select.BLANK:
+                self.app.notify("Please select a valid narrator voice", severity="warning")
+                return
+            
+            # Limit preview to first 500 characters
+            preview_text = chapter.content[:500] + "..." if len(chapter.content) > 500 else chapter.content
+            
+            # Log preview generation
+            log = self.query_one("#audiobook-generation-log", RichLog)
+            log.write(f"[yellow]Generating preview for: {chapter.title}[/yellow]")
+            
+            # Create TTS request event
+            from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSPlaygroundGenerateEvent
+            
+            # Post event to generate preview
+            self.post_message(STTSPlaygroundGenerateEvent(
+                text=preview_text,
+                provider=provider,
+                voice=narrator_voice,
+                model=self._get_model_for_provider(provider),
+                speed=1.0,
+                format="mp3",
+                extra_params={"preview_chapter": chapter.title}
+            ))
+            
+            log.write("[green]Preview generation started...[/green]")
+            
+        except Exception as e:
+            logger.error(f"Failed to preview chapter audio: {e}")
+            self.app.notify(f"Failed to generate preview: {e}", severity="error")
+    
+    def _get_model_for_provider(self, provider: str) -> str:
+        """Get the default model for a given provider"""
+        model_map = {
+            "openai": "tts-1",
+            "elevenlabs": "eleven_multilingual_v2",
+            "kokoro": "kokoro",
+            "chatterbox": "chatterbox",
+            "alltalk": "alltalk"
+        }
+        return model_map.get(provider, "default")
 
 
 class STTSWindow(Container):
