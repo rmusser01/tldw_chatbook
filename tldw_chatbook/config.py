@@ -401,12 +401,8 @@ def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         enc_module = get_encryption_module()
         
-        # Decrypt api_settings sections
-        decrypted_config = copy.deepcopy(config_data)
-        for section_name, section_value in config_data.items():
-            if section_name.startswith('api_settings.') and isinstance(section_value, dict):
-                decrypted_section = enc_module.decrypt_config(section_value, password)
-                decrypted_config[section_name] = decrypted_section
+        # Decrypt all sections recursively
+        decrypted_config = enc_module.decrypt_config(config_data, password)
         
         return decrypted_config
     except Exception as e:
@@ -437,13 +433,49 @@ def encrypt_api_keys_in_config(config_data: Dict[str, Any], password: str) -> Di
     encryption_config["password_verifier"] = enc_module.create_password_verifier(password)
     encrypted_config["encryption"] = encryption_config
     
-    # Encrypt api_settings sections
-    for section_name, section_value in config_data.items():
-        if section_name.startswith('api_settings.') and isinstance(section_value, dict):
-            encrypted_section = enc_module.encrypt_config(section_value, password)
-            encrypted_config[section_name] = encrypted_section
+    # Encrypt all sensitive fields in all sections
+    def encrypt_sensitive_fields(d: Dict[str, Any]) -> Dict[str, Any]:
+        result = {}
+        for key, value in d.items():
+            # Skip the encryption section itself
+            if key == "encryption":
+                result[key] = value
+                continue
+                
+            if isinstance(value, dict):
+                # Recursively encrypt nested dictionaries
+                result[key] = encrypt_sensitive_fields(value)
+            elif isinstance(value, str) and value.strip():
+                # Check if this is a sensitive field
+                key_lower = key.lower()
+                # Check exact matches and also patterns
+                sensitive_exact = ['api_key', 'apikey', 'api-key', 'secret', 'token', 'password', 
+                                  'auth_token', 'api_token', 'access_token', 'secret_key',
+                                  'refresh_token', 'client_secret']
+                # Also check if key contains these patterns
+                sensitive_patterns = ['api_key', 'apikey', 'api-key', '_key', '_token', '_secret', '_password']
+                
+                is_sensitive = key_lower in sensitive_exact
+                if not is_sensitive:
+                    # Check if key contains any sensitive pattern
+                    for pattern in sensitive_patterns:
+                        if pattern in key_lower:
+                            is_sensitive = True
+                            break
+                
+                if is_sensitive:
+                    # Skip if already encrypted or is a placeholder
+                    if not (enc_module.is_encrypted(value) or (value.startswith('<') and value.endswith('>'))):
+                        result[key] = enc_module.encrypt_value(value, password)
+                    else:
+                        result[key] = value
+                else:
+                    result[key] = value
+            else:
+                result[key] = value
+        return result
     
-    return encrypted_config
+    return encrypt_sensitive_fields(encrypted_config)
 
 
 def _get_typed_value(data_dict: Dict, key: str, default: Any, target_type: type = str) -> Any:
@@ -2554,14 +2586,30 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
         return False
 
     # Step 3: Check if we need to encrypt the value
-    # If we're saving to an api_settings section and encryption is enabled, encrypt the value
+    # If encryption is enabled and this is a sensitive field, encrypt the value
     encryption_config = config_data.get("encryption", {})
+    key_lower = key.lower()
+    # Check exact matches and also patterns
+    sensitive_exact = ['api_key', 'apikey', 'api-key', 'secret', 'token', 'password', 
+                      'auth_token', 'api_token', 'access_token', 'secret_key',
+                      'refresh_token', 'client_secret']
+    # Also check if key contains these patterns
+    sensitive_patterns = ['api_key', 'apikey', 'api-key', '_key', '_token', '_secret', '_password']
+    
+    is_sensitive = key_lower in sensitive_exact
+    if not is_sensitive:
+        # Check if key contains any sensitive pattern
+        for pattern in sensitive_patterns:
+            if pattern in key_lower:
+                is_sensitive = True
+                break
+    
     if (encryption_config.get("enabled", False) and 
-        section.startswith("api_settings.") and 
-        key == "api_key" and 
+        is_sensitive and 
         isinstance(value, str) and 
         value and 
-        not value.startswith("enc:")):
+        not value.startswith("enc:") and
+        not (value.startswith('<') and value.endswith('>'))):
         
         password = get_encryption_password()
         if password:
@@ -2569,7 +2617,7 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
                 enc_module = get_encryption_module()
                 encrypted_value = enc_module.encrypt_value(value, password)
                 current_level[key] = encrypted_value
-                logger.info(f"Encrypted API key for {section}")
+                logger.info(f"Encrypted {key} in section {section}")
             except Exception as e:
                 logger.error(f"Failed to encrypt value: {e}")
                 # Continue with unencrypted value

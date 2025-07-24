@@ -310,10 +310,10 @@ class SavedSearchesPanel(Container):
             
         # Limit the number of saved searches to prevent performance issues
         if len(self.saved_searches) > 50:  # Arbitrary limit
-            # Remove the oldest saved search
+            # Remove the oldest saved search by creation time
             oldest_name = min(
                 self.saved_searches.keys(),
-                key=lambda k: datetime.fromisoformat(self.saved_searches[k]["last_used"])
+                key=lambda k: datetime.fromisoformat(self.saved_searches[k]["created_at"])
             )
             del self.saved_searches[oldest_name]
             logger.info(f"Removed oldest saved search to maintain limit: {oldest_name}")
@@ -790,6 +790,30 @@ class SearchRAGWindow(Container):
         
         await self._perform_search(query)
     
+    async def restart_search_with_settings(self, query: str, settings: Dict[str, Any]) -> None:
+        """Restart a search with updated settings
+        
+        Args:
+            query: The search query
+            settings: Dictionary of settings to update before searching
+        """
+        # Update settings
+        for key, value in settings.items():
+            if key == "search_mode":
+                self.query_one("#search-mode-select").value = value
+            elif key == "max_context":
+                self.query_one("#max-context-input").value = str(value)
+            elif key == "top_k":
+                self.query_one("#top-k-input").value = str(value)
+            elif key == "conversation_mode":
+                self.query_one("#conversation-mode").value = value
+            elif key == "sources":
+                for source, enabled in value.items():
+                    self.query_one(f"#source-{source}").value = enabled
+        
+        # Restart search
+        await self._perform_search(query)
+    
     @on(Input.Submitted, "#rag-search-input")
     async def handle_search_submit(self, event: Input.Submitted) -> None:
         """Handle Enter key in search input"""
@@ -817,8 +841,13 @@ class SearchRAGWindow(Container):
         status.update(f"🔄 Switched to {mode_name} search mode")
     
     @work(exclusive=True)
-    async def _perform_search(self, query: str) -> None:
-        """Perform the actual search with streaming results"""
+    async def _perform_search(self, query: str, max_retries: int = 3) -> None:
+        """Perform the actual search with streaming results and automatic fallback
+        
+        Args:
+            query: The search query
+            max_retries: Maximum number of retry attempts for recoverable errors
+        """
         if not self.rag_search_available:
             self.app_instance.notify(
                 "RAG search functionality is not available. Please install required dependencies.",
@@ -835,6 +864,10 @@ class SearchRAGWindow(Container):
         progress_bar = self.query_one("#search-progress", ProgressBar)
         progress_bar.remove_class("hidden")
         progress_bar.update(progress=0)
+        
+        # Track retry attempts
+        retry_count = 0
+        original_search_mode = None
         
         # Check if conversation mode is enabled
         conversation_mode = self.query_one("#conversation-mode", Checkbox).value
@@ -859,18 +892,25 @@ class SearchRAGWindow(Container):
                     Static(f"--- Continued conversation: {query} ---", classes="conversation-separator")
                 )
         
-        try:
-            # Get search parameters
-            search_mode = self.query_one("#search-mode-select", Select).value
-            sources = {
-                'media': self.query_one("#source-media", Checkbox).value,
-                'conversations': self.query_one("#source-conversations", Checkbox).value,
-                'notes': self.query_one("#source-notes", Checkbox).value
-            }
-            
-            if not any(sources.values()):
-                self.app_instance.notify("Please select at least one source", severity="warning")
-                return
+        # Main search loop with automatic fallback
+        while retry_count < max_retries:
+            try:
+                # Get search parameters
+                search_mode = self.query_one("#search-mode-select", Select).value
+                
+                # Store original mode for fallback tracking
+                if original_search_mode is None:
+                    original_search_mode = search_mode
+                
+                sources = {
+                    'media': self.query_one("#source-media", Checkbox).value,
+                    'conversations': self.query_one("#source-conversations", Checkbox).value,
+                    'notes': self.query_one("#source-notes", Checkbox).value
+                }
+                
+                if not any(sources.values()):
+                    self.app_instance.notify("Please select at least one source", severity="warning")
+                    return
             
             # Store current search configuration
             self.current_search_config = {
@@ -1072,232 +1112,214 @@ class SearchRAGWindow(Container):
             history_dropdown = self.query_one(SearchHistoryDropdown)
             history_dropdown.hide()
             
-            # Update final status
-            if len(results) > 0:
-                await status_elem.update(f"✅ Found {len(results)} results in {duration_ms/1000:.2f}s")
-            else:
-                await status_elem.update(f"🔍 No results found in {duration_ms/1000:.2f}s - try different keywords")
-            
-        except Exception as e:
-            logger.error(f"Search error: {e}", exc_info=True)
-            error_msg = str(e)
-            error_lower = error_msg.lower()
-            
-            # Handle specific error types with tailored messages and recovery suggestions
-            if "embeddings" in error_lower:
-                await status_elem.update("❌ Embeddings not available - using plain search instead")
+                # Update final status
+                if len(results) > 0:
+                    await status_elem.update(f"✅ Found {len(results)} results in {duration_ms/1000:.2f}s")
+                else:
+                    await status_elem.update(f"🔍 No results found in {duration_ms/1000:.2f}s - try different keywords")
                 
-                # Show a more helpful message with recovery steps
-                if hasattr(self.app_instance, 'notify'):
-                    self.app_instance.notify(
-                        "Embeddings service is not available. Falling back to plain search mode.\n\n"
-                        "To enable semantic search: pip install -e '.[embeddings_rag]'",
-                        severity="warning",
-                        timeout=10
-                    )
+                # Success - break out of retry loop
+                break
                 
-                # Fallback to plain search automatically
-                if search_mode != "plain":
-                    logger.info(f"SearchRAGWindow: Falling back to plain search mode from {search_mode}")
-                    self.query_one("#search-mode-select").value = "plain"
-                    await self._perform_search(query)
-                    return
-            
-            elif "pipeline" in error_lower or "invalid pipeline" in error_lower:
-                await status_elem.update("❌ Pipeline configuration error - check settings")
+            except Exception as e:
+                logger.error(f"Search error (attempt {retry_count + 1}/{max_retries}): {e}", exc_info=True)
+                error_msg = str(e)
+                error_lower = error_msg.lower()
                 
-                # Show a more helpful message with recovery steps
-                if hasattr(self.app_instance, 'notify'):
-                    self.app_instance.notify(
-                        f"Pipeline error: {error_msg[:100]}...\n\n"
-                        f"Try selecting a different search mode or check pipeline configuration.",
-                        severity="error",
-                        timeout=10
-                    )
+                # Increment retry count
+                retry_count += 1
                 
-                # Suggest switching to plain mode
-                try:
-                    # Add a suggestion button to switch to plain mode
-                    results_container = self.query_one("#results-container")
-                    await results_container.mount(Static(
-                        "⚠️ Pipeline error detected. Try using Plain search mode instead:",
-                        classes="error-suggestion"
-                    ))
+                # Handle specific error types with tailored messages and recovery suggestions
+                if "embeddings" in error_lower:
+                    await status_elem.update("❌ Embeddings not available - switching to plain search")
                     
-                    # Add a button to switch to plain mode
-                    switch_btn = Button("Switch to Plain Search Mode", classes="recovery-button", variant="primary")
-                    await results_container.mount(switch_btn)
+                    # Show a more helpful message with recovery steps
+                    if hasattr(self.app_instance, 'notify'):
+                        self.app_instance.notify(
+                            "Embeddings service is not available. Switching to plain search mode.\n\n"
+                            "To enable semantic search: pip install -e '.[embeddings_rag]'",
+                            severity="warning",
+                            timeout=10
+                        )
                     
-                    # Add a handler for the button
-                    @on(Button.Pressed, switch_btn)
-                    async def switch_to_plain_mode(self, event: Button.Pressed) -> None:
+                    # Fallback to plain search automatically
+                    if search_mode != "plain":
+                        logger.info(f"SearchRAGWindow: Falling back to plain search mode from {search_mode}")
                         self.query_one("#search-mode-select").value = "plain"
-                        await self._perform_search(query)
-                except Exception as ui_error:
-                    logger.warning(f"Could not add recovery UI: {ui_error}")
+                        # Continue to next iteration of the loop
+                        continue
+                    else:
+                        # Already in plain mode, can't fallback further
+                        break
                 
-            elif "connection" in error_lower or "timeout" in error_lower or "network" in error_lower:
-                await status_elem.update("❌ Connection error - check network settings")
-                
-                if hasattr(self.app_instance, 'notify'):
-                    self.app_instance.notify(
-                        f"Network error: {error_msg[:100]}...\n\n"
-                        f"Check your internet connection and try again. If the problem persists, "
-                        f"try using offline search sources only.",
-                        severity="error",
-                        timeout=10
-                    )
-                
-                # Suggest using offline sources only
-                try:
-                    results_container = self.query_one("#results-container")
-                    await results_container.mount(Static(
-                        "⚠️ Network error detected. Try searching offline sources only:",
-                        classes="error-suggestion"
-                    ))
+                elif "pipeline" in error_lower or "invalid pipeline" in error_lower:
+                    await status_elem.update("❌ Pipeline configuration error - switching to plain mode")
                     
-                    # Add buttons to select offline sources
-                    offline_btn = Button("Search Offline Sources Only", classes="recovery-button", variant="primary")
-                    await results_container.mount(offline_btn)
+                    # Show a more helpful message with recovery steps
+                    if hasattr(self.app_instance, 'notify'):
+                        self.app_instance.notify(
+                            f"Pipeline error: {error_msg[:100]}...\n\n"
+                            f"Switching to plain search mode.",
+                            severity="error",
+                            timeout=10
+                        )
                     
-                    # Add a handler for the button
-                    @on(Button.Pressed, offline_btn)
-                    async def search_offline_only(self, event: Button.Pressed) -> None:
-                        # Disable online sources
-                        self.query_one("#source-media").value = True
-                        self.query_one("#source-conversations").value = True
-                        self.query_one("#source-notes").value = True
-                        # Retry the search
-                        await self._perform_search(query)
-                except Exception as ui_error:
-                    logger.warning(f"Could not add recovery UI: {ui_error}")
+                    # Fallback to plain mode if not already there
+                    if search_mode != "plain":
+                        logger.info("SearchRAGWindow: Pipeline error, falling back to plain mode")
+                        self.query_one("#search-mode-select").value = "plain"
+                        continue
+                    else:
+                        # Already in plain mode, show error UI
+                        try:
+                            results_container = self.query_one("#results-container")
+                            await results_container.mount(Static(
+                                "❌ Pipeline error: Unable to complete search",
+                                classes="error-message"
+                            ))
+                        except Exception as ui_error:
+                            logger.warning(f"Could not add error UI: {ui_error}")
+                        break
                 
-            elif "permission" in error_lower or "access" in error_lower:
-                await status_elem.update("❌ Permission error - check file access")
-                
-                if hasattr(self.app_instance, 'notify'):
-                    self.app_instance.notify(
-                        f"Permission error: {error_msg[:100]}...\n\n"
-                        f"Check file permissions and try again. You may need to restart the application "
-                        f"with appropriate permissions.",
-                        severity="error",
-                        timeout=10
-                    )
-                
-            elif "memory" in error_lower or "out of memory" in error_lower:
-                await status_elem.update("❌ Memory error - try reducing context size")
-                
-                if hasattr(self.app_instance, 'notify'):
-                    self.app_instance.notify(
-                        "Out of memory error.\n\n"
-                        "Try reducing the context length or number of results in Advanced Settings.",
-                        severity="error",
-                        timeout=10
-                    )
-                
-                # Suggest reducing context size
-                try:
-                    results_container = self.query_one("#results-container")
-                    await results_container.mount(Static(
-                        "⚠️ Memory error detected. Try reducing context size and results count:",
-                        classes="error-suggestion"
-                    ))
+                elif "connection" in error_lower or "timeout" in error_lower or "network" in error_lower:
+                    await status_elem.update("❌ Connection error - retrying...")
                     
-                    # Add a button to reduce context size
-                    reduce_btn = Button("Reduce Context Size & Try Again", classes="recovery-button", variant="primary")
-                    await results_container.mount(reduce_btn)
+                    if hasattr(self.app_instance, 'notify'):
+                        self.app_instance.notify(
+                            f"Network error: {error_msg[:100]}...\n\n"
+                            f"Retrying with offline sources only.",
+                            severity="warning",
+                            timeout=5
+                        )
                     
-                    # Add a handler for the button
-                    @on(Button.Pressed, reduce_btn)
-                    async def reduce_context_size(self, event: Button.Pressed) -> None:
+                    # For network errors, try one more time with reduced scope
+                    if retry_count < max_retries:
+                        # Wait a bit before retrying
+                        await asyncio.sleep(1.0)
+                        continue
+                    else:
+                        # Max retries reached, show error UI
+                        try:
+                            results_container = self.query_one("#results-container")
+                            await results_container.mount(Static(
+                                "❌ Network error: Unable to complete search. Please check your connection.",
+                                classes="error-message"
+                            ))
+                        except Exception as ui_error:
+                            logger.warning(f"Could not add error UI: {ui_error}")
+                        break
+                
+                elif "permission" in error_lower or "access" in error_lower:
+                    await status_elem.update("❌ Permission error - check file access")
+                    
+                    if hasattr(self.app_instance, 'notify'):
+                        self.app_instance.notify(
+                            f"Permission error: {error_msg[:100]}...\n\n"
+                            f"Check file permissions and try again. You may need to restart the application "
+                            f"with appropriate permissions.",
+                            severity="error",
+                            timeout=10
+                        )
+                    
+                    # Permission errors are not recoverable through retry
+                    break
+                    
+                elif "memory" in error_lower or "out of memory" in error_lower:
+                    await status_elem.update("❌ Memory error - reducing context size")
+                    
+                    if hasattr(self.app_instance, 'notify'):
+                        self.app_instance.notify(
+                            "Out of memory error. Automatically reducing context size and retrying.",
+                            severity="warning",
+                            timeout=5
+                        )
+                    
+                    # Automatically reduce context size and retry
+                    if retry_count < max_retries:
                         # Reduce context size and results count
-                        self.query_one("#max-context-input").value = "5000"
-                        self.query_one("#top-k-input").value = "5"
-                        # Retry the search
-                        await self._perform_search(query)
-                except Exception as ui_error:
-                    logger.warning(f"Could not add recovery UI: {ui_error}")
-                
-            elif conversation_mode and "context" in error_lower:
-                await status_elem.update("❌ Conversation context error - resetting conversation")
-                
-                if hasattr(self.app_instance, 'notify'):
-                    self.app_instance.notify(
-                        "Error with conversation context. Resetting conversation mode.\n\n"
-                        "Your search will continue in standard mode.",
-                        severity="warning",
-                        timeout=10
-                    )
-                
-                # Reset conversation context
-                self.conversation_context = []
-                self.previous_context = ""
-                self.query_one("#conversation-mode").value = False
-                
-                # Try again without conversation mode
-                try:
-                    results_container = self.query_one("#results-container")
-                    await results_container.mount(Static(
-                        "⚠️ Conversation context error. Conversation mode has been reset.",
-                        classes="error-suggestion"
-                    ))
-                    
-                    # Add a button to retry without conversation mode
-                    retry_btn = Button("Retry Search Without Conversation Mode", classes="recovery-button", variant="primary")
-                    await results_container.mount(retry_btn)
-                    
-                    # Add a handler for the button
-                    @on(Button.Pressed, retry_btn)
-                    async def retry_without_conversation(self, event: Button.Pressed) -> None:
-                        # Retry the search
-                        await self._perform_search(query)
-                except Exception as ui_error:
-                    logger.warning(f"Could not add recovery UI: {ui_error}")
-                
-            else:
-                # Generic error handling with more helpful message
-                await status_elem.update(f"❌ Search error: {error_msg[:100]}...")
-                
-                if hasattr(self.app_instance, 'notify'):
-                    self.app_instance.notify(
-                        f"Search error: {error_msg[:100]}...\n\n"
-                        f"Try a different search query or check the logs for details. "
-                        f"You can also try using Plain search mode which has fewer dependencies.",
-                        severity="error",
-                        timeout=10
-                    )
-                
-                # Add a generic retry button
-                try:
-                    results_container = self.query_one("#results-container")
-                    await results_container.mount(Static(
-                        "⚠️ Search error. You can try these recovery options:",
-                        classes="error-suggestion"
-                    ))
-                    
-                    # Add buttons for common recovery options
-                    with Container(classes="recovery-options"):
-                        # Button to retry with plain mode
-                        plain_btn = Button("Try Plain Search Mode", classes="recovery-button", variant="primary")
-                        await results_container.mount(plain_btn)
+                        current_context = int(self.query_one("#max-context-input").value or "10000")
+                        current_top_k = int(self.query_one("#top-k-input").value or "10")
                         
-                        # Button to retry with fewer results
-                        fewer_btn = Button("Try Fewer Results", classes="recovery-button", variant="primary")
-                        await results_container.mount(fewer_btn)
+                        self.query_one("#max-context-input").value = str(max(1000, current_context // 2))
+                        self.query_one("#top-k-input").value = str(max(3, current_top_k // 2))
                         
-                        # Add handlers for the buttons
-                        @on(Button.Pressed, plain_btn)
-                        async def try_plain_mode(self, event: Button.Pressed) -> None:
-                            self.query_one("#search-mode-select").value = "plain"
-                            await self._perform_search(query)
-                            
-                        @on(Button.Pressed, fewer_btn)
-                        async def try_fewer_results(self, event: Button.Pressed) -> None:
-                            self.query_one("#top-k-input").value = "5"
-                            await self._perform_search(query)
-                except Exception as ui_error:
-                    logger.warning(f"Could not add recovery UI: {ui_error}")
-            
+                        logger.info(f"Reduced context to {self.query_one('#max-context-input').value} and top_k to {self.query_one('#top-k-input').value}")
+                        continue
+                    else:
+                        # Max retries reached
+                        try:
+                            results_container = self.query_one("#results-container")
+                            await results_container.mount(Static(
+                                "❌ Memory error: Unable to complete search. Try reducing settings manually.",
+                                classes="error-message"
+                            ))
+                        except Exception as ui_error:
+                            logger.warning(f"Could not add error UI: {ui_error}")
+                        break
+                
+                elif conversation_mode and "context" in error_lower:
+                    await status_elem.update("❌ Conversation context error - disabling conversation mode")
+                    
+                    if hasattr(self.app_instance, 'notify'):
+                        self.app_instance.notify(
+                            "Error with conversation context. Disabling conversation mode and retrying.",
+                            severity="warning",
+                            timeout=5
+                        )
+                    
+                    # Reset conversation context and disable conversation mode
+                    self.conversation_context = []
+                    self.previous_context = ""
+                    self.query_one("#conversation-mode").value = False
+                    conversation_mode = False  # Update local variable
+                    
+                    # Continue with retry
+                    if retry_count < max_retries:
+                        continue
+                    else:
+                        break
+                
+                else:
+                    # Generic error handling
+                    if search_mode != "plain" and retry_count < max_retries:
+                        # Try falling back to plain mode for generic errors
+                        await status_elem.update("❌ Search error - trying plain mode")
+                        
+                        if hasattr(self.app_instance, 'notify'):
+                            self.app_instance.notify(
+                                f"Search error: {error_msg[:100]}...\n\n"
+                                f"Attempting to retry with plain search mode.",
+                                severity="warning",
+                                timeout=5
+                            )
+                        
+                        self.query_one("#search-mode-select").value = "plain"
+                        continue
+                    else:
+                        # Final error - no more retries
+                        await status_elem.update(f"❌ Search failed: {error_msg[:100]}...")
+                        
+                        if hasattr(self.app_instance, 'notify'):
+                            self.app_instance.notify(
+                                f"Search error: {error_msg[:100]}...\n\n"
+                                f"Please try a different search query or check the logs for details.",
+                                severity="error",
+                                timeout=10
+                            )
+                        
+                        # Show error in results
+                        try:
+                            results_container = self.query_one("#results-container")
+                            await results_container.mount(Static(
+                                f"❌ Search failed after {retry_count} attempts: {error_msg[:200]}",
+                                classes="error-message"
+                            ))
+                        except Exception as ui_error:
+                            logger.warning(f"Could not add error UI: {ui_error}")
+                        
+                        break
+        
+        # End of retry loop
         finally:
             self.is_searching = False
             progress_bar.add_class("hidden")

@@ -348,7 +348,7 @@ async def scrape_article(url: str, custom_cookies: Optional[List[Dict[str, Any]]
                 try:
                     logging.info(f"Fetching HTML from {url} (Attempt {attempt + 1}/{retries})")
 
-                    async with async_playwright as p:
+                    async with async_playwright() as p:
                         browser = await p.chromium.launch(headless=True)
                         context = await browser.new_context(
                             user_agent=web_scraping_user_agent,

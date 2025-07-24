@@ -721,7 +721,7 @@ def chat_api_call(
         ChatAPIError: For other unexpected API-related errors.
         requests.exceptions.HTTPError: Propagated from underlying HTTP requests if not caught and re-raised.
         requests.exceptions.RequestException: For network errors during the request.
-        :rtype: str | Generator[str | Any, Any, None] | Generator[str, Any, None] | Generator[str | Any, Any, Any] | Generator[Any, Any, None] | dict[str, str | int | list[dict[str, int | dict[str, str] | str | Any]] | Any] | dict[str, str | int | None | list[Any] | Any] | dict[str, str | int | None | list[dict[str, int | dict[str, str] | str | Any]]]
+        :rtype: str | dict | Generator[str, Any, None]
     """
     endpoint_lower = api_endpoint.lower()
     logger.info(f"Chat API Call - Routing to endpoint: {endpoint_lower}")
