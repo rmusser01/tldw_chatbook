@@ -9,10 +9,11 @@ import sys
 import time
 import threading
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union, Callable, Tuple, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, Union, Callable, Tuple, TYPE_CHECKING, TypedDict
 import json
 from loguru import logger
 from contextlib import contextmanager
+from enum import Enum
 
 # Type checking imports (not loaded at runtime)
 if TYPE_CHECKING:
@@ -65,6 +66,53 @@ _torchaudio = None
 
 # Local imports
 from ..config import get_cli_setting
+
+
+# Enums and Constants
+class ClusteringMethod(Enum):
+    """Clustering methods for speaker identification."""
+    SPECTRAL = 'spectral'
+    AGGLOMERATIVE = 'agglomerative'
+
+
+class EmbeddingDevice(Enum):
+    """Device options for embedding model."""
+    AUTO = 'auto'
+    CPU = 'cpu'
+    CUDA = 'cuda'
+
+
+class SegmentDict(TypedDict, total=False):
+    """Type definition for segment dictionaries."""
+    start: float
+    end: float
+    waveform: Any  # torch.Tensor
+    speaker_id: Optional[int]
+    speaker_label: Optional[str]
+    is_padded: bool
+    original_duration: float
+    speech_region: Dict[str, Any]
+
+
+class DiarizationResult(TypedDict):
+    """Type definition for diarization results."""
+    segments: List[Dict[str, Any]]
+    speakers: List[Dict[str, Any]]
+    duration: float
+    num_speakers: int
+    processing_time: float
+
+
+# Constants
+DEFAULT_VAD_THRESHOLD = 0.5
+DEFAULT_SEGMENT_DURATION = 2.0
+DEFAULT_SEGMENT_OVERLAP = 0.5
+DEFAULT_MIN_SPEAKERS = 1
+DEFAULT_MAX_SPEAKERS = 10
+DEFAULT_SIMILARITY_THRESHOLD = 0.85
+DEFAULT_EMBEDDING_BATCH_SIZE = 32
+DEFAULT_EMBEDDING_MODEL = 'speechbrain/spkrec-ecapa-voxceleb'
+SPEAKER_LABEL_PREFIX = 'SPEAKER_'
 
 
 def _sanitize_path_component(name: str) -> str:
@@ -285,39 +333,30 @@ class DiarizationService:
         config (dict): Configuration parameters for diarization.
     """
     
-    def __init__(self):
-        """Initialize the diarization service."""
+    def __init__(self, config: Optional[Dict[str, Any]] = None, config_loader: Optional[Callable[[], Dict[str, Any]]] = None):
+        """Initialize the diarization service.
+        
+        Args:
+            config: Optional configuration override
+            config_loader: Optional configuration loader function
+        """
         logger.info("Initializing DiarizationService...")
         
-        # Configuration
-        self.config = {
-            # VAD settings
-            'vad_threshold': get_cli_setting('diarization.vad_threshold', 0.5) or 0.5,
-            'vad_min_speech_duration': get_cli_setting('diarization.vad_min_speech_duration', 0.25) or 0.25,
-            'vad_min_silence_duration': get_cli_setting('diarization.vad_min_silence_duration', 0.25) or 0.25,
-            
-            # Segmentation settings
-            'segment_duration': get_cli_setting('diarization.segment_duration', 2.0) or 2.0,
-            'segment_overlap': get_cli_setting('diarization.segment_overlap', 0.5) or 0.5,
-            'min_segment_duration': get_cli_setting('diarization.min_segment_duration', 1.0) or 1.0,
-            'max_segment_duration': get_cli_setting('diarization.max_segment_duration', 3.0) or 3.0,
-            
-            # Embedding model
-            'embedding_model': get_cli_setting('diarization.embedding_model', 'speechbrain/spkrec-ecapa-voxceleb') or 'speechbrain/spkrec-ecapa-voxceleb',
-            'embedding_device': get_cli_setting('diarization.embedding_device', 'auto') or 'auto',
-            
-            # Clustering settings
-            'clustering_method': get_cli_setting('diarization.clustering_method', 'spectral') or 'spectral',
-            'similarity_threshold': get_cli_setting('diarization.similarity_threshold', 0.85) or 0.85,
-            'min_speakers': get_cli_setting('diarization.min_speakers', 1) or 1,
-            'max_speakers': get_cli_setting('diarization.max_speakers', 10) or 10,
-            
-            # Post-processing
-            'merge_threshold': get_cli_setting('diarization.merge_threshold', 0.5) or 0.5,
-            'min_speaker_duration': get_cli_setting('diarization.min_speaker_duration', 3.0) or 3.0,
-        }
+        # Use provided config loader or default
+        if config_loader is None:
+            config_loader = self._default_config_loader
+        
+        # Load configuration
+        self.config = config_loader()
+        
+        # Override with provided config
+        if config:
+            self.config.update(config)
         
         logger.debug(f"Diarization service configuration: {self.config}")
+        
+        # Validate configuration
+        self._validate_config(self.config)
         
         # Model storage (lazy loaded)
         self._vad_model = None
@@ -344,17 +383,123 @@ class DiarizationService:
         
         return True
     
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default configuration."""
+        return {
+            # VAD settings
+            'vad_threshold': DEFAULT_VAD_THRESHOLD,
+            'vad_min_speech_duration': 0.25,
+            'vad_min_silence_duration': 0.25,
+            
+            # Segmentation settings
+            'segment_duration': DEFAULT_SEGMENT_DURATION,
+            'segment_overlap': DEFAULT_SEGMENT_OVERLAP,
+            'min_segment_duration': 1.0,
+            'max_segment_duration': 3.0,
+            
+            # Embedding model
+            'embedding_model': DEFAULT_EMBEDDING_MODEL,
+            'embedding_device': EmbeddingDevice.AUTO.value,
+            
+            # Clustering settings
+            'clustering_method': ClusteringMethod.SPECTRAL.value,
+            'similarity_threshold': DEFAULT_SIMILARITY_THRESHOLD,
+            'min_speakers': DEFAULT_MIN_SPEAKERS,
+            'max_speakers': DEFAULT_MAX_SPEAKERS,
+            
+            # Post-processing
+            'merge_threshold': 0.5,
+            'min_speaker_duration': 3.0,
+            
+            # Batch processing
+            'embedding_batch_size': DEFAULT_EMBEDDING_BATCH_SIZE,
+        }
+    
+    def _default_config_loader(self) -> Dict[str, Any]:
+        """Default configuration loader using get_cli_setting."""
+        default_config = self._get_default_config()
+        
+        # Override with settings from config file
+        config = {}
+        for key, default_value in default_config.items():
+            config[key] = get_cli_setting(f'diarization.{key}', default_value) or default_value
+        
+        return config
+    
+    def _validate_config(self, config: Dict) -> None:
+        """Validate configuration parameters.
+        
+        Args:
+            config: Configuration dictionary to validate
+            
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        # VAD settings validation
+        if config['vad_threshold'] < 0 or config['vad_threshold'] > 1:
+            raise ValueError("vad_threshold must be between 0 and 1")
+        
+        if config['vad_min_speech_duration'] < 0:
+            raise ValueError("vad_min_speech_duration must be non-negative")
+        
+        if config['vad_min_silence_duration'] < 0:
+            raise ValueError("vad_min_silence_duration must be non-negative")
+        
+        # Segmentation settings validation
+        if config['segment_overlap'] >= config['segment_duration']:
+            raise ValueError("segment_overlap must be less than segment_duration")
+        
+        if config['segment_overlap'] < 0:
+            raise ValueError("segment_overlap must be non-negative")
+        
+        if config['min_segment_duration'] > config['max_segment_duration']:
+            raise ValueError("min_segment_duration must be <= max_segment_duration")
+        
+        if config['segment_duration'] > config['max_segment_duration']:
+            raise ValueError("segment_duration must be <= max_segment_duration")
+        
+        # Clustering settings validation
+        if config['min_speakers'] < 1:
+            raise ValueError("min_speakers must be at least 1")
+        
+        if config['max_speakers'] < config['min_speakers']:
+            raise ValueError("max_speakers must be >= min_speakers")
+        
+        if config['similarity_threshold'] < 0 or config['similarity_threshold'] > 1:
+            raise ValueError("similarity_threshold must be between 0 and 1")
+        
+        # Post-processing validation
+        if config['merge_threshold'] < 0:
+            raise ValueError("merge_threshold must be non-negative")
+        
+        if config['min_speaker_duration'] < 0:
+            raise ValueError("min_speaker_duration must be non-negative")
+        
+        # Batch processing validation
+        if config['embedding_batch_size'] < 1:
+            raise ValueError("embedding_batch_size must be at least 1")
+        
+        # Embedding device validation
+        valid_devices = [e.value for e in EmbeddingDevice]
+        if config['embedding_device'] not in valid_devices:
+            raise ValueError(f"embedding_device must be one of {valid_devices}")
+        
+        # Clustering method validation
+        valid_methods = [m.value for m in ClusteringMethod]
+        if config['clustering_method'] not in valid_methods:
+            raise ValueError(f"clustering_method must be one of {valid_methods}")
+    
     def _get_device(self) -> str:
         """Determine the device to use for inference."""
-        if self.config['embedding_device'] == 'auto':
+        if self.config['embedding_device'] == EmbeddingDevice.AUTO.value:
             torch = _lazy_import_torch()
             if torch:
                 try:
                     if hasattr(torch, 'cuda') and torch.cuda.is_available():
-                        return 'cuda'
+                        return EmbeddingDevice.CUDA.value
                 except (AttributeError, RuntimeError) as e:
                     logger.debug(f"Error checking CUDA availability: {e}")
-            return 'cpu'
+            return EmbeddingDevice.CPU.value
         return self.config['embedding_device']
     
     def _load_embedding_model(self):
@@ -383,7 +528,7 @@ class DiarizationService:
                     logger.info(f"Embedding model loaded successfully on {device}")
                 except Exception as e:
                     logger.error(f"Failed to load embedding model: {e}")
-                    raise DiarizationError(f"Failed to load embedding model: {e}")
+                    raise DiarizationError(f"Failed to load embedding model: {e}") from e
     
     def _load_vad_model(self):
         """Load the VAD model (lazy loading).
@@ -392,52 +537,53 @@ class DiarizationService:
         The VAD utilities are particularly brittle as they return as a tuple
         in a specific order that can change between versions.
         """
-        if self._vad_model is None:
-            try:
-                model, utils = _lazy_import_silero_vad()
-                if not model or not utils:
-                    raise DiarizationError("Silero VAD model or utilities not available")
-                
-                # Validate that we have the expected utilities
-                # Silero returns (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks)
-                # but this order is not guaranteed and can break between versions
-                if not isinstance(utils, (list, tuple)) or len(utils) < 5:
-                    raise DiarizationError(
-                        f"Unexpected Silero VAD utils format. Expected tuple/list with 5+ items, "
-                        f"got {type(utils).__name__} with {len(utils) if hasattr(utils, '__len__') else 'unknown'} items"
-                    )
-                
-                # Store model
-                self._vad_model = model
-                
-                # Map utilities with extensive validation
-                # NOTE: This mapping is fragile and depends on Silero's return order
+        with self._model_lock:  # Add thread safety
+            if self._vad_model is None:
                 try:
-                    self._vad_utils = {
-                        'get_speech_timestamps': utils[0],  # Main VAD function
-                        'save_audio': utils[1],             # Audio saving utility
-                        'read_audio': utils[2],             # Audio loading utility
-                        'VADIterator': utils[3],            # Streaming VAD class
-                        'collect_chunks': utils[4]          # Chunk collection utility
-                    }
+                    model, utils = _lazy_import_silero_vad()
+                    if not model or not utils:
+                        raise DiarizationError("Silero VAD model or utilities not available")
                     
-                    # Validate that each utility is callable (except VADIterator which is a class)
-                    for name, func in self._vad_utils.items():
-                        if name != 'VADIterator' and not callable(func):
-                            raise DiarizationError(f"VAD utility '{name}' is not callable")
+                    # Validate that we have the expected utilities
+                    # Silero returns (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks)
+                    # but this order is not guaranteed and can break between versions
+                    if not isinstance(utils, (list, tuple)) or len(utils) < 5:
+                        raise DiarizationError(
+                            f"Unexpected Silero VAD utils format. Expected tuple/list with 5+ items, "
+                            f"got {type(utils).__name__} with {len(utils) if hasattr(utils, '__len__') else 'unknown'} items"
+                        )
                     
-                    logger.debug("VAD utilities loaded and validated successfully")
+                    # Store model
+                    self._vad_model = model
                     
-                except (IndexError, TypeError) as e:
-                    raise DiarizationError(
-                        f"Failed to map Silero VAD utilities. The utility order may have changed. Error: {e}"
-                    )
-                    
-            except Exception as e:
-                logger.error(f"Failed to load VAD model: {e}")
-                self._vad_model = None
-                self._vad_utils = None
-                raise DiarizationError(f"Failed to load Silero VAD model: {e}")
+                    # Map utilities with extensive validation
+                    # NOTE: This mapping is fragile and depends on Silero's return order
+                    try:
+                        self._vad_utils = {
+                            'get_speech_timestamps': utils[0],  # Main VAD function
+                            'save_audio': utils[1],             # Audio saving utility
+                            'read_audio': utils[2],             # Audio loading utility
+                            'VADIterator': utils[3],            # Streaming VAD class
+                            'collect_chunks': utils[4]          # Chunk collection utility
+                        }
+                        
+                        # Validate that each utility is callable (except VADIterator which is a class)
+                        for name, func in self._vad_utils.items():
+                            if name != 'VADIterator' and not callable(func):
+                                raise DiarizationError(f"VAD utility '{name}' is not callable")
+                        
+                        logger.debug("VAD utilities loaded and validated successfully")
+                        
+                    except (IndexError, TypeError) as e:
+                        raise DiarizationError(
+                            f"Failed to map Silero VAD utilities. The utility order may have changed. Error: {e}"
+                        ) from e
+                        
+                except Exception as e:
+                    logger.error(f"Failed to load VAD model: {e}")
+                    self._vad_model = None
+                    self._vad_utils = None
+                    raise DiarizationError(f"Failed to load Silero VAD model: {e}") from e
     
     def _get_vad_utility(self, name: str) -> Callable:
         """Safely get a VAD utility function with validation.
@@ -551,7 +697,7 @@ class DiarizationService:
             # Step 5: Assign speakers to segments
             for segment, label in zip(segments, speaker_labels):
                 segment['speaker_id'] = int(label)
-                segment['speaker_label'] = f"SPEAKER_{label}"
+                segment['speaker_label'] = f"{SPEAKER_LABEL_PREFIX}{label}"
             
             # Step 6: Merge consecutive segments
             if progress_callback:
@@ -583,17 +729,18 @@ class DiarizationService:
                     'duration': duration
                 })
             
-            return {
+            result: DiarizationResult = {
                 'segments': aligned_segments,
                 'speakers': speaker_stats,
                 'duration': len(waveform) / sample_rate,
                 'num_speakers': unique_speakers,
                 'processing_time': duration
             }
+            return result
             
         except Exception as e:
             logger.error(f"Diarization failed: {e}", exc_info=True)
-            raise DiarizationError(f"Diarization failed: {str(e)}")
+            raise DiarizationError(f"Diarization failed: {str(e)}") from e
     
     def _load_audio(self, audio_path: str):
         """Load audio file and convert to correct format."""
@@ -624,7 +771,7 @@ class DiarizationService:
                     self._load_vad_model()
                 except Exception as e:
                     logger.error(f"Failed to load VAD model for audio reading: {e}")
-                    raise DiarizationError(f"Cannot load audio: VAD model load failed: {e}")
+                    raise DiarizationError(f"Cannot load audio: VAD model load failed: {e}") from e
             
             # Validate read_audio function exists and is callable
             if not self._vad_utils or 'read_audio' not in self._vad_utils:
@@ -651,7 +798,7 @@ class DiarizationService:
                 logger.error(f"Failed to load audio with Silero read_audio: {e}")
                 raise DiarizationError(
                     f"Failed to load audio file '{audio_path}': {str(e)}"
-                )
+                ) from e
     
     def _detect_speech(self, waveform, sample_rate: int) -> List[Dict]:
         """Detect speech segments using VAD.
@@ -710,7 +857,7 @@ class DiarizationService:
                     
         except Exception as e:
             logger.error(f"VAD detection failed: {e}")
-            raise DiarizationError(f"Speech detection failed: {str(e)}")
+            raise DiarizationError(f"Speech detection failed: {str(e)}") from e
         
         # Convert to seconds
         for ts in speech_timestamps:
@@ -724,75 +871,139 @@ class DiarizationService:
         waveform: "torch.Tensor", 
         speech_timestamps: List[Dict],
         sample_rate: int
-    ) -> List[Dict]:
+    ) -> List[SegmentDict]:
         """Create fixed-length overlapping segments from speech regions."""
+        torch = _lazy_import_torch()
+        if not torch:
+            raise DiarizationError("PyTorch not available for segment creation")
+        
         segments = []
         segment_samples = int(self.config['segment_duration'] * sample_rate)
+        min_segment_samples = int(self.config.get('min_segment_duration', 1.0) * sample_rate)
         overlap_samples = int(self.config['segment_overlap'] * sample_rate)
         step_samples = segment_samples - overlap_samples
         
         for speech in speech_timestamps:
             start_sample = int(speech['start'] * sample_rate)
             end_sample = int(speech['end'] * sample_rate)
+            speech_duration = end_sample - start_sample
             
-            # Create overlapping segments within this speech region
-            for i in range(start_sample, end_sample - segment_samples + 1, step_samples):
-                segment_waveform = waveform[i:i + segment_samples]
+            if speech_duration < min_segment_samples:
+                # Handle short segments by padding
+                segment_waveform = waveform[start_sample:end_sample]
+                # Pad to minimum length with silence
+                padding_needed = min_segment_samples - speech_duration
+                try:
+                    padded_waveform = torch.nn.functional.pad(segment_waveform, (0, padding_needed))
+                except Exception as e:
+                    logger.warning(f"Failed to pad short segment: {e}")
+                    continue  # Skip this segment if padding fails
                 
                 segments.append({
-                    'start': i / sample_rate,
-                    'end': (i + segment_samples) / sample_rate,
-                    'waveform': segment_waveform,
+                    'start': start_sample / sample_rate,
+                    'end': end_sample / sample_rate,
+                    'waveform': padded_waveform,
+                    'is_padded': True,
+                    'original_duration': speech_duration / sample_rate,
                     'speech_region': speech  # Keep reference to original speech region
                 })
+            else:
+                # Create overlapping segments within this speech region
+                for i in range(start_sample, end_sample - segment_samples + 1, step_samples):
+                    segment_waveform = waveform[i:i + segment_samples]
+                    
+                    segments.append({
+                        'start': i / sample_rate,
+                        'end': (i + segment_samples) / sample_rate,
+                        'waveform': segment_waveform,
+                        'is_padded': False,
+                        'speech_region': speech  # Keep reference to original speech region
+                    })
+                
+                # Handle the last segment if it's shorter than segment_duration but longer than min_segment_duration
+                last_segment_start = start_sample + ((end_sample - start_sample - segment_samples) // step_samples) * step_samples + step_samples
+                if last_segment_start < end_sample:
+                    remaining_samples = end_sample - last_segment_start
+                    if remaining_samples >= min_segment_samples:
+                        segment_waveform = waveform[last_segment_start:end_sample]
+                        # Pad to segment_duration
+                        padding_needed = segment_samples - remaining_samples
+                        try:
+                            padded_waveform = torch.nn.functional.pad(segment_waveform, (0, padding_needed))
+                            segments.append({
+                                'start': last_segment_start / sample_rate,
+                                'end': end_sample / sample_rate,
+                                'waveform': padded_waveform,
+                                'is_padded': True,
+                                'original_duration': remaining_samples / sample_rate,
+                                'speech_region': speech
+                            })
+                        except Exception as e:
+                            logger.warning(f"Failed to pad last segment: {e}")
         
         return segments
     
     def _extract_embeddings(
         self, 
-        segments: List[Dict],
-        progress_callback: Optional[Callable] = None
+        segments: List[SegmentDict],
+        progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None
     ) -> "np.ndarray":
-        """Extract speaker embeddings for each segment."""
+        """Extract speaker embeddings for each segment using batch processing."""
         # Load embedding model if not already loaded
         self._load_embedding_model()
         
         embeddings = []
         total_segments = len(segments)
+        batch_size = self.config.get('embedding_batch_size', 32)
         
-        for i, segment in enumerate(segments):
-            # Convert waveform to correct format
-            waveform = segment['waveform'].unsqueeze(0)
+        torch = _lazy_import_torch()
+        if not torch:
+            raise DiarizationError("PyTorch not available for embedding extraction")
+        
+        # Process segments in batches
+        for batch_idx in range(0, len(segments), batch_size):
+            batch_segments = segments[batch_idx:batch_idx + batch_size]
             
-            # Extract embedding
-            torch = _lazy_import_torch()
+            # Stack waveforms for batch processing
             try:
-                if torch and hasattr(torch, 'no_grad'):
+                waveforms = torch.stack([seg['waveform'].unsqueeze(0) for seg in batch_segments])
+            except Exception as e:
+                logger.error(f"Failed to stack waveforms for batch {batch_idx}: {e}")
+                raise DiarizationError(f"Failed to prepare batch: {e}") from e
+            
+            # Extract embeddings for the batch
+            try:
+                if hasattr(torch, 'no_grad'):
                     try:
                         with torch.no_grad():
-                            embedding = self._embedding_model.encode_batch(waveform)
+                            batch_embeddings = self._embedding_model.encode_batch(waveforms)
                     except (AttributeError, RuntimeError) as e:
                         logger.debug(f"Failed to use torch.no_grad(): {e}")
                         # Fallback without no_grad context
-                        embedding = self._embedding_model.encode_batch(waveform)
+                        batch_embeddings = self._embedding_model.encode_batch(waveforms)
                 else:
-                    # No torch available or no_grad not available, run without context manager
-                    embedding = self._embedding_model.encode_batch(waveform)
+                    # No no_grad available, run without context manager
+                    batch_embeddings = self._embedding_model.encode_batch(waveforms)
+                
+                # Convert to numpy
+                batch_embeddings = batch_embeddings.cpu().numpy()
+                
+                # Add each embedding from the batch
+                for embedding in batch_embeddings:
+                    embeddings.append(embedding.squeeze())
+                
             except Exception as e:
-                logger.error(f"Failed to extract embedding for segment {i}: {e}")
-                raise DiarizationError(f"Embedding extraction failed: {e}")
-            
-            # Convert to numpy and flatten
-            embedding = embedding.squeeze().cpu().numpy()
-            embeddings.append(embedding)
+                logger.error(f"Failed to extract embeddings for batch starting at {batch_idx}: {e}")
+                raise DiarizationError(f"Batch embedding extraction failed: {e}") from e
             
             # Progress update
-            if progress_callback and i % 10 == 0:
-                progress = 30 + (40 * i / total_segments)  # 30-70% range
+            if progress_callback:
+                processed = min(batch_idx + len(batch_segments), total_segments)
+                progress = 30 + (40 * processed / total_segments)  # 30-70% range
                 progress_callback(
                     progress, 
-                    f"Processing segment {i+1}/{total_segments}",
-                    {'current': i+1, 'total': total_segments}
+                    f"Processing batch {batch_idx//batch_size + 1}/{(total_segments + batch_size - 1)//batch_size}",
+                    {'current': processed, 'total': total_segments}
                 )
         
         np = _lazy_import_numpy()
@@ -803,7 +1014,7 @@ class DiarizationService:
             return np.array(embeddings)
         except Exception as e:
             logger.error(f"Failed to create numpy array from embeddings: {e}")
-            raise DiarizationError(f"Failed to create embedding array: {e}")
+            raise DiarizationError(f"Failed to create embedding array: {e}") from e
     
     def _cluster_speakers(
         self, 
@@ -811,6 +1022,14 @@ class DiarizationService:
         num_speakers: Optional[int] = None
     ) -> "np.ndarray":
         """Cluster embeddings to identify speakers."""
+        np = _lazy_import_numpy()
+        if not np:
+            raise DiarizationError("NumPy not available for clustering")
+        
+        # Handle single speaker case
+        if num_speakers == 1:
+            return np.zeros(len(embeddings), dtype=int)
+        
         sklearn_modules = _lazy_import_sklearn()
         if not sklearn_modules:
             raise DiarizationError("scikit-learn modules not available for clustering")
@@ -819,8 +1038,10 @@ class DiarizationService:
         normalize = sklearn_modules['normalize']
         embeddings = normalize(embeddings, axis=1, norm='l2')
         
+        # Add single-speaker detection before clustering
         if num_speakers is None:
-            # Estimate number of speakers
+            if self._is_single_speaker(embeddings):
+                return np.zeros(len(embeddings), dtype=int)
             num_speakers = self._estimate_num_speakers(embeddings)
             logger.info(f"Estimated {num_speakers} speakers")
         
@@ -828,7 +1049,7 @@ class DiarizationService:
         num_speakers = max(self.config['min_speakers'], 
                           min(num_speakers, self.config['max_speakers']))
         
-        if self.config['clustering_method'] == 'spectral':
+        if self.config['clustering_method'] == ClusteringMethod.SPECTRAL.value:
             SpectralClustering = sklearn_modules['SpectralClustering']
             clustering = SpectralClustering(
                 n_clusters=num_speakers,
@@ -882,6 +1103,55 @@ class DiarizationService:
                 logger.warning(f"Failed to test {n} speakers: {e}")
         
         return best_n
+    
+    def _is_single_speaker(self, embeddings: "np.ndarray", threshold: Optional[float] = None) -> bool:
+        """Check if all embeddings likely belong to a single speaker.
+        
+        Args:
+            embeddings: Normalized speaker embeddings
+            threshold: Similarity threshold (default from config)
+            
+        Returns:
+            True if likely single speaker, False otherwise
+        """
+        if threshold is None:
+            threshold = self.config.get('similarity_threshold', 0.85)
+        
+        np = _lazy_import_numpy()
+        if not np:
+            # Can't check without numpy, assume multiple speakers
+            return False
+        
+        sklearn_modules = _lazy_import_sklearn()
+        if not sklearn_modules or 'normalize' not in sklearn_modules:
+            # Can't normalize without sklearn, assume multiple speakers
+            return False
+        
+        try:
+            # Ensure embeddings are normalized
+            normalize = sklearn_modules['normalize']
+            normalized = normalize(embeddings, axis=1, norm='l2')
+            
+            # Compute pairwise cosine similarities
+            similarities = normalized @ normalized.T
+            
+            # Calculate average similarity (excluding diagonal)
+            n = len(embeddings)
+            if n <= 1:
+                return True  # Single embedding is single speaker
+            
+            # Sum all similarities minus diagonal, divide by number of pairs
+            avg_similarity = (similarities.sum() - n) / (n * (n - 1))
+            
+            logger.debug(f"Average cosine similarity: {avg_similarity:.3f}, threshold: {threshold}")
+            
+            # If average similarity is very high, likely single speaker
+            return avg_similarity > threshold
+            
+        except Exception as e:
+            logger.warning(f"Failed to check single speaker: {e}")
+            # On error, assume multiple speakers for safety
+            return False
     
     def _merge_segments(self, segments: List[Dict]) -> List[Dict]:
         """Merge consecutive segments from the same speaker."""
@@ -942,7 +1212,7 @@ class DiarizationService:
                 # Create aligned segment
                 aligned_seg = trans_seg.copy()
                 aligned_seg['speaker_id'] = speaker_id
-                aligned_seg['speaker_label'] = f"SPEAKER_{speaker_id}"
+                aligned_seg['speaker_label'] = f"{SPEAKER_LABEL_PREFIX}{speaker_id}"
                 aligned.append(aligned_seg)
             else:
                 # No overlap found, keep original
@@ -976,7 +1246,7 @@ class DiarizationService:
         for speaker_id, stats in speaker_times.items():
             speakers.append({
                 'speaker_id': speaker_id,
-                'speaker_label': f"SPEAKER_{speaker_id}",
+                'speaker_label': f"{SPEAKER_LABEL_PREFIX}{speaker_id}",
                 'total_time': stats['total_time'],
                 'segment_count': stats['segment_count'],
                 'first_appearance': stats['first_appearance'],

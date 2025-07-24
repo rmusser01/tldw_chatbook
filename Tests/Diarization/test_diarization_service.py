@@ -131,21 +131,26 @@ class TestDiarizationService(unittest.TestCase):
         if not self.service.is_available:
             self.skipTest("Diarization dependencies not available")
         
+        # Import torch if available
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("PyTorch not available for testing")
+        
         # Mock the embedding model
         mock_model = MagicMock()
+        # Return batch of embeddings matching the input batch size
         mock_model.encode_batch.return_value = MagicMock(
-            squeeze=lambda: MagicMock(
-                cpu=lambda: MagicMock(
-                    numpy=lambda: np.random.randn(192)
-                )
+            cpu=lambda: MagicMock(
+                numpy=lambda: np.random.randn(2, 192)  # Batch of 2 embeddings
             )
         )
         self.service._embedding_model = mock_model
         
-        # Create test segments
+        # Create test segments with proper torch tensors
         segments = [
-            {'waveform': MagicMock()},
-            {'waveform': MagicMock()}
+            {'waveform': torch.randn(16000)},  # 1 second of audio at 16kHz
+            {'waveform': torch.randn(16000)}
         ]
         
         # Extract embeddings
@@ -337,6 +342,60 @@ class TestDiarizationService(unittest.TestCase):
             # Check progress values
             progress_values = [call['progress'] for call in progress_calls]
             self.assertEqual(progress_values[-1], 100)  # Should end at 100%
+
+
+    def test_single_speaker_case(self):
+        """Test handling of single speaker case."""
+        # Skip if dependencies not available
+        if not self.service.is_available:
+            self.skipTest("Diarization dependencies not available")
+        
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("NumPy not available for testing")
+        
+        # Create embeddings that are very similar (single speaker)
+        embeddings = np.random.randn(10, 192)
+        embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+        
+        # Test explicit num_speakers=1
+        labels = self.service._cluster_speakers(embeddings, num_speakers=1)
+        self.assertTrue(np.all(labels == 0))
+        
+        # Test automatic single speaker detection
+        # Create very similar embeddings
+        base_embedding = np.random.randn(192)
+        base_embedding = base_embedding / np.linalg.norm(base_embedding)
+        similar_embeddings = np.array([base_embedding + 0.01 * np.random.randn(192) for _ in range(10)])
+        similar_embeddings = similar_embeddings / np.linalg.norm(similar_embeddings, axis=1, keepdims=True)
+        
+        is_single = self.service._is_single_speaker(similar_embeddings)
+        self.assertTrue(is_single)
+    
+    def test_config_validation(self):
+        """Test configuration validation."""
+        # Get a valid config and modify it to test validation
+        service = DiarizationService()
+        base_config = service.config.copy()
+        
+        # Test invalid vad_threshold
+        with self.assertRaises(ValueError):
+            invalid_config = base_config.copy()
+            invalid_config['vad_threshold'] = 1.5
+            service._validate_config(invalid_config)
+        
+        # Test invalid segment overlap
+        with self.assertRaises(ValueError):
+            invalid_config = base_config.copy()
+            invalid_config['segment_overlap'] = 3.0  # Greater than segment_duration
+            service._validate_config(invalid_config)
+        
+        # Test invalid min_speakers
+        with self.assertRaises(ValueError):
+            invalid_config = base_config.copy()
+            invalid_config['min_speakers'] = 0
+            service._validate_config(invalid_config)
 
 
 if __name__ == '__main__':
