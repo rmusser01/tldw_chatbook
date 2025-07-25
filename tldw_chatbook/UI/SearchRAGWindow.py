@@ -852,7 +852,7 @@ class SearchRAGWindow(Container):
         if event.value == "full":
             chunking_options.remove_class("hidden")
             if not self.embeddings_available:
-                self.app_instance.notify(
+                            self.app_instance.notify(
                     "🔒 Semantic search requires embeddings dependencies",
                     severity="warning",
                     timeout=5
@@ -935,9 +935,9 @@ class SearchRAGWindow(Container):
                 if not any(sources.values()):
                     self.app_instance.notify("Please select at least one source", severity="warning")
                     return
-            
-            # Store current search configuration
-            self.current_search_config = {
+                
+                # Store current search configuration
+                self.current_search_config = {
                 "query": query,
                 "mode": search_mode,
                 "sources": sources,
@@ -947,89 +947,77 @@ class SearchRAGWindow(Container):
                 "parent_size_threshold": int(self.query_one("#parent-size-threshold", Input).value or "5000"),
                 "parent_inclusion_strategy": self.query_one("#parent-strategy", Select).value,
                 "enable_rerank": self.query_one("#enable-rerank", Checkbox).value,
-                "conversation_mode": conversation_mode
-            }
-            
-            # Update status with more descriptive message
-            mode_names = {"plain": "Plain", "full": "Semantic", "hybrid": "Hybrid"}
-            mode_display = mode_names.get(search_mode, search_mode)
-            active_sources = [k for k, v in sources.items() if v]
-            sources_display = ", ".join(s.capitalize() for s in active_sources)
-            
-            # Update status message based on conversation mode
-            if conversation_mode:
-                await status_elem.update(f"🔄 Continuing conversation using {mode_display} mode...")
-            else:
-                await status_elem.update(f"🔍 Searching {sources_display} using {mode_display} mode...")
-            
-            await progress_bar.update(progress=20)
-            
-            # Perform search based on mode
-            chunk_size = int(self.query_one("#chunk-size-input", Input).value or "400")
-            chunk_overlap = int(self.query_one("#chunk-overlap-input", Input).value or "100")
-            
-            # Check if pipeline integration is available and try to use it
-            if PIPELINE_INTEGRATION_AVAILABLE:
-                pipeline_manager = get_pipeline_manager()
+                    "conversation_mode": conversation_mode
+                }
                 
-                # Check if the search_mode is a pipeline ID
-                if pipeline_manager.validate_pipeline_id(search_mode):
-                    logger.info(f"Using pipeline '{search_mode}' from TOML configuration")
-                    
-                    # Prepare kwargs for pipeline execution
-                    pipeline_kwargs = {
-                        "top_k": self.current_search_config["top_k"],
-                        "max_context_length": self.current_search_config["max_context"],
-                        "chunk_size": chunk_size,
-                        "chunk_overlap": chunk_overlap,
-                        "include_metadata": True,
-                        "enable_rerank": self.current_search_config["enable_rerank"],
-                        "reranker_model": "flashrank",
-                        "bm25_weight": 0.5,
-                        "vector_weight": 0.5,
-                        "include_parent_docs": self.current_search_config["include_parent_docs"],
-                        "parent_size_threshold": self.current_search_config["parent_size_threshold"],
-                        "parent_inclusion_strategy": self.current_search_config["parent_inclusion_strategy"]
-                    }
-                    
-                    # Add conversation context if in conversation mode
-                    if conversation_mode and self.previous_context:
-                        pipeline_kwargs["previous_context"] = self.previous_context
-                        pipeline_kwargs["conversation_history"] = self.conversation_context
-                        logger.info(f"Using conversation context with {len(self.conversation_context)} previous exchanges")
-                    
-                    # Get pipeline default parameters and merge
-                    default_params = pipeline_manager.get_pipeline_parameters(search_mode)
-                    pipeline_kwargs.update(default_params)
-                    
-                    # Execute pipeline
-                    results, context = await pipeline_manager.execute_pipeline(
-                        search_mode, self.app_instance, query, sources, **pipeline_kwargs
-                    )
+                # Update status with more descriptive message
+                mode_names = {"plain": "Plain", "full": "Semantic", "hybrid": "Hybrid"}
+                mode_display = mode_names.get(search_mode, search_mode)
+                active_sources = [k for k, v in sources.items() if v]
+                sources_display = ", ".join(s.capitalize() for s in active_sources)
+                
+                # Update status message based on conversation mode
+                if conversation_mode:
+                    await status_elem.update(f"🔄 Continuing conversation using {mode_display} mode...")
                 else:
-                    logger.info(f"Pipeline '{search_mode}' not found in TOML, falling back to legacy mode")
-                    # Fall through to legacy implementation below
+                    await status_elem.update(f"🔍 Searching {sources_display} using {mode_display} mode...")
+                
+                await progress_bar.update(progress=20)
+                
+                # Perform search based on mode
+                chunk_size = int(self.query_one("#chunk-size-input", Input).value or "400")
+                chunk_overlap = int(self.query_one("#chunk-overlap-input", Input).value or "100")
+                
+                # Check if pipeline integration is available and try to use it
+                if PIPELINE_INTEGRATION_AVAILABLE:
+                    pipeline_manager = get_pipeline_manager()
+                    
+                    # Check if the search_mode is a pipeline ID
+                    if pipeline_manager.validate_pipeline_id(search_mode):
+                        logger.info(f"Using pipeline '{search_mode}' from TOML configuration")
+                        
+                        # Prepare kwargs for pipeline execution
+                        pipeline_kwargs = {
+                            "top_k": self.current_search_config["top_k"],
+                            "max_context_length": self.current_search_config["max_context"],
+                            "chunk_size": chunk_size,
+                            "chunk_overlap": chunk_overlap,
+                            "include_metadata": True,
+                            "enable_rerank": self.current_search_config["enable_rerank"],
+                            "reranker_model": "flashrank",
+                            "bm25_weight": 0.5,
+                            "vector_weight": 0.5,
+                            "include_parent_docs": self.current_search_config["include_parent_docs"],
+                            "parent_size_threshold": self.current_search_config["parent_size_threshold"],
+                            "parent_inclusion_strategy": self.current_search_config["parent_inclusion_strategy"]
+                        }
+                    
+                        # Add conversation context if in conversation mode
+                        if conversation_mode and self.previous_context:
+                            pipeline_kwargs["previous_context"] = self.previous_context
+                            pipeline_kwargs["conversation_history"] = self.conversation_context
+                            logger.info(f"Using conversation context with {len(self.conversation_context)} previous exchanges")
+                    
+                        # Get pipeline default parameters and merge
+                        default_params = pipeline_manager.get_pipeline_parameters(search_mode)
+                        pipeline_kwargs.update(default_params)
+                    
+                        # Execute pipeline
+                        results, context = await pipeline_manager.execute_pipeline(
+                            search_mode, self.app_instance, query, sources, **pipeline_kwargs
+                        )
+                    else:
+                        logger.info(f"Pipeline '{search_mode}' not found in TOML, falling back to legacy mode")
+                        # Fall through to legacy implementation below
+                        results = None
+                        context = None
+                else:
                     results = None
                     context = None
-            else:
-                results = None
-                context = None
                 
-            # Legacy implementation
-            if results is None:
-                if search_mode == "plain":
-                    results, context = await perform_plain_rag_search(
-                        self.app_instance,
-                        query,
-                        sources,
-                        self.current_search_config["top_k"],
-                        self.current_search_config["max_context"],
-                        self.current_search_config["enable_rerank"],
-                        "flashrank"
-                    )
-                elif search_mode == "full":
-                    if not self.embeddings_available:
-                        self.app_instance.notify("Embeddings not available, using plain search", severity="info")
+                # Legacy implementation
+                if results is None:
+                    if search_mode == "plain":
                         results, context = await perform_plain_rag_search(
                             self.app_instance,
                             query,
@@ -1039,102 +1027,114 @@ class SearchRAGWindow(Container):
                             self.current_search_config["enable_rerank"],
                             "flashrank"
                         )
+                    elif search_mode == "full":
+                        if not self.embeddings_available:
+                            self.app_instance.notify("Embeddings not available, using plain search", severity="info")
+                            results, context = await perform_plain_rag_search(
+                                self.app_instance,
+                                query,
+                                sources,
+                                self.current_search_config["top_k"],
+                                self.current_search_config["max_context"],
+                                self.current_search_config["enable_rerank"],
+                                "flashrank"
+                            )
+                        else:
+                            results, context = await perform_full_rag_pipeline(
+                                self.app_instance,
+                                query,
+                                sources,
+                                self.current_search_config["top_k"],
+                                self.current_search_config["max_context"],
+                                chunk_size,
+                                chunk_overlap,
+                                True,  # include_metadata
+                                self.current_search_config["enable_rerank"],
+                                "flashrank"
+                            )
+                    elif search_mode == "hybrid":
+                        if not self.embeddings_available:
+                            self.app_instance.notify("Embeddings not available for hybrid search, using plain search", severity="info")
+                            results, context = await perform_plain_rag_search(
+                                self.app_instance,
+                                query,
+                                sources,
+                                self.current_search_config["top_k"],
+                                self.current_search_config["max_context"],
+                                self.current_search_config["enable_rerank"],
+                                "flashrank"
+                            )
                     else:
-                        results, context = await perform_full_rag_pipeline(
-                            self.app_instance,
-                            query,
-                            sources,
-                            self.current_search_config["top_k"],
-                            self.current_search_config["max_context"],
-                            chunk_size,
-                            chunk_overlap,
-                            True,  # include_metadata
-                            self.current_search_config["enable_rerank"],
-                            "flashrank"
-                        )
-                else:  # hybrid
-                    if not self.embeddings_available:
-                        self.app_instance.notify("Embeddings not available for hybrid search, using plain search", severity="info")
-                        results, context = await perform_plain_rag_search(
-                            self.app_instance,
-                            query,
-                            sources,
-                            self.current_search_config["top_k"],
-                            self.current_search_config["max_context"],
-                            self.current_search_config["enable_rerank"],
-                            "flashrank"
-                        )
-                    else:
-                        results, context = await perform_hybrid_rag_search(
-                            self.app_instance,
-                            query,
-                            sources,
-                            self.current_search_config["top_k"],
-                            self.current_search_config["max_context"],
-                            self.current_search_config["enable_rerank"],
-                            "flashrank",
-                            chunk_size,
-                            chunk_overlap,
+                            results, context = await perform_hybrid_rag_search(
+                                self.app_instance,
+                                query,
+                                sources,
+                                self.current_search_config["top_k"],
+                                self.current_search_config["max_context"],
+                                self.current_search_config["enable_rerank"],
+                                "flashrank",
+                                chunk_size,
+                                chunk_overlap,
                             0.5,  # BM25 weight
                             0.5   # Vector weight
-                        )
+                            )
             
-            await progress_bar.update(progress=80)
+                await progress_bar.update(progress=80)
             
-            # Store results
-            if conversation_mode and self.all_results:
-                # In conversation mode, append new results to existing ones
-                self.all_results.extend(results)
-                self.total_results = len(self.all_results)
-                
-                # Update conversation context
-                self.conversation_context.append({
-                    "query": query,
-                    "response": context,
-                    "timestamp": datetime.now().isoformat()
-                })
-                
-                # Store the context for future searches
-                self.previous_context = context
-                
-                # Log conversation update
-                logger.info(f"Updated conversation context with query: {query}")
-                logger.debug(f"Conversation context now has {len(self.conversation_context)} exchanges")
-            else:
-                # Normal mode or first search in conversation mode
-                self.all_results = results
-                self.total_results = len(results)
-                
-                # Initialize conversation context if this is the first search in conversation mode
-                if conversation_mode:
-                    self.conversation_context = [{
+                # Store results
+                if conversation_mode and self.all_results:
+                    # In conversation mode, append new results to existing ones
+                    self.all_results.extend(results)
+                    self.total_results = len(self.all_results)
+                    
+                    # Update conversation context
+                    self.conversation_context.append({
                         "query": query,
                         "response": context,
                         "timestamp": datetime.now().isoformat()
-                    }]
+                    })
+                    
+                    # Store the context for future searches
                     self.previous_context = context
-                    logger.info(f"Started new conversation with query: {query}")
+                    
+                    # Log conversation update
+                    logger.info(f"Updated conversation context with query: {query}")
+                    logger.debug(f"Conversation context now has {len(self.conversation_context)} exchanges")
+                else:
+                    # Normal mode or first search in conversation mode
+                    self.all_results = results
+                    self.total_results = len(results)
+                
+                    # Initialize conversation context if this is the first search in conversation mode
+                    if conversation_mode:
+                        self.conversation_context = [{
+                            "query": query,
+                            "response": context,
+                            "timestamp": datetime.now().isoformat()
+                        }]
+                        self.previous_context = context
+                        logger.info(f"Started new conversation with query: {query}")
             
-            # Display results with pagination
-            await self._display_results_page(context)
+                    # Display results with pagination
+                await self._display_results_page(context)
             
-            # Enable export button if we have results
-            if results:
-                self.query_one("#export-results-btn").disabled = False
+                # Enable export button if we have results
+                if results:
+                    self.query_one("#export-results-btn").disabled = False
             
-            # Record search to history
-            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-            self.current_search_id = self._record_search_to_history(
+                # Record search to history
+                duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+                self.current_search_id = self._record_search_to_history(
                 query=query,
                 search_type=search_mode,
                 results=results,
                 execution_time_ms=duration_ms,
                 search_params=self.current_search_config
-            )
+                )
             
-            # Update history dropdown
-            history_dropdown = self.query_one(SearchHistoryDropdown)
-            history_dropdown.hide()
+                # Update history dropdown
+                history_dropdown = self.query_one(SearchHistoryDropdown)
+                history_dropdown.hide()
             
                 # Update final status
                 if len(results) > 0:
@@ -1344,15 +1344,15 @@ class SearchRAGWindow(Container):
                         break
         
         # End of retry loop
-        finally:
-            self.is_searching = False
-            progress_bar.add_class("hidden")
-            # Ensure maintenance menu is hidden
-            try:
-                self.query_one("#maintenance-menu").add_class("hidden")
-            except NoMatches:
-                logger.debug("Maintenance menu not found, likely not created yet")
-                pass
+            finally:
+                self.is_searching = False
+                progress_bar.add_class("hidden")
+                # Ensure maintenance menu is hidden
+                try:
+                    self.query_one("#maintenance-menu").add_class("hidden")
+                except NoMatches:
+                    logger.debug("Maintenance menu not found, likely not created yet")
+                    pass
     
     async def _display_results_page(self, context: str) -> None:
         """Display current page of results"""
