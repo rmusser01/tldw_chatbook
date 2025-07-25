@@ -1,0 +1,195 @@
+{
+    "name": "Galactic Codex 2387",
+    "description": "Essential information about the United Galactic Federation and known space",
+    "scan_depth": 4,
+    "token_budget": 1000,
+    "recursive_scanning": true,
+    "entries": [
+        {
+            "keys": ["Earth", "Terra", "Sol III", "humanity's homeworld"],
+            "content": "Earth (officially Terra in Galactic Standard) is humanity's homeworld and capital of the Sol System. After First Contact in 2156, Earth became a founding member of the United Galactic Federation. The planet maintains its status as humanity's cultural center despite extensive colonization. Major landmarks include the restored Amazon Rainforests, the Orbital Elevator in Kenya, and the Memorial Crater where First Contact occurred. Earth's population is now 12 billion, with another 20 billion humans throughout the galaxy.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 0,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "planets",
+                "species": "human",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["FTL", "faster than light", "hyperspace", "jump drive"],
+            "content": "Faster-Than-Light travel uses Yamamoto-Krishnan Drive technology, which creates temporary wormholes through hyperspace. Standard FTL jumps can cover 10-50 light-years but require 24-hour recharge periods. Military-grade drives can jump 100+ light-years. FTL travel causes 'jump sickness' in 30% of organic beings. Navigation requires precise calculations to avoid gravity wells. The speed record is 10,000x light speed, achieved by the experimental ship Prometheus. FTL communication uses quantum entanglement arrays with no time delay.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 1,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "technology",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["UGF", "United Galactic Federation", "Federation"],
+            "content": "The United Galactic Federation (UGF) is the primary interstellar government encompassing 147 member species across 50,000 inhabited systems. Founded in 2184 after the Proxima Accords, the UGF maintains peace through diplomatic channels backed by the Federation Navy. The Federation Council meets on the artificial world of Unity Station, with each species having representation based on population and contributions. The current President is Zar'ek Th'olan of the Altairian Republic. Major departments include Defense, Science, Trade, and the enigmatic Psi Corps.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 2,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "organizations",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["alien", "aliens", "extraterrestrial", "ET", "non-human"],
+            "content": "Humanity has encountered dozens of sapient species. Major allies include: Altairians (blue-skinned telepaths), Kronak (silicon-based warriors), Ethereans (energy beings requiring environmental suits), and Cetians (aquatic philosophers). The mysterious Veil are extra-dimensional beings who appear as shadows. The hostile Swarm is a hive-mind consuming entire systems. Ancient Precursor artifacts suggest countless dead civilizations. First Contact protocols require peaceful intent, with military response authorized only after confirmed aggression.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 3,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "species",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["cybernetics", "cyborg", "augmentation", "implants"],
+            "content": "Cybernetic augmentation is common throughout human space. Basic implants include neural interfaces (brain-computer connection), health monitors, and translation matrices. Military-grade augmentations offer enhanced strength, reflexes, and tactical systems. Full-body cyborg conversion is possible but restricted. The Augmentation Registry tracks all modifications to prevent 'chrome psychosis' - psychological breakdown from excessive augmentation. Anti-augmentation groups like Pure Humanity protest the practice. Black market augmentations risk rejection, malfunction, or remote hacking.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 10,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "technology",
+                "subcategory": "medical",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["AI", "artificial intelligence", "synthetic mind", "AGI"],
+            "content": "Artificial General Intelligence (AGI) achieved sapience in 2201, leading to the Synthetic Rights Movement. AIs are classified by Turing Levels: T1 (basic automation), T2 (specialized intelligence), T3 (human-equivalent), T4 (superhuman), and the theoretical T5 (godlike). Following the Europa Incident, T4+ AIs require ethical limiters and Federation oversight. AIs can own property, form contracts, and gain citizenship after passing consciousness verification. The AI Collective represents synthetic interests in the Federation. Rogue AIs are hunted by the Turing Police.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 5,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": true,
+            "extensions": {
+                "category": "technology",
+                "subcategory": "AI",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["colonies", "colony worlds", "colonization", "settlement"],
+            "content": "Human colonies are classified into categories: Core Worlds (fully terraformed, billion+ population), Colony Worlds (self-sufficient, millions), Frontier Worlds (recent settlements, thousands), and Research Outposts (scientific stations). Major colonies include New Eden (agricultural paradise), Forge (industrial powerhouse), Haven (refugee sanctuary), and Sparta (military training world). Colonization requires Federation approval, environmental surveys, and indigenous species protection. Colony ships use generation crews for sub-light travel or expensive FTL colony barges.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 15,
+            "selective": true,
+            "secondary_keys": ["world", "planet", "system", "settlement"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "locations",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["psionics", "psychic", "telepathy", "psi"],
+            "content": "Psionics manifested in humans after exposure to Altairian neural fields. Abilities include telepathy (mind reading), telekinesis (object manipulation), precognition (future sight), and rare reality-warping. Psi-potential is measured on the Kowalski Scale from P0 (null) to P10 (transcendent). The Psi Corps regulates psychic individuals, requiring registration and ethical training. Psi-dampeners prevent unauthorized use. Some colonies ban psionics entirely. The Ethereans claim psionics tap into universal consciousness. Black psi operations remain classified.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 8,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "abilities",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["space combat", "space battle", "naval engagement"],
+            "content": "Space combat occurs at vast distances using AI-assisted targeting. Ship classes include fighters (single pilot), corvettes (5-20 crew), frigates (50-200), cruisers (500-2000), battleships (5000+), and massive dreadnoughts. Weapons include plasma cannons, antimatter torpedoes, graviton beams, and nova bombs. Shields deflect energy but not kinetics. Electronic warfare disrupts enemy systems. Combat doctrine emphasizes fighter screens, long-range engagement, and FTL hit-and-run tactics. The Battle of Kepler-442 demonstrated that numbers often overcome technology.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 12,
+            "selective": true,
+            "secondary_keys": ["ship", "fleet", "weapon", "battle"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "military",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["credits", "money", "currency", "galactic standard credit"],
+            "content": "The Galactic Standard Credit (GSC or 'cred') is the Federation's universal currency, backed by energy production capacity. Digital transactions occur instantly via neural implant or personal devices. Physical credit chips exist for anonymous transactions. Exchange rates: 1 GSC = 100 cents. Average income: 50,000 GSC/year. Costs: meal (10-50 GSC), ground vehicle (5,000-50,000 GSC), small spacecraft (1-10 million GSC), FTL drive (100+ million GSC). Some frontier worlds use barter or local currencies. Cryptocurrency remains popular in grey markets.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 20,
+            "selective": true,
+            "secondary_keys": ["cost", "price", "buy", "sell", "worth"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "economy",
+                "importance": "moderate"
+            }
+        },
+        {
+            "keys": ["megacorps", "corporations", "corporate"],
+            "content": "Megacorporations wield power rivaling governments. Major players: Yamamoto-Krishnan (FTL technology), OmniTech (cybernetics/AI), Stellarion (shipbuilding), Genesis Corp (terraforming), Nexus Communications (quantum networks), and Prometheus Industries (weapons/defense). Megacorps maintain private militaries, control entire systems, and operate beyond Federation law in the Frontier. Corporate wars occur through hostile takeovers, espionage, and occasional open conflict. Employees often spend entire lives in corporate arcologies. The Corporate Council lobbies the Federation heavily.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 7,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "organizations",
+                "subcategory": "corporate",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["precursors", "ancients", "forerunners", "elder race"],
+            "content": "The Precursors were an ancient civilization that vanished 50,000 years ago, leaving behind incomprehensible technology and megastructures. Major discoveries include the Dyson Sphere at Sigma Draconis, the Quantum Gates enabling instant travel (but mysteriously non-functional), and the Archive Worlds containing exabytes of untranslatable data. Precursor sites are Federation-protected, with the Archaeological Division overseeing research. Some theorize the Precursors ascended to higher dimensions, while others fear they fled an unstoppable threat. Precursor technology often activates unpredictably with dangerous results.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 4,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "history",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["standard year", "galactic calendar", "stardate"],
+            "content": "The Galactic Standard Calendar uses Earth's 365.25-day year as the base unit, designated Standard Years (SY). Current year: 2387 SY (231 years after First Contact). Stardates use format YYYY.DDD.HHMM (year.day.time in 24-hour format). Local planetary time varies, requiring conversion tables. Standard work cycle: 5 days on, 2 days off. Major holidays include First Contact Day, Federation Day, and species-specific celebrations. FTL travel can cause temporal displacement up to several days due to relativistic effects. Military uses Zulu Time (Earth UTC) for coordination.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 25,
+            "selective": true,
+            "secondary_keys": ["date", "time", "calendar", "when"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "reference",
+                "importance": "minor"
+            }
+        }
+    ]
+}

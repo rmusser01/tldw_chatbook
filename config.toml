@@ -140,7 +140,7 @@ enabled = false
 
 # --- TTS Settings ---
 [TTSSettings]
-default_tts_provider = "kokoro"  # Options: "openai", "kokoro", "elevenlabs", "chatterbox", "alltalk"
+default_tts_provider = "kokoro"  # Options: "openai", "kokoro", "elevenlabs", "chatterbox", "alltalk", "higgs"
 default_tts_voice = "af_sky"  # Default voice for TTS
 ALLTALK_TTS_URL_DEFAULT = "http://127.0.0.1:7851"
 ALLTALK_TTS_VOICE_DEFAULT = "female_01.wav"
@@ -186,6 +186,27 @@ CHATTERBOX_CROSSFADE_MS = 50         # Crossfade duration (ms)
 # OpenAI TTS settings
 OPENAI_BASE_URL = "https://api.openai.com/v1/audio/speech"  # Custom API endpoint
 OPENAI_ORG_ID = ""  # Organization ID (optional)
+
+# Higgs Audio TTS settings
+HIGGS_MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"  # Model identifier or local path
+HIGGS_DEVICE = "auto"  # Options: "auto", "cpu", "cuda", "cuda:0" (auto detects CUDA availability)
+HIGGS_ENABLE_FLASH_ATTN = true  # Enable flash attention optimization
+HIGGS_DTYPE = "bfloat16"  # Options: "float32", "float16", "bfloat16"
+HIGGS_VOICE_SAMPLES_DIR = "~/.config/tldw_cli/higgs_voices"  # Voice profile storage
+HIGGS_ENABLE_VOICE_CLONING = true  # Enable zero-shot voice cloning
+HIGGS_MAX_REFERENCE_DURATION = 30  # Maximum reference audio duration in seconds
+HIGGS_DEFAULT_LANGUAGE = "en"  # Default language code
+HIGGS_ENABLE_BACKGROUND_MUSIC = false  # Enable background music mixing
+HIGGS_ENABLE_MULTI_SPEAKER = true  # Enable multi-speaker dialog generation
+HIGGS_SPEAKER_DELIMITER = "|||"  # Delimiter for speaker changes
+HIGGS_MAX_TOKENS = 500  # Maximum tokens per chunk
+HIGGS_TRACK_PERFORMANCE = true  # Track performance metrics
+
+# Higgs Audio generation parameters
+HIGGS_MAX_NEW_TOKENS = 4096  # Maximum tokens to generate
+HIGGS_TEMPERATURE = 0.7  # Sampling temperature (0.0-2.0)
+HIGGS_TOP_P = 0.9  # Nucleus sampling (0.0-1.0)
+HIGGS_REPETITION_PENALTY = 1.1  # Repetition penalty (1.0 = no penalty)
 
 # --- STT Settings ---
 [STTSettings]

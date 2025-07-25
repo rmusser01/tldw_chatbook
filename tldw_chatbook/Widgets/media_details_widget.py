@@ -36,6 +36,10 @@ class MediaDetailsWidget(Container):
     media_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
     format_for_reading = reactive(False)
     
+    # Search-related state
+    search_matches: reactive[List[Tuple[int, int]]] = reactive([])
+    current_match_index: reactive[int] = reactive(-1)
+    
     def __init__(self, app_instance: 'TldwCli', type_slug: str, **kwargs):
         """
         Initialize the MediaDetailsWidget.
@@ -164,6 +168,19 @@ class MediaDetailsWidget(Container):
                 classes="format-reading-checkbox",
                 value=False
             )
+        
+        # Content search section
+        with Container(id=f"content-search-section-{self.type_slug}", classes="content-search-section"):
+            with Horizontal(classes="search-controls"):
+                yield Input(
+                    id=f"content-search-input-{self.type_slug}",
+                    placeholder="Search within content...",
+                    classes="content-search-input"
+                )
+                yield Button("🔍", id=f"content-search-button-{self.type_slug}", classes="content-search-button")
+                yield Button("⬆", id=f"content-search-prev-{self.type_slug}", classes="content-search-nav", disabled=True)
+                yield Button("⬇", id=f"content-search-next-{self.type_slug}", classes="content-search-nav", disabled=True)
+                yield Static("", id=f"content-search-status-{self.type_slug}", classes="content-search-status")
         
         # Content section (read-only)
         yield TextArea(
@@ -695,4 +712,129 @@ class MediaDetailsWidget(Container):
             logger.error(f"Error loading chunking config: {e}")
         except Exception as e:
             logger.error(f"Unexpected error loading chunking config: {e}")
+    
+    # Content search methods
+    @on(Button.Pressed, ".content-search-button")
+    @on(Input.Submitted, ".content-search-input")
+    async def _perform_content_search(self, event) -> None:
+        """Perform search within the content."""
+        try:
+            search_input = self.query_one(f"#content-search-input-{self.type_slug}", Input)
+            search_term = search_input.value.strip()
+            
+            if not search_term:
+                self.search_matches = []
+                self.current_match_index = -1
+                self._update_search_status()
+                return
+            
+            content_area = self.query_one(f"#content-display-{self.type_slug}", TextArea)
+            content = content_area.text
+            
+            # Find all matches (case-insensitive)
+            matches = []
+            search_lower = search_term.lower()
+            content_lower = content.lower()
+            start = 0
+            
+            while True:
+                pos = content_lower.find(search_lower, start)
+                if pos == -1:
+                    break
+                matches.append((pos, pos + len(search_term)))
+                start = pos + 1
+            
+            self.search_matches = matches
+            
+            if matches:
+                self.current_match_index = 0
+                self._highlight_current_match()
+                self._update_search_navigation()
+            else:
+                self.current_match_index = -1
+                self.app_instance.notify(f"No matches found for '{search_term}'", severity="information")
+            
+            self._update_search_status()
+            
+        except Exception as e:
+            logger.error(f"Error performing content search: {e}")
+            self.app_instance.notify("Search error occurred", severity="error")
+    
+    @on(Button.Pressed, ".content-search-nav")
+    async def _navigate_search_results(self, event: Button.Pressed) -> None:
+        """Navigate through search results."""
+        if not self.search_matches:
+            return
+        
+        button_id = event.button.id
+        
+        if f"content-search-prev-{self.type_slug}" in button_id:
+            self.current_match_index = (self.current_match_index - 1) % len(self.search_matches)
+        elif f"content-search-next-{self.type_slug}" in button_id:
+            self.current_match_index = (self.current_match_index + 1) % len(self.search_matches)
+        
+        self._highlight_current_match()
+        self._update_search_status()
+    
+    def _highlight_current_match(self) -> None:
+        """Highlight the current search match in the content."""
+        if self.current_match_index < 0 or not self.search_matches:
+            return
+        
+        try:
+            content_area = self.query_one(f"#content-display-{self.type_slug}", TextArea)
+            start, end = self.search_matches[self.current_match_index]
+            
+            # Calculate line and column for the match
+            text_before = content_area.text[:start]
+            line = text_before.count('\n')
+            last_newline = text_before.rfind('\n')
+            column = start - last_newline - 1 if last_newline != -1 else start
+            
+            # Move cursor to the match
+            content_area.cursor_location = (line, column)
+            content_area.selection = (line, column, line, column + (end - start))
+            
+            # Scroll to make the match visible
+            content_area.scroll_to_center(line)
+            
+        except Exception as e:
+            logger.error(f"Error highlighting match: {e}")
+    
+    def _update_search_status(self) -> None:
+        """Update the search status display."""
+        try:
+            status = self.query_one(f"#content-search-status-{self.type_slug}", Static)
+            
+            if not self.search_matches:
+                status.update("")
+            else:
+                status.update(f"{self.current_match_index + 1} of {len(self.search_matches)}")
+                
+        except Exception as e:
+            logger.error(f"Error updating search status: {e}")
+    
+    def _update_search_navigation(self) -> None:
+        """Update search navigation button states."""
+        try:
+            prev_button = self.query_one(f"#content-search-prev-{self.type_slug}", Button)
+            next_button = self.query_one(f"#content-search-next-{self.type_slug}", Button)
+            
+            has_matches = len(self.search_matches) > 0
+            prev_button.disabled = not has_matches
+            next_button.disabled = not has_matches
+            
+        except Exception as e:
+            logger.error(f"Error updating search navigation: {e}")
+    
+    def watch_search_matches(self, old_matches: List[Tuple[int, int]], new_matches: List[Tuple[int, int]]) -> None:
+        """React to changes in search matches."""
+        self._update_search_navigation()
+        if not new_matches:
+            # Clear any existing selection
+            try:
+                content_area = self.query_one(f"#content-display-{self.type_slug}", TextArea)
+                content_area.selection = None
+            except Exception:
+                pass
     

@@ -108,6 +108,12 @@ class TTSBackendManager:
             BackendRegistry.register("alltalk_*", AllTalkTTSBackend)
         except ImportError:
             logger.warning("AllTalk TTS backend not available")
+        
+        try:
+            from tldw_chatbook.TTS.backends.higgs import HiggsAudioTTSBackend
+            BackendRegistry.register("local_higgs_*", HiggsAudioTTSBackend)
+        except ImportError:
+            logger.warning("Higgs Audio TTS backend not available")
     
     async def get_backend(self, backend_id: str) -> Optional[TTSBackendBase]:
         if backend_id not in self._backends:
@@ -189,11 +195,46 @@ class TTSBackendManager:
             }
             config.update(kokoro_defaults)
         
+        elif backend_id.startswith("local_higgs"):
+            # Get Higgs-specific configuration
+            import os
+            
+            higgs_defaults = {
+                "HIGGS_MODEL_PATH": os.getenv("HIGGS_MODEL_PATH",
+                    self.app_config.get("HIGGS_MODEL_PATH", "bosonai/higgs-audio-v2-generation-3B-base")),
+                "HIGGS_DEVICE": self.app_config.get("HIGGS_DEVICE", "cuda" if self._check_cuda_available() else "cpu"),
+                "HIGGS_ENABLE_FLASH_ATTN": self.app_config.get("HIGGS_ENABLE_FLASH_ATTN", True),
+                "HIGGS_DTYPE": self.app_config.get("HIGGS_DTYPE", "bfloat16"),
+                "HIGGS_VOICE_SAMPLES_DIR": os.path.expanduser(
+                    self.app_config.get("HIGGS_VOICE_SAMPLES_DIR", "~/.config/tldw_cli/higgs_voices")),
+                "HIGGS_ENABLE_VOICE_CLONING": self.app_config.get("HIGGS_ENABLE_VOICE_CLONING", True),
+                "HIGGS_MAX_REFERENCE_DURATION": self.app_config.get("HIGGS_MAX_REFERENCE_DURATION", 30),
+                "HIGGS_DEFAULT_LANGUAGE": self.app_config.get("HIGGS_DEFAULT_LANGUAGE", "en"),
+                "HIGGS_ENABLE_BACKGROUND_MUSIC": self.app_config.get("HIGGS_ENABLE_BACKGROUND_MUSIC", False),
+                "HIGGS_ENABLE_MULTI_SPEAKER": self.app_config.get("HIGGS_ENABLE_MULTI_SPEAKER", True),
+                "HIGGS_SPEAKER_DELIMITER": self.app_config.get("HIGGS_SPEAKER_DELIMITER", "|||"),
+                "HIGGS_MAX_TOKENS": self.app_config.get("HIGGS_MAX_TOKENS", 500),
+                "HIGGS_TRACK_PERFORMANCE": self.app_config.get("HIGGS_TRACK_PERFORMANCE", True),
+                "HIGGS_MAX_NEW_TOKENS": self.app_config.get("HIGGS_MAX_NEW_TOKENS", 4096),
+                "HIGGS_TEMPERATURE": self.app_config.get("HIGGS_TEMPERATURE", 0.7),
+                "HIGGS_TOP_P": self.app_config.get("HIGGS_TOP_P", 0.9),
+                "HIGGS_REPETITION_PENALTY": self.app_config.get("HIGGS_REPETITION_PENALTY", 1.1),
+            }
+            config.update(higgs_defaults)
+        
         # Finally, apply backend-specific config overrides (highest priority)
         backend_specific = self.app_config.get(backend_id, {})
         config.update(backend_specific)
         
         return config
+    
+    def _check_cuda_available(self) -> bool:
+        """Check if CUDA is available"""
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except ImportError:
+            return False
     
     def list_available_backends(self) -> List[str]:
         """List all available backend IDs"""

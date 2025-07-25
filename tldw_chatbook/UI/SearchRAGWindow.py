@@ -229,6 +229,30 @@ class SearchResult(Container):
                     yield Static("[bold]Full Content:[/bold]", classes="expanded-section-title")
                     yield Static(content, classes="result-full-content")
                     
+                    # Citations if available
+                    if self.result.get('citations'):
+                        yield Static("[bold]Sources:[/bold]", classes="expanded-section-title")
+                        citations = self.result['citations']
+                        
+                        # Group citations by document
+                        citations_by_doc = {}
+                        for citation in citations:
+                            doc_title = citation.get('document_title', 'Unknown')
+                            if doc_title not in citations_by_doc:
+                                citations_by_doc[doc_title] = []
+                            citations_by_doc[doc_title].append(citation)
+                        
+                        # Display citations grouped by document
+                        for doc_title, doc_citations in citations_by_doc.items():
+                            yield Static(f"📄 {doc_title}", classes="citation-doc-title")
+                            for citation in doc_citations:
+                                match_type = citation.get('match_type', 'unknown')
+                                confidence = citation.get('confidence', 0)
+                                text_snippet = citation.get('text', '')[:100] + '...' if len(citation.get('text', '')) > 100 else citation.get('text', '')
+                                
+                                citation_text = f"  • [{match_type}] ({confidence:.0%}) {text_snippet}"
+                                yield Static(citation_text, classes=f"citation-item citation-{match_type}")
+                    
                     # Full metadata
                     if self.result.get('metadata'):
                         yield Static("[bold]All Metadata:[/bold]", classes="expanded-section-title")

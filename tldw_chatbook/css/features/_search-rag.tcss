@@ -711,6 +711,34 @@
     margin: 1 0;
 }
 
+.citation-doc-title {
+    color: $primary;
+    margin: 1 0 0 1;
+    text-style: bold;
+}
+
+.citation-item {
+    color: $text-muted;
+    margin: 0 0 0 2;
+    padding: 0;
+}
+
+.citation-exact {
+    color: $success;
+}
+
+.citation-semantic {
+    color: $primary;
+}
+
+.citation-fuzzy {
+    color: $warning;
+}
+
+.citation-keyword {
+    color: $secondary;
+}
+
 .result-full-content {
     color: $text;
     margin-bottom: 1;
