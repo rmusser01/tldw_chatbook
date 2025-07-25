@@ -9,6 +9,11 @@ os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
+# Disable Textual logging in production
+# Set to a path to enable logging for debugging: os.environ['TEXTUAL_LOG'] = '/tmp/textual.log'
+if 'TEXTUAL_LOG' not in os.environ:
+    os.environ['TEXTUAL_LOG'] = ''  # Empty string disables logging
+
 # Imports
 import asyncio
 import concurrent.futures
