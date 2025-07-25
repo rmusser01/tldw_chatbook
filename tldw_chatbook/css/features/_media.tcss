@@ -286,6 +286,43 @@ MediaDetailsWidget {
     padding: 1;
 }
 
+/* Content search section */
+.content-search-section {
+    width: 100%;
+    padding: 1;
+    background: $boost;
+    border-bottom: solid $primary-background;
+}
+
+.search-controls {
+    layout: horizontal;
+    align: center middle;
+    height: 3;
+}
+
+.content-search-input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+.content-search-button {
+    width: 4;
+    min-width: 4;
+    margin-right: 1;
+}
+
+.content-search-nav {
+    width: 3;
+    min-width: 3;
+    margin-right: 1;
+}
+
+.content-search-status {
+    width: auto;
+    color: $text-muted;
+    text-style: italic;
+}
+
 /* --- Deleted Items Styling --- */
 .deleted-media-item {
     opacity: 0.6;

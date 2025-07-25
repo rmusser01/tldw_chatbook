@@ -199,14 +199,31 @@ async def search_semantic(
     # Convert to our SearchResult format
     results = []
     for result in rag_results:
-        results.append(SearchResult(
-            source=result.source,
-            id=result.id,
-            title=result.title,
-            content=result.content,
-            score=result.score,
-            metadata=result.metadata
-        ))
+        # Check if this result has citations
+        if hasattr(result, 'citations') and result.citations:
+            # Include citations in metadata
+            metadata = result.metadata.copy() if result.metadata else {}
+            metadata['_has_citations'] = True
+            metadata['_citations'] = [c.to_dict() for c in result.citations]
+            
+            results.append(SearchResult(
+                source=getattr(result, 'source', 'unknown'),
+                id=result.id,
+                title=getattr(result, 'title', result.document[:50]),
+                content=result.document,
+                score=result.score,
+                metadata=metadata
+            ))
+        else:
+            # Basic result without citations
+            results.append(SearchResult(
+                source=getattr(result, 'source', 'unknown'),
+                id=result.id,
+                title=getattr(result, 'title', result.document[:50]),
+                content=getattr(result, 'content', result.document),
+                score=result.score,
+                metadata=result.metadata if hasattr(result, 'metadata') else {}
+            ))
     
     return results
 

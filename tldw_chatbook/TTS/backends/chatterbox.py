@@ -861,6 +861,19 @@ class ChatterboxTTSBackend(TTSBackendBase):
             if not os.path.exists(reference_audio_path):
                 logger.warning(f"Reference audio not found: {reference_audio_path}")
                 reference_audio_path = None
+        elif voice.startswith("profile:"):
+            # Handle voice profile
+            profile_name = voice[8:]  # Remove "profile:" prefix
+            # Try to get profile from voice manager
+            try:
+                from .chatterbox_voice_manager import ChatterboxVoiceManager
+                manager = ChatterboxVoiceManager(self.voice_dir)
+                reference_audio_path = manager.get_reference_audio_path(profile_name)
+                if not reference_audio_path:
+                    logger.warning(f"Voice profile '{profile_name}' not found")
+            except Exception as e:
+                logger.error(f"Failed to load voice profile: {e}")
+                reference_audio_path = None
         elif voice != "default":
             # Check for predefined voice
             predefined_path = self.voice_dir / f"{voice}.wav"
@@ -937,6 +950,14 @@ class ChatterboxTTSBackend(TTSBackendBase):
                         text, reference_audio_path, exaggeration, cfg_weight, temperature
                     )
                 
+                # Report near completion
+                await self._report_progress(
+                    progress=0.9,
+                    processed=1,
+                    total=1,
+                    status="Finalizing audio"
+                )
+                
                 # Convert format if needed
                 if request.response_format != "wav":
                     output_bytes = await self.audio_service.convert_audio_format(
@@ -944,6 +965,15 @@ class ChatterboxTTSBackend(TTSBackendBase):
                     )
                 else:
                     output_bytes = audio_bytes
+                
+                # Report completion
+                await self._report_progress(
+                    progress=1.0,
+                    processed=1,
+                    total=1,
+                    status="Generation complete",
+                    metrics={"format": request.response_format}
+                )
                 
                 yield output_bytes
                 

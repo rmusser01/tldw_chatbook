@@ -1,0 +1,178 @@
+{
+    "name": "Hidden World Primer",
+    "description": "The secret supernatural society existing alongside the mundane modern world",
+    "scan_depth": 3,
+    "token_budget": 700,
+    "recursive_scanning": false,
+    "entries": [
+        {
+            "keys": ["The Veil", "masquerade", "secrecy"],
+            "content": "The Veil is the magical barrier that separates the mundane world from the supernatural. It's maintained by the collective unconscious disbelief of humanity and reinforced by the Treaty of Shadows (1692). When mundane humans witness magic, the Veil causes them to rationalize it away or forget entirely. Only those with supernatural blood, magical training, or who've been 'awakened' can see through the Veil. The Bureau of Supernatural Affairs monitors Veil breaches, with Memory Adjustment Teams deployed for serious incidents.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 0,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "fundamental_concepts",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["vampire", "vampires", "bloodsucker", "kindred"],
+            "content": "Modern vampires are organized into Courts based on major cities. They're not undead but infected with the Sanguine Virus, which grants immortality, enhanced abilities, and the need for blood. Sunlight weakens but doesn't kill them - they use high-SPF sunscreen and UV-blocking clothing. Vampires run many nighttime businesses: clubs, security firms, and 24-hour services. The five major bloodlines each have different abilities: Dracul (shapeshifting), Bathory (mind control), Nostros (prophecy), Morrigan (shadow manipulation), and Zhou (energy absorption). They feed through blood banks, willing donors, or synthetic blood.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 5,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "species",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["werewolf", "werewolves", "lycanthrope", "shifter"],
+            "content": "Werewolves are hereditary shapeshifters organized into Packs, typically 10-30 individuals controlling territory in rural and suburban areas. They transform at will (not just full moons) into wolf, hybrid, or human forms. Modern packs often run legitimate businesses: construction, security, outdoor recreation, and veterinary services. The Lunar Accords govern inter-pack relations and territory disputes. Werewolves have enhanced senses, rapid healing, and pack telepathy. They're vulnerable to silver and wolfsbane. Urban werewolves often work as police, firefighters, or park rangers.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 6,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "species",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["witch", "witches", "wizard", "mage", "sorcerer"],
+            "content": "Modern practitioners are organized into Covens (collaborative groups) or practice as Solitaries. Magic requires energy drawn from ley lines, personal reserves, or ritual components. The five paths are: Elemental (controlling nature), Ceremonial (ritual magic), Hedge (herbs and potions), Tech-Witchery (merging magic with technology), and Chaos (unpredictable reality manipulation). Practitioners often hide in plain sight as alternative medicine providers, tech consultants, or artisans. The Academy of Arcane Arts has online courses and physical campuses hidden in major universities. Magic shops operate as occult bookstores or new age shops.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 3,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "magic_users",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["fae", "fairy", "faerie", "sidhe", "fair folk"],
+            "content": "The Fae inhabit the parallel realm of Arcadia, accessible through thin places like old forests, stone circles, and certain nightclubs. They're divided into Seelie (benevolent) and Unseelie (malevolent) Courts. Fae cannot lie but excel at misdirection. They're bound by contracts and ancient rules. Iron burns them, and they're compelled to repay debts. Modern fae often work in entertainment, law, fashion, or social media - fields where glamour and influence reign. Changelings (human-raised fae or fae-raised humans) serve as ambassadors between worlds. Never give a fae your full name or accept gifts without clarifying terms.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 7,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "species",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["Bureau", "BSA", "Bureau of Supernatural Affairs"],
+            "content": "The Bureau of Supernatural Affairs is the primary governmental organization managing supernatural-mundane relations. Founded in 1947 after the Roswell Incident, the BSA operates as a black-budget agency within homeland security. Departments include: Veil Maintenance (keeping magic secret), Integration Services (helping supernaturals blend in), Enforcement Division (supernatural law enforcement), Research & Containment (studying dangerous artifacts/entities), and Diplomatic Corps (managing inter-species relations). Agents are recruited from military, law enforcement, or are supernaturals themselves. Regional offices hide in federal buildings, with the headquarters beneath Denver International Airport.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 1,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": true,
+            "extensions": {
+                "category": "organizations",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["Hunter", "Hunters", "hunt", "hunting"],
+            "content": "Hunters are humans who've discovered the supernatural world and dedicated themselves to protecting humanity. They're loosely organized into Cells (3-10 members) networked through encrypted forums and the Hunter's Database. Most hunters have day jobs and hunt part-time. They use conventional weapons with supernatural modifications: silver bullets, blessed weapons, iron chains, and UV lights. The Code of the Hunt forbids killing peaceful supernaturals. Major hunter organizations include: The Watchers (scholars and researchers), Silver Dawn (militant extremists), and the Night Watch (supernatural-human alliance). Hunters often suffer from PTSD and paranoia.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 10,
+            "selective": true,
+            "secondary_keys": ["kill", "protect", "fight", "weapon"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "factions",
+                "importance": "moderate"
+            }
+        },
+        {
+            "keys": ["neutral ground", "sanctuary", "safe haven"],
+            "content": "Neutral grounds are locations where supernatural violence is forbidden by ancient pacts. Violators face immediate retribution from the location's guardian spirits. Major neutral grounds include: The Crossroads Club (supernatural nightclub in every major city), St. Mary's Hospital (treats supernatural injuries), the Metropolitan Library's Restricted Section, and Neutral Grounds Coffee (24-hour café chain run by retired hunters). These spaces allow enemies to meet peacefully, conduct business, and seek medical help. Each has unique rules: no shapeshifting, weapons peace-bonded, or true names used only.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 15,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "locations",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["ley lines", "magical energy", "nodes", "mana"],
+            "content": "Ley lines are invisible rivers of magical energy crisscrossing the Earth. Where lines intersect, Nodes form - powerful magical hotspots. Major cities are built on nodes: London, New York, Tokyo, Cairo. Ley lines fluctuate with celestial events, strongest during full moons and solstices. Practitioners tap into ley lines for power, but overuse can cause 'mana burn' or attract unwanted attention. Corporations secretly map ley lines for industrial magic use. The Grand Convergence occurs every 50 years when all major lines align, causing worldwide magical surges. Ley line maps are valuable black market items.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 2,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "magic",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["artifact", "magical item", "enchanted object"],
+            "content": "Magical artifacts range from minor charms to world-ending relics. They're classified by the Chicago Scale: Class 1 (minor enchantments), Class 2 (significant power), Class 3 (dangerous), Class 4 (catastrophic), Class 5 (apocalyptic). Common artifacts include: healing amulets, scrying mirrors, blessed weapons, and ward stones. The BSA maintains the Artifact Registry and storage facilities. Black market artifact dealers operate through dark web sites and supernatural auctions. Creating new artifacts requires rare materials, astronomical alignments, and often personal sacrifice. Many mundane antiques hide dormant enchantments waiting for activation.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 8,
+            "selective": true,
+            "secondary_keys": ["power", "magic", "enchanted", "cursed"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "items",
+                "importance": "moderate"
+            }
+        },
+        {
+            "keys": ["half-blood", "hybrid", "dhampir", "halfling"],
+            "content": "Half-bloods result from supernatural-human relationships and often struggle between two worlds. Common types include: Dhampirs (half-vampire, can daywalk but need some blood), Wolfkin (half-werewolf, enhanced senses without full transformation), Fae-touched (half-fae, minor glamour and cannot lie), and Nephilim (half-angel/demon, rare and powerful). Half-bloods often work as mediators, translators, or BSA agents. They face discrimination from both communities. Support groups like 'Between Worlds' help with identity issues. Many half-bloods discover their heritage during puberty when powers manifest, leading to the Young Supernaturals Initiative for training and integration.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 12,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "species",
+                "subcategory": "hybrid",
+                "importance": "moderate"
+            }
+        },
+        {
+            "keys": ["mundane", "normal", "mortal", "human"],
+            "content": "Mundanes are humans without supernatural abilities or awareness, comprising 99% of the population. The Veil protects them from supernatural knowledge, making them rationalize away magical events. Some mundanes are 'Veil-touched' - they sense something's wrong but can't quite see through. Mundanes unknowingly interact with supernaturals daily: their barista might be a witch, their Uber driver a vampire, their doctor a fae healer. When mundanes are forcibly awakened to the supernatural, they often experience 'Veil Shock' - mental breakdown requiring BSA intervention. Some mundanes carry latent supernatural genes that activate under stress.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 20,
+            "selective": true,
+            "secondary_keys": ["people", "person", "civilian", "unaware"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "terminology",
+                "importance": "fundamental"
+            }
+        }
+    ]
+}

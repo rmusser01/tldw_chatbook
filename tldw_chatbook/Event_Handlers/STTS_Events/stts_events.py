@@ -11,7 +11,7 @@ import tempfile
 #
 # Third-party imports
 from textual.message import Message
-from textual.widgets import Button, TextArea, Select, Input, RichLog
+from textual.widgets import Button, TextArea, Select, Input, RichLog, Static, ProgressBar
 #
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
@@ -154,6 +154,21 @@ class STTSEventHandler:
     async def _generate_tts_worker(self, event: STTSPlaygroundGenerateEvent, playground=None) -> None:
         """Worker function for TTS generation"""
         try:
+            # Show progress container if available
+            if playground:
+                def show_progress():
+                    try:
+                        status_container = playground.query_one("#generation-status-container")
+                        status_container.remove_class("hidden")
+                        progress_bar = playground.query_one("#generation-progress")
+                        progress_bar.update(total=100, progress=0)
+                    except Exception as e:
+                        logger.debug(f"Could not show progress container: {e}")
+                
+                if hasattr(playground, 'call_from_thread'):
+                    playground.call_from_thread(show_progress)
+                else:
+                    show_progress()
             # Validate and clean format
             format_value = event.format
             if isinstance(format_value, tuple):
@@ -197,6 +212,8 @@ class STTSEventHandler:
                 provider_lower = "chatterbox"
             elif "alltalk" in provider_lower:
                 provider_lower = "alltalk"
+            elif "higgs" in provider_lower:
+                provider_lower = "higgs"
             
             if provider_lower == "openai":
                 # Also convert model to lowercase
@@ -225,7 +242,22 @@ class STTSEventHandler:
                 if event.voice.startswith("custom:"):
                     # Voice contains reference audio path
                     request.voice = event.voice
+                elif event.voice.startswith("profile:"):
+                    # Voice is a saved profile
+                    request.voice = event.voice
                 # Add extra params to request for Chatterbox
+                if event.extra_params:
+                    request.extra_params = event.extra_params
+            elif provider_lower == "higgs":
+                internal_model_id = "local_higgs_v2"
+                # Handle voice cloning reference
+                if event.voice.startswith("custom:"):
+                    # Voice contains reference audio path
+                    request.voice = event.voice
+                elif event.voice.startswith("profile:"):
+                    # Voice is a saved profile
+                    request.voice = event.voice
+                # Pass extra params for Higgs features
                 if event.extra_params:
                     request.extra_params = event.extra_params
             elif provider_lower == "alltalk":
@@ -243,13 +275,61 @@ class STTSEventHandler:
                 
                 if hasattr(playground, 'call_from_thread'):
                     playground.call_from_thread(update_log, f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]")
+                    if provider_lower in ["higgs", "chatterbox", "kokoro"]:
+                        playground.call_from_thread(update_log, "[dim]⚠️  First-time model loading may take 2-5 minutes...[/dim]")
+                        playground.call_from_thread(update_log, "[dim]The model will be cached for faster subsequent generations.[/dim]")
                 else:
                     update_log(f"[bold yellow]Starting generation with {event.provider}...[/bold yellow]")
+                    if provider_lower in ["higgs", "chatterbox", "kokoro"]:
+                        update_log("[dim]⚠️  First-time model loading may take 2-5 minutes...[/dim]")
+                        update_log("[dim]The model will be cached for faster subsequent generations.[/dim]")
+            
+            # Define progress callback
+            async def progress_callback(info: Dict[str, Any]) -> None:
+                """Update UI with generation progress"""
+                if playground:
+                    def update_progress():
+                        try:
+                            # Update status text
+                            status_text = playground.query_one("#generation-status-text", Static)
+                            status_text.update(info.get("status", "Generating..."))
+                            
+                            # Update progress bar
+                            progress_bar = playground.query_one("#generation-progress", ProgressBar)
+                            progress = info.get("progress", 0) * 100
+                            progress_bar.update(progress=progress)
+                            
+                            # Log additional details
+                            log = playground.query_one("#tts-generation-log", RichLog)
+                            if "metrics" in info:
+                                metrics = info["metrics"]
+                                if "audio_duration" in metrics:
+                                    log.write(f"[dim]Generated {metrics['audio_duration']:.1f}s of audio[/dim]")
+                                elif "current_chunk" in info:
+                                    log.write(f"[dim]Processing chunk {info.get('current_chunk')}/{info.get('total_chunks', '?')}[/dim]")
+                        except Exception as e:
+                            logger.debug(f"Progress update error: {e}")
+                    
+                    if hasattr(playground, 'call_from_thread'):
+                        playground.call_from_thread(update_progress)
+                    else:
+                        update_progress()
+            
+            # Set progress callback on the backend if supported
+            try:
+                backend = await self._stts_service.backend_manager.get_backend(internal_model_id)
+                if backend and hasattr(backend, 'set_progress_callback'):
+                    backend.set_progress_callback(progress_callback)
+                    logger.debug(f"Set progress callback for {internal_model_id}")
+            except Exception as e:
+                logger.debug(f"Could not set progress callback: {e}")
             
             # Generate audio with provider-specific settings
             audio_data = b""
             chunk_count = 0
             total_size = 0
+            start_time = asyncio.get_event_loop().time()
+            last_status_time = start_time
             
             # Pass extra params to the service if needed
             if event.provider == "elevenlabs" and event.extra_params:
@@ -258,19 +338,60 @@ class STTSEventHandler:
                 request_dict = request.dict()
                 request_dict.update(event.extra_params)
                 # Note: This requires the backend to support these extra parameters
-                
-            async for chunk in self._stts_service.generate_audio_stream(request, internal_model_id):
-                audio_data += chunk
-                chunk_count += 1
-                total_size = len(audio_data)
+            
+            # Create a task to show periodic status while waiting
+            async def show_waiting_status():
+                wait_count = 0
+                while chunk_count == 0:  # While we haven't received any chunks yet
+                    await asyncio.sleep(5)  # Check every 5 seconds
+                    wait_count += 1
+                    if playground and chunk_count == 0:  # Still waiting
+                        elapsed = int(asyncio.get_event_loop().time() - start_time)
+                        wait_msg = f"[yellow]⏳ Still loading model... ({elapsed}s elapsed)[/yellow]"
+                        if wait_count > 12:  # After 1 minute
+                            wait_msg += "\n[dim]This is taking longer than usual. Please be patient.[/dim]"
+                        
+                        def update_wait():
+                            log = playground.query_one("#tts-generation-log", RichLog)
+                            log.write(wait_msg)
+                        
+                        if hasattr(playground, 'call_from_thread'):
+                            playground.call_from_thread(update_wait)
+                        else:
+                            update_wait()
+            
+            # Start the waiting status task
+            status_task = asyncio.create_task(show_waiting_status())
+            
+            try:
+                async for chunk in self._stts_service.generate_audio_stream(request, internal_model_id):
+                    audio_data += chunk
+                    chunk_count += 1
+                    total_size = len(audio_data)
+                    
+                    # Cancel the waiting status task once we start receiving data
+                    if chunk_count == 1:
+                        status_task.cancel()
                 
                 # Update progress periodically (every 10 chunks)
                 if chunk_count % 10 == 0 and playground:
-                    progress_msg = f"[cyan]Generating... {total_size / 1024:.1f} KB received[/cyan]"
+                    progress_msg = f"[cyan]Streaming audio... {total_size / 1024:.1f} KB received[/cyan]"
                     if hasattr(playground, 'call_from_thread'):
                         playground.call_from_thread(update_log, progress_msg)
                     else:
                         update_log(progress_msg)
+                
+                # Also update for first chunk to show we're receiving data
+                if chunk_count == 1 and playground:
+                    first_msg = "[green]✓ Model loaded, receiving audio data...[/green]"
+                    if hasattr(playground, 'call_from_thread'):
+                        playground.call_from_thread(update_log, first_msg)
+                    else:
+                        update_log(first_msg)
+            
+            finally:
+                # Make sure to cancel the status task
+                status_task.cancel()
             
             # Save to temporary WAV file first
             import tempfile
@@ -362,6 +483,18 @@ class STTSEventHandler:
             if playground:
                 try:
                     playground.query_one("#tts-generate-btn", Button).disabled = False
+                    # Hide progress container
+                    def hide_progress():
+                        try:
+                            status_container = playground.query_one("#generation-status-container")
+                            status_container.add_class("hidden")
+                        except Exception:
+                            pass
+                    
+                    if hasattr(playground, 'call_from_thread'):
+                        playground.call_from_thread(hide_progress)
+                    else:
+                        hide_progress()
                 except (OSError, FileNotFoundError):
                     pass
     
@@ -393,6 +526,23 @@ class STTSEventHandler:
                 "kokoro_device": ("app_tts", "KOKORO_DEVICE"),
                 "kokoro_use_onnx": ("app_tts", "KOKORO_USE_ONNX"),
                 "kokoro_model_path": ("app_tts", "KOKORO_MODEL_PATH"),
+                
+                # Higgs settings
+                "HIGGS_MODEL_PATH": ("HiggsSettings", "model_path"),
+                "HIGGS_VOICE_SAMPLES_DIR": ("HiggsSettings", "voice_samples_dir"),
+                "HIGGS_DEVICE": ("HiggsSettings", "device"),
+                "HIGGS_ENABLE_FLASH_ATTN": ("HiggsSettings", "enable_flash_attn"),
+                "HIGGS_DTYPE": ("HiggsSettings", "dtype"),
+                "HIGGS_MAX_REFERENCE_DURATION": ("HiggsSettings", "max_reference_duration"),
+                "HIGGS_DEFAULT_LANGUAGE": ("HiggsSettings", "default_language"),
+                "HIGGS_ENABLE_VOICE_CLONING": ("HiggsSettings", "enable_voice_cloning"),
+                "HIGGS_ENABLE_MULTI_SPEAKER": ("HiggsSettings", "enable_multi_speaker"),
+                "HIGGS_SPEAKER_DELIMITER": ("HiggsSettings", "speaker_delimiter"),
+                "HIGGS_TRACK_PERFORMANCE": ("HiggsSettings", "track_performance"),
+                "HIGGS_MAX_NEW_TOKENS": ("HiggsSettings", "max_new_tokens"),
+                "HIGGS_TEMPERATURE": ("HiggsSettings", "temperature"),
+                "HIGGS_TOP_P": ("HiggsSettings", "top_p"),
+                "HIGGS_TOP_K": ("HiggsSettings", "top_k"),
             }
             
             # Save each setting
