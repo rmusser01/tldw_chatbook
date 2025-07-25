@@ -2,10 +2,12 @@
 
 This guide covers the installation, configuration, and usage of the Higgs Audio V2 text-to-speech backend in tldw_chatbook.
 
+> ⚠️ **IMPORTANT**: Higgs Audio requires manual installation from GitHub before using the pip extras. See [Installation](#installation) section below.
+
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Installation](#installation)
+1. [Installation](#installation) ⚠️ **Start Here**
+2. [Overview](#overview)
 3. [Configuration](#configuration)
 4. [Basic Usage](#basic-usage)
 5. [Voice Cloning](#voice-cloning)
@@ -14,6 +16,107 @@ This guide covers the installation, configuration, and usage of the Higgs Audio 
 8. [Advanced Features](#advanced-features)
 9. [Troubleshooting](#troubleshooting)
 10. [Examples](#examples)
+
+## Installation
+
+> ⚠️ **CRITICAL**: The `boson-multimodal` package cannot be installed via pip and must be installed from GitHub BEFORE installing tldw_chatbook's Higgs extras.
+
+### Prerequisites Check
+
+Before installing, ensure you have:
+- ✅ Python 3.11 or higher
+- ✅ 8GB+ RAM (16GB+ recommended for smooth operation)
+- ✅ ~6GB free disk space for models
+- ✅ (Optional) CUDA-capable GPU for faster generation
+
+### Installation Options
+
+#### Option 1: Automated Installation (Recommended)
+
+We provide installation scripts that automate the entire process:
+
+```bash
+# Unix/Linux/macOS
+./scripts/install_higgs.sh
+
+# Windows
+scripts\install_higgs.bat
+```
+
+The script will:
+- Check system requirements
+- Clone and install Higgs Audio
+- Install tldw_chatbook with Higgs support
+- Verify the installation
+
+#### Option 2: Manual Installation
+
+If you prefer to install manually or the script doesn't work for your system:
+
+##### Step 1: Install Higgs Audio from GitHub (REQUIRED)
+
+```bash
+# Clone the Higgs Audio repository
+git clone https://github.com/boson-ai/higgs-audio.git
+cd higgs-audio
+
+# Install Higgs requirements
+pip install -r requirements.txt
+
+# Install Higgs in development mode
+pip install -e .
+
+# Return to your project directory
+cd ..
+```
+
+##### Step 2: Install tldw_chatbook with Higgs Support
+
+```bash
+# From the tldw_chatbook directory
+pip install -e ".[higgs_tts]"
+```
+
+### Step 3: Verify Installation
+
+```bash
+# Run the verification script
+python scripts/verify_higgs_installation.py
+
+# Or manually test imports
+python -c "import boson_multimodal; print('✅ Higgs Audio core installed successfully!')"
+python -c "import torch, torchaudio, librosa, soundfile; print('✅ All dependencies installed successfully!')"
+```
+
+### Step 4: Download Model (Optional)
+
+The model will be downloaded automatically on first use (~6GB), but you can pre-download:
+
+```python
+from huggingface_hub import snapshot_download
+snapshot_download("bosonai/higgs-audio-v2-generation-3B-base")
+```
+
+### Common Installation Issues
+
+1. **ImportError: No module named 'boson_multimodal'**
+   - You skipped Step 1. The higgs-audio repository must be installed first.
+
+2. **PyTorch CUDA Issues**
+   - Install PyTorch with CUDA support before Step 1:
+     ```bash
+     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+     ```
+
+3. **macOS Audio Libraries**
+   - Install required audio libraries:
+     ```bash
+     brew install libsndfile ffmpeg
+     ```
+
+4. **Memory Errors During Model Loading**
+   - Ensure you have at least 8GB RAM available
+   - Use CPU mode if GPU memory is insufficient
 
 ## Overview
 
@@ -24,44 +127,6 @@ Higgs Audio V2 is an open-source audio foundation model developed by Boson AI, t
 - **Multilingual support**: Generate speech in multiple languages
 - **Local execution**: No API costs or internet dependency
 - **High quality**: State-of-the-art speech synthesis
-
-## Installation
-
-### Prerequisites
-
-1. Python 3.11 or higher
-2. PyTorch (CPU or CUDA)
-3. 8GB+ RAM (16GB+ recommended)
-4. ~6GB disk space for models
-
-### Step 1: Install Dependencies
-
-```bash
-# Core dependencies
-pip install torch torchvision torchaudio
-
-# Higgs Audio
-pip install boson-multimodal
-
-# Optional but recommended
-pip install numpy librosa soundfile
-```
-
-### Step 2: Install tldw_chatbook with TTS support
-
-```bash
-# From the tldw_chatbook directory
-pip install -e ".[tts]"
-```
-
-### Step 3: Download Model (Optional)
-
-The model will be downloaded automatically on first use, but you can pre-download:
-
-```python
-from huggingface_hub import snapshot_download
-snapshot_download("bosonai/higgs-audio-v2-generation-3B-base")
-```
 
 ## Configuration
 

@@ -83,6 +83,10 @@ class TTSPlaygroundWidget(Widget):
         display: block;
     }
     
+    #higgs-settings.visible {
+        display: block;
+    }
+    
     .watermark-notice {
         color: $warning;
         margin-top: 1;
@@ -118,6 +122,21 @@ class TTSPlaygroundWidget(Widget):
     
     .hidden {
         display: none;
+    }
+    
+    .generation-status {
+        height: 4;
+        margin: 1 0;
+        border: solid $primary;
+        padding: 0 1;
+    }
+    
+    #generation-status-text {
+        margin-bottom: 0;
+    }
+    
+    #generation-progress {
+        margin-top: 0;
     }
     
     .tts-text-input, #tts-text-input {
@@ -156,6 +175,7 @@ class TTSPlaygroundWidget(Widget):
         super().__init__()
         self.current_audio_file = None
         self.reference_audio_path = None
+        self.higgs_reference_audio_path = None
         self._progress_timer_task = None
         self.example_texts = [
             "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
@@ -192,6 +212,7 @@ class TTSPlaygroundWidget(Widget):
                         ("elevenlabs", "ElevenLabs"),
                         ("kokoro", "Kokoro (Local)"),
                         ("chatterbox", "Chatterbox (Local)"),
+                        ("higgs", "Higgs Audio (Local)"),
                         ("alltalk", "AllTalk (Local)"),
                     ],
                     id="tts-provider-select"
@@ -365,6 +386,63 @@ class TTSPlaygroundWidget(Widget):
                     classes="watermark-notice"
                 )
             
+            # Higgs-specific settings
+            with Vertical(id="higgs-settings", classes="provider-settings"):
+                with Horizontal(classes="form-row"):
+                    yield Label("Temperature:", classes="form-label")
+                    yield Input(
+                        id="tts-higgs-temperature-input",
+                        value="0.7",
+                        placeholder="0.0-2.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Top P:", classes="form-label")
+                    yield Input(
+                        id="tts-higgs-top-p-input",
+                        value="0.9",
+                        placeholder="0.0-1.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Repetition Penalty:", classes="form-label")
+                    yield Input(
+                        id="tts-higgs-repetition-penalty-input",
+                        value="1.1",
+                        placeholder="1.0+",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Voice Cloning:", classes="form-label")
+                    yield Switch(id="tts-higgs-voice-cloning-switch", value=True)
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Multi-speaker Mode:", classes="form-label")
+                    yield Switch(id="tts-higgs-multi-speaker-switch", value=True)
+                
+                with Horizontal(classes="form-row", id="higgs-voice-upload-row"):
+                    yield Label("Voice Reference:", classes="form-label")
+                    yield Button("📁 Upload Voice", id="higgs-voice-upload-btn", variant="default")
+                    yield Button("❌ Clear", id="higgs-clear-voice-btn", variant="default", disabled=True)
+                
+                yield Static("No voice reference selected", id="higgs-voice-status", classes="status-text")
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Speaker Delimiter:", classes="form-label")
+                    yield Input(
+                        id="tts-higgs-delimiter-input",
+                        value="|||",
+                        placeholder="Default: |||"
+                    )
+                
+                yield Static(
+                    "💡 For multi-speaker: Use format 'Speaker|||Text' in your input",
+                    classes="help-text"
+                )
+            
             # Format selection
             with Horizontal(classes="form-row"):
                 yield Label("Format:", classes="form-label")
@@ -407,6 +485,11 @@ class TTSPlaygroundWidget(Widget):
                     yield Button("⏹️ Stop", id="stop-audio-btn", disabled=True)
                     yield Button("💾 Export", id="audio-export-btn", disabled=True)
             
+            # Generation status and progress
+            with Container(id="generation-status-container", classes="generation-status hidden"):
+                yield Static("Ready to generate", id="generation-status-text")
+                yield ProgressBar(id="generation-progress", show_eta=True, show_percentage=True)
+            
             # Generation log
             yield Label("Generation Log:")
             yield RichLog(id="tts-generation-log", classes="generation-log", highlight=True, markup=True)
@@ -426,20 +509,20 @@ class TTSPlaygroundWidget(Widget):
     def _initialize_defaults(self) -> None:
         """Initialize default values after mount"""
         try:
-            # Set default format if not already set
-            format_select = self.query_one("#tts-format-select", Select)
-            if format_select.value is None or format_select.value == Select.BLANK:
-                # Force selection of first option
-                try:
-                    format_select.action_select_cursor()
-                except Exception:
-                    pass
-            
-            # Update voices and models for the default provider
+            # Set default provider
             provider_select = self.query_one("#tts-provider-select", Select)
+            default_provider = get_cli_setting("app_tts", "default_provider", "openai")
             
-            # Get the current value - it should default to the first option
-            current_provider = provider_select.value
+            # Try to set the provider value
+            if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox", "higgs", "alltalk"]:
+                try:
+                    provider_select.value = default_provider
+                    current_provider = default_provider
+                except Exception as e:
+                    logger.debug(f"Could not set provider immediately: {e}")
+                    current_provider = provider_select.value or "openai"
+            else:
+                current_provider = provider_select.value or "openai"
             
             # If no value selected (shouldn't happen with options), default to openai
             if current_provider is None or current_provider == Select.BLANK:
@@ -451,6 +534,16 @@ class TTSPlaygroundWidget(Widget):
             if current_provider != Select.BLANK:
                 self._update_voice_options(current_provider)
                 self._update_model_options(current_provider)
+            
+            # Set default format
+            format_select = self.query_one("#tts-format-select", Select)
+            default_format = get_cli_setting("app_tts", "default_format", "mp3")
+            if default_format in ["mp3", "opus", "aac", "flac", "wav", "pcm"]:
+                try:
+                    format_select.value = default_format
+                except Exception as e:
+                    logger.debug(f"Could not set format immediately: {e}")
+                    
         except Exception as e:
             logger.warning(f"Error initializing defaults: {e}")
     
@@ -468,6 +561,7 @@ class TTSPlaygroundWidget(Widget):
                 ("elevenlabs", "ElevenLabs"),
                 ("kokoro", "Kokoro (Local)"),
                 ("chatterbox", "Chatterbox (Local)"),
+                ("higgs", "Higgs Audio (Local)"),
                 ("alltalk", "AllTalk (Local)"),
             ]:
                 if event.value == option_label or event.value == option_value:
@@ -516,6 +610,15 @@ class TTSPlaygroundWidget(Widget):
                     chatterbox_settings.add_class("visible")
                 else:
                     chatterbox_settings.remove_class("visible")
+                
+                # Show/hide Higgs settings
+                higgs_settings = self.query_one("#higgs-settings", Vertical)
+                if provider_value == "higgs":
+                    higgs_settings.add_class("visible")
+                    # Check if Higgs is installed
+                    self._check_higgs_installation()
+                else:
+                    higgs_settings.remove_class("visible")
         
         elif event.select.id == "tts-voice-select":
             # Validate voice selection (prevent selecting separators)
@@ -685,12 +788,66 @@ class TTSPlaygroundWidget(Widget):
             # Use helper method to set valid voice
             self._set_valid_voice(voice_select, voice_options, fallback="af_bella")
         elif provider == "chatterbox":
-            voice_select.set_options([
+            logger.info(f"Setting up Chatterbox voices for provider: {provider}")
+            voice_options = [
                 ("default", "Default Voice"),
-                ("custom", "Custom (Upload Reference)"),
-                # Predefined voices will be loaded dynamically if available
-            ])
+                ("_separator", "──── Custom Voices ────"),
+                ("custom", "Upload Reference Audio"),
+            ]
+            
+            # Add saved voice profiles
+            try:
+                from tldw_chatbook.TTS.backends.chatterbox_voice_manager import ChatterboxVoiceManager
+                voice_dir = Path.home() / ".config" / "tldw_cli" / "chatterbox_voices"
+                if voice_dir.exists():
+                    manager = ChatterboxVoiceManager(voice_dir)
+                    profiles = manager.list_profiles()
+                    if profiles:
+                        voice_options.append(("_separator2", "──── Saved Profiles ────"))
+                        for profile in profiles:
+                            voice_options.append((profile["name"], profile["display_name"]))
+                    logger.info(f"Loaded {len(profiles)} Chatterbox voice profiles")
+            except Exception as e:
+                logger.warning(f"Could not load Chatterbox voice profiles: {e}")
+            
+            voice_select.set_options(voice_options)
             self._safe_set_select_value(voice_select, "default", "Chatterbox voice")
+        elif provider == "higgs":
+            logger.info(f"Setting up Higgs voices for provider: {provider}")
+            voice_options = [
+                # Default Higgs voices
+                ("professional_female", "Professional Female"),
+                ("warm_female", "Warm Female"),
+                ("storyteller_male", "Storyteller Male"),
+                ("deep_male", "Deep Male"),
+                ("energetic_female", "Energetic Female"),
+                ("soft_female", "Soft Female"),
+                # Separator for custom voices
+                ("_separator", "──── Custom Voices ────"),
+                ("custom", "Upload Reference Audio"),
+            ]
+            
+            # Add saved voice profiles
+            try:
+                from tldw_chatbook.TTS.backends.higgs_voice_manager import HiggsVoiceProfileManager
+                voice_dir = Path.home() / ".config" / "tldw_cli" / "higgs_voices"
+                if voice_dir.exists():
+                    manager = HiggsVoiceProfileManager(voice_dir)
+                    profiles = manager.list_profiles()
+                    if profiles:
+                        # Add separator
+                        voice_options.append(("_separator2", "──── Saved Profiles ────"))
+                        # Add each profile
+                        for profile in profiles:
+                            display_name = f"📎 {profile['display_name']}"
+                            if profile.get('description'):
+                                display_name += f" - {profile['description'][:30]}"
+                            voice_options.append((f"profile:{profile['name']}", display_name))
+            except Exception as e:
+                logger.debug(f"Could not load Higgs voice profiles: {e}")
+            
+            voice_select.set_options(voice_options)
+            self._set_valid_voice(voice_select, voice_options, fallback="professional_female")
         elif provider == "alltalk":
             voice_select.set_options([
                 ("female_01.wav", "Female 01"),
@@ -748,6 +905,13 @@ class TTSPlaygroundWidget(Widget):
                 ("chatterbox", "Chatterbox 0.5B"),
             ])
             self._safe_set_select_value(model_select, "chatterbox", "Chatterbox model")
+        elif provider == "higgs":
+            logger.info("Setting Higgs model options")
+            model_select.set_options([
+                ("higgs-audio-v2", "Higgs Audio V2 3B"),
+            ])
+            self._safe_set_select_value(model_select, "higgs-audio-v2", "Higgs model")
+            logger.info("Higgs model options configured")
         elif provider == "alltalk":
             model_select.set_options([
                 ("alltalk", "AllTalk TTS"),
@@ -788,6 +952,12 @@ class TTSPlaygroundWidget(Widget):
             event.stop()
         elif event.button.id == "clear-reference-audio-btn":
             self._clear_reference_audio()
+            event.stop()
+        elif event.button.id == "higgs-voice-upload-btn":
+            self._upload_higgs_voice()
+            event.stop()
+        elif event.button.id == "higgs-clear-voice-btn":
+            self._clear_higgs_voice()
             event.stop()
     
     def _generate_tts(self) -> None:
@@ -887,6 +1057,37 @@ class TTSPlaygroundWidget(Widget):
                 self.app.notify("Please select reference audio for custom voice", severity="warning")
                 self.query_one("#tts-generate-btn", Button).disabled = False
                 return
+            elif voice not in ["default", "custom", "_separator", "_separator2"] and not voice.startswith("custom:"):
+                # This is a saved profile - format it as profile:name
+                voice = f"profile:{voice}"
+        elif provider == "higgs":
+            # Collect Higgs-specific parameters
+            temperature = float(self.query_one("#tts-higgs-temperature-input", Input).value)
+            top_p = float(self.query_one("#tts-higgs-top-p-input", Input).value)
+            repetition_penalty = float(self.query_one("#tts-higgs-repetition-penalty-input", Input).value)
+            enable_voice_cloning = self.query_one("#tts-higgs-voice-cloning-switch", Switch).value
+            enable_multi_speaker = self.query_one("#tts-higgs-multi-speaker-switch", Switch).value
+            speaker_delimiter = self.query_one("#tts-higgs-delimiter-input", Input).value
+            
+            extra_params["temperature"] = temperature
+            extra_params["top_p"] = top_p
+            extra_params["repetition_penalty"] = repetition_penalty
+            extra_params["enable_voice_cloning"] = enable_voice_cloning
+            extra_params["enable_multi_speaker"] = enable_multi_speaker
+            extra_params["speaker_delimiter"] = speaker_delimiter
+            
+            # Handle voice selection for custom upload
+            if voice == "custom" and hasattr(self, 'higgs_reference_audio_path') and self.higgs_reference_audio_path:
+                # Use custom voice with reference audio
+                voice = f"custom:{self.higgs_reference_audio_path}"
+            elif voice == "custom":
+                self.app.notify("Please upload reference audio for custom voice", severity="warning")
+                self.query_one("#tts-generate-btn", Button).disabled = False
+                return
+            elif voice not in ["professional_female", "warm_female", "storyteller_male", "deep_male", 
+                              "energetic_female", "soft_female", "custom", "_separator", "_separator2"] and not voice.startswith("custom:"):
+                # This is a saved profile - format it as profile:name
+                voice = f"profile:{voice}"
         
         # Log the request
         log = self.query_one("#tts-generation-log", RichLog)
@@ -964,13 +1165,20 @@ class TTSPlaygroundWidget(Widget):
             return
             
         if self._ensure_audio_player():
+            # Cancel any existing progress timer first
+            if self._progress_timer_task and not self._progress_timer_task.done():
+                self._progress_timer_task.cancel()
+                self._progress_timer_task = None
+                logger.debug("Cancelled existing progress timer")
+            
             # Enable pause and stop buttons
             self.query_one("#pause-audio-btn", Button).disabled = False
             self.query_one("#stop-audio-btn", Button).disabled = False
             self.query_one("#audio-player-status", Static).update("Playing...")
             
             # Use the new audio player method
-            self.run_worker(self._play_audio_async, exclusive=True)
+            # Don't use exclusive worker - allow interruption by stop/pause
+            self.run_worker(self._play_audio_async, exclusive=False)
         else:
             self.app.notify("Audio playback not available", severity="warning")
     
@@ -988,6 +1196,10 @@ class TTSPlaygroundWidget(Widget):
                 if audio_path.exists():
                     # Stop any existing playback first
                     await self.app.audio_player.stop()
+                    
+                    # Small delay to ensure clean state
+                    import asyncio
+                    await asyncio.sleep(0.1)
                     
                     success = await self.app.audio_player.play(audio_path)
                     if success:
@@ -1101,18 +1313,19 @@ class TTSPlaygroundWidget(Widget):
             
             success = await self.app.audio_player.stop()
             logger.debug(f"Stop result: {success}")
+            
+            # Always reset button states regardless of success
+            # (audio may have already finished playing)
+            self.query_one("#audio-play-btn", Button).disabled = False  # Re-enable play button
+            self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
+            self.query_one("#pause-audio-btn", Button).disabled = True
+            self.query_one("#stop-audio-btn", Button).disabled = True
+            
             if success:
-                # Reset button states
-                self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
-                self.query_one("#pause-audio-btn", Button).disabled = True
-                self.query_one("#stop-audio-btn", Button).disabled = True
                 self.query_one("#audio-player-status", Static).update("Playback stopped")
                 self.app.notify("Playback stopped", severity="information")
             else:
-                # Still reset UI state even if audio already finished
-                self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
-                self.query_one("#pause-audio-btn", Button).disabled = True
-                self.query_one("#stop-audio-btn", Button).disabled = True
+                # Audio already finished or wasn't playing
                 self.query_one("#audio-player-status", Static).update("Audio ready to play")
                 logger.debug("Audio may have already finished playing")
         except Exception as e:
@@ -1213,6 +1426,56 @@ class TTSPlaygroundWidget(Widget):
         self.query_one("#clear-reference-audio-btn", Button).disabled = True
         logger.info("Reference audio cleared")
     
+    def _upload_higgs_voice(self) -> None:
+        """Open file dialog to select reference audio for Higgs voice cloning"""
+        def handle_selection(path: Optional[Path]) -> None:
+            if path:
+                self.higgs_reference_audio_path = str(path)
+                # Update status
+                status = self.query_one("#higgs-voice-status", Static)
+                status.update(f"Selected: {path.name}")
+                # Enable clear button
+                self.query_one("#higgs-clear-voice-btn", Button).disabled = False
+                logger.info(f"Higgs reference audio selected: {path}")
+            else:
+                logger.info("Higgs reference audio selection cancelled")
+        
+        file_open = FileOpen(
+            title="Select Reference Audio for Voice Cloning",
+            filters=Filters(
+                (
+                    "Audio Files",
+                    lambda p: p.suffix.lower() in {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"}
+                ),
+                ("All Files", lambda p: True),
+            ),
+            select_type="file",
+        )
+        self.app.push_screen(file_open, handle_selection)
+    
+    def _clear_higgs_voice(self) -> None:
+        """Clear the selected Higgs reference audio"""
+        self.higgs_reference_audio_path = None
+        # Update status
+        status = self.query_one("#higgs-voice-status", Static)
+        status.update("No voice reference selected")
+        # Disable clear button
+        self.query_one("#higgs-clear-voice-btn", Button).disabled = True
+        logger.info("Higgs reference audio cleared")
+    
+    def _check_higgs_installation(self) -> None:
+        """Check if Higgs Audio is properly installed"""
+        try:
+            import boson_multimodal
+            logger.info("Higgs Audio is installed and available")
+        except ImportError:
+            self.app.notify(
+                "⚠️ Higgs Audio not installed! Run: ./scripts/install_higgs.sh",
+                severity="warning",
+                timeout=10
+            )
+            logger.warning("Higgs Audio (boson_multimodal) is not installed")
+    
     def _insert_random_text(self) -> None:
         """Insert a random example text"""
         import random
@@ -1285,6 +1548,18 @@ class TTSPlaygroundWidget(Widget):
                     # Hide progress elements
                     self.query_one("#audio-progress-bar").add_class("hidden")
                     self.query_one("#audio-time-display").add_class("hidden")
+                    
+                    # Reset button states when playback finishes
+                    self.query_one("#audio-play-btn", Button).disabled = False
+                    self.query_one("#pause-audio-btn", Button).disabled = True
+                    self.query_one("#pause-audio-btn", Button).label = "⏸️ Pause"
+                    self.query_one("#stop-audio-btn", Button).disabled = True
+                    self.query_one("#audio-player-status", Static).update("Playback complete")
+                    
+                    # Notify that playback is complete
+                    if state == PlaybackState.FINISHED:
+                        self.app.notify("Playback complete", severity="information")
+                    
                     break
                 
                 await asyncio.sleep(0.1)  # Update every 100ms
@@ -1372,6 +1647,7 @@ class TTSSettingsWidget(Widget):
                             ("elevenlabs", "ElevenLabs"),
                             ("kokoro", "Kokoro (Local)"),
                             ("chatterbox", "Chatterbox (Local)"),
+                            ("higgs", "Higgs Audio (Local)"),
                             ("alltalk", "AllTalk (Local Server)"),
                         ],
                         id="default-provider-select"
@@ -1725,6 +2001,151 @@ class TTSSettingsWidget(Widget):
                         type="number"
                     )
             
+            # Higgs Audio settings
+            with Collapsible(title="Higgs Audio Settings", classes="settings-section"):
+                with Horizontal(classes="form-row"):
+                    yield Label("Model Path:", classes="form-label")
+                    yield Input(
+                        id="higgs-model-path-input",
+                        value=get_cli_setting("HiggsSettings", "model_path", "bosonai/higgs-audio-v2-generation-3B-base"),
+                        placeholder="Model path or HuggingFace ID"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Voice Samples Dir:", classes="form-label")
+                    yield Input(
+                        id="higgs-voices-dir-input",
+                        value=str(get_cli_setting("HiggsSettings", "voice_samples_dir", "~/.config/tldw_cli/higgs_voices")),
+                        placeholder="Path to voice samples"
+                    )
+                    yield Button("📁", id="higgs-voices-browse-btn", classes="path-browse-button")
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Device:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("auto", "Auto-detect"),
+                            ("cpu", "CPU"),
+                            ("cuda", "CUDA (GPU)"),
+                            ("cuda:0", "CUDA Device 0"),
+                            ("cuda:1", "CUDA Device 1"),
+                        ],
+                        id="higgs-device-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Flash Attention:", classes="form-label")
+                    yield Switch(
+                        id="higgs-flash-attn-switch",
+                        value=get_cli_setting("HiggsSettings", "enable_flash_attn", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Data Type:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("float32", "Float32 (Full precision)"),
+                            ("float16", "Float16 (Half precision)"),
+                            ("bfloat16", "BFloat16 (Better range)"),
+                        ],
+                        id="higgs-dtype-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Max Reference Duration:", classes="form-label")
+                    yield Input(
+                        id="higgs-max-ref-duration-input",
+                        value=str(get_cli_setting("HiggsSettings", "max_reference_duration", "30")),
+                        placeholder="Seconds (e.g., 30)",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Default Language:", classes="form-label")
+                    yield Select(
+                        options=[
+                            ("en", "English"),
+                            ("es", "Spanish"),
+                            ("fr", "French"),
+                            ("de", "German"),
+                            ("it", "Italian"),
+                            ("pt", "Portuguese"),
+                            ("ru", "Russian"),
+                            ("zh", "Chinese"),
+                            ("ja", "Japanese"),
+                            ("ko", "Korean"),
+                        ],
+                        id="higgs-language-select"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Voice Cloning:", classes="form-label")
+                    yield Switch(
+                        id="higgs-voice-cloning-switch",
+                        value=get_cli_setting("HiggsSettings", "enable_voice_cloning", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Enable Multi-speaker:", classes="form-label")
+                    yield Switch(
+                        id="higgs-multi-speaker-switch",
+                        value=get_cli_setting("HiggsSettings", "enable_multi_speaker", True)
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Speaker Delimiter:", classes="form-label")
+                    yield Input(
+                        id="higgs-delimiter-input",
+                        value=get_cli_setting("HiggsSettings", "speaker_delimiter", "|||"),
+                        placeholder="Default: |||"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Performance Tracking:", classes="form-label")
+                    yield Switch(
+                        id="higgs-track-performance-switch",
+                        value=get_cli_setting("HiggsSettings", "track_performance", True)
+                    )
+                
+                # Generation parameters
+                yield Label("Generation Parameters:", classes="subsection-label")
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Max New Tokens:", classes="form-label")
+                    yield Input(
+                        id="higgs-max-tokens-input",
+                        value=str(get_cli_setting("HiggsSettings", "max_new_tokens", "4096")),
+                        placeholder="Max tokens to generate",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Temperature:", classes="form-label")
+                    yield Input(
+                        id="higgs-temperature-input",
+                        value=str(get_cli_setting("HiggsSettings", "temperature", "0.7")),
+                        placeholder="0.0-2.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Top P:", classes="form-label")
+                    yield Input(
+                        id="higgs-top-p-input",
+                        value=str(get_cli_setting("HiggsSettings", "top_p", "0.9")),
+                        placeholder="0.0-1.0",
+                        type="number"
+                    )
+                
+                with Horizontal(classes="form-row"):
+                    yield Label("Repetition Penalty:", classes="form-label")
+                    yield Input(
+                        id="higgs-repetition-penalty-input",
+                        value=str(get_cli_setting("HiggsSettings", "repetition_penalty", "1.1")),
+                        placeholder="1.0 = no penalty",
+                        type="number"
+                    )
+            
             # AllTalk settings
             with Collapsible(title="AllTalk Settings", classes="settings-section"):
                 with Horizontal(classes="form-row"):
@@ -1782,7 +2203,7 @@ class TTSSettingsWidget(Widget):
             # Set default provider
             provider_select = self.query_one("#default-provider-select", Select)
             default_provider = get_cli_setting("app_tts", "default_provider", "openai")
-            if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox", "alltalk"]:
+            if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox", "higgs", "alltalk"]:
                 provider_select.value = default_provider
             
             # Load voice blends
@@ -1827,16 +2248,22 @@ class TTSSettingsWidget(Widget):
                 format_select.value = default_format
             
             # Set Kokoro device
-            device_select = self.query_one("#kokoro-device-select", Select)
-            kokoro_device = get_cli_setting("app_tts", "KOKORO_DEVICE_DEFAULT", "cpu")
-            if kokoro_device in ["cpu", "cuda"]:
-                device_select.value = kokoro_device
+            try:
+                device_select = self.query_one("#kokoro-device-select", Select)
+                kokoro_device = get_cli_setting("app_tts", "KOKORO_DEVICE_DEFAULT", "cpu")
+                if kokoro_device in ["cpu", "cuda"]:
+                    device_select.value = kokoro_device
+            except Exception as e:
+                logger.debug(f"Could not set Kokoro device: {e}")
             
             # Set Chatterbox device
-            chatterbox_device_select = self.query_one("#chatterbox-device-select", Select)
-            chatterbox_device = get_cli_setting("app_tts", "CHATTERBOX_DEVICE", "cpu")
-            if chatterbox_device in ["cpu", "cuda"]:
-                chatterbox_device_select.value = chatterbox_device
+            try:
+                chatterbox_device_select = self.query_one("#chatterbox-device-select", Select)
+                chatterbox_device = get_cli_setting("app_tts", "CHATTERBOX_DEVICE", "cpu")
+                if chatterbox_device in ["cpu", "cuda"]:
+                    chatterbox_device_select.value = chatterbox_device
+            except Exception as e:
+                logger.debug(f"Could not set Chatterbox device: {e}")
             
             # Set ElevenLabs model
             elevenlabs_model_select = self.query_one("#elevenlabs-model-select", Select)
@@ -1861,6 +2288,29 @@ class TTSSettingsWidget(Widget):
             alltalk_format = get_cli_setting("app_tts", "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT", "wav")
             if alltalk_format in ["wav", "mp3", "opus", "flac"]:
                 alltalk_format_select.value = alltalk_format
+            
+            # Set Higgs settings - Select widgets are already initialized in compose(),
+            # but we ensure they have the correct values here
+            try:
+                # Device
+                higgs_device_select = self.query_one("#higgs-device-select", Select)
+                higgs_device = get_cli_setting("HiggsSettings", "device", "auto")
+                if higgs_device in ["auto", "cpu", "cuda", "cuda:0", "cuda:1"]:
+                    higgs_device_select.value = higgs_device
+                
+                # Data type
+                higgs_dtype_select = self.query_one("#higgs-dtype-select", Select)
+                higgs_dtype = get_cli_setting("HiggsSettings", "dtype", "bfloat16")
+                if higgs_dtype in ["float32", "float16", "bfloat16"]:
+                    higgs_dtype_select.value = higgs_dtype
+                
+                # Language
+                higgs_language_select = self.query_one("#higgs-language-select", Select)
+                higgs_language = get_cli_setting("HiggsSettings", "default_language", "en")
+                if higgs_language in ["en", "es", "fr", "de", "it", "pt", "ru", "zh", "ja", "ko"]:
+                    higgs_language_select.value = higgs_language
+            except Exception as e:
+                logger.debug(f"Could not set Higgs initial values: {e}")
             
             # Load and display Kokoro voice blends
             self._load_kokoro_voice_blends()
@@ -1890,6 +2340,9 @@ class TTSSettingsWidget(Widget):
             event.stop()
         elif event.button.id == "chatterbox-browse-voice-dir-btn":
             self._browse_chatterbox_voice_dir()
+            event.stop()
+        elif event.button.id == "higgs-voices-browse-btn":
+            self._browse_higgs_voices_dir()
             event.stop()
     
     def _is_valid_voice(self, voice: str) -> bool:
@@ -2016,6 +2469,16 @@ class TTSSettingsWidget(Widget):
                 ("custom", "Custom (Upload Reference)"),
             ])
             voice_select.value = "default"
+        elif provider == "higgs":
+            voice_select.set_options([
+                ("professional_female", "Professional Female"),
+                ("warm_female", "Warm Female"),
+                ("storyteller_male", "Storyteller Male"),
+                ("deep_male", "Deep Male"),
+                ("energetic_female", "Energetic Female"),
+                ("soft_female", "Soft Female"),
+            ])
+            voice_select.value = "professional_female"
         elif provider == "alltalk":
             voice_select.set_options([
                 ("female_01.wav", "Female 01"),
@@ -2067,6 +2530,13 @@ class TTSSettingsWidget(Widget):
                 ("chatterbox", "Chatterbox 0.5B"),
             ])
             model_select.value = "chatterbox"
+        elif provider == "higgs":
+            logger.info("Setting Higgs model options")
+            model_select.set_options([
+                ("higgs-audio-v2", "Higgs Audio V2 3B"),
+            ])
+            model_select.value = "higgs-audio-v2"
+            logger.info("Higgs model set successfully")
         elif provider == "alltalk":
             model_select.set_options([
                 ("alltalk", "AllTalk TTS"),
@@ -2182,6 +2652,54 @@ class TTSSettingsWidget(Widget):
                 self.query_one("#chatterbox-crossfade-ms-input", Input).value, 10, 500, 50
             ))
             
+            # Higgs settings
+            higgs_model_path = self.query_one("#higgs-model-path-input", Input).value
+            if higgs_model_path:
+                settings["HIGGS_MODEL_PATH"] = higgs_model_path
+            
+            higgs_voices_dir = self.query_one("#higgs-voices-dir-input", Input).value
+            if higgs_voices_dir:
+                settings["HIGGS_VOICE_SAMPLES_DIR"] = higgs_voices_dir
+            
+            # Use _get_select_key to get actual key value from Select widgets
+            higgs_device_select = self.query_one("#higgs-device-select", Select)
+            higgs_device_value = self._get_select_key(higgs_device_select)
+            if higgs_device_value:
+                settings["HIGGS_DEVICE"] = higgs_device_value
+            
+            settings["HIGGS_ENABLE_FLASH_ATTN"] = self.query_one("#higgs-flash-attn-switch", Switch).value
+            
+            higgs_dtype_select = self.query_one("#higgs-dtype-select", Select)
+            higgs_dtype_value = self._get_select_key(higgs_dtype_select)
+            if higgs_dtype_value:
+                settings["HIGGS_DTYPE"] = higgs_dtype_value
+            
+            settings["HIGGS_MAX_REFERENCE_DURATION"] = int(self._validate_numeric_input(
+                self.query_one("#higgs-max-ref-duration-input", Input).value, 1, 60, 30
+            ))
+            
+            higgs_language_select = self.query_one("#higgs-language-select", Select)
+            higgs_language_value = self._get_select_key(higgs_language_select)
+            if higgs_language_value:
+                settings["HIGGS_DEFAULT_LANGUAGE"] = higgs_language_value
+            settings["HIGGS_ENABLE_VOICE_CLONING"] = self.query_one("#higgs-voice-cloning-switch", Switch).value
+            settings["HIGGS_ENABLE_MULTI_SPEAKER"] = self.query_one("#higgs-multi-speaker-switch", Switch).value
+            settings["HIGGS_SPEAKER_DELIMITER"] = self.query_one("#higgs-delimiter-input", Input).value
+            settings["HIGGS_TRACK_PERFORMANCE"] = self.query_one("#higgs-track-performance-switch", Switch).value
+            
+            settings["HIGGS_MAX_NEW_TOKENS"] = int(self._validate_numeric_input(
+                self.query_one("#higgs-max-tokens-input", Input).value, 512, 8192, 4096
+            ))
+            settings["HIGGS_TEMPERATURE"] = self._validate_numeric_input(
+                self.query_one("#higgs-temperature-input", Input).value, 0.0, 2.0, 0.7
+            )
+            settings["HIGGS_TOP_P"] = self._validate_numeric_input(
+                self.query_one("#higgs-top-p-input", Input).value, 0.0, 1.0, 0.9
+            )
+            settings["HIGGS_REPETITION_PENALTY"] = self._validate_numeric_input(
+                self.query_one("#higgs-repetition-penalty-input", Input).value, 1.0, 2.0, 1.1
+            )
+            
             # AllTalk settings
             url = self.query_one("#alltalk-url-input", Input).value
             if url:
@@ -2211,6 +2729,22 @@ class TTSSettingsWidget(Widget):
             return max(min_val, min(max_val, num_val))
         except ValueError:
             return default
+    
+    def _get_select_key(self, select_widget) -> Optional[str]:
+        """Get the actual key from a Select widget, not the display text"""
+        if not hasattr(select_widget, '_options') or not select_widget._options:
+            return None
+        
+        current_value = select_widget.value
+        if current_value == Select.BLANK:
+            return None
+            
+        # Find the key that matches the current value
+        for key, label in select_widget._options:
+            if label == current_value or key == current_value:
+                return key
+        
+        return None
     
     def _load_kokoro_voice_blends(self) -> None:
         """Load and display Kokoro voice blends"""
@@ -2520,6 +3054,45 @@ class TTSSettingsWidget(Widget):
         else:
             voice_dir_btn.label = "📁 Select voice directory"
     
+    def _browse_higgs_voices_dir(self) -> None:
+        """Browse for Higgs voices directory"""
+        # Get current value as starting path
+        voices_input = self.query_one("#higgs-voices-dir-input", Input)
+        current_value = voices_input.value
+        if current_value.startswith("~"):
+            current_value = str(Path(current_value).expanduser())
+        location = Path(current_value) if current_value and Path(current_value).exists() else Path.home()
+        
+        # Create filter for directory selection
+        filters = Filters(
+            ("Directories", lambda p: p.is_dir() if p.exists() else False),
+            ("All Files", lambda p: True)
+        )
+        
+        file_picker = FileOpen(
+            location=str(location),
+            title="Select Higgs Voice Samples Directory (choose any file in target directory)",
+            filters=filters,
+            context="higgs_voices_dir"
+        )
+        
+        # Push the file picker screen
+        self.app.push_screen(file_picker, self._handle_higgs_voices_dir_selection)
+    
+    def _handle_higgs_voices_dir_selection(self, path: Optional[Path]) -> None:
+        """Handle the selection of Higgs voices directory"""
+        if path:
+            # Extract directory from selected file
+            if path.is_file():
+                dir_path = path.parent
+            else:
+                dir_path = path
+            
+            # Update input
+            voices_input = self.query_one("#higgs-voices-dir-input", Input)
+            voices_input.value = str(dir_path)
+            logger.info(f"Higgs voices directory selected: {dir_path}")
+    
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle select widget changes"""
         if event.select.id == "default-provider-select":
@@ -2796,16 +3369,27 @@ class AudioBookGenerationWidget(Widget):
     
     def on_mount(self) -> None:
         """Set initial values from config after mount"""
+        # Delay initialization to ensure widgets are ready
+        self.set_timer(0.1, self._initialize_audiobook_defaults)
+    
+    def _initialize_audiobook_defaults(self) -> None:
+        """Initialize default values after widgets are ready"""
         try:
             # Set audiobook provider
             provider_select = self.query_one("#audiobook-provider-select", Select)
             default_provider = get_cli_setting("app_tts", "default_provider", "openai")
             if default_provider in ["openai", "elevenlabs", "kokoro", "chatterbox"]:
-                provider_select.value = default_provider
+                try:
+                    provider_select.value = default_provider
+                except Exception as e:
+                    logger.debug(f"Could not set audiobook provider: {e}")
             
             # Set default format to m4b
             format_select = self.query_one("#audiobook-format-select", Select)
-            format_select.value = "m4b"
+            try:
+                format_select.value = "m4b"
+            except Exception as e:
+                logger.debug(f"Could not set audiobook format: {e}")
         except Exception as e:
             logger.warning(f"Failed to set audiobook defaults: {e}")
     
@@ -3465,10 +4049,10 @@ class STTSWindow(Container):
             yield Button("⚙️ TTS Settings", id="view-settings-btn", classes="sidebar-button")
             yield Button("📚 AudioBook/Podcast", id="view-audiobook-btn", classes="sidebar-button")
             
-            # Future features
+            # Additional features
             yield Rule()
-            yield Label("Coming Soon:", classes="section-title")
-            yield Button("🎙️ Voice Cloning", id="view-voice-cloning-btn", classes="sidebar-button", disabled=True)
+            yield Label("Additional Features:", classes="section-title")
+            yield Button("🎙️ Voice Cloning", id="view-voice-cloning-btn", classes="sidebar-button")
             yield Button("🔤 Speech Recognition", id="view-stt-btn", classes="sidebar-button", disabled=True)
             yield Button("🎵 Audio Effects", id="view-effects-btn", classes="sidebar-button", disabled=True)
         
@@ -3522,7 +4106,9 @@ class STTSWindow(Container):
         elif event.button.id == "view-audiobook-btn":
             self.current_view = "audiobook"
         elif event.button.id == "view-voice-cloning-btn":
-            self.app.notify("Voice Cloning coming soon!", severity="information")
+            # Import and push the Voice Cloning window
+            from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
+            self.app.push_screen(VoiceCloningWindow())
         elif event.button.id == "view-stt-btn":
             self.app.notify("Speech Recognition coming soon!", severity="information")
         elif event.button.id == "view-effects-btn":

@@ -2832,8 +2832,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info("AppFooterStatus widget instance acquired.")
 
             await self.update_db_sizes()  # Initial population
-            self._db_size_update_timer = self.set_interval(60, self.update_db_sizes) # Periodic updates
-            self.loguru_logger.info("DB size update timer started for AppFooterStatus.")
+            self._db_size_update_timer = self.set_interval(120, self.update_db_sizes) # Update every 2 minutes
+            self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
             
             # Start token count updates
             # Initial update after a short delay to ensure UI is ready
@@ -3027,6 +3027,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     # Clean up STTS event handler resources if it has the cleanup method
                     if hasattr(self._stts_handler, 'cleanup_tts_resources'):
                         await self._stts_handler.cleanup_tts_resources()
+                    
+                    # Special handling for Higgs backend cleanup
+                    if self._stts_handler._stts_service:
+                        backend_manager = getattr(self._stts_handler._stts_service, 'backend_manager', None)
+                        if backend_manager:
+                            # Check if Higgs backend is loaded
+                            higgs_backends = [
+                                backend_id for backend_id in backend_manager._backends 
+                                if 'higgs' in backend_id.lower()
+                            ]
+                            
+                            if higgs_backends:
+                                self.loguru_logger.info(f"Found {len(higgs_backends)} Higgs backend(s) to clean up")
+                                
+                                # Give Higgs backends extra time to clean up
+                                for backend_id in higgs_backends:
+                                    backend = backend_manager._backends.get(backend_id)
+                                    if backend and hasattr(backend, 'close'):
+                                        try:
+                                            self.loguru_logger.info(f"Cleaning up Higgs backend: {backend_id}")
+                                            await asyncio.wait_for(backend.close(), timeout=10.0)
+                                        except asyncio.TimeoutError:
+                                            self.loguru_logger.warning(f"Higgs backend {backend_id} cleanup timed out")
+                                        except Exception as e:
+                                            self.loguru_logger.error(f"Error cleaning up Higgs backend {backend_id}: {e}")
                     
                     self.loguru_logger.info("STTS service cleaned up")
                 except Exception as e:
@@ -5574,6 +5599,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             except Exception as e:
                 loguru_logger.error(f"Error stopping audio during quit: {e}")
         
+        # Force cleanup Higgs backends immediately
+        if hasattr(self, '_stts_handler') and self._stts_handler:
+            try:
+                if hasattr(self._stts_handler, '_stts_service') and self._stts_handler._stts_service:
+                    backend_manager = getattr(self._stts_handler._stts_service, 'backend_manager', None)
+                    if backend_manager and hasattr(backend_manager, '_backends'):
+                        for backend_id, backend in list(backend_manager._backends.items()):
+                            if 'higgs' in backend_id.lower():
+                                loguru_logger.info(f"Signaling Higgs backend shutdown: {backend_id}")
+                                # Set shutdown event if available
+                                if hasattr(backend, '_shutdown_event'):
+                                    backend._shutdown_event.set()
+            except Exception as e:
+                loguru_logger.error(f"Error signaling Higgs shutdown: {e}")
+        
         # Cancel media cleanup timer if it exists
         if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
             self._media_cleanup_timer.stop()
@@ -5899,6 +5939,17 @@ def main_cli_runner():
         import threading
         import concurrent.futures
         
+        # Force kill any Higgs-related threads first
+        for thread in threading.enumerate():
+            thread_name = thread.name.lower()
+            if any(name in thread_name for name in ['higgs', 'boson', 'serve_engine', 'audio']):
+                loguru_logger.warning(f"Force killing thread: {thread.name}")
+                try:
+                    # Mark as daemon to not block exit
+                    thread.daemon = True
+                except Exception:
+                    pass
+        
         # Force daemon all threads
         for thread in threading.enumerate():
             if thread != threading.main_thread() and not thread.daemon:
@@ -5910,6 +5961,15 @@ def main_cli_runner():
         # Clear thread pool queues
         try:
             concurrent.futures.thread._threads_queues.clear()
+        except Exception:
+            pass
+        
+        # Force clear any PyTorch CUDA resources
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
         except Exception:
             pass
     

@@ -167,6 +167,29 @@ local_tts = [
     "onnxruntime",  # For ONNX models
     "av",  # pyav for audio format conversion
 ]
+higgs_tts = [
+    # IMPORTANT: Higgs Audio requires manual installation BEFORE using this extra!
+    # The boson-multimodal package cannot be installed via pip and must be installed from GitHub:
+    #
+    # Step 1: Clone and install Higgs Audio (REQUIRED):
+    #   git clone https://github.com/boson-ai/higgs-audio.git
+    #   cd higgs-audio
+    #   pip install -r requirements.txt
+    #   pip install -e .
+    #   cd ..
+    #
+    # Step 2: Install tldw_chatbook with Higgs support:
+    #   pip install -e ".[higgs_tts]"
+    #
+    # The following are supporting dependencies for Higgs Audio:
+    "torch",  # PyTorch for model inference
+    "torchaudio",  # For audio processing and voice cloning
+    "numpy",  # For audio data manipulation
+    "scipy",  # For audio signal processing
+    "librosa",  # For advanced audio feature extraction
+    "soundfile",  # For audio file I/O
+    "transformers",  # For tokenization and text processing
+]
 nemo = [
     "nemo-toolkit[asr]>=1.20.0",  # For NVIDIA Parakeet and Canary models
     "torch",  # Required by NeMo
