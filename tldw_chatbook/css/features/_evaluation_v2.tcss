@@ -5,17 +5,11 @@
  * Using modern Textual layout best practices
  * ======================================== */
 
-/* --- Main Layout Grid --- */
+/* --- Main Layout --- */
 EvalsWindow {
-    layout: grid;
-    grid-size: 2;
-    grid-columns: 25% 75%;
+    layout: horizontal;
     height: 100%;
     width: 100%;
-}
-
-EvalsWindow.sidebar-collapsed {
-    grid-columns: 0 100%;
 }
 
 /* --- Navigation Sidebar --- */
@@ -25,10 +19,16 @@ EvalsWindow.sidebar-collapsed {
     border-right: solid $primary;
     overflow-y: auto;
     height: 100%;
+    width: 25%;
+    min-width: 20;
 }
 
 .evals-nav-pane.collapsed {
-    display: none;
+    width: 0 !important;
+    min-width: 0 !important;
+    border-right: none !important;
+    padding: 0 !important;
+    overflow: hidden;
 }
 
 .sidebar-title {
@@ -66,23 +66,34 @@ EvalsWindow.sidebar-collapsed {
 /* --- Content Area --- */
 .evals-content-pane {
     layout: vertical;
-    padding: 1 2;
+    padding: 0;
     background: $background;
     overflow-y: auto;
     height: 100%;
+    width: 1fr;
 }
 
-/* Sidebar Toggle */
-.sidebar-toggle {
-    width: 3;
+/* Evals-specific Sidebar Toggle */
+#evals-content-pane > Button#evals-sidebar-toggle-button {
+    dock: top;
     height: 3;
-    margin-right: 1;
+    width: 5;
+    margin: 0 0 1 1;
     background: $surface;
     border: solid $primary-background;
+    color: $primary;
+    display: block !important;
+    visibility: visible !important;
 }
 
-.sidebar-toggle:hover {
+#evals-sidebar-toggle-button:hover {
     background: $surface-lighten-1;
+    color: $text;
+}
+
+#evals-sidebar-toggle-button.collapsed {
+    color: $secondary;
+    border-left: thick $primary;
 }
 
 /* --- View Areas --- */

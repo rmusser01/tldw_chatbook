@@ -46,9 +46,7 @@ class EvalsWindow(Container):
     Uses grid layout for better organization and responsiveness.
     """
     
-    # Load external CSS instead of inline
-    css_path = Path(__file__).parent.parent / "css" / "features" / "_evaluation_v2.tcss"
-    DEFAULT_CSS = css_path.read_text(encoding='utf-8') if css_path.exists() else ""
+    # CSS is loaded from the main app's modular CSS file
     
     # --- STATE LIVES HERE NOW ---
     evals_sidebar_collapsed: reactive[bool] = reactive(False)
@@ -97,12 +95,12 @@ class EvalsWindow(Container):
     def watch_evals_sidebar_collapsed(self, collapsed: bool) -> None:
         """Dynamically adjusts the evals browser panes when the sidebar is collapsed or expanded."""
         try:
+            # Toggle the nav pane collapsed state
             nav_pane = self.query_one("#evals-nav-pane")
-            toggle_button = self.query_one("#evals-sidebar-toggle-button")
-            
-            # Toggle classes for responsive grid layout
-            self.set_class(collapsed, "sidebar-collapsed")
             nav_pane.set_class(collapsed, "collapsed")
+            
+            # Update button visual state
+            toggle_button = self.query_one("#evals-sidebar-toggle-button")
             toggle_button.set_class(collapsed, "collapsed")
         except QueryError as e:
             logger.warning(f"UI component not found during evals sidebar collapse: {e}")
@@ -582,8 +580,8 @@ class EvalsWindow(Container):
             logger.error(f"Error populating initial data: {e}")
 
     def compose(self) -> ComposeResult:
-        # Left Navigation Pane
-        with Container(classes="evals-nav-pane", id="evals-nav-pane"):
+        # Left Navigation Pane - using VerticalScroll like Media window
+        with VerticalScroll(classes="evals-nav-pane", id="evals-nav-pane"):
             yield Static("Evaluation Tools", classes="sidebar-title")
             yield Button("Evaluation Setup", id=EVALS_NAV_SETUP, classes="evals-nav-button")
             yield Button("Results Dashboard", id=EVALS_NAV_RESULTS, classes="evals-nav-button")
@@ -592,18 +590,20 @@ class EvalsWindow(Container):
 
         # Main Content Pane
         with Container(classes="evals-content-pane", id="evals-content-pane"):
-                yield Button(
-                    get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
-                    id="evals-sidebar-toggle-button",
-                    classes="sidebar-toggle"
-                )
+            # Toggle button - docked at top of content pane
+            yield Button(
+                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
+                id="evals-sidebar-toggle-button",
+                classes="sidebar-toggle",
+                tooltip="Toggle sidebar"
+            )
 
-                # Create a view for Evaluation Setup
-                with Container(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
-                    yield Static("Evaluation Setup", classes="pane-title")
-                    
-                    # Task Upload Section
-                    with Container(classes="section-container"):
+            # Create a view for Evaluation Setup
+            with Container(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
+                yield Static("Evaluation Setup", classes="pane-title")
+                
+                # Task Upload Section
+                with Container(classes="section-container"):
                         yield Static("Task Configuration", classes="section-title")
                         yield Button("Upload Task File", id="upload-task-btn", classes="action-button")
                         yield Button("Create New Task", id="create-task-btn", classes="action-button")
