@@ -111,7 +111,7 @@ EvalsWindow {
 #evals-view-setup VerticalScroll {
     width: 100%;
     height: 100%;
-    padding-bottom: 2;
+    padding-bottom: 4;
 }
 
 /* Page Title */
@@ -145,7 +145,7 @@ EvalsWindow {
 .config-details-panel {
     background: $panel;
     padding: 2;
-    padding-bottom: 4;
+    padding-bottom: 5;
     border: round $primary-background;
     height: auto;
 }
@@ -311,8 +311,8 @@ EvalsWindow {
 .status-text {
     width: 100%;
     margin-top: 1;
-    margin-bottom: 2;
-    padding: 1 2;
+    margin-bottom: 3;
+    padding: 2;
     background: $background-lighten-1;
     border: round $primary-background;
     color: $text-muted;
@@ -506,7 +506,7 @@ Collapsible > Container {
 /* Specific status displays */
 #config-status {
     min-height: 4;
-    margin-bottom: 3;
+    margin-bottom: 4;
     margin-top: 1;
     padding: 1 2;
 }
