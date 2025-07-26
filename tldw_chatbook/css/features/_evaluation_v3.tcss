@@ -16,8 +16,8 @@ EvalsWindow {
 .evals-nav-pane {
     dock: left;
     width: auto;
-    min-width: 20;
-    max-width: 30;
+    min-width: 25;
+    max-width: 50;
     height: 100%;
     background: $surface;
     padding: 1;
@@ -81,13 +81,17 @@ EvalsWindow {
 .sidebar-toggle {
     width: 3;
     height: 3;
-    margin-right: 1;
+    margin: 0 1 1 0;
     background: $surface;
     border: solid $primary-background;
 }
 
 .sidebar-toggle:hover {
     background: $surface-lighten-1;
+}
+
+.sidebar-toggle.collapsed {
+    border-left: thick $primary;
 }
 
 /* --- View Areas --- */

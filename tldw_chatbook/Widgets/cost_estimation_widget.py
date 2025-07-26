@@ -64,7 +64,7 @@ class CostEstimationWidget(Container):
             
             # Cost breakdown
             with Container(classes="cost-section", id="details-section"):
-                yield Static("Details", classes="section-label collapsible")
+                yield Button("Details ▼", id="toggle-details-btn", classes="section-label")
                 
                 with Container(classes="details-content collapsed", id="details-content"):
                     yield Static("", id="provider-info", classes="info-row")
@@ -284,21 +284,23 @@ class CostEstimationWidget(Container):
         except NoMatches:
             pass
     
-    def on_click(self, event) -> None:
-        """Handle click events on the widget."""
-        # Get the widget at the click position
-        widget, _ = self.get_widget_at(event.x, event.y)
-        if widget and hasattr(widget, 'has_class') and widget.has_class("collapsible"):
-            self.toggle_details()
+    @on(Button.Pressed, "#toggle-details-btn")
+    def on_toggle_details(self, event) -> None:
+        """Handle details toggle button press."""
+        self.toggle_details()
     
     def toggle_details(self) -> None:
         """Toggle details section."""
         try:
             content = self.query_one("#details-content")
+            button = self.query_one("#toggle-details-btn", Button)
+            
             if content.has_class("collapsed"):
                 content.remove_class("collapsed")
+                button.label = "Details ▲"
             else:
                 content.add_class("collapsed")
+                button.label = "Details ▼"
         except NoMatches:
             pass
     
