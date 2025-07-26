@@ -107,6 +107,12 @@ EvalsWindow {
     display: block;
 }
 
+/* VerticalScroll inside view area should take full height */
+#evals-view-setup VerticalScroll {
+    width: 100%;
+    height: 100%;
+}
+
 /* Page Title */
 .pane-title {
     text-style: bold underline;
@@ -228,6 +234,7 @@ EvalsWindow {
     height: auto;
     margin: 2 0 1 0;
     align: center middle;
+    min-height: 5;
 }
 
 .action-button {
@@ -427,6 +434,11 @@ EvalsWindow {
 /* --- Advanced Options --- */
 #advanced-options {
     margin-top: 1;
+    height: auto;
+}
+
+#advanced-options Collapsible {
+    height: auto;
 }
 
 #advanced-options.collapsed .advanced-content {

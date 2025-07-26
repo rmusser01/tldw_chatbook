@@ -743,110 +743,111 @@ class EvalsWindow(Container):
 
             # Evaluation Setup View with Two-Column Layout
             with Container(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
-                yield Static("🚀 Evaluation Setup", classes="pane-title")
-                
-                # Two-column container
-                with Container(classes="setup-two-columns"):
-                    # LEFT COLUMN - Quick Setup Panel
-                    with Container(classes="quick-setup-panel"):
-                        yield Static("Quick Setup", classes="section-title")
-                        
-                        # Provider selection
-                        yield from create_form_field(
+                with VerticalScroll():
+                    yield Static("🚀 Evaluation Setup", classes="pane-title")
+                    
+                    # Two-column container
+                    with Container(classes="setup-two-columns"):
+                        # LEFT COLUMN - Quick Setup Panel
+                        with Container(classes="quick-setup-panel"):
+                            yield Static("Quick Setup", classes="section-title")
+                            
+                            # Provider selection
+                            yield from create_form_field(
                             "Provider",
                             "provider-select",
                             "select",
                             options=[("Select Provider", Select.BLANK)],
                             required=True
-                        )
-                        
-                        # Model selection
-                        yield from create_form_field(
+                            )
+                            
+                            # Model selection
+                            yield from create_form_field(
                             "Model",
                             "model-select",
                             "select",
                             options=[("Select Model", Select.BLANK)],
                             required=True
-                        )
-                        
-                        # Dataset selection
-                        yield from create_form_field(
+                            )
+                            
+                            # Dataset selection
+                            yield from create_form_field(
                             "Dataset",
                             "dataset-select",
                             "select",
                             options=[("Select Dataset", Select.BLANK)],
                             required=True
-                        )
-                        
-                        # Task type selection
-                        yield from create_form_field(
+                            )
+                            
+                            # Task type selection
+                            yield from create_form_field(
                             "Task Type",
                             "task-select",
                             "select",
                             options=[("Select Task", Select.BLANK)],
                             required=True
+                            )
+                            
+                            # Templates section
+                            yield Static("Templates", classes="subsection-title")
+                            with Container(classes="template-grid-small"):
+                                yield Button("GSM8K Math", id="template-gsm8k", classes="template-button")
+                                yield Button("HumanEval", id="template-humaneval", classes="template-button")
+                                yield Button("TruthfulQA", id="template-truthqa", classes="template-button")
+                        
+                        # RIGHT COLUMN - Configuration Details
+                        with Container(classes="config-details-panel"):
+                            yield Static("Configuration Details", classes="section-title")
+                            
+                            # Selected configuration info
+                            with Container(classes="config-info-box"):
+                                yield Static("Selected Configuration:", classes="info-label")
+                                yield Static("No configuration selected", id="config-display", classes="config-display")
+                            
+                            # Cost estimation widget
+                            from ..Widgets.cost_estimation_widget import CostEstimationWidget
+                            yield CostEstimationWidget(id="cost-estimator")
+                            
+                            # Advanced options (collapsible)
+                            with Collapsible(title="Advanced Options", collapsed=True, id="advanced-options"):
+                                yield Label("Max Samples:")
+                                yield Input("100", id="max-samples-input", type="integer")
+                                
+                                yield Label("Temperature:")
+                                yield Input("0.7", id="temperature-input", type="number")
+                                
+                                yield Label("Max Tokens:")
+                                yield Input("2048", id="max-tokens-input", type="integer")
+                                
+                                yield Label("Custom System Prompt:")
+                                yield Input("", id="system-prompt-input", placeholder="Optional system prompt")
+                            
+                            # Action buttons
+                            with Container(classes="action-buttons"):
+                                yield Button("Start Evaluation", id="start-eval-btn", classes="action-button primary")
+                                yield Button("Save Configuration", id="save-config-btn", classes="action-button")
+                                yield Button("Load Configuration", id="load-config-btn", classes="action-button")
+                            
+                            # Status display
+                            yield Static("", id="config-status", classes="status-text")
+                    
+                    # Bottom section - Active Evaluations Progress Tracker
+                    with Container(classes="progress-tracker-section"):
+                        yield Static("Active Evaluations", classes="section-title")
+                        
+                        # Progress tracking
+                        from ..Widgets.eval_results_widgets import ProgressTracker
+                        yield ProgressTracker(id="progress-tracker")
+                        
+                        # Run status
+                        yield Static("Status: Idle", id="run-status", classes="status-text")
+                        
+                        # Workflow progress
+                        from ..Widgets.loading_states import WorkflowProgress
+                        yield WorkflowProgress(
+                            ["Load Configuration", "Validate Setup", "Run Evaluation", "Save Results"],
+                            id="workflow-progress"
                         )
-                        
-                        # Templates section
-                        yield Static("Templates", classes="subsection-title")
-                        with Container(classes="template-grid-small"):
-                            yield Button("GSM8K Math", id="template-gsm8k", classes="template-button")
-                            yield Button("HumanEval", id="template-humaneval", classes="template-button")
-                            yield Button("TruthfulQA", id="template-truthqa", classes="template-button")
-                    
-                    # RIGHT COLUMN - Configuration Details
-                    with Container(classes="config-details-panel"):
-                        yield Static("Configuration Details", classes="section-title")
-                        
-                        # Selected configuration info
-                        with Container(classes="config-info-box"):
-                            yield Static("Selected Configuration:", classes="info-label")
-                            yield Static("No configuration selected", id="config-display", classes="config-display")
-                        
-                        # Cost estimation widget
-                        from ..Widgets.cost_estimation_widget import CostEstimationWidget
-                        yield CostEstimationWidget(id="cost-estimator")
-                        
-                        # Advanced options (collapsible)
-                        with Collapsible(title="Advanced Options", collapsed=True, id="advanced-options"):
-                            yield Label("Max Samples:")
-                            yield Input("100", id="max-samples-input", type="integer")
-                            
-                            yield Label("Temperature:")
-                            yield Input("0.7", id="temperature-input", type="number")
-                            
-                            yield Label("Max Tokens:")
-                            yield Input("2048", id="max-tokens-input", type="integer")
-                            
-                            yield Label("Custom System Prompt:")
-                            yield Input("", id="system-prompt-input", placeholder="Optional system prompt")
-                        
-                        # Action buttons
-                        with Container(classes="action-buttons"):
-                            yield Button("Start Evaluation", id="start-eval-btn", classes="action-button primary")
-                            yield Button("Save Configuration", id="save-config-btn", classes="action-button")
-                            yield Button("Load Configuration", id="load-config-btn", classes="action-button")
-                        
-                        # Status display
-                        yield Static("", id="config-status", classes="status-text")
-                
-                # Bottom section - Active Evaluations Progress Tracker
-                with Container(classes="progress-tracker-section"):
-                    yield Static("Active Evaluations", classes="section-title")
-                    
-                    # Progress tracking
-                    from ..Widgets.eval_results_widgets import ProgressTracker
-                    yield ProgressTracker(id="progress-tracker")
-                    
-                    # Run status
-                    yield Static("Status: Idle", id="run-status", classes="status-text")
-                    
-                    # Workflow progress
-                    from ..Widgets.loading_states import WorkflowProgress
-                    yield WorkflowProgress(
-                        ["Load Configuration", "Validate Setup", "Run Evaluation", "Save Results"],
-                        id="workflow-progress"
-                    )
 
             # Results Dashboard View
             with Container(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
