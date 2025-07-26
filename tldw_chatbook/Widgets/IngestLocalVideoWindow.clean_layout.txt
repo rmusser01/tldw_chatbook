@@ -1,0 +1,92 @@
+============================================================
+Layout: IngestLocalVideoWindow.py
+============================================================
+
+📦 VerticalScroll ⬇️
+  📍 Static "Local Video Processing"
+  📍 Static "Media Details & Processin..."
+  📍 Label "Media URLs (one per line,..."
+  📄 TextArea #local-urls-video
+  🔘 Button #local-...-video "Browse Local Files..."
+  📍 Label "Selected Local Files:"
+  📑 ListView #local-...-video
+  📦 Horizontal ➡️
+    ├─ [Vertical...] | [Vertical...]
+    └─ Vertical details:
+      📦 Vertical ⬇️
+        📍 Label "Title (Optional):"
+        📝 Input #local-title-video
+    └─ Vertical details:
+      📦 Vertical ⬇️
+        📍 Label "Author (Optional):"
+        📝 Input #local-author-video
+  📍 Label "Keywords (comma-separated..."
+  📄 TextArea #local-keywords-video
+  📍 Static "Video Processing Options"
+  ☑️ Checkbox #local-...-video "Extract Audio Only (faste..."
+  ☑️ Checkbox #local-...-video "Download Full Video (if U..."
+  📦 Horizontal ➡️
+    ├─ [Vertical...] | [Vertical...]
+    └─ Vertical details:
+      📦 Vertical ⬇️
+        📍 Label "Start Time (HH:MM:SS or s..."
+        📝 Input #local-...-video
+    └─ Vertical details:
+      📦 Vertical ⬇️
+        📍 Label "End Time (HH:MM:SS or sec..."
+        📝 Input #local-end-time-video
+  📍 Static "Transcription Options"
+  📍 Label "Source Language (ISO code..."
+  📝 Input #local-...-video
+  📦 Container #local-...-video ⬇️
+    📍 Label "Target Language for Trans..."
+    📝 Input #local-...-video
+  ☑️ Checkbox #local-...-video "Enable Voice Activity Det..."
+  ☑️ Checkbox #local-diarize-video "Enable Speaker Diarizatio..."
+  ☑️ Checkbox #local-...-video "Include Timestamps"
+  ☑️ Checkbox #local-...-video "Perform Analysis (e.g., S..."
+  ▫️ PromptSelector #local-...-video
+  📍 Label "Analysis API Provider (if..."
+  📋 Select #local-...-video
+  📍 Label "Analysis API Key (if need..."
+  📝 Input #local-...-video
+  📦 Collapsible #local-...-video ⬇️
+    ☑️ Checkbox #local-...-video "Perform Chunking"
+    📍 Label "Chunking Method:"
+    📋 Select #local-...-video
+    📦 Horizontal ➡️
+      ├─ [Vertical...] | [Vertical...]
+      └─ Vertical details:
+        📦 Vertical ⬇️
+          📍 Label "Chunk Size:"
+          📝 Input #local-...-video
+      └─ Vertical details:
+        📦 Vertical ⬇️
+          📍 Label "Chunk Overlap:"
+          📝 Input #local-...-video
+    ☑️ Checkbox #local-...-video "Use Adaptive Chunking"
+    ☑️ Checkbox #local-...-video "Use Multi-level Chunking"
+    📍 Label "Chunk Language (for seman..."
+    📝 Input #local-...-video
+    ☑️ Checkbox #local-...-video "Summarize Recursively"
+  📦 Collapsible ⬇️
+    ☑️ Checkbox #local-...-video "Use Cookies"
+    📍 Label "Cookies (JSON format):"
+    📄 TextArea #local-cookies-video
+  ☑️ Checkbox #local-...-video "Keep Original Video Files"
+  ☑️ Checkbox #local-...-video "Overwrite if exists in da..."
+  🔘 Button #local-submit-video "Submit"
+  ⏳ LoadingIndicator #local-...-video
+  📄 TextArea #local-status-video
+
+Legend:
+  📦 = Container (Vertical/Horizontal/Scroll)
+  🔘 = Button
+  📝 = Input Field
+  📄 = Text Area
+  📋 = Select/Dropdown
+  ☑️  = Checkbox
+  📍 = Label/Static Text
+  📑 = List View
+  ➡️  = Horizontal Layout
+  ⬇️  = Vertical Layout

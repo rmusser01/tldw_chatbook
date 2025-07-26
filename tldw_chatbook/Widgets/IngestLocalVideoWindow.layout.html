@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Textual UI Layout Visualization</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        
+        .app-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        .widget {
+            margin: 5px 0;
+            padding: 10px;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            background: #2d2d30;
+        }
+        
+        .widget-container {
+            border: 2px dashed #007acc;
+            background: #1e1e1e;
+        }
+        
+        .widget-horizontal {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .widget-horizontal > .widget {
+            flex: 1;
+            min-width: 200px;
+        }
+        
+        .widget-label {
+            font-size: 12px;
+            color: #608b4e;
+            margin-bottom: 5px;
+        }
+        
+        .widget-id {
+            color: #9cdcfe;
+            font-size: 11px;
+        }
+        
+        .widget-text {
+            color: #ce9178;
+            font-style: italic;
+            font-size: 11px;
+        }
+        
+        .widget-button {
+            background: #0e639c;
+            color: white;
+            text-align: center;
+            padding: 8px 16px;
+            cursor: pointer;
+        }
+        
+        .widget-input, .widget-select {
+            background: #3c3c3c;
+            border: 1px solid #464647;
+            padding: 6px 10px;
+        }
+        
+        .widget-textarea {
+            background: #3c3c3c;
+            border: 1px solid #464647;
+            min-height: 60px;
+            padding: 6px 10px;
+        }
+        
+        .widget-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .widget-collapsed {
+            background: #2d2d30;
+            padding: 8px 12px;
+            cursor: pointer;
+        }
+        
+        .widget-collapsed::before {
+            content: "▶ ";
+        }
+        
+        .widget-listview {
+            background: #1e1e1e;
+            border: 1px solid #464647;
+            min-height: 100px;
+            padding: 10px;
+        }
+        
+        h1 {
+            color: #d4d4d4;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .legend {
+            margin-top: 30px;
+            padding: 15px;
+            background: #1e1e1e;
+            border-radius: 4px;
+        }
+        
+        .legend h3 {
+            margin-top: 0;
+            color: #d4d4d4;
+        }
+        
+        .legend-item {
+            display: inline-block;
+            margin-right: 20px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Textual UI Layout Visualization</h1>
+
+<div class="app-container">
+<div class="widget widget-container">
+<div class="widget-label">VerticalScroll</div>
+<div class="widget widget-static">
+<div class="widget-label">Static <span class="widget-text">"Local Video Processing"</span></div>
+
+</div>
+<div class="widget widget-static">
+<div class="widget-label">Static <span class="widget-text">"Media Details &amp; Processing Options"</span></div>
+
+</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Media URLs (one per line, e.g., YouTube)..."</span></div>
+
+</div>
+<div class="widget widget-textarea">
+<div class="widget-label">TextArea <span class="widget-id">#local-urls-video</span></div>
+...
+</div>
+<div class="widget widget-button">
+<div class="widget-label">Button <span class="widget-id">#local-browse-local-files-button-video</span> <span class="widget-text">"Browse Local Files..."</span></div>
+<div style="text-align: center">Browse Local Files...</div>
+</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Selected Local Files:"</span></div>
+
+</div>
+<div class="widget widget-listview">
+<div class="widget-label">ListView <span class="widget-id">#local-selected-local-files-list-video</span></div>
+<div style="color: #666">List items...</div>
+</div>
+<div class="widget widget-container widget-horizontal">
+<div class="widget-label">Horizontal</div>
+<div class="widget widget-container">
+<div class="widget-label">Vertical</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Title (Optional):"</span></div>
+
+</div>
+<div class="widget widget-input">
+<div class="widget-label">Input <span class="widget-id">#local-title-video</span></div>
+...
+</div>
+</div>
+<div class="widget widget-container">
+<div class="widget-label">Vertical</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Author (Optional):"</span></div>
+
+</div>
+<div class="widget widget-input">
+<div class="widget-label">Input <span class="widget-id">#local-author-video</span></div>
+...
+</div>
+</div>
+</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Keywords (comma-separated):"</span></div>
+
+</div>
+<div class="widget widget-textarea">
+<div class="widget-label">TextArea <span class="widget-id">#local-keywords-video</span></div>
+...
+</div>
+<div class="widget widget-static">
+<div class="widget-label">Static <span class="widget-text">"Video Processing Options"</span></div>
+
+</div>
+<div class="widget widget-checkbox">
+<div class="widget-label">Checkbox <span class="widget-id">#local-extract-audio-only-video</span> <span class="widget-text">"Extract Audio Only (faster, no video fil..."</span></div>
+☐ Extract Audio Only (faster, no video file kept)
+</div>
+<div class="widget widget-checkbox">
+<div class="widget-label">Checkbox <span class="widget-id">#local-download-video-video</span> <span class="widget-text">"Download Full Video (if URL)"</span></div>
+☐ Download Full Video (if URL)
+</div>
+<div class="widget widget-container widget-horizontal">
+<div class="widget-label">Horizontal</div>
+<div class="widget widget-container">
+<div class="widget-label">Vertical</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Start Time (HH:MM:SS or seconds):"</span></div>
+
+</div>
+<div class="widget widget-input">
+<div class="widget-label">Input <span class="widget-id">#local-start-time-video</span></div>
+...
+</div>
+</div>
+<div class="widget widget-container">
+<div class="widget-label">Vertical</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"End Time (HH:MM:SS or seconds):"</span></div>
+
+</div>
+<div class="widget widget-input">
+<div class="widget-label">Input <span class="widget-id">#local-end-time-video</span></div>
+...
+</div>
+</div>
+</div>
+<div class="widget widget-static">
+<div class="widget-label">Static <span class="widget-text">"Transcription Options"</span></div>
+
+</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Source Language (ISO code):"</span></div>
+
+</div>
+<div class="widget widget-input">
+<div class="widget-label">Input <span class="widget-id">#local-transcription-language-video</span></div>
+...
+</div>
+<div class="widget widget-container">
+<div class="widget-label">Container <span class="widget-id">#local-translation-container-video</span></div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Target Language for Translation (optiona..."</span></div>
+
+</div>
+<div class="widget widget-input">
+<div class="widget-label">Input <span class="widget-id">#local-translation-target-video</span></div>
+...
+</div>
+</div>
+<div class="widget widget-checkbox">
+<div class="widget-label">Checkbox <span class="widget-id">#local-vad-filter-video</span> <span class="widget-text">"Enable Voice Activity Detection (VAD)"</span></div>
+☐ Enable Voice Activity Detection (VAD)
+</div>
+<div class="widget widget-checkbox">
+<div class="widget-label">Checkbox <span class="widget-id">#local-diarize-video</span> <span class="widget-text">"Enable Speaker Diarization"</span></div>
+☐ Enable Speaker Diarization
+</div>
+<div class="widget widget-checkbox">
+<div class="widget-label">Checkbox <span class="widget-id">#local-timestamps-video</span> <span class="widget-text">"Include Timestamps"</span></div>
+☐ Include Timestamps
+</div>
+<div class="widget widget-checkbox">
+<div class="widget-label">Checkbox <span class="widget-id">#local-perform-analysis-video</span> <span class="widget-text">"Perform Analysis (e.g., Summarization)"</span></div>
+☐ Perform Analysis (e.g., Summarization)
+</div>
+<div class="widget widget-promptselector">
+<div class="widget-label">PromptSelector <span class="widget-id">#local-prompt-selector-video</span></div>
+
+</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Analysis API Provider (if analysis enabl..."</span></div>
+
+</div>
+<div class="widget widget-select">
+<div class="widget-label">Select <span class="widget-id">#local-analysis-api-name-video</span></div>
+...
+</div>
+<div class="widget widget-label">
+<div class="widget-label">Label <span class="widget-text">"Analysis API Key (if needed):"</span></div>
+
+</div>
+<div class="widget widget-input">
+<div class="widget-label">Input <span class="widget-id">#local-analysis-api-key-video</span></div>
+...
+</div>
+<div class="widget widget-container widget-collapsed">Collapsible <span class="widget-id">#local-chunking-collapsible-video</span> (collapsed)</div>
+<div class="widget widget-container widget-collapsed">Collapsible (collapsed)</div>
+<div class="widget widget-checkbox">
+<div class="widget-label">Checkbox <span class="widget-id">#local-keep-original-video</span> <span class="widget-text">"Keep Original Video Files"</span></div>
+☐ Keep Original Video Files
+</div>
+<div class="widget widget-checkbox">
+<div class="widget-label">Checkbox <span class="widget-id">#local-overwrite-if-exists-video</span> <span class="widget-text">"Overwrite if exists in database"</span></div>
+☐ Overwrite if exists in database
+</div>
+<div class="widget widget-button">
+<div class="widget-label">Button <span class="widget-id">#local-submit-video</span> <span class="widget-text">"Submit"</span></div>
+<div style="text-align: center">Submit</div>
+</div>
+<div class="widget widget-loadingindicator">
+<div class="widget-label">LoadingIndicator <span class="widget-id">#local-loading-indicator-video</span></div>
+
+</div>
+<div class="widget widget-textarea">
+<div class="widget-label">TextArea <span class="widget-id">#local-status-video</span></div>
+...
+</div>
+</div>
+</div>
+
+    <div class="legend">
+        <h3>Widget Types</h3>
+        <div class="legend-item">🔲 Containers (Vertical/Horizontal)</div>
+        <div class="legend-item">🔘 Buttons</div>
+        <div class="legend-item">📝 Input Fields</div>
+        <div class="legend-item">📄 Text Areas</div>
+        <div class="legend-item">☑️ Checkboxes</div>
+        <div class="legend-item">📋 Lists</div>
+    </div>
+</body>
+</html>

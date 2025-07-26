@@ -202,3 +202,4 @@ List.txt
 /pretrained_models/
 *.cpkt
 *.ckpt
+/higgs-audio/

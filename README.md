@@ -631,7 +631,8 @@ pip install -e .  # or with optional features
 </details>
 
 ### Inspiration
-https://github.com/darrenburns/elia
+- https://github.com/darrenburns/elia
+- https://github.com/paulrobello/parllama
 
 ## Contributing
 - Contributions are welcome! Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file for details on how to contribute to this project.(WIP)

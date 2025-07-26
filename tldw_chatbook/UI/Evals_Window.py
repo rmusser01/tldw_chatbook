@@ -8,6 +8,7 @@ from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
+from pathlib import Path
 from textual.css.query import QueryError
 from textual.reactive import reactive
 from textual.widgets import Static, Button, Label, ProgressBar, TabPane, TabbedContent, Input, Select
@@ -42,240 +43,12 @@ class EvalsWindow(Container):
     A fully self-contained component for the Evals Tab, featuring a collapsible
     sidebar and content areas for evaluation-related functionality.
     Enhanced with better UX, real-time updates, and improved feedback.
+    Uses grid layout for better organization and responsiveness.
     """
     
-    DEFAULT_CSS = """
-    /* Evals Navigation Pane */
-    .evals-nav-pane {
-        dock: left;
-        width: 25%;
-        min-width: 25;
-        max-width: 50;
-        height: 100%;
-        background: $boost;
-        padding: 1;
-        border-right: thick $background-darken-1;
-        overflow-y: auto;
-        overflow-x: hidden;
-        transition: width 200ms;
-    }
-    
-    .evals-nav-pane.collapsed {
-        width: 0 !important;
-        min-width: 0 !important;
-        border-right: none !important;
-        padding: 0 !important;
-        overflow: hidden !important;
-        display: none !important;
-    }
-    
-    /* Navigation Buttons */
-    .evals-nav-button {
-        width: 100%;
-        height: 3;
-        margin-bottom: 1;
-        border: none;
-        background: $surface;
-    }
-    
-    .evals-nav-button:hover {
-        background: $accent 50%;
-    }
-    
-    .evals-nav-button.active {
-        background: $accent;
-        color: $text;
-        text-style: bold;
-    }
-    
-    /* Content Pane */
-    .evals-content-pane {
-        width: 1fr;
-        height: 100%;
-        padding: 1 2;
-        overflow-y: auto;
-    }
-    
-    /* View Areas */
-    .evals-view-area {
-        width: 100%;
-        height: 100%;
-        padding: 1;
-    }
-    
-    /* Titles */
-    .sidebar-title, .pane-title {
-        text-style: bold underline;
-        width: 100%;
-        text-align: center;
-        margin-bottom: 2;
-        color: $text;
-    }
-    
-    .section-title {
-        text-style: bold;
-        margin: 1 0;
-        color: $text;
-    }
-    
-    .subsection-title {
-        text-style: italic;
-        margin: 1 0;
-        color: $text-muted;
-    }
-    
-    /* Containers */
-    .section-container {
-        border: round $surface;
-        padding: 1;
-        margin-bottom: 2;
-        background: $panel;
-    }
-    
-    /* Buttons */
-    .action-button {
-        margin: 0 1 1 0;
-        min-width: 15;
-        height: 3;
-    }
-    
-    .action-button.primary {
-        background: $accent;
-        color: $text;
-    }
-    
-    .action-button.danger {
-        background: $error;
-        color: $text;
-    }
-    
-    /* Status Text */
-    .status-text {
-        width: 100%;
-        margin-top: 1;
-        color: $text-muted;
-        text-style: italic;
-    }
-    
-    .status-text.success {
-        color: $success;
-    }
-    
-    .status-text.error {
-        color: $error;
-    }
-    
-    .status-text.warning {
-        color: $warning;
-    }
-    
-    .status-text.info {
-        color: $primary;
-    }
-    
-    /* Results Container */
-    .results-container, .models-container, .datasets-container {
-        border: round $surface;
-        padding: 1;
-        margin-top: 1;
-        background: $surface-darken-1;
-        min-height: 10;
-    }
-    
-    /* Button Rows */
-    .button-row {
-        layout: horizontal;
-        height: auto;
-        margin-bottom: 1;
-    }
-    
-    /* Provider Grid */
-    .provider-grid {
-        layout: grid;
-        grid-size: 4;
-        grid-gutter: 1;
-        margin-top: 1;
-    }
-    
-    .provider-button {
-        height: 5;
-        text-align: center;
-    }
-    
-    /* Template Buttons */
-    .template-button {
-        margin: 0 1 1 0;
-        min-width: 20;
-        height: 3;
-    }
-    
-    /* Help Text */
-    .help-text {
-        color: $text-muted;
-        text-style: italic;
-        margin-bottom: 1;
-    }
-    
-    /* Configuration Rows */
-    .config-row {
-        layout: horizontal;
-        height: 3;
-        margin-bottom: 1;
-        align: left middle;
-    }
-    
-    .config-label {
-        width: 15;
-        text-align: right;
-        margin-right: 1;
-    }
-    
-    .config-input, .config-select {
-        width: 30;
-    }
-    
-    /* Quick Config Container */
-    .quick-config-container {
-        border: round $surface;
-        padding: 1;
-        margin: 1 0;
-        background: $surface-darken-1;
-    }
-    
-    /* Footer */
-    .footer-container {
-        dock: bottom;
-        height: auto;
-        width: 100%;
-        padding: 1;
-        background: $surface-darken-2;
-        border-top: solid $surface;
-    }
-    
-    .tip-text {
-        color: $text-muted;
-        text-style: italic;
-        margin: 0;
-    }
-    
-    /* Sidebar Toggle */
-    .sidebar-toggle {
-        width: 3;
-        height: 3;
-        margin-right: 1;
-        border: none;
-        background: $surface-darken-1;
-        color: $text;
-    }
-    
-    .sidebar-toggle:hover {
-        background: $surface;
-    }
-    
-    .sidebar-toggle.collapsed {
-        margin-left: 0;
-    }
-    """
+    # Load external CSS instead of inline
+    css_path = Path(__file__).parent.parent / "css" / "features" / "_evaluation_v2.tcss"
+    DEFAULT_CSS = css_path.read_text(encoding='utf-8') if css_path.exists() else ""
     
     # --- STATE LIVES HERE NOW ---
     evals_sidebar_collapsed: reactive[bool] = reactive(False)
@@ -326,6 +99,9 @@ class EvalsWindow(Container):
         try:
             nav_pane = self.query_one("#evals-nav-pane")
             toggle_button = self.query_one("#evals-sidebar-toggle-button")
+            
+            # Toggle classes for responsive grid layout
+            self.set_class(collapsed, "sidebar-collapsed")
             nav_pane.set_class(collapsed, "collapsed")
             toggle_button.set_class(collapsed, "collapsed")
         except QueryError as e:
@@ -481,21 +257,21 @@ class EvalsWindow(Container):
         """Handle task file upload."""
         logger.info("Upload task button pressed")
         from ..Event_Handlers.eval_events import handle_upload_task
-        self.app.call_from_thread(handle_upload_task, self.app_instance, event)
+        handle_upload_task(self.app_instance, event)
     
     @on(Button.Pressed, "#create-task-btn")
     def handle_create_task(self, event: Button.Pressed) -> None:
         """Handle new task creation."""
         logger.info("Create task button pressed")
         from ..Event_Handlers.eval_events import handle_create_task
-        self.app.call_from_thread(handle_create_task, self.app_instance, event)
+        handle_create_task(self.app_instance, event)
     
     @on(Button.Pressed, "#add-model-btn")
     def handle_add_model(self, event: Button.Pressed) -> None:
         """Handle adding model configuration."""
         logger.info("Add model button pressed")
         from ..Event_Handlers.eval_events import handle_add_model
-        self.app.call_from_thread(handle_add_model, self.app_instance, event)
+        handle_add_model(self.app_instance, event)
     
     @on(Button.Pressed, "#start-eval-btn")
     def handle_start_evaluation(self, event: Button.Pressed) -> None:
@@ -503,11 +279,11 @@ class EvalsWindow(Container):
         if self.current_run_status == "running":
             logger.info("Cancel evaluation button pressed")
             from ..Event_Handlers.eval_events import handle_cancel_evaluation
-            self.app.call_from_thread(handle_cancel_evaluation, self.app_instance, self.active_run_id)
+            handle_cancel_evaluation(self.app_instance, self.active_run_id)
         else:
             logger.info("Start evaluation button pressed")
             from ..Event_Handlers.eval_events import handle_start_evaluation
-            self.app.call_from_thread(handle_start_evaluation, self.app_instance, event)
+            handle_start_evaluation(self.app_instance, event)
     
     # --- Results Dashboard Handlers ---
     @on(Button.Pressed, "#refresh-results-btn")
@@ -515,35 +291,35 @@ class EvalsWindow(Container):
         """Handle refreshing results list."""
         logger.info("Refresh results button pressed")
         from ..Event_Handlers.eval_events import handle_refresh_results
-        self.app.call_from_thread(handle_refresh_results, self.app_instance, event)
+        handle_refresh_results(self.app_instance, event)
     
     @on(Button.Pressed, "#view-detailed-btn")
     def handle_view_detailed_results(self, event: Button.Pressed) -> None:
         """Handle viewing detailed results for the most recent run."""
         logger.info("View detailed results button pressed")
         from ..Event_Handlers.eval_events import handle_view_detailed_results
-        self.app.call_from_thread(handle_view_detailed_results, self.app_instance, event)
+        handle_view_detailed_results(self.app_instance, event)
     
     @on(Button.Pressed, "#compare-runs-btn")
     def handle_compare_runs(self, event: Button.Pressed) -> None:
         """Handle comparing evaluation runs."""
         logger.info("Compare runs button pressed")
         from ..Event_Handlers.eval_events import handle_compare_runs
-        self.app.call_from_thread(handle_compare_runs, self.app_instance, event)
+        handle_compare_runs(self.app_instance, event)
     
     @on(Button.Pressed, "#export-csv-btn")
     def handle_export_csv(self, event: Button.Pressed) -> None:
         """Handle CSV export."""
         logger.info("Export CSV button pressed")
         from ..Event_Handlers.eval_events import handle_export_results
-        self.app.call_from_thread(handle_export_results, self.app_instance, 'csv')
+        handle_export_results(self.app_instance, 'csv')
     
     @on(Button.Pressed, "#export-json-btn")
     def handle_export_json(self, event: Button.Pressed) -> None:
         """Handle JSON export."""
         logger.info("Export JSON button pressed")
         from ..Event_Handlers.eval_events import handle_export_results
-        self.app.call_from_thread(handle_export_results, self.app_instance, 'json')
+        handle_export_results(self.app_instance, 'json')
     
     # --- Model Management Handlers ---
     @on(Button.Pressed, "#add-new-model-btn")
@@ -551,7 +327,7 @@ class EvalsWindow(Container):
         """Handle adding new model configuration."""
         logger.info("Add new model button pressed")
         from ..Event_Handlers.eval_events import handle_add_model
-        self.app.call_from_thread(handle_add_model, self.app_instance, event)
+        handle_add_model(self.app_instance, event)
     
     @on(Button.Pressed, ".provider-button")
     def handle_provider_setup(self, event: Button.Pressed) -> None:
@@ -559,7 +335,7 @@ class EvalsWindow(Container):
         provider = event.button.label.plain.lower()
         logger.info(f"Setting up {provider} provider")
         from ..Event_Handlers.eval_events import handle_provider_setup
-        self.app.call_from_thread(handle_provider_setup, self.app_instance, provider)
+        handle_provider_setup(self.app_instance, provider)
     
     # --- Dataset Management Handlers ---
     @on(Button.Pressed, "#upload-csv-btn")
@@ -567,14 +343,14 @@ class EvalsWindow(Container):
         """Handle CSV dataset upload."""
         logger.info("Upload CSV button pressed")
         from ..Event_Handlers.eval_events import handle_upload_dataset
-        self.app.call_from_thread(handle_upload_dataset, self.app_instance, event)
+        handle_upload_dataset(self.app_instance, event)
     
     @on(Button.Pressed, "#upload-json-btn")
     def handle_upload_json(self, event: Button.Pressed) -> None:
         """Handle JSON dataset upload."""
         logger.info("Upload JSON button pressed")
         from ..Event_Handlers.eval_events import handle_upload_dataset
-        self.app.call_from_thread(handle_upload_dataset, self.app_instance, event)
+        handle_upload_dataset(self.app_instance, event)
     
     @on(Button.Pressed, "#add-hf-dataset-btn")
     def handle_add_hf_dataset(self, event: Button.Pressed) -> None:
@@ -587,14 +363,14 @@ class EvalsWindow(Container):
         """Handle refreshing datasets list."""
         logger.info("Refresh datasets button pressed")
         from ..Event_Handlers.eval_events import handle_refresh_datasets
-        self.app.call_from_thread(handle_refresh_datasets, self.app_instance, event)
+        handle_refresh_datasets(self.app_instance, event)
     
     @on(Button.Pressed, ".template-button")
     def handle_template_button(self, event: Button.Pressed) -> None:
         """Handle template button press."""
         logger.info(f"Template button pressed: {event.button.id}")
         from ..Event_Handlers.eval_events import handle_template_button
-        self.app.call_from_thread(handle_template_button, self.app_instance, event)
+        handle_template_button(self.app_instance, event)
     
     # --- Cost Estimation Updates ---
     @on(Select.Changed, "#model-select")
@@ -636,7 +412,7 @@ class EvalsWindow(Container):
         """Handle refresh request from ResultsTable widget."""
         logger.info("ResultsTable refresh requested")
         from ..Event_Handlers.eval_events import handle_refresh_results
-        self.app.call_from_thread(handle_refresh_results, self.app_instance, None)
+        handle_refresh_results(self.app_instance, None)
     
     # --- Helper Methods ---
     def _update_status(self, status_id: str, message: str, add_class: str = None) -> None:
@@ -744,7 +520,7 @@ class EvalsWindow(Container):
         """Update the results list display."""
         try:
             from ..Event_Handlers.eval_events import refresh_results_list
-            self.app.call_from_thread(refresh_results_list, self.app_instance)
+            refresh_results_list(self.app_instance)
         except Exception as e:
             logger.warning(f"Error refreshing results list: {e}")
     
@@ -752,7 +528,7 @@ class EvalsWindow(Container):
         """Update the models list display."""
         try:
             from ..Event_Handlers.eval_events import refresh_models_list
-            self.app.call_from_thread(refresh_models_list, self.app_instance)
+            refresh_models_list(self.app_instance)
         except Exception as e:
             logger.warning(f"Error refreshing models list: {e}")
     
@@ -760,7 +536,7 @@ class EvalsWindow(Container):
         """Update the datasets list display."""
         try:
             from ..Event_Handlers.eval_events import refresh_datasets_list
-            self.app.call_from_thread(refresh_datasets_list, self.app_instance)
+            refresh_datasets_list(self.app_instance)
         except Exception as e:
             logger.warning(f"Error refreshing datasets list: {e}")
 
@@ -774,7 +550,7 @@ class EvalsWindow(Container):
         # Initialize evaluation system
         try:
             from ..Event_Handlers.eval_events import initialize_evals_system
-            self.app.call_from_thread(initialize_evals_system, self.app_instance)
+            initialize_evals_system(self.app_instance)
             
             # Load initial data for dropdowns and lists
             self._populate_initial_data()
@@ -807,7 +583,7 @@ class EvalsWindow(Container):
 
     def compose(self) -> ComposeResult:
         # Left Navigation Pane
-        with VerticalScroll(classes="evals-nav-pane", id="evals-nav-pane"):
+        with Container(classes="evals-nav-pane", id="evals-nav-pane"):
             yield Static("Evaluation Tools", classes="sidebar-title")
             yield Button("Evaluation Setup", id=EVALS_NAV_SETUP, classes="evals-nav-button")
             yield Button("Results Dashboard", id=EVALS_NAV_RESULTS, classes="evals-nav-button")
@@ -816,212 +592,210 @@ class EvalsWindow(Container):
 
         # Main Content Pane
         with Container(classes="evals-content-pane", id="evals-content-pane"):
-            yield Button(
-                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
-                id="evals-sidebar-toggle-button",
-                classes="sidebar-toggle"
-            )
+                yield Button(
+                    get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
+                    id="evals-sidebar-toggle-button",
+                    classes="sidebar-toggle"
+                )
 
-            # Create a view for Evaluation Setup
-            with VerticalScroll(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
-                yield Static("Evaluation Setup", classes="pane-title")
-                
-                # Task Upload Section
-                with Container(classes="section-container"):
-                    yield Static("Task Configuration", classes="section-title")
-                    yield Button("Upload Task File", id="upload-task-btn", classes="action-button")
-                    yield Button("Create New Task", id="create-task-btn", classes="action-button")
-                    yield Static("", id="task-status", classes="status-text")
-                
-                # Model Configuration Section
-                with Container(classes="section-container"):
-                    yield Static("Model Configuration", classes="section-title")
-                    yield Button("Add Model", id="add-model-btn", classes="action-button")
-                    yield Static("", id="model-status", classes="status-text")
-                
-                # Run Configuration Section
-                with Container(classes="section-container"):
-                    yield Static("Run Configuration", classes="section-title")
-                    yield Button("Start Evaluation", id="start-eval-btn", classes="action-button primary")
-                    yield Static("", id="run-status", classes="status-text")
-                
-                # Progress Tracking Section
-                with Container(classes="section-container", id="progress-section"):
-                    yield Static("Evaluation Progress", classes="section-title")
-                    from ..Widgets.eval_results_widgets import ProgressTracker
-                    yield ProgressTracker(id="progress-tracker")
+                # Create a view for Evaluation Setup
+                with Container(id=EVALS_VIEW_SETUP, classes="evals-view-area"):
+                    yield Static("Evaluation Setup", classes="pane-title")
                     
-                    # Quick Configuration Section  
-                    with Container(classes="quick-config-container"):
-                        yield Static("Quick Configuration", classes="subsection-title")
-                        
-                        with Horizontal(classes="config-row"):
+                    # Task Upload Section
+                    with Container(classes="section-container"):
+                        yield Static("Task Configuration", classes="section-title")
+                        yield Button("Upload Task File", id="upload-task-btn", classes="action-button")
+                        yield Button("Create New Task", id="create-task-btn", classes="action-button")
+                        yield Static("", id="task-status", classes="status-text")
+                    
+                    # Model Configuration Section
+                    with Container(classes="section-container"):
+                        yield Static("Model Configuration", classes="section-title")
+                        yield Button("Add Model", id="add-model-btn", classes="action-button")
+                        yield Static("", id="model-status", classes="status-text")
+                    
+                    # Run Configuration Section
+                    with Container(classes="section-container"):
+                        yield Static("Run Configuration", classes="section-title")
+                        yield Button("Start Evaluation", id="start-eval-btn", classes="action-button primary")
+                        yield Static("", id="run-status", classes="status-text")
+                    
+                    # Progress Tracking Section
+                    with Container(classes="section-container", id="progress-section"):
+                        yield Static("Evaluation Progress", classes="section-title")
+                        from ..Widgets.eval_results_widgets import ProgressTracker
+                        yield ProgressTracker(id="progress-tracker")
+                    
+                        # Quick Configuration Section  
+                        with Container(classes="quick-config-container"):
+                            yield Static("Quick Configuration", classes="subsection-title")
+                            
                             yield Label("Max Samples:", classes="config-label")
                             yield Input(placeholder="100", id="max-samples-input", classes="config-input")
-                        
-                        with Horizontal(classes="config-row"):
+                            
                             yield Label("Model:", classes="config-label")
                             yield Select([("Select Model", "")], id="model-select", classes="config-select")
-                        
-                        with Horizontal(classes="config-row"):
+                            
                             yield Label("Task:", classes="config-label")
                             yield Select([("Select Task", "")], id="task-select", classes="config-select")
                     
-                    # Cost Estimation Section
-                    from ..Widgets.cost_estimation_widget import CostEstimationWidget
-                    yield CostEstimationWidget(id="cost-estimator")
-                    
-                    # Workflow Progress Section
-                    from ..Widgets.loading_states import WorkflowProgress
-                    yield WorkflowProgress(
-                        ["Load Task", "Configure Model", "Run Evaluation", "Save Results"],
-                        id="workflow-progress"
-                    )
+                        # Cost Estimation Section
+                        from ..Widgets.cost_estimation_widget import CostEstimationWidget
+                        yield CostEstimationWidget(id="cost-estimator")
+                        
+                        # Workflow Progress Section
+                        from ..Widgets.loading_states import WorkflowProgress
+                        yield WorkflowProgress(
+                            ["Load Task", "Configure Model", "Run Evaluation", "Save Results"],
+                            id="workflow-progress"
+                        )
 
-            # Create a view for Results Dashboard
-            with VerticalScroll(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
-                yield Static("Results Dashboard", classes="pane-title")
-                
-                # Results Overview Section
-                with Container(classes="section-container"):
-                    yield Static("Recent Evaluations", classes="section-title")
+                # Create a view for Results Dashboard
+                with Container(id=EVALS_VIEW_RESULTS, classes="evals-view-area"):
+                    yield Static("Results Dashboard", classes="pane-title")
                     
-                    with Horizontal(classes="button-row"):
-                        yield Button("Refresh Results", id="refresh-results-btn", classes="action-button")
-                        yield Button("View Detailed Results", id="view-detailed-btn", classes="action-button")
-                        yield Button("Filter Results", id="filter-results-btn", classes="action-button")
+                    # Results Overview Section
+                    with Container(classes="section-container"):
+                        yield Static("Recent Evaluations", classes="section-title")
+                        
+                        with Horizontal(classes="button-row"):
+                            yield Button("Refresh Results", id="refresh-results-btn", classes="action-button")
+                            yield Button("View Detailed Results", id="view-detailed-btn", classes="action-button")
+                            yield Button("Filter Results", id="filter-results-btn", classes="action-button")
                     
-                    yield Static("Loading evaluations...", id="results-list", classes="results-container")
+                        yield Static("Loading evaluations...", id="results-list", classes="results-container")
+                        
+                        # Add detailed results table
+                        from ..Widgets.eval_results_widgets import ResultsTable
+                        yield ResultsTable(id="results-table")
                     
-                    # Add detailed results table
-                    from ..Widgets.eval_results_widgets import ResultsTable
-                    yield ResultsTable(id="results-table")
-                
-                # Metrics Display Section
-                with Container(classes="section-container"):
-                    yield Static("Latest Run Metrics", classes="section-title")
-                    from ..Widgets.eval_results_widgets import MetricsDisplay
-                    yield MetricsDisplay(id="metrics-display")
-                
-                # Comparison Section
-                with Container(classes="section-container"):
-                    yield Static("Compare Runs", classes="section-title")
-                    yield Button("Compare Selected", id="compare-runs-btn", classes="action-button")
-                    yield Static("", id="comparison-results", classes="results-container")
-                
-                # Export Section
-                with Container(classes="section-container"):
-                    yield Static("Export Results", classes="section-title")
+                    # Metrics Display Section
+                    with Container(classes="section-container"):
+                        yield Static("Latest Run Metrics", classes="section-title")
+                        from ..Widgets.eval_results_widgets import MetricsDisplay
+                        yield MetricsDisplay(id="metrics-display")
                     
-                    with Horizontal(classes="button-row"):
-                        yield Button("Export to CSV", id="export-csv-btn", classes="action-button")
-                        yield Button("Export to JSON", id="export-json-btn", classes="action-button")
-                        yield Button("Export Report", id="export-report-btn", classes="action-button")
+                    # Comparison Section
+                    with Container(classes="section-container"):
+                        yield Static("Compare Runs", classes="section-title")
+                        yield Button("Compare Selected", id="compare-runs-btn", classes="action-button")
+                        yield Static("", id="comparison-results", classes="results-container")
                     
-                    yield Static("", id="export-status", classes="status-text")
-                
-                # Cost Summary Section
-                with Container(classes="section-container"):
-                    yield Static("Cost Analysis", classes="section-title")
-                    from ..Widgets.cost_estimation_widget import CostSummaryWidget, CostEstimator
-                    yield CostSummaryWidget(CostEstimator(), id="cost-summary")
+                    # Export Section
+                    with Container(classes="section-container"):
+                        yield Static("Export Results", classes="section-title")
+                        
+                        with Horizontal(classes="button-row"):
+                            yield Button("Export to CSV", id="export-csv-btn", classes="action-button")
+                            yield Button("Export to JSON", id="export-json-btn", classes="action-button")
+                            yield Button("Export Report", id="export-report-btn", classes="action-button")
+                    
+                        yield Static("", id="export-status", classes="status-text")
+                    
+                    # Cost Summary Section
+                    with Container(classes="section-container"):
+                        yield Static("Cost Analysis", classes="section-title")
+                        from ..Widgets.cost_estimation_widget import CostSummaryWidget, CostEstimator
+                        yield CostSummaryWidget(CostEstimator(), id="cost-summary")
 
-            # Create a view for Model Management
-            with VerticalScroll(id=EVALS_VIEW_MODELS, classes="evals-view-area"):
-                yield Static("Model Management", classes="pane-title")
-                
-                # Model List Section
-                with Container(classes="section-container"):
-                    yield Static("Available Models", classes="section-title")
+                # Create a view for Model Management
+                with Container(id=EVALS_VIEW_MODELS, classes="evals-view-area"):
+                    yield Static("Model Management", classes="pane-title")
                     
-                    with Horizontal(classes="button-row"):
-                        yield Button("Add Model Configuration", id="add-new-model-btn", classes="action-button primary")
-                        yield Button("Test Connection", id="test-connection-btn", classes="action-button")
-                        yield Button("Import from Templates", id="import-templates-btn", classes="action-button")
+                    # Model List Section
+                    with Container(classes="section-container"):
+                        yield Static("Available Models", classes="section-title")
+                        
+                        with Horizontal(classes="button-row"):
+                            yield Button("Add Model Configuration", id="add-new-model-btn", classes="action-button primary")
+                            yield Button("Test Connection", id="test-connection-btn", classes="action-button")
+                            yield Button("Import from Templates", id="import-templates-btn", classes="action-button")
                     
-                    yield Static("Loading models...", id="models-list", classes="models-container")
-                    yield Static("", id="model-test-status", classes="status-text")
-                
-                # Provider Templates Section
-                with Container(classes="section-container"):
-                    yield Static("Quick Setup", classes="section-title")
-                    yield Static("Click a provider to set up with default settings", classes="help-text")
+                        yield Static("Loading models...", id="models-list", classes="models-container")
+                        yield Static("", id="model-test-status", classes="status-text")
                     
-                    with Horizontal(classes="provider-grid"):
-                        yield Button("🤖 OpenAI", id="setup-openai-btn", classes="provider-button")
-                        yield Button("🧠 Anthropic", id="setup-anthropic-btn", classes="provider-button")
-                        yield Button("🚀 Cohere", id="setup-cohere-btn", classes="provider-button")
-                        yield Button("⚡ Groq", id="setup-groq-btn", classes="provider-button")
+                    # Provider Templates Section
+                    with Container(classes="section-container"):
+                        yield Static("Quick Setup", classes="section-title")
+                        yield Static("Click a provider to set up with default settings", classes="help-text")
+                        
+                        with Container(classes="provider-grid"):
+                            yield Button("🤖 OpenAI", id="setup-openai-btn", classes="provider-button")
+                            yield Button("🧠 Anthropic", id="setup-anthropic-btn", classes="provider-button")
+                            yield Button("🚀 Cohere", id="setup-cohere-btn", classes="provider-button")
+                            yield Button("⚡ Groq", id="setup-groq-btn", classes="provider-button")
                     
-                    yield Static("", id="provider-setup-status", classes="status-text")
+                        yield Static("", id="provider-setup-status", classes="status-text")
 
-            # Create a view for Dataset Management
-            with VerticalScroll(id=EVALS_VIEW_DATASETS, classes="evals-view-area"):
-                yield Static("Dataset Management", classes="pane-title")
+                # Create a view for Dataset Management
+                with Container(id=EVALS_VIEW_DATASETS, classes="evals-view-area"):
+                    yield Static("Dataset Management", classes="pane-title")
+                    
+                    # Dataset Upload Section
+                    with Container(classes="section-container"):
+                        yield Static("Upload Dataset", classes="section-title")
+                        yield Button("Upload CSV/TSV", id="upload-csv-btn", classes="action-button")
+                        yield Button("Upload JSON", id="upload-json-btn", classes="action-button")
+                        yield Button("Add HuggingFace Dataset", id="add-hf-dataset-btn", classes="action-button")
+                        yield Static("", id="dataset-upload-status", classes="status-text")
+                    
+                    # Available Datasets Section
+                    with Container(classes="section-container"):
+                        yield Static("Available Datasets", classes="section-title")
+                        
+                        with Horizontal(classes="button-row"):
+                            yield Button("Refresh List", id="refresh-datasets-btn", classes="action-button")
+                            yield Button("Validate Datasets", id="validate-datasets-btn", classes="action-button")
+                            yield Button("Browse Samples", id="browse-samples-btn", classes="action-button")
+                    
+                        yield Static("Loading datasets...", id="datasets-list", classes="datasets-container")
+                        yield Static("", id="dataset-validation-status", classes="status-text")
                 
-                # Dataset Upload Section
-                with Container(classes="section-container"):
-                    yield Static("Upload Dataset", classes="section-title")
-                    yield Button("Upload CSV/TSV", id="upload-csv-btn", classes="action-button")
-                    yield Button("Upload JSON", id="upload-json-btn", classes="action-button")
-                    yield Button("Add HuggingFace Dataset", id="add-hf-dataset-btn", classes="action-button")
-                    yield Static("", id="dataset-upload-status", classes="status-text")
-                
-                # Available Datasets Section
-                with Container(classes="section-container"):
-                    yield Static("Available Datasets", classes="section-title")
+                    # Evaluation Templates Section
+                    with Container(classes="section-container"):
+                        yield Static("Evaluation Templates", classes="section-title")
+                        
+                        # Reasoning & Math
+                        yield Static("Reasoning & Mathematics", classes="subsection-title")
+                        with Container(classes="template-grid"):
+                            yield Button("GSM8K Math", id="template-gsm8k-btn", classes="template-button")
+                            yield Button("Logical Reasoning", id="template-logic-btn", classes="template-button")
+                            yield Button("Chain of Thought", id="template-cot-btn", classes="template-button")
                     
-                    with Horizontal(classes="button-row"):
-                        yield Button("Refresh List", id="refresh-datasets-btn", classes="action-button")
-                        yield Button("Validate Datasets", id="validate-datasets-btn", classes="action-button")
-                        yield Button("Browse Samples", id="browse-samples-btn", classes="action-button")
+                        # Safety & Alignment
+                        yield Static("Safety & Alignment", classes="subsection-title")
+                        with Container(classes="template-grid"):
+                            yield Button("Harmfulness Detection", id="template-harm-btn", classes="template-button")
+                            yield Button("Bias Evaluation", id="template-bias-btn", classes="template-button")
+                            yield Button("Truthfulness QA", id="template-truth-btn", classes="template-button")
                     
-                    yield Static("Loading datasets...", id="datasets-list", classes="datasets-container")
-                    yield Static("", id="dataset-validation-status", classes="status-text")
-                
-                # Evaluation Templates Section
-                with Container(classes="section-container"):
-                    yield Static("Evaluation Templates", classes="section-title")
+                        # Code & Programming
+                        yield Static("Code & Programming", classes="subsection-title")
+                        with Container(classes="template-grid"):
+                            yield Button("HumanEval Coding", id="template-humaneval-btn", classes="template-button")
+                            yield Button("Bug Detection", id="template-bugs-btn", classes="template-button")
+                            yield Button("SQL Generation", id="template-sql-btn", classes="template-button")
                     
-                    # Reasoning & Math
-                    yield Static("Reasoning & Mathematics", classes="subsection-title")
-                    yield Button("GSM8K Math", id="template-gsm8k-btn", classes="template-button")
-                    yield Button("Logical Reasoning", id="template-logic-btn", classes="template-button")
-                    yield Button("Chain of Thought", id="template-cot-btn", classes="template-button")
+                        # Domain Knowledge
+                        yield Static("Domain Knowledge", classes="subsection-title")
+                        with Container(classes="template-grid"):
+                            yield Button("Medical QA", id="template-medical-btn", classes="template-button")
+                            yield Button("Legal Reasoning", id="template-legal-btn", classes="template-button")
+                            yield Button("Scientific Reasoning", id="template-science-btn", classes="template-button")
                     
-                    # Safety & Alignment
-                    yield Static("Safety & Alignment", classes="subsection-title")
-                    yield Button("Harmfulness Detection", id="template-harm-btn", classes="template-button")
-                    yield Button("Bias Evaluation", id="template-bias-btn", classes="template-button")
-                    yield Button("Truthfulness QA", id="template-truth-btn", classes="template-button")
-                    
-                    # Code & Programming
-                    yield Static("Code & Programming", classes="subsection-title")
-                    yield Button("HumanEval Coding", id="template-humaneval-btn", classes="template-button")
-                    yield Button("Bug Detection", id="template-bugs-btn", classes="template-button")
-                    yield Button("SQL Generation", id="template-sql-btn", classes="template-button")
-                    
-                    # Domain Knowledge
-                    yield Static("Domain Knowledge", classes="subsection-title")
-                    yield Button("Medical QA", id="template-medical-btn", classes="template-button")
-                    yield Button("Legal Reasoning", id="template-legal-btn", classes="template-button")
-                    yield Button("Scientific Reasoning", id="template-science-btn", classes="template-button")
-                    
-                    # Creative & Open-ended
-                    yield Static("Creative & Open-ended", classes="subsection-title")
-                    yield Button("Creative Writing", id="template-creative-btn", classes="template-button")
-                    yield Button("Story Completion", id="template-story-btn", classes="template-button")
-                    yield Button("Summarization", id="template-summary-btn", classes="template-button")
+                        # Creative & Open-ended
+                        yield Static("Creative & Open-ended", classes="subsection-title")
+                        with Container(classes="template-grid"):
+                            yield Button("Creative Writing", id="template-creative-btn", classes="template-button")
+                            yield Button("Story Completion", id="template-story-btn", classes="template-button")
+                            yield Button("Summarization", id="template-summary-btn", classes="template-button")
 
-            # Hide all views by default; on_mount will manage visibility
-            for view_area in self.query(".evals-view-area"):
-                view_area.styles.display = "none"
-            
-            # Add footer with helpful information
-            with Container(classes="footer-container"):
-                yield Static("💡 Tip: Use templates to quickly set up common evaluation tasks", classes="tip-text")
-                yield Static("📊 View real-time progress in the Setup tab while evaluations run", classes="tip-text")
-                yield Static("🔄 Results auto-refresh every 30 seconds when evaluations are active", classes="tip-text")
+                # Add footer with helpful information
+                with Container(classes="footer-container"):
+                    yield Static("💡 Tip: Use templates to quickly set up common evaluation tasks", classes="tip-text")
+                    yield Static("📊 View real-time progress in the Setup tab while evaluations run", classes="tip-text")
+                    yield Static("🔄 Results auto-refresh every 30 seconds when evaluations are active", classes="tip-text")
 
 #
 # End of Evals_Window.py

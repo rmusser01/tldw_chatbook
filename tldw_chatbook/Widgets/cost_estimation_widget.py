@@ -286,8 +286,9 @@ class CostEstimationWidget(Container):
     
     def on_click(self, event) -> None:
         """Handle click events on the widget."""
-        # Check if the clicked element has the collapsible class
-        if event.target and hasattr(event.target, 'has_class') and event.target.has_class("collapsible"):
+        # Get the widget at the click position
+        widget, _ = self.get_widget_at(event.x, event.y)
+        if widget and hasattr(widget, 'has_class') and widget.has_class("collapsible"):
             self.toggle_details()
     
     def toggle_details(self) -> None:

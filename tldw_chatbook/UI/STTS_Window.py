@@ -177,6 +177,7 @@ class TTSPlaygroundWidget(Widget):
         self.reference_audio_path = None
         self.higgs_reference_audio_path = None
         self._progress_timer_task = None
+        self._play_worker_task = None
         self.example_texts = [
             "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
             "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
@@ -505,6 +506,27 @@ class TTSPlaygroundWidget(Widget):
         """Initialize default values on mount"""
         # Delay initialization to ensure widgets are ready
         self.set_timer(0.1, self._initialize_defaults)
+    
+    async def on_unmount(self) -> None:
+        """Clean up resources when widget is unmounted"""
+        try:
+            # Cancel any active progress timer
+            if self._progress_timer_task and not self._progress_timer_task.done():
+                self._progress_timer_task.cancel()
+                await asyncio.sleep(0.05)
+            
+            # Cancel any active play worker
+            if hasattr(self, '_play_worker_task') and self._play_worker_task and not self._play_worker_task.done():
+                self._play_worker_task.cancel()
+                await asyncio.sleep(0.05)
+            
+            # Stop audio playback if active
+            if hasattr(self.app, 'audio_player'):
+                await self.app.audio_player.stop()
+                
+            logger.debug("TTSPlaygroundWidget cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during TTSPlaygroundWidget cleanup: {e}")
     
     def _initialize_defaults(self) -> None:
         """Initialize default values after mount"""
@@ -1148,6 +1170,11 @@ class TTSPlaygroundWidget(Widget):
         """Play the generated audio"""
         logger.debug(f"_play_audio called, current_audio_file: {self.current_audio_file}")
         
+        # Check if we're already playing
+        if hasattr(self, '_play_worker_task') and self._play_worker_task and not self._play_worker_task.done():
+            logger.debug("Play already in progress, ignoring request")
+            return
+        
         if not self.current_audio_file:
             self.app.notify("No audio file to play", severity="warning")
             return
@@ -1177,8 +1204,8 @@ class TTSPlaygroundWidget(Widget):
             self.query_one("#audio-player-status", Static).update("Playing...")
             
             # Use the new audio player method
-            # Don't use exclusive worker - allow interruption by stop/pause
-            self.run_worker(self._play_audio_async, exclusive=False)
+            # Store the worker task so we can check if it's running
+            self._play_worker_task = self.run_worker(self._play_audio_async, exclusive=False)
         else:
             self.app.notify("Audio playback not available", severity="warning")
     
@@ -1194,36 +1221,66 @@ class TTSPlaygroundWidget(Widget):
                     audio_path = self.current_audio_file
                     
                 if audio_path.exists():
-                    # Stop any existing playback first
-                    await self.app.audio_player.stop()
+                    # Get current player state before stopping
+                    from tldw_chatbook.TTS.audio_player import PlaybackState
+                    current_state = await self.app.audio_player.get_state()
+                    logger.debug(f"Current player state before play: {current_state}")
+                    
+                    # Always force stop any existing playback first
+                    stop_result = await self.app.audio_player.stop()
+                    logger.debug(f"Stop result: {stop_result}")
                     
                     # Small delay to ensure clean state
                     import asyncio
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.2)
                     
+                    # Check state after stop
+                    state_after_stop = await self.app.audio_player.get_state()
+                    logger.debug(f"Player state after stop: {state_after_stop}")
+                    
+                    # Attempt to play the audio file
+                    logger.info(f"Attempting to play audio file: {audio_path}")
                     success = await self.app.audio_player.play(audio_path)
+                    logger.debug(f"Play result: {success}")
+                    
                     if success:
                         # Cancel any existing progress timer
                         if self._progress_timer_task and not self._progress_timer_task.done():
                             self._progress_timer_task.cancel()
+                            await asyncio.sleep(0.05)  # Small delay to ensure cancellation
                         
                         # Start new progress timer
-                        import asyncio
                         self._progress_timer_task = asyncio.create_task(self._update_progress_timer())
+                        logger.debug("Started new progress timer")
+                        
+                        # Wait a tiny bit to ensure the player has started
+                        await asyncio.sleep(0.1)
+                        
+                        # Double-check the player is actually playing
+                        is_playing = await self.app.audio_player.is_playing()
+                        logger.debug(f"Player is_playing check after start: {is_playing}")
+                        
+                        # Clear the worker task reference as it's now running
+                        self._play_worker_task = None
                     else:
+                        logger.error("Failed to start playback - play() returned False")
                         self.app.notify("Failed to start playback", severity="error")
                         # Reset button states on failure
+                        self.query_one("#audio-play-btn", Button).disabled = False
                         self.query_one("#pause-audio-btn", Button).disabled = True
                         self.query_one("#stop-audio-btn", Button).disabled = True
                         self.query_one("#audio-player-status", Static).update("Playback failed")
                 else:
+                    logger.warning(f"Audio file not found: {audio_path}")
                     self.app.notify(f"Audio file not found: {audio_path.name}", severity="warning")
             else:
+                logger.warning("No audio file to play")
                 self.app.notify("No audio file to play", severity="warning")
         except Exception as e:
-            logger.error(f"Error playing audio: {e}")
+            logger.error(f"Error playing audio: {e}", exc_info=True)
             self.app.notify(f"Playback error: {str(e)}", severity="error")
             # Reset button states on error
+            self.query_one("#audio-play-btn", Button).disabled = False
             self.query_one("#pause-audio-btn", Button).disabled = True
             self.query_one("#stop-audio-btn", Button).disabled = True
             self.query_one("#audio-player-status", Static).update("Playback error")
@@ -1311,8 +1368,14 @@ class TTSPlaygroundWidget(Widget):
                 self._progress_timer_task.cancel()
                 self._progress_timer_task = None
             
+            # Force stop any playback
             success = await self.app.audio_player.stop()
             logger.debug(f"Stop result: {success}")
+            
+            # Also ensure progress timer is cancelled
+            if self._progress_timer_task and not self._progress_timer_task.done():
+                self._progress_timer_task.cancel()
+                await asyncio.sleep(0.1)  # Give it time to cancel
             
             # Always reset button states regardless of success
             # (audio may have already finished playing)
@@ -1563,9 +1626,21 @@ class TTSPlaygroundWidget(Widget):
                     break
                 
                 await asyncio.sleep(0.1)  # Update every 100ms
+            except asyncio.CancelledError:
+                logger.debug("Progress timer cancelled")
+                break
             except Exception as e:
                 logger.error(f"Error updating progress: {e}")
                 break
+        
+        # Ensure UI is reset on exit
+        try:
+            self.query_one("#audio-play-btn", Button).disabled = False
+            self.query_one("#pause-audio-btn", Button).disabled = True
+            self.query_one("#stop-audio-btn", Button).disabled = True
+            self.query_one("#audio-player-status", Static).update("Ready to play")
+        except Exception as e:
+            logger.debug(f"Could not reset UI on progress timer exit: {e}")
     
     def _format_time(self, seconds: float) -> str:
         """Format seconds to MM:SS format"""

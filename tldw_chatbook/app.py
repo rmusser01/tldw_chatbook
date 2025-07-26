@@ -135,7 +135,8 @@ from .UI.Stats_Window import StatsWindow
 from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
-from .UI.Evals_Window import EvalsWindow # Added EvalsWindow
+# Using v3 of EvalsWindow with two-column layout for Evaluation Setup
+from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Tab_Bar import TabBar
@@ -3114,6 +3115,29 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             import threading
             import subprocess
             import signal
+            import platform
+            
+            # On macOS, force kill any afplay processes
+            if platform.system() == "Darwin":
+                try:
+                    # Find and kill any afplay processes spawned by this app
+                    import psutil
+                    current_pid = os.getpid()
+                    for proc in psutil.process_iter(['pid', 'name', 'ppid']):
+                        try:
+                            if proc.info['name'] == 'afplay' and proc.info['ppid'] == current_pid:
+                                self.loguru_logger.info(f"Killing orphaned afplay process: {proc.info['pid']}")
+                                proc.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                except ImportError:
+                    # Fallback if psutil not available - use subprocess
+                    try:
+                        # Kill all afplay processes (less precise but works)
+                        subprocess.run(['killall', 'afplay'], capture_output=True, timeout=1)
+                        self.loguru_logger.info("Killed all afplay processes")
+                    except Exception as e:
+                        self.loguru_logger.debug(f"Could not kill afplay processes: {e}")
             import concurrent.futures
             import asyncio
             
@@ -3142,9 +3166,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 except Exception as e:
                     self.loguru_logger.error(f"Error terminating subprocess: {e}")
             
-            # Force-set daemon flag on ThreadPoolExecutor threads
+            # Force-set daemon flag on ThreadPoolExecutor and AudioPlayer threads
             for thread in threading.enumerate():
-                if thread.name.startswith('ThreadPoolExecutor'):
+                if thread.name.startswith(('ThreadPoolExecutor', 'AudioPlayer')):
                     try:
                         thread.daemon = True
                         self.loguru_logger.info(f"Set daemon flag on {thread.name}")
@@ -5589,13 +5613,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Set flag to prevent new operations
         self._shutting_down = True
         
-        # Force stop any playing audio
+        # Force stop any playing audio and cleanup
         if hasattr(self, 'audio_player'):
             try:
                 import asyncio
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    asyncio.create_task(self.audio_player.stop())
+                    # Create cleanup tasks
+                    async def cleanup_audio():
+                        try:
+                            await asyncio.wait_for(self.audio_player.stop(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            loguru_logger.warning("Audio stop timed out")
+                        try:
+                            await asyncio.wait_for(self.audio_player.cleanup(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            loguru_logger.warning("Audio cleanup timed out")
+                    
+                    # Schedule cleanup
+                    asyncio.create_task(cleanup_audio())
+                else:
+                    # Synchronous cleanup if no event loop
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(self.audio_player.cleanup())
+                    loop.close()
+                loguru_logger.info("Audio player stopped and cleaned up")
             except Exception as e:
                 loguru_logger.error(f"Error stopping audio during quit: {e}")
         
