@@ -11,7 +11,7 @@ from textual.containers import Container, VerticalScroll, Horizontal, Vertical, 
 from pathlib import Path
 from textual.css.query import QueryError
 from textual.reactive import reactive
-from textual.widgets import Static, Button, Label, ProgressBar, TabPane, TabbedContent, Input, Select, Collapsible
+from textual.widgets import Static, Button, Label, ProgressBar, TabPane, TabbedContent, Input, Select, Collapsible, ListView, ListItem
 from ..Widgets.loading_states import WorkflowProgress
 from textual.message import Message
 #
@@ -38,6 +38,21 @@ EVALS_NAV_SETUP = "evals-nav-setup"
 EVALS_NAV_RESULTS = "evals-nav-results"
 EVALS_NAV_MODELS = "evals-nav-models"
 EVALS_NAV_DATASETS = "evals-nav-datasets"
+
+
+class DatasetListItem(ListItem):
+    """Custom list item for dataset display."""
+    
+    def __init__(self, dataset_info: Dict[str, Any], **kwargs):
+        super().__init__(**kwargs)
+        self.dataset_info = dataset_info
+        
+    def compose(self) -> ComposeResult:
+        """Compose the dataset list item."""
+        with Horizontal(classes="dataset-list-item"):
+            yield Static(self.dataset_info['name'], classes="dataset-name")
+            yield Static(f"({self.dataset_info.get('size', 0)} samples)", classes="dataset-size")
+
 
 class EvalsWindow(Container):
     """
@@ -190,7 +205,7 @@ class EvalsWindow(Container):
         
         try:
             from ..Event_Handlers.eval_events import get_recent_evaluations
-            recent_runs = await self.app.run_in_executor(None, get_recent_evaluations, self.app_instance)
+            recent_runs = get_recent_evaluations(self.app_instance)
             
             # Update results list
             if recent_runs:
@@ -217,7 +232,7 @@ class EvalsWindow(Container):
         
         try:
             from ..Event_Handlers.eval_events import get_available_models
-            models = await self.app.run_in_executor(None, get_available_models, self.app_instance)
+            models = get_available_models(self.app_instance)
             
             if models:
                 models_html = "\n".join([
@@ -238,25 +253,12 @@ class EvalsWindow(Container):
     async def _refresh_datasets_list(self) -> None:
         """Refresh the datasets list with available data."""
         self.is_loading_datasets = True
-        datasets_list = self.query_one("#datasets-list")
-        datasets_list.update("🔄 Loading datasets...")
         
         try:
-            from ..Event_Handlers.eval_events import get_available_datasets
-            datasets = await self.app.run_in_executor(None, get_available_datasets, self.app_instance)
-            
-            if datasets:
-                datasets_html = "\n".join([
-                    f"• {dataset['name']} ({dataset.get('format', 'unknown')} format) - {dataset.get('sample_count', '?')} samples"
-                    for dataset in datasets[:10]  # Show last 10 datasets
-                ])
-                datasets_list.update(datasets_html)
-            else:
-                datasets_list.update("No datasets found")
-                
+            # Just call the update method which handles the new ListView
+            self._update_datasets_list()
         except Exception as e:
             logger.error(f"Error refreshing datasets list: {e}")
-            self._update_status("datasets-list", f"Error loading datasets: {e}")
         finally:
             self.is_loading_datasets = False
 
@@ -447,32 +449,46 @@ class EvalsWindow(Container):
         handle_provider_setup(self.app_instance, provider)
     
     # --- Dataset Management Handlers ---
-    @on(Button.Pressed, "#upload-csv-btn")
-    def handle_upload_csv(self, event: Button.Pressed) -> None:
-        """Handle CSV dataset upload."""
-        logger.info("Upload CSV button pressed")
+    @on(Button.Pressed, "#upload-dataset-btn")
+    def handle_upload_dataset(self, event: Button.Pressed) -> None:
+        """Handle dataset upload."""
+        logger.info("Upload dataset button pressed")
         from ..Event_Handlers.eval_events import handle_upload_dataset
         handle_upload_dataset(self.app_instance, event)
     
-    @on(Button.Pressed, "#upload-json-btn")
-    def handle_upload_json(self, event: Button.Pressed) -> None:
-        """Handle JSON dataset upload."""
-        logger.info("Upload JSON button pressed")
-        from ..Event_Handlers.eval_events import handle_upload_dataset
-        handle_upload_dataset(self.app_instance, event)
+    @on(Button.Pressed, "#import-dataset-btn")
+    def handle_import_dataset(self, event: Button.Pressed) -> None:
+        """Handle dataset import from standard sources."""
+        logger.info("Import dataset button pressed")
+        # TODO: Implement import dialog
+        self.app.notify("Import functionality coming soon", severity="information")
     
-    @on(Button.Pressed, "#add-hf-dataset-btn")
-    def handle_add_hf_dataset(self, event: Button.Pressed) -> None:
-        """Handle HuggingFace dataset addition."""
-        logger.info("Add HF dataset button pressed")
-        self._update_status("dataset-upload-status", "HuggingFace dataset integration coming soon")
+    @on(Input.Changed, "#dataset-search")
+    def handle_dataset_search(self, event: Input.Changed) -> None:
+        """Handle dataset search input changes."""
+        self._filter_dataset_list(event.value)
     
-    @on(Button.Pressed, "#refresh-datasets-btn")
-    def handle_refresh_datasets(self, event: Button.Pressed) -> None:
-        """Handle refreshing datasets list."""
-        logger.info("Refresh datasets button pressed")
-        from ..Event_Handlers.eval_events import handle_refresh_datasets
-        handle_refresh_datasets(self.app_instance, event)
+    @on(ListView.Selected, "#dataset-list")
+    async def handle_dataset_selection(self, event: ListView.Selected) -> None:
+        """Handle dataset selection from list."""
+        if event.item and hasattr(event.item, 'dataset_info'):
+            await self._update_dataset_preview(event.item.dataset_info)
+            
+            # Enable action buttons
+            self.query_one("#validate-dataset-btn", Button).disabled = False
+            self.query_one("#edit-dataset-btn", Button).disabled = False
+    
+    @on(Button.Pressed, "#validate-dataset-btn")
+    async def handle_validate_dataset(self, event: Button.Pressed) -> None:
+        """Validate selected dataset."""
+        # TODO: Implement validation
+        self.app.notify("Dataset validation complete", severity="success")
+    
+    @on(Button.Pressed, "#edit-dataset-btn")
+    async def handle_edit_dataset(self, event: Button.Pressed) -> None:
+        """Edit selected dataset."""
+        # TODO: Implement dataset editor
+        self.app.notify("Edit functionality coming soon", severity="information")
     
     # --- Cost Estimation Updates ---
     @on(Input.Changed, "#max-samples-input")
@@ -541,7 +557,7 @@ class EvalsWindow(Container):
             model_select.set_options([("Loading models...", Select.BLANK)])
             
             from ..Event_Handlers.eval_events import get_models_for_provider
-            models = await self.app.run_in_executor(None, get_models_for_provider, self.app_instance, provider)
+            models = get_models_for_provider(self.app_instance, provider)
             
             if models:
                 model_options = [(f"{m['name']}", m['id']) for m in models]
@@ -672,10 +688,116 @@ class EvalsWindow(Container):
     def _update_datasets_list(self) -> None:
         """Update the datasets list display."""
         try:
-            from ..Event_Handlers.eval_events import refresh_datasets_list
-            refresh_datasets_list(self.app_instance)
+            from ..Event_Handlers.eval_events import get_available_datasets
+            datasets = get_available_datasets(self.app_instance)
+            
+            list_view = self.query_one("#dataset-list", ListView)
+            list_view.clear()
+            
+            for dataset in datasets:
+                list_view.append(DatasetListItem(dataset))
+                
         except Exception as e:
             logger.warning(f"Error refreshing datasets list: {e}")
+    
+    def _filter_dataset_list(self, search_query: str) -> None:
+        """Filter dataset list based on search query."""
+        try:
+            from ..Event_Handlers.eval_events import get_available_datasets
+            datasets = get_available_datasets(self.app_instance)
+            
+            list_view = self.query_one("#dataset-list", ListView)
+            list_view.clear()
+            
+            # Filter datasets
+            query = search_query.lower()
+            filtered = [d for d in datasets if query in d['name'].lower()] if query else datasets
+            
+            for dataset in filtered:
+                list_view.append(DatasetListItem(dataset))
+                
+        except Exception as e:
+            logger.warning(f"Error filtering datasets: {e}")
+    
+    async def _update_dataset_preview(self, dataset_info: Dict[str, Any]) -> None:
+        """Update the dataset preview panel."""
+        try:
+            from ..Event_Handlers.eval_events import get_dataset_info
+            
+            # Update dataset info
+            detailed_info = await get_dataset_info(self.app_instance, dataset_info['name'])
+            
+            self.query_one("#dataset-name").update(detailed_info['name'])
+            self.query_one("#dataset-type").update(detailed_info.get('type', 'Multiple Choice'))
+            self.query_one("#dataset-size").update(f"{detailed_info.get('size', 0):,} samples")
+            
+            # Update sample preview
+            await self._load_dataset_samples(detailed_info)
+            
+        except Exception as e:
+            logger.error(f"Error updating dataset preview: {e}")
+    
+    async def _load_dataset_samples(self, dataset_info: Dict[str, Any]) -> None:
+        """Load and display dataset samples."""
+        preview_container = self.query_one("#sample-preview")
+        preview_container.remove_children()
+        
+        try:
+            # For now, show mock samples
+            samples = self._get_mock_samples()
+            
+            for i, sample in enumerate(samples[:3]):
+                sample_widget = Container(classes="dataset-sample")
+                
+                # Add sample number
+                sample_widget.mount(
+                    Static(f"Sample {i+1}:", classes="sample-header")
+                )
+                
+                # Add question/input
+                sample_widget.mount(
+                    Static(f"Q: {sample['question']}", classes="sample-question")
+                )
+                
+                # Add options if multiple choice
+                if 'options' in sample:
+                    for option in sample['options']:
+                        sample_widget.mount(
+                            Static(f"   {option}", classes="sample-option")
+                        )
+                
+                # Add answer
+                if 'answer' in sample:
+                    sample_widget.mount(
+                        Static(f"A: {sample['answer']}", classes="sample-answer")
+                    )
+                
+                preview_container.mount(sample_widget)
+                
+        except Exception as e:
+            preview_container.mount(
+                Static(f"Failed to load samples: {e}", classes="error-text")
+            )
+    
+    def _get_mock_samples(self) -> List[Dict[str, Any]]:
+        """Get mock samples for preview."""
+        return [
+            {
+                "question": "What is the capital of France?",
+                "options": ["A) London", "B) Paris", "C) Berlin", "D) Madrid"],
+                "answer": "B) Paris"
+            },
+            {
+                "question": "Which planet is known as the Red Planet?",
+                "options": ["A) Venus", "B) Mars", "C) Jupiter", "D) Saturn"],
+                "answer": "B) Mars"
+            },
+            {
+                "question": "What is 2 + 2?",
+                "options": ["A) 3", "B) 4", "C) 5", "D) 6"],
+                "answer": "B) 4"
+            }
+        ]
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
@@ -707,7 +829,7 @@ class EvalsWindow(Container):
             
             # Populate task select dropdown
             from ..Event_Handlers.eval_events import get_available_tasks
-            tasks = await self.app.run_in_executor(None, get_available_tasks, self.app_instance)
+            tasks = get_available_tasks(self.app_instance)
             
             task_select = self.query_one("#task-select")
             task_options = [(t['name'], t['id']) for t in tasks[:10]]
@@ -715,7 +837,7 @@ class EvalsWindow(Container):
             
             # Populate dataset select dropdown
             from ..Event_Handlers.eval_events import get_available_datasets
-            datasets = await self.app.run_in_executor(None, get_available_datasets, self.app_instance)
+            datasets = get_available_datasets(self.app_instance)
             
             dataset_select = self.query_one("#dataset-select")
             dataset_options = [(d['name'], d['id']) for d in datasets[:10]]
@@ -928,29 +1050,58 @@ class EvalsWindow(Container):
 
             # Dataset Management View
             with Container(id=EVALS_VIEW_DATASETS, classes="evals-view-area"):
-                yield Static("Dataset Management", classes="pane-title")
+                yield Static("📚 Dataset Management", classes="pane-title")
                 
-                # Dataset Upload Section
-                with Container(classes="section-container"):
-                    yield Static("Upload Dataset", classes="section-title")
-                    yield Button("Upload CSV/TSV", id="upload-csv-btn", classes="action-button")
-                    yield Button("Upload JSON", id="upload-json-btn", classes="action-button")
-                    yield Button("Add HuggingFace Dataset", id="add-hf-dataset-btn", classes="action-button")
-                    yield Static("", id="dataset-upload-status", classes="status-text")
-                
-                # Available Datasets Section
-                with Container(classes="section-container"):
-                    yield Static("Available Datasets", classes="section-title")
+                with Horizontal(classes="dataset-management-layout"):
+                    # Left panel - Dataset list
+                    with Vertical(classes="dataset-list-panel"):
+                        yield Static("Datasets", classes="panel-title")
+                        
+                        # Search input
+                        yield Input(
+                            placeholder="Search datasets...",
+                            id="dataset-search",
+                            classes="dataset-search-input"
+                        )
+                        
+                        # Dataset list
+                        with VerticalScroll(classes="dataset-list-container"):
+                            yield ListView(
+                                id="dataset-list",
+                                classes="dataset-list"
+                            )
+                        
+                        # Action buttons
+                        with Horizontal(classes="dataset-actions"):
+                            yield Button("Upload", id="upload-dataset-btn", classes="action-button")
+                            yield Button("Import", id="import-dataset-btn", classes="action-button")
                     
-                    with Horizontal(classes="button-row"):
-                        yield Button("Refresh List", id="refresh-datasets-btn", classes="action-button")
-                        yield Button("Validate Datasets", id="validate-datasets-btn", classes="action-button")
-                        yield Button("Browse Samples", id="browse-samples-btn", classes="action-button")
+                    # Right panel - Dataset preview
+                    with Vertical(classes="dataset-preview-panel"):
+                        yield Static("Dataset Preview", classes="panel-title")
+                        
+                        # Dataset info section
+                        with Container(classes="dataset-info-section"):
+                            yield Label("Name:", classes="info-label")
+                            yield Static("Select a dataset", id="dataset-name", classes="info-value")
+                            
+                            yield Label("Type:", classes="info-label")
+                            yield Static("-", id="dataset-type", classes="info-value")
+                            
+                            yield Label("Size:", classes="info-label") 
+                            yield Static("-", id="dataset-size", classes="info-value")
+                        
+                        # Sample preview section
+                        yield Static("Sample Preview:", classes="section-title")
+                        with VerticalScroll(classes="sample-preview-container"):
+                            yield Container(id="sample-preview", classes="sample-preview")
+                        
+                        # Action buttons
+                        with Horizontal(classes="preview-actions"):
+                            yield Button("Validate", id="validate-dataset-btn", classes="action-button", disabled=True)
+                            yield Button("Edit", id="edit-dataset-btn", classes="action-button", disabled=True)
                 
-                    yield Static("Loading datasets...", id="datasets-list", classes="datasets-container")
-                    yield Static("", id="dataset-validation-status", classes="status-text")
-            
-                # Evaluation Templates Section
+                # Evaluation Templates Section (moved below the two-panel layout)
                 with Container(classes="section-container"):
                     yield Static("Evaluation Templates", classes="section-title")
                     

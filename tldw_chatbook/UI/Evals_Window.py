@@ -627,10 +627,11 @@ class EvalsWindow(Container):
                         from ..Widgets.eval_results_widgets import ProgressTracker
                         yield ProgressTracker(id="progress-tracker")
                     
-                        # Quick Configuration Section  
+                    # Quick Configuration Section  
+                    with Container(classes="section-container"):
+                        yield Static("Quick Configuration", classes="section-title")
+                        
                         with Container(classes="quick-config-container"):
-                            yield Static("Quick Configuration", classes="subsection-title")
-                            
                             yield Label("Max Samples:", classes="config-label")
                             yield Input(placeholder="100", id="max-samples-input", classes="config-input")
                             
@@ -640,11 +641,15 @@ class EvalsWindow(Container):
                             yield Label("Task:", classes="config-label")
                             yield Select([("Select Task", "")], id="task-select", classes="config-select")
                     
-                        # Cost Estimation Section
+                    # Cost Estimation Section
+                    with Container(classes="section-container"):
+                        yield Static("Cost Estimation", classes="section-title")
                         from ..Widgets.cost_estimation_widget import CostEstimationWidget
                         yield CostEstimationWidget(id="cost-estimator")
-                        
-                        # Workflow Progress Section
+                    
+                    # Workflow Progress Section
+                    with Container(classes="section-container"):
+                        yield Static("Workflow Progress", classes="section-title")
                         from ..Widgets.loading_states import WorkflowProgress
                         yield WorkflowProgress(
                             ["Load Task", "Configure Model", "Run Evaluation", "Save Results"],

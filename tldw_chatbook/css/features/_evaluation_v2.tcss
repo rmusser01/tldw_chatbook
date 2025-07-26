@@ -124,6 +124,7 @@ EvalsWindow {
     padding: 2;
     margin-bottom: 2;
     border: round $primary-background;
+    min-height: 10;
 }
 
 .section-title {
@@ -346,6 +347,39 @@ EvalsWindow {
 /* --- Cost Estimation --- */
 #cost-estimator {
     margin-top: 1;
+    min-height: 10;
+}
+
+.cost-widget {
+    background: $surface;
+    padding: 1;
+    border: round $secondary;
+    margin-bottom: 1;
+}
+
+.widget-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+.cost-section {
+    padding: 1;
+}
+
+.section-label {
+    color: $text-muted;
+    margin-bottom: 0;
+}
+
+.cost-display {
+    color: $success;
+    text-style: bold;
+}
+
+.cost-display.large {
+    text-style: bold;
+    color: $success-lighten-1;
 }
 
 /* --- Responsive Design --- */

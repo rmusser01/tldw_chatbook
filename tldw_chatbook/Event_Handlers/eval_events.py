@@ -1221,6 +1221,152 @@ def get_available_datasets(app: 'TldwCli', limit: int = 50) -> List[Dict[str, An
         logger.error(f"Error getting available datasets: {e}")
         return []
 
+async def get_dataset_info(app: 'TldwCli', dataset_name: str) -> Dict[str, Any]:
+    """Get detailed information about a specific dataset."""
+    try:
+        orchestrator = get_orchestrator()
+        datasets = orchestrator.list_datasets()
+        
+        # Find the dataset by name
+        for dataset in datasets:
+            if dataset.get('name') == dataset_name:
+                # Add additional computed fields
+                dataset['created'] = dataset.get('created_at', 'Unknown')
+                dataset['format'] = Path(dataset.get('source_path', '')).suffix.lstrip('.') or 'Unknown'
+                dataset['task'] = dataset.get('task_type', 'General')
+                return dataset
+        
+        # Dataset not found
+        return {
+            'name': dataset_name,
+            'type': 'Unknown',
+            'size': 0,
+            'created': 'Unknown',
+            'format': 'Unknown',
+            'task': 'Unknown'
+        }
+    except Exception as e:
+        logger.error(f"Error getting dataset info: {e}")
+        return {}
+
+async def validate_dataset(app: 'TldwCli', file_path: str) -> Dict[str, Any]:
+    """Validate a dataset file."""
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            return {'valid': False, 'error': 'File not found'}
+        
+        # Check file size
+        file_size = path.stat().st_size
+        if file_size == 0:
+            return {'valid': False, 'error': 'File is empty'}
+        
+        # Try to load and count samples based on file type
+        samples_count = 0
+        try:
+            if path.suffix.lower() == '.json':
+                import json
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        samples_count = len(data)
+                    else:
+                        samples_count = 1
+            elif path.suffix.lower() == '.jsonl':
+                with open(path, 'r') as f:
+                    samples_count = sum(1 for line in f if line.strip())
+            elif path.suffix.lower() in ['.csv', '.tsv']:
+                import csv
+                with open(path, 'r') as f:
+                    reader = csv.reader(f)
+                    samples_count = sum(1 for _ in reader) - 1  # Subtract header
+            else:
+                return {'valid': False, 'error': f'Unsupported file format: {path.suffix}'}
+            
+            return {
+                'valid': True,
+                'samples': samples_count,
+                'format': path.suffix.lstrip('.'),
+                'size_mb': round(file_size / 1024 / 1024, 2)
+            }
+            
+        except Exception as e:
+            return {'valid': False, 'error': f'Failed to parse file: {str(e)}'}
+            
+    except Exception as e:
+        logger.error(f"Error validating dataset: {e}")
+        return {'valid': False, 'error': str(e)}
+
+async def upload_dataset(app: 'TldwCli', source: str, source_type: str = "file") -> Dict[str, Any]:
+    """Upload a dataset from file or URL."""
+    try:
+        orchestrator = get_orchestrator()
+        
+        if source_type == "file":
+            # Validate file first
+            validation = await validate_dataset(app, source)
+            if not validation['valid']:
+                return {'success': False, 'error': validation['error']}
+            
+            dataset_name = Path(source).stem
+            dataset_id = orchestrator.create_dataset_from_file(
+                name=dataset_name,
+                file_path=source,
+                description=f"Uploaded from {Path(source).name}"
+            )
+            
+            return {
+                'success': True,
+                'dataset_name': dataset_name,
+                'dataset_id': dataset_id
+            }
+            
+        elif source_type == "url":
+            # TODO: Implement URL download
+            return {'success': False, 'error': 'URL upload not yet implemented'}
+            
+        else:
+            return {'success': False, 'error': f'Unknown source type: {source_type}'}
+            
+    except Exception as e:
+        logger.error(f"Error uploading dataset: {e}")
+        return {'success': False, 'error': str(e)}
+
+async def delete_dataset(app: 'TldwCli', dataset_name: str) -> Dict[str, Any]:
+    """Delete a dataset."""
+    try:
+        orchestrator = get_orchestrator()
+        
+        # Find dataset ID by name
+        datasets = orchestrator.list_datasets()
+        dataset_id = None
+        for dataset in datasets:
+            if dataset.get('name') == dataset_name:
+                dataset_id = dataset.get('id')
+                break
+        
+        if not dataset_id:
+            return {'success': False, 'error': 'Dataset not found'}
+        
+        # Delete the dataset
+        orchestrator.db.delete_dataset(dataset_id)
+        
+        return {'success': True}
+        
+    except Exception as e:
+        logger.error(f"Error deleting dataset: {e}")
+        return {'success': False, 'error': str(e)}
+
+async def export_dataset(app: 'TldwCli', dataset_name: str, export_path: str, format: str = 'json') -> Dict[str, Any]:
+    """Export a dataset to file."""
+    try:
+        # TODO: Implement dataset export
+        return {'success': False, 'error': 'Export not yet implemented'}
+        
+    except Exception as e:
+        logger.error(f"Error exporting dataset: {e}")
+        return {'success': False, 'error': str(e)}
+
 async def handle_cancel_evaluation(app: 'TldwCli', run_id: Optional[str]) -> None:
     """Handle cancelling an active evaluation."""
     log_counter("eval_ui_cancel_evaluation_clicked")
