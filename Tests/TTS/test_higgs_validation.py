@@ -144,53 +144,95 @@ class TestHiggsValidation:
     
     @pytest.mark.asyncio
     async def test_multi_speaker_parsing(self, backend):
-        """Test multi-speaker text parsing"""
-        # NOTE: The current parser implementation has bugs that cause incorrect parsing
-        # These tests document the ACTUAL behavior, not the EXPECTED behavior
+        """Test multi-speaker text parsing - SPECIFICATION OF EXPECTED BEHAVIOR"""
+        # IMPORTANT: This test is expected to FAIL with the current implementation.
+        # It serves as a specification for how the parser SHOULD work.
+        # The parser should handle the format: "Speaker1|||text1 Speaker2|||text2"
+        # 
+        # When fixing the parser implementation in higgs.py, use this test as a guide.
+        # The fix is complete when all assertions in this test pass.
         
         # Test case 1: Simple two-speaker dialog
         simple_text = "narrator|||Welcome. Alice|||Hello!"
         simple_sections = backend._parse_multi_speaker_text(simple_text)
         
-        # BUG: Parser incorrectly treats this as single narrator section
-        # Expected: [("narrator", "Welcome."), ("Alice", "Hello!")]
-        # Actual: [("narrator", "Welcome. Alice Hello!")]
-        actual_simple = [("narrator", "Welcome. Alice Hello!")]
-        assert simple_sections == actual_simple, f"Expected {actual_simple}, got {simple_sections}"
+        # EXPECTED: Each speaker followed by ||| should have their text extracted correctly
+        expected_simple = [("narrator", "Welcome."), ("Alice", "Hello!")]
+        assert simple_sections == expected_simple, f"Expected {expected_simple}, got {simple_sections}"
         
         # Test case 2: Multi-speaker conversation  
         text = "Alice|||Hello there! Bob|||Hi, how are you? Alice|||I'm doing great!"
         sections = backend._parse_multi_speaker_text(text)
         
-        # The parser has complex logic for handling subsequent speakers
-        # It tries to extract speaker names from the end of previous text
-        # This results in incorrect parsing
-        assert len(sections) >= 1  # At least some parsing occurs
+        # EXPECTED: Each speaker's text should be properly separated
+        expected_sections = [
+            ("Alice", "Hello there!"),
+            ("Bob", "Hi, how are you?"),
+            ("Alice", "I'm doing great!")
+        ]
+        assert sections == expected_sections, f"Expected {expected_sections}, got {sections}"
         
         # Test case 3: Text without speaker markers
         no_speaker_text = "This is just regular text without any speakers."
         no_speaker_sections = backend._parse_multi_speaker_text(no_speaker_text)
+        # EXPECTED: Text without markers should be assigned to "narrator"
         assert no_speaker_sections == [("narrator", no_speaker_text)]
         
-        # Test case 4: Single speaker with simple text
+        # Test case 4: Single speaker
         single_speaker = "Host|||Welcome to the show!"
         single_sections = backend._parse_multi_speaker_text(single_speaker)
-        # This case might work correctly
-        assert len(single_sections) == 1
-        assert single_sections[0][0] in ["Host", "Welcome"]  # Parser confusion
+        # EXPECTED: Single speaker should work correctly
+        expected_single = [("Host", "Welcome to the show!")]
+        assert single_sections == expected_single, f"Expected {expected_single}, got {single_sections}"
         
         # Test case 5: Empty speaker name
         empty_speaker = "|||Hello from nobody!"
         empty_sections = backend._parse_multi_speaker_text(empty_speaker)
-        # Parser removes empty strings, so this becomes ["Hello from nobody!"]
-        assert len(empty_sections) > 0  # At minimum ensure it doesn't crash
+        # EXPECTED: Empty speaker should default to "narrator" or similar
+        expected_empty = [("narrator", "Hello from nobody!")]
+        assert empty_sections == expected_empty, f"Expected {expected_empty}, got {empty_sections}"
         
-        # Test case 6: What the parser expects - speakers at END of text
-        # Based on code analysis, the parser expects: "text1 Speaker2|||text2 Speaker3|||"
-        expected_format = "Welcome from the narrator|||This is Alice speaking. Bob|||Hi Alice!"
-        expected_sections = backend._parse_multi_speaker_text(expected_format)
-        # This might parse more correctly given the parser's logic
-        assert len(expected_sections) >= 2
+        # Test case 6: Mixed content with narrator
+        mixed_text = "Once upon a time... narrator|||The story begins. Alice|||What a beautiful day!"
+        mixed_sections = backend._parse_multi_speaker_text(mixed_text)
+        # EXPECTED: Initial text before first ||| should be narrator, then proper speaker parsing
+        expected_mixed = [
+            ("narrator", "Once upon a time..."),
+            ("narrator", "The story begins."),
+            ("Alice", "What a beautiful day!")
+        ]
+        assert mixed_sections == expected_mixed, f"Expected {expected_mixed}, got {mixed_sections}"
+        
+        # Test case 7: Consecutive same speaker
+        consecutive_text = "Alice|||Hello! Alice|||How are you? Alice|||I'm Alice."
+        consecutive_sections = backend._parse_multi_speaker_text(consecutive_text)
+        # EXPECTED: Same speaker can appear multiple times
+        expected_consecutive = [
+            ("Alice", "Hello!"),
+            ("Alice", "How are you?"),
+            ("Alice", "I'm Alice.")
+        ]
+        assert consecutive_sections == expected_consecutive, f"Expected {expected_consecutive}, got {consecutive_sections}"
+        
+        # Test case 8: Special characters in text
+        special_text = "Bot|||Hello! How's it going? User|||Great! Thanks :)"
+        special_sections = backend._parse_multi_speaker_text(special_text)
+        # EXPECTED: Special characters in text should be preserved
+        expected_special = [
+            ("Bot", "Hello! How's it going?"),
+            ("User", "Great! Thanks :)")
+        ]
+        assert special_sections == expected_special, f"Expected {expected_special}, got {special_sections}"
+        
+        # Test case 9: Whitespace handling
+        whitespace_text = "Alice|||  Hello!   Bob|||Hi there!  "
+        whitespace_sections = backend._parse_multi_speaker_text(whitespace_text)
+        # EXPECTED: Whitespace should be trimmed appropriately
+        expected_whitespace = [
+            ("Alice", "Hello!"),
+            ("Bob", "Hi there!")
+        ]
+        assert whitespace_sections == expected_whitespace, f"Expected {expected_whitespace}, got {whitespace_sections}"
     
     @pytest.mark.asyncio
     async def test_multi_speaker_generation(self, backend, mock_serve_engine):

@@ -775,86 +775,147 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
         """
         Parse text with speaker markers.
         
-        Format: "Speaker1|||Hello there! Speaker2|||Hi, how are you?"
-        Returns: [("Speaker1", "Hello there!"), ("Speaker2", "Hi, how are you?")]
-        """
-        sections = []
+        Format: "Speaker1|||text1 Speaker2|||text2 Speaker3|||text3"
+        Expected: [("Speaker1", "text1"), ("Speaker2", "text2"), ("Speaker3", "text3")]
         
+        Returns: List of (speaker_name, text) tuples
+        """
         # If no delimiter present, return as narrator
         if self.speaker_delimiter not in text:
             return [("narrator", text.strip())]
         
-        # Split by delimiter to get parts
+        sections = []
+        # Split by delimiter
+        # "narrator|||Welcome. Alice|||Hello!" -> ['narrator', 'Welcome. Alice', 'Hello!']
         parts = text.split(self.speaker_delimiter)
         
-        # Handle edge case of empty parts
-        parts = [p for p in parts if p]  # Remove empty strings
+        # Track current speaker for proper pairing
+        current_speaker = None
         
-        if not parts:
-            return [("narrator", "")]
-        
-        # Process parts
-        i = 0
-        
-        # Check if first part is narrator text (doesn't look like a speaker name)
-        if i < len(parts) and not self._is_speaker_name(parts[i]):
-            # First part contains spaces or punctuation, likely narrator text
-            sections.append(("narrator", parts[i].strip()))
-            i += 1
-        
-        # Process remaining parts as speaker-text pairs
-        while i < len(parts):
-            if i + 1 < len(parts):
-                # We have a speaker and their text
-                speaker_part = parts[i].strip()
-                text_part = parts[i + 1].strip()
-                
-                # The speaker might be at the end of the previous text
-                # E.g., "Hello there! John" where "John" is the speaker
-                words = speaker_part.split()
-                if len(words) > 1:
-                    # Multiple words - last word is likely the speaker
-                    speaker = words[-1]
-                    # Add remaining text to previous speaker if any
-                    remaining = " ".join(words[:-1]).strip()
-                    if remaining and sections:
-                        prev_speaker, prev_text = sections[-1]
-                        sections[-1] = (prev_speaker, prev_text + " " + remaining)
+        for i, part in enumerate(parts):
+            part = part.strip()
+            
+            if i == 0:
+                # First part - before any delimiter
+                if part:
+                    if len(parts) > 1:
+                        # Check if this part ends with a speaker name
+                        # Format could be "text speaker|||" or just "speaker|||"
+                        last_space = part.rfind(' ')
+                        if last_space > 0:
+                            # Has space, might be "text speaker" format
+                            text_part = part[:last_space].strip()
+                            potential_speaker = part[last_space + 1:].strip()
+                            
+                            # Check if this looks like narrator text followed by speaker
+                            if text_part and ('.' in text_part or '!' in text_part or '?' in text_part or len(text_part) > 20):
+                                # Text part looks like narrator text
+                                sections.append(("narrator", text_part))
+                                current_speaker = potential_speaker
+                            else:
+                                # Whole thing might be a speaker name or short text
+                                current_speaker = part
+                        else:
+                            # No space, check if it's a simple speaker name
+                            if len(part) < 30 and part.isalnum():
+                                # Simple word/name, likely a speaker
+                                current_speaker = part
+                            else:
+                                # Treat as narrator text
+                                sections.append(("narrator", part))
+                                current_speaker = None
+                    else:
+                        # Only one part total, treat as narrator text
+                        sections.append(("narrator", part))
                 else:
-                    # Single word - it's the speaker
-                    speaker = speaker_part
-                
-                # Add this speaker and their text
-                if text_part:  # Only add if there's actual text
-                    sections.append((speaker, text_part))
-                
-                i += 2
+                    # Empty first part (text starts with |||)
+                    current_speaker = "narrator"
             else:
-                # Odd number of parts - last part is either a speaker with no text
-                # or continuation of previous speaker's text
-                last_part = parts[i].strip()
-                if self._is_speaker_name(last_part) and not sections:
-                    # It's a speaker with no text - ignore
-                    pass
-                elif sections:
-                    # Add to previous speaker's text
-                    prev_speaker, prev_text = sections[-1]
-                    sections[-1] = (prev_speaker, prev_text + " " + last_part)
+                # Parts after delimiter
+                if not part:
+                    # Empty part after ||| - like "|||text"
+                    if current_speaker:
+                        sections.append((current_speaker, ""))
+                    continue
+                
+                # If we don't have a current speaker, extract it from the beginning of this part
+                if current_speaker is None:
+                    # This part should start with "speaker text" or just be a speaker name
+                    first_space = part.find(' ')
+                    if first_space > 0:
+                        # Has space, split into speaker and text
+                        current_speaker = part[:first_space].strip()
+                        remaining_text = part[first_space + 1:].strip()
+                        
+                        # Check if remaining text contains next speaker at the end
+                        if i < len(parts) - 1 and ' ' in remaining_text:
+                            last_space = remaining_text.rfind(' ')
+                            text_part = remaining_text[:last_space].strip()
+                            next_speaker = remaining_text[last_space + 1:].strip()
+                            sections.append((current_speaker, text_part))
+                            current_speaker = next_speaker
+                        else:
+                            sections.append((current_speaker, remaining_text))
+                    else:
+                        # No space, entire part is speaker name
+                        current_speaker = part
+                        # Don't add section yet, wait for text
+                    continue
+                
+                # Check if this part contains the next speaker at the end
+                # This handles "text1 Speaker2" pattern
+                if i < len(parts) - 1:
+                    # Not the last part, might have next speaker embedded
+                    # Look for last space-separated word as potential next speaker
+                    last_space = part.rfind(' ')
+                    if last_space > 0:
+                        # Has space, split into text and potential next speaker
+                        text_part = part[:last_space].strip()
+                        potential_speaker = part[last_space + 1:].strip()
+                        
+                        # Add current speaker with their text
+                        if current_speaker:
+                            sections.append((current_speaker, text_part))
+                        
+                        # Update current speaker for next iteration
+                        current_speaker = potential_speaker
+                    else:
+                        # No space, entire part is text for current speaker
+                        if current_speaker:
+                            sections.append((current_speaker, part))
                 else:
-                    # No previous speaker, treat as narrator
-                    sections.append(("narrator", last_part))
-                i += 1
+                    # Last part - just text for current speaker
+                    if current_speaker:
+                        sections.append((current_speaker, part))
         
         return sections if sections else [("narrator", text.strip())]
     
-    def _is_speaker_name(self, text: str) -> bool:
-        """Check if text looks like a speaker name (single word, no spaces or special chars except dash/underscore)"""
+    def _looks_like_speaker_name(self, text: str) -> bool:
+        """Check if text looks like a speaker name"""
         if not text:
             return False
-        # Speaker names are typically single words, possibly with dash or underscore
-        # They shouldn't contain spaces, punctuation (except - and _), or be too long
+        
+        # Speaker names are typically:
+        # - Single words or compound names with underscores/dashes
+        # - Not too long
+        # - Don't contain spaces (unless it's a voice profile name)
+        # - May contain underscores or dashes
+        
+        # Check if it's a known voice profile
+        if text in self.voice_profiles:
+            return True
+        
+        # Basic validation for speaker names
         import re
-        return bool(re.match(r'^[\w-]+$', text)) and len(text) < 50 and ' ' not in text
+        # Allow alphanumeric, underscore, dash
+        if re.match(r'^[\w-]+$', text) and len(text) < 50:
+            return True
+        
+        # Also allow names with single spaces for compound names like "professional_female"
+        if re.match(r'^[\w]+(?:[\s_-][\w]+)*$', text) and len(text) < 50:
+            return True
+        
+        return False
     
     async def _prepare_voice_config(self, voice_name: str) -> Dict[str, Any]:
         """Prepare voice configuration from voice name or profile"""
