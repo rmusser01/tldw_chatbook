@@ -1,0 +1,306 @@
+"""
+MediaWindow v2 - Orchestrator for media browsing components.
+
+This is a refactored version that uses the new component-based architecture.
+"""
+
+from typing import TYPE_CHECKING, List, Optional, Dict, Any
+from textual import on, work
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal
+from textual.css.query import QueryError
+from textual.reactive import reactive
+from loguru import logger
+
+# Import media components
+from ..Widgets.Media import (
+    MediaNavigationPanel,
+    MediaSearchPanel,
+    MediaSearchEvent,
+    MediaListPanel,
+    MediaItemSelectedEvent,
+    MediaViewerPanel
+)
+
+# Import events
+from ..Event_Handlers.media_events import (
+    MediaTypeSelectedEvent,
+    MediaMetadataUpdateEvent,
+    MediaDeleteConfirmationEvent,
+    MediaUndeleteEvent
+)
+
+if TYPE_CHECKING:
+    from ..app import TldwCli
+
+
+class MediaWindow(Container):
+    """
+    Orchestrator for the Media Tab components.
+    
+    Manages communication between navigation, search, list, and viewer panels.
+    """
+    
+    DEFAULT_CSS = """
+    MediaWindow {
+        layout: horizontal;
+        height: 100%;
+        width: 100%;
+    }
+    
+    MediaWindow .main-content {
+        width: 1fr;
+        height: 100%;
+        layout: vertical;
+    }
+    
+    MediaWindow .content-area {
+        layout: horizontal;
+        height: 1fr;
+        width: 100%;
+    }
+    """
+    
+    # Reactive properties
+    active_media_type: reactive[Optional[str]] = reactive(None)
+    selected_media_id: reactive[Optional[int]] = reactive(None)
+    media_active_view: reactive[Optional[str]] = reactive(None)
+    
+    def __init__(self, app_instance: 'TldwCli', **kwargs):
+        """Initialize the MediaWindow."""
+        super().__init__(**kwargs)
+        self.app_instance = app_instance
+        self.media_types = self._get_media_types()
+        
+    def _get_media_types(self) -> List[str]:
+        """Get media types from the app instance."""
+        return getattr(self.app_instance, '_media_types_for_ui', [])
+    
+    def compose(self) -> ComposeResult:
+        """Compose the MediaWindow UI."""
+        # Navigation panel
+        self.nav_panel = MediaNavigationPanel(
+            self.app_instance,
+            self.media_types,
+            id="media-nav-panel"
+        )
+        yield self.nav_panel
+        
+        # Main content area
+        with Container(classes="main-content"):
+            # Search panel
+            self.search_panel = MediaSearchPanel(
+                self.app_instance,
+                id="media-search-panel"
+            )
+            yield self.search_panel
+            
+            # Content area with list and viewer
+            with Horizontal(classes="content-area"):
+                # List panel
+                self.list_panel = MediaListPanel(
+                    self.app_instance,
+                    id="media-list-panel"
+                )
+                yield self.list_panel
+                
+                # Viewer panel
+                self.viewer_panel = MediaViewerPanel(
+                    self.app_instance,
+                    id="media-viewer-panel"
+                )
+                yield self.viewer_panel
+    
+    def on_mount(self) -> None:
+        """Called when the MediaWindow is mounted."""
+        logger.info("MediaWindow v2 mounted")
+        
+        # Set initial media type if available
+        if self.media_types and "All Media" in self.media_types:
+            self.activate_media_type("all-media", "All Media")
+    
+    @on(MediaTypeSelectedEvent)
+    def handle_media_type_selected(self, event: MediaTypeSelectedEvent) -> None:
+        """Handle media type selection from navigation panel."""
+        logger.info(f"Media type selected: {event.type_slug}")
+        self.activate_media_type(event.type_slug, event.display_name)
+    
+    @on(MediaSearchEvent)
+    def handle_media_search(self, event: MediaSearchEvent) -> None:
+        """Handle search event from search panel."""
+        logger.info(f"Search triggered: term='{event.search_term}', keywords='{event.keyword_filter}'")
+        
+        if self.active_media_type:
+            # Perform search directly - call the worker method since it's already decorated
+            self._perform_search(
+                self.active_media_type,
+                event.search_term,
+                event.keyword_filter
+            )
+    
+    @on(MediaItemSelectedEvent)
+    def handle_media_item_selected(self, event: MediaItemSelectedEvent) -> None:
+        """Handle media item selection from list panel."""
+        logger.info(f"Media item selected: {event.media_id}")
+        self.selected_media_id = event.media_id
+        self.viewer_panel.load_media(event.media_data)
+    
+    @on(MediaMetadataUpdateEvent)
+    async def handle_metadata_update(self, event: MediaMetadataUpdateEvent) -> None:
+        """Handle metadata update from viewer panel."""
+        # Set the type slug
+        event.type_slug = self.active_media_type or ""
+        
+        # Forward to existing handler
+        from ..Event_Handlers import media_events
+        await media_events.handle_media_metadata_update(self.app_instance, event)
+        
+        # Refresh the list
+        if self.active_media_type:
+            search_term = self.search_panel.search_term
+            keyword_filter = self.search_panel.keyword_filter
+            self._perform_search(
+                self.active_media_type,
+                search_term,
+                keyword_filter
+            )
+    
+    @on(MediaDeleteConfirmationEvent)
+    async def handle_delete_confirmation(self, event: MediaDeleteConfirmationEvent) -> None:
+        """Handle delete confirmation from viewer panel."""
+        # Set the type slug
+        event.type_slug = self.active_media_type or ""
+        
+        # Forward to existing handler
+        from ..Event_Handlers import media_events
+        await media_events.handle_media_delete_confirmation(self.app_instance, event)
+    
+    @on(MediaUndeleteEvent)
+    async def handle_media_undelete(self, event: MediaUndeleteEvent) -> None:
+        """Handle undelete event."""
+        from ..Event_Handlers import media_events
+        await media_events.handle_media_undelete(self.app_instance, event)
+        
+        # Refresh the list
+        if self.active_media_type:
+            search_term = self.search_panel.search_term
+            keyword_filter = self.search_panel.keyword_filter
+            self._perform_search(
+                self.active_media_type,
+                search_term,
+                keyword_filter
+            )
+    
+    def activate_media_type(self, type_slug: str, display_name: str) -> None:
+        """Activate a media type and perform initial search."""
+        self.active_media_type = type_slug
+        
+        # Update navigation panel
+        self.nav_panel.selected_type = type_slug
+        
+        # Update search panel
+        self.search_panel.set_type_filter(type_slug, display_name)
+        
+        # Clear viewer
+        self.viewer_panel.clear_display()
+        
+        # Perform search - call the worker method directly since it's already decorated with @work
+        self._perform_search(type_slug, "", "")
+    
+    def activate_initial_view(self) -> None:
+        """Activate the initial view - called by app.py."""
+        if not self.active_media_type and self.media_types:
+            # Try "All Media" first
+            if "All Media" in self.media_types:
+                self.activate_media_type("all-media", "All Media")
+            elif self.media_types:
+                # Fall back to first available type
+                from ..Utils.text import slugify
+                first_type = self.media_types[0]
+                self.activate_media_type(slugify(first_type), first_type)
+    
+    def update_search_results(self, results: List[Dict[str, Any]], page: int, total_pages: int) -> None:
+        """Update search results in the list panel."""
+        self.list_panel.load_items(results, page, total_pages)
+    
+    def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
+        """React to media_active_view changes from app.py button handlers."""
+        if new_view and new_view.startswith("media-view-"):
+            type_slug = new_view.replace("media-view-", "")
+            # Find display name from media types
+            display_name = type_slug.replace("-", " ").title()
+            # Special case handling for known types
+            if type_slug == "all-media":
+                display_name = "All Media"
+            elif type_slug == "analysis-review":
+                display_name = "Analysis Review"
+            elif type_slug == "collections-tags":
+                display_name = "Collections/Tags"
+            elif type_slug == "multi-item-review":
+                display_name = "Multi-Item Review"
+            
+            self.activate_media_type(type_slug, display_name)
+    
+    @work(thread=True)
+    def _perform_search(self, type_slug: str, search_term: str, keyword_filter: str) -> None:
+        """Perform media search in background thread."""
+        try:
+            if not self.app_instance.media_db:
+                logger.error("Media DB service not available")
+                return
+            
+            # Skip search for special windows
+            if type_slug in ["collections-tags", "multi-item-review"]:
+                logger.info(f"Skipping search for special window: {type_slug}")
+                return
+            
+            # Set loading state
+            self.app_instance.call_from_thread(self.list_panel.set_loading, True)
+            
+            # Prepare search parameters
+            media_types_filter = None
+            if type_slug not in ["all-media", "analysis-review"]:
+                db_media_type = type_slug.replace('-', '_')
+                media_types_filter = [db_media_type]
+            
+            # Search for media items
+            results = self.app_instance.media_db.search_media(
+                search_query=search_term,
+                media_types=media_types_filter,
+                keywords=keyword_filter.split(",") if keyword_filter else None,
+                page=self.list_panel.current_page,
+                results_per_page=self.list_panel.items_per_page,
+                include_deleted=self.search_panel.show_deleted
+            )
+            
+            if results:
+                media_items = results.get("results", [])
+                total_count = results.get("total_count", 0)
+                page = results.get("page", 1)
+                results_per_page = results.get("results_per_page", 20)
+                
+                # Calculate total pages
+                total_pages = (total_count + results_per_page - 1) // results_per_page
+                
+                # Update the list panel
+                self.app_instance.call_from_thread(
+                    self.update_search_results,
+                    media_items,
+                    page,
+                    total_pages
+                )
+                
+                logger.info(f"Found {len(media_items)} items for type '{type_slug}' (page {page}/{total_pages})")
+            else:
+                # No results
+                self.app_instance.call_from_thread(
+                    self.update_search_results,
+                    [],
+                    1,
+                    1
+                )
+                logger.info(f"No media items found for type '{type_slug}'")
+                
+        except Exception as e:
+            logger.error(f"Error during media search: {e}", exc_info=True)
+            self.app_instance.call_from_thread(self.list_panel.set_loading, False)

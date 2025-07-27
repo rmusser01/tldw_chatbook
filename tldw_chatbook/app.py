@@ -140,7 +140,7 @@ from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Tab_Bar import TabBar
-from .UI.MediaWindow import MediaWindow
+from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
 from .UI.Embeddings_Window import EmbeddingsWindow
 from .UI.Subscription_Window import SubscriptionWindow

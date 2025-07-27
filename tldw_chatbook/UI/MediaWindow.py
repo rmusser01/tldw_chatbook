@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, List, Optional
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll, Horizontal, Vertical
+from textual.containers import Container, VerticalScroll, Horizontal, Vertical, Grid
 from textual.css.query import QueryError
 from textual.reactive import reactive
 from textual.widgets import Static, Button, Label, Input, ListView, TextArea, Markdown, Checkbox
@@ -65,6 +65,10 @@ class MediaWindow(Container):
     def watch_media_sidebar_collapsed(self, collapsed: bool) -> None:
         """Dynamically adjusts the media browser panes when the sidebar is collapsed or expanded."""
         try:
+            # Add class to self (MediaWindow) for grid column adjustment
+            self.set_class(collapsed, "sidebar-collapsed")
+            
+            # Keep existing logic for nav pane and toggle button
             nav_pane = self.query_one("#media-nav-pane")
             toggle_button = self.query_one("#media-sidebar-toggle-button")
             nav_pane.set_class(collapsed, "collapsed")
@@ -113,7 +117,10 @@ class MediaWindow(Container):
                 # Ensure the app's media_current_page is reset for a new view activation if that's desired behavior
                 # self.app_instance.media_current_page = 1 # Already done in handle_nav_button_press
                 if type_slug not in ["collections-tags", "multi-item-review"]:
-                    self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, "", "")
+                    # Create a coroutine and run it with run_worker
+                    async def perform_search():
+                        await media_events.perform_media_search_and_display(self.app_instance, type_slug, "", "")
+                    self.run_worker(perform_search(), exclusive=True)
             else:
                 self.log.info("MediaWindow.watch_media_active_view: new_view is None, all .media-view-area views remain hidden.")
 
@@ -140,7 +147,9 @@ class MediaWindow(Container):
                     keyword_filter = keyword_input.value
                 except QueryError:
                     pass
-                self.app_instance.call_later(media_events.perform_media_search_and_display, self.app_instance, type_slug, search_term, keyword_filter)
+                async def perform_search():
+                    await media_events.perform_media_search_and_display(self.app_instance, type_slug, search_term, keyword_filter)
+                self.run_worker(perform_search(), exclusive=True)
 
     @on(Checkbox.Changed, ".show-deleted-checkbox")
     def handle_show_deleted_checkbox(self, event: Checkbox.Changed) -> None:
@@ -265,8 +274,8 @@ class MediaWindow(Container):
                     )
                 else:
                     # Standard media view layout
-                    # Each media view is a Horizontal container for left (list) and right (details) panes
-                    with Horizontal(id=view_id, classes="media-view-area"):
+                    # Each media view is a Grid container for left (list) and right (details) panes
+                    with Grid(id=view_id, classes="media-view-area"):
                         # --- LEFT PANE (for list and controls) ---
                         with Container(classes="media-content-left-pane"):
                             yield Label(f"{media_type_display_name} Management", classes="pane-title")
