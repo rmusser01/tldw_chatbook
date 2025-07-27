@@ -852,7 +852,7 @@ class SearchRAGWindow(Container):
         if event.value == "full":
             chunking_options.remove_class("hidden")
             if not self.embeddings_available:
-                            self.app_instance.notify(
+                self.app_instance.notify(
                     "🔒 Semantic search requires embeddings dependencies",
                     severity="warning",
                     timeout=5
