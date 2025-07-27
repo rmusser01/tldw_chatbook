@@ -54,6 +54,15 @@ class MediaSearchPanel(Container):
         margin-bottom: 1;
     }
     
+    MediaSearchPanel .media-sidebar-toggle {
+        height: 3;
+        width: auto;
+        min-width: 5;
+        margin-right: 1;
+        background: $boost;
+        border: solid $primary;
+    }
+    
     MediaSearchPanel .search-input {
         width: 1fr;
         height: 3;
@@ -61,7 +70,7 @@ class MediaSearchPanel(Container):
     }
     
     MediaSearchPanel .keyword-input {
-        width: 1fr;
+        width: 5fr;
         height: 3;
         margin-right: 1;
     }
@@ -109,8 +118,16 @@ class MediaSearchPanel(Container):
         
     def compose(self) -> ComposeResult:
         """Compose the search panel UI."""
+        # Import here to avoid circular imports
+        from ...Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
+        
         # Search row
         with Horizontal(classes="search-row"):
+            yield Button(
+                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
+                id="media-sidebar-toggle",
+                classes="media-sidebar-toggle"
+            )
             yield Input(
                 placeholder="Search media items...",
                 id="search-input",
@@ -212,6 +229,25 @@ class MediaSearchPanel(Container):
     def handle_input_submit(self) -> None:
         """Handle Enter key in input fields."""
         self.perform_search()
+    
+    @on(Button.Pressed, "#media-sidebar-toggle")
+    def handle_sidebar_toggle(self) -> None:
+        """Handle sidebar toggle button press."""
+        # Find the MediaWindow parent and toggle its sidebar
+        from ...UI.MediaWindow_v2 import MediaWindow
+        try:
+            # Walk up the widget tree to find MediaWindow
+            current = self.parent
+            while current is not None:
+                if isinstance(current, MediaWindow):
+                    current.sidebar_collapsed = not current.sidebar_collapsed
+                    logger.debug(f"Toggled sidebar: collapsed={current.sidebar_collapsed}")
+                    break
+                current = current.parent
+            else:
+                logger.warning("Could not find MediaWindow parent")
+        except Exception as e:
+            logger.error(f"Error toggling sidebar: {e}")
     
     def perform_search(self) -> None:
         """Trigger a search with current criteria."""

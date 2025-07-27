@@ -61,13 +61,6 @@ class MediaWindow(Container):
         height: 1fr;
         width: 100%;
     }
-    
-    MediaWindow .sidebar-toggle {
-        dock: top;
-        height: 3;
-        width: 3;
-        margin: 0 0 1 1;
-    }
     """
     
     # Reactive properties
@@ -98,13 +91,6 @@ class MediaWindow(Container):
         
         # Main content area
         with Container(classes="main-content"):
-            # Sidebar toggle button
-            yield Button(
-                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
-                id="sidebar-toggle",
-                classes="sidebar-toggle"
-            )
-            
             # Search panel
             self.search_panel = MediaSearchPanel(
                 self.app_instance,
@@ -137,11 +123,6 @@ class MediaWindow(Container):
     def watch_sidebar_collapsed(self, collapsed: bool) -> None:
         """React to sidebar collapse changes."""
         self.nav_panel.collapsed = collapsed
-    
-    @on(Button.Pressed, "#sidebar-toggle")
-    def handle_sidebar_toggle(self) -> None:
-        """Handle sidebar toggle button press."""
-        self.sidebar_collapsed = not self.sidebar_collapsed
     
     @on(MediaTypeSelectedEvent)
     def handle_media_type_selected(self, event: MediaTypeSelectedEvent) -> None:
