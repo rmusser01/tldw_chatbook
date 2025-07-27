@@ -229,6 +229,9 @@ class MediaWindow(Container):
         # Clear viewer
         self.viewer_panel.clear_display()
         
+        # Reset page to 1 when switching types
+        self.list_panel.current_page = 1
+        
         # Perform search
         logger.info(f"About to call _perform_search for type '{type_slug}'")
         self._perform_search(type_slug, "", "")
@@ -247,7 +250,11 @@ class MediaWindow(Container):
     
     def update_search_results(self, results: List[Dict[str, Any]], page: int, total_pages: int) -> None:
         """Update search results in the list panel."""
-        self.list_panel.load_items(results, page, total_pages)
+        try:
+            logger.info(f"Updating search results: {len(results)} items, page {page}/{total_pages}")
+            self.list_panel.load_items(results, page, total_pages)
+        except Exception as e:
+            logger.error(f"Error updating search results: {e}", exc_info=True)
     
     def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         """React to media_active_view changes from app.py button handlers."""
@@ -329,10 +336,15 @@ class MediaWindow(Container):
                     # No results
                     self.update_search_results([], 1, 1)
                     logger.info(f"No media items found for type '{type_slug}'")
+                
+                # Always set loading false when done
+                self.list_panel.set_loading(False)
                     
             except Exception as e:
                 logger.error(f"Error during media search: {e}", exc_info=True)
                 self.list_panel.set_loading(False)
+                # Notify user of error
+                self.app_instance.notify(f"Error loading media: {str(e)[:100]}", severity="error")
         
         # Run the worker
         self.run_worker(perform_search(), exclusive=True)

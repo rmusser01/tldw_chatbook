@@ -67,8 +67,10 @@ class MediaListPanel(Container):
     }
     
     MediaListPanel .media-item {
-        padding: 1;
-        margin-bottom: 1;
+        padding: 0 1;
+        height: 5;
+        margin-bottom: 0;
+        border: solid $primary-lighten-1;
     }
     
     MediaListPanel .media-item.deleted {
@@ -146,6 +148,7 @@ class MediaListPanel(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.items_per_page = 20
+        self._updating = False
         
     def compose(self) -> ComposeResult:
         """Compose the list panel UI."""
@@ -164,7 +167,8 @@ class MediaListPanel(Container):
     
     def watch_items(self, items: List[Dict[str, Any]]) -> None:
         """Update the list when items change."""
-        self.refresh_list()
+        # Use call_later to run the async method
+        self.call_later(self.refresh_list)
     
     def watch_current_page(self, page: int) -> None:
         """Update pagination controls when page changes."""
@@ -187,66 +191,70 @@ class MediaListPanel(Container):
             else:
                 item.remove_class("selected")
     
-    def refresh_list(self) -> None:
+    async def refresh_list(self) -> None:
         """Refresh the list view with current items."""
-        list_view = self.query_one("#media-list", ListView)
-        
-        # Remove all children manually to ensure clean state
-        for child in list(list_view.children):
-            list_view.remove(child)
-        
-        if not self.items:
-            list_view.append(ListItem(
-                Static("No media items found", classes="no-results")
-            ))
+        # Prevent concurrent updates
+        if self._updating:
+            logger.warning("Skipping refresh_list - update already in progress")
             return
-        
-        for item in self.items:
-            # Build metadata string
-            meta_parts = []
-            media_type = item.get("type") or item.get("media_type")
-            if media_type:
-                meta_parts.append(f"Type: {media_type}")
-            if item.get("author"):
-                meta_parts.append(f"Author: {item['author']}")
             
-            # Add ingestion date if available
-            if item.get("ingestion_date"):
-                date_str = str(item["ingestion_date"])
-                if "T" in date_str:
-                    date_str = date_str.split("T")[0]
-                meta_parts.append(f"Ingested: {date_str}")
+        self._updating = True
+        try:
+            list_view = self.query_one("#media-list", ListView)
             
-            # Build snippet - content is not included in search results, so skip for now
-            snippet = ""
+            # Clear all existing items first
+            await list_view.clear()
             
-            # Determine if deleted
-            is_deleted = item.get("is_deleted", False) or item.get("deleted", 0) == 1
+            if not self.items:
+                await list_view.append(ListItem(
+                    Static("No media items found", classes="no-results")
+                ))
+                return
             
-            # Create list item with vertical layout
-            title_classes = "item-title deleted" if is_deleted else "item-title"
-            meta_classes = "item-meta deleted" if is_deleted else "item-meta"
-            snippet_classes = "item-snippet deleted" if is_deleted else "item-snippet"
-            
-            # Build the widgets list
-            widgets = [Static(item.get("title", "Untitled"), classes=title_classes)]
-            
-            if meta_parts:
-                widgets.append(Static(" | ".join(meta_parts), classes=meta_classes))
+            for item in self.items:
+                # Get item data
+                title = item.get("title", "Untitled")
+                media_type = item.get("type") or item.get("media_type", "Unknown")
+                author = item.get("author", "")
+                url = item.get("url", "")
                 
-            if snippet:
-                widgets.append(Static(snippet, classes=snippet_classes))
-            
-            # Create list item
-            list_item_classes = "media-item deleted" if is_deleted else "media-item"
-            
-            list_item = ListItem(
-                Vertical(*widgets),
-                id=f"media-item-{item['id']}",
-                classes=list_item_classes
-            )
-            
-            list_view.append(list_item)
+                # Get ingestion date
+                ingestion_date = ""
+                if item.get("ingestion_date"):
+                    date_str = str(item["ingestion_date"])
+                    if "T" in date_str:
+                        ingestion_date = date_str.split("T")[0]
+                    else:
+                        ingestion_date = date_str
+                
+                # Determine if deleted
+                is_deleted = item.get("is_deleted", False) or item.get("deleted", 0) == 1
+                
+                # Create list item with formatted layout
+                title_classes = "item-title deleted" if is_deleted else "item-title"
+                meta_classes = "item-meta deleted" if is_deleted else "item-meta"
+                
+                # Build the formatted text
+                formatted_lines = [
+                    f"Title: {title}",
+                    f"Type: {media_type} / Ingested: {ingestion_date}",
+                    f"Author: {author}",
+                    f"URL: {url}",
+                    ""  # Empty line for spacing
+                ]
+                
+                # Create list item
+                list_item_classes = "media-item deleted" if is_deleted else "media-item"
+                
+                list_item = ListItem(
+                    Static("\n".join(formatted_lines), classes=meta_classes),
+                    id=f"media-item-{item['id']}",
+                    classes=list_item_classes
+                )
+                
+                await list_view.append(list_item)
+        finally:
+            self._updating = False
     
     def update_pagination(self) -> None:
         """Update pagination controls."""
