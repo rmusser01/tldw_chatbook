@@ -87,8 +87,15 @@ class MediaViewerPanel(Container):
     }
     
     MediaViewerPanel .metadata-buttons Button {
-        margin-right: 1;
         min-width: 10;
+    }
+    
+    MediaViewerPanel .metadata-buttons #edit-button {
+        dock: left;
+    }
+    
+    MediaViewerPanel .metadata-buttons #delete-button {
+        dock: right;
     }
     
     MediaViewerPanel .edit-section {

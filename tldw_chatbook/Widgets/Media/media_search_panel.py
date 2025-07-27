@@ -42,7 +42,7 @@ class MediaSearchPanel(Container):
     DEFAULT_CSS = """
     MediaSearchPanel {
         dock: top;
-        height: auto;
+        height: 9;
         padding: 1;
         background: $boost;
         border-bottom: thick $background-darken-1;
@@ -50,28 +50,32 @@ class MediaSearchPanel(Container):
     
     MediaSearchPanel .search-row {
         layout: horizontal;
-        height: auto;
+        height: 3;
         margin-bottom: 1;
     }
     
     MediaSearchPanel .search-input {
         width: 1fr;
+        height: 3;
         margin-right: 1;
     }
     
     MediaSearchPanel .keyword-input {
         width: 1fr;
+        height: 3;
         margin-right: 1;
     }
     
     MediaSearchPanel .search-button {
         width: auto;
         min-width: 10;
+        height: 3;
     }
     
     MediaSearchPanel .filter-row {
         layout: horizontal;
-        height: auto;
+        height: 3;
+        align-vertical: middle;
     }
     
     MediaSearchPanel .filter-label {

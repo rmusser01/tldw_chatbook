@@ -38,37 +38,38 @@ class MediaNavigationPanel(Container):
         max-width: 40;
         height: 100%;
         background: $boost;
-        layout: horizontal;
+        layout: vertical;
+        border-right: thick $background-darken-1;
     }
     
     MediaNavigationPanel.collapsed {
-        width: auto;
+        width: 3;
+        min-width: 3;
+    }
+    
+    MediaNavigationPanel .nav-header {
+        height: 3;
+        padding: 0 1;
+        layout: horizontal;
+        align-horizontal: right;
     }
     
     MediaNavigationPanel .nav-toggle-button {
-        dock: left;
         width: 3;
-        height: 100%;
+        height: 3;
         padding: 0;
         margin: 0;
-        border-right: thick $background-darken-1;
-    }
-    
-    MediaNavigationPanel.collapsed .nav-toggle-button {
-        border-right: none;
-    }
-    
-    MediaNavigationPanel .nav-content {
-        width: 1fr;
-        height: 100%;
-        padding: 1;
-        border-right: thick $background-darken-1;
-        overflow-y: auto;
-        overflow-x: hidden;
     }
     
     MediaNavigationPanel.collapsed .nav-content {
         display: none;
+    }
+    
+    MediaNavigationPanel .nav-content {
+        height: 1fr;
+        padding: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     
     MediaNavigationPanel .nav-title {
@@ -115,12 +116,13 @@ class MediaNavigationPanel(Container):
         
     def compose(self) -> ComposeResult:
         """Compose the navigation panel UI."""
-        # Toggle button - always visible
-        yield Button(
-            get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
-            id="nav-toggle-button",
-            classes="nav-toggle-button"
-        )
+        # Header with toggle button on the right
+        with Container(classes="nav-header"):
+            yield Button(
+                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
+                id="nav-toggle-button",
+                classes="nav-toggle-button"
+            )
         
         # Navigation content - hideable
         with VerticalScroll(classes="nav-content"):
