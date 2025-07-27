@@ -54,6 +54,7 @@ class MediaListPanel(Container):
     }
     
     MediaListPanel .list-title {
+        width: 100%;
         text-align: center;
         text-style: bold;
     }

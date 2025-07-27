@@ -48,11 +48,7 @@ class MediaViewerPanel(Container):
     }
     
     MediaViewerPanel .viewer-header {
-        dock: top;
-        height: auto;
-        padding: 1;
-        background: $boost;
-        border-bottom: solid $background-darken-1;
+        display: none;
     }
     
     MediaViewerPanel .metadata-section {
