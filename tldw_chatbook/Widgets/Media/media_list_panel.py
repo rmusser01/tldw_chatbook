@@ -190,7 +190,10 @@ class MediaListPanel(Container):
     def refresh_list(self) -> None:
         """Refresh the list view with current items."""
         list_view = self.query_one("#media-list", ListView)
-        list_view.clear()
+        
+        # Remove all children manually to ensure clean state
+        for child in list(list_view.children):
+            list_view.remove(child)
         
         if not self.items:
             list_view.append(ListItem(
@@ -199,40 +202,46 @@ class MediaListPanel(Container):
             return
         
         for item in self.items:
-            # Create list item content
-            with Vertical() as item_content:
-                # Title
-                title_classes = "item-title"
-                if item.get("is_deleted"):
-                    title_classes += " deleted"
-                    
-                Static(
-                    item.get("title", "Untitled"),
-                    classes=title_classes
-                )
+            # Build metadata string
+            meta_parts = []
+            media_type = item.get("type") or item.get("media_type")
+            if media_type:
+                meta_parts.append(f"Type: {media_type}")
+            if item.get("author"):
+                meta_parts.append(f"Author: {item['author']}")
+            
+            # Add ingestion date if available
+            if item.get("ingestion_date"):
+                date_str = str(item["ingestion_date"])
+                if "T" in date_str:
+                    date_str = date_str.split("T")[0]
+                meta_parts.append(f"Ingested: {date_str}")
+            
+            # Build snippet - content is not included in search results, so skip for now
+            snippet = ""
+            
+            # Determine if deleted
+            is_deleted = item.get("is_deleted", False) or item.get("deleted", 0) == 1
+            
+            # Create list item with vertical layout
+            title_classes = "item-title deleted" if is_deleted else "item-title"
+            meta_classes = "item-meta deleted" if is_deleted else "item-meta"
+            snippet_classes = "item-snippet deleted" if is_deleted else "item-snippet"
+            
+            # Build the widgets list
+            widgets = [Static(item.get("title", "Untitled"), classes=title_classes)]
+            
+            if meta_parts:
+                widgets.append(Static(" | ".join(meta_parts), classes=meta_classes))
                 
-                # Metadata
-                meta_parts = []
-                if item.get("media_type"):
-                    meta_parts.append(f"Type: {item['media_type']}")
-                if item.get("author"):
-                    meta_parts.append(f"Author: {item['author']}")
-                    
-                if meta_parts:
-                    Static(" | ".join(meta_parts), classes="item-meta")
-                
-                # Snippet
-                if item.get("content"):
-                    snippet = str(item["content"])[:150] + "..." if len(str(item["content"])) > 150 else str(item["content"])
-                    Static(snippet, classes="item-snippet")
+            if snippet:
+                widgets.append(Static(snippet, classes=snippet_classes))
             
             # Create list item
-            list_item_classes = "media-item"
-            if item.get("is_deleted"):
-                list_item_classes += " deleted"
-                
+            list_item_classes = "media-item deleted" if is_deleted else "media-item"
+            
             list_item = ListItem(
-                item_content,
+                Vertical(*widgets),
                 id=f"media-item-{item['id']}",
                 classes=list_item_classes
             )

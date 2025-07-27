@@ -884,6 +884,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
     evals_sidebar_collapsed: reactive[bool] = reactive(False) # Added for Evals tab
+    media_active_view: reactive[Optional[str]] = reactive(None)  # Added for Media tab navigation
 
     # Reactive variables for selected note details
     current_selected_note_id: reactive[Optional[str]] = reactive(None)
@@ -3568,6 +3569,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error("Evals sidebar (#evals-nav-pane) not found for collapse toggle.")
         except Exception as e:
             self.loguru_logger.error(f"Error toggling Evals sidebar: {e}", exc_info=True)
+    
+    def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
+        """Notify MediaWindow when media_active_view changes."""
+        # Temporarily disabled - MediaWindow handles its own navigation via MediaTypeSelectedEvent
+        pass
+        # if not self._ui_ready:
+        #     self.loguru_logger.debug("watch_media_active_view: UI not ready.")
+        #     return
+        # 
+        # if self.current_tab == TAB_MEDIA:
+        #     try:
+        #         media_window = self.query_one(MediaWindow)
+        #         # Sync the MediaWindow's own media_active_view
+        #         media_window.media_active_view = new_view
+        #         # Call the watcher manually to trigger the view change
+        #         if new_view:
+        #             media_window.watch_media_active_view(old_view, new_view)
+        #         self.loguru_logger.info(f"Notified MediaWindow of view change: {old_view} -> {new_view}")
+        #     except QueryError:
+        #         self.loguru_logger.error("MediaWindow not found for view update.")
+        #     except Exception as e:
+        #         self.loguru_logger.error(f"Error updating MediaWindow view: {e}", exc_info=True)
 
     def show_ingest_view(self, view_id_to_show: Optional[str]):
         """

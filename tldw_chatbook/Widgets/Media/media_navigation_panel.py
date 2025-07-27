@@ -13,13 +13,22 @@ from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
 from textual.reactive import reactive
 from textual.widgets import Static, Button
+from textual.message import Message
 from loguru import logger
 
 from ...Utils.text import slugify
-from ...Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
 
 if TYPE_CHECKING:
     from ...app import TldwCli
+
+
+class MediaTypeSelectedEvent(Message):
+    """Event fired when a media type is selected."""
+    
+    def __init__(self, type_slug: str, display_name: str) -> None:
+        super().__init__()
+        self.type_slug = type_slug
+        self.display_name = display_name
 
 
 class MediaNavigationPanel(Container):
@@ -45,20 +54,6 @@ class MediaNavigationPanel(Container):
     MediaNavigationPanel.collapsed {
         width: 3;
         min-width: 3;
-    }
-    
-    MediaNavigationPanel .nav-header {
-        height: 3;
-        padding: 0 1;
-        layout: horizontal;
-        align-horizontal: right;
-    }
-    
-    MediaNavigationPanel .nav-toggle-button {
-        width: 3;
-        height: 3;
-        padding: 0;
-        margin: 0;
     }
     
     MediaNavigationPanel.collapsed .nav-content {
@@ -116,14 +111,6 @@ class MediaNavigationPanel(Container):
         
     def compose(self) -> ComposeResult:
         """Compose the navigation panel UI."""
-        # Header with toggle button on the right
-        with Container(classes="nav-header"):
-            yield Button(
-                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
-                id="nav-toggle-button",
-                classes="nav-toggle-button"
-            )
-        
         # Navigation content - hideable
         with VerticalScroll(classes="nav-content"):
             yield Static("Media Types", classes="nav-title")
@@ -185,11 +172,6 @@ class MediaNavigationPanel(Container):
             except:
                 pass
     
-    @on(Button.Pressed, ".nav-toggle-button")
-    def handle_toggle(self) -> None:
-        """Handle sidebar toggle button press."""
-        self.collapsed = not self.collapsed
-        
     @on(Button.Pressed, ".media-type-button")
     def handle_type_selection(self, event: Button.Pressed) -> None:
         """Handle media type button press."""
@@ -197,5 +179,8 @@ class MediaNavigationPanel(Container):
             type_slug = event.button.id.replace("media-nav-", "")
             self.selected_type = type_slug
             
-            # Don't post event - let app.py button handler deal with it
-            # The button press will bubble up to app.py's button handler
+            # Get display name from button label
+            display_name = str(event.button.label)
+            
+            # Post event for MediaWindow to handle
+            self.post_message(MediaTypeSelectedEvent(type_slug, display_name))

@@ -5,11 +5,12 @@ This is a refactored version that uses the new component-based architecture.
 """
 
 from typing import TYPE_CHECKING, List, Optional, Dict, Any
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.css.query import QueryError
 from textual.reactive import reactive
+from textual.widgets import Button
 from loguru import logger
 
 # Import media components
@@ -21,10 +22,11 @@ from ..Widgets.Media import (
     MediaItemSelectedEvent,
     MediaViewerPanel
 )
+from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
 
 # Import events
+from ..Widgets.Media.media_navigation_panel import MediaTypeSelectedEvent
 from ..Event_Handlers.media_events import (
-    MediaTypeSelectedEvent,
     MediaMetadataUpdateEvent,
     MediaDeleteConfirmationEvent,
     MediaUndeleteEvent
@@ -59,12 +61,20 @@ class MediaWindow(Container):
         height: 1fr;
         width: 100%;
     }
+    
+    MediaWindow .sidebar-toggle {
+        dock: top;
+        height: 3;
+        width: 3;
+        margin: 0 0 1 1;
+    }
     """
     
     # Reactive properties
     active_media_type: reactive[Optional[str]] = reactive(None)
     selected_media_id: reactive[Optional[int]] = reactive(None)
     media_active_view: reactive[Optional[str]] = reactive(None)
+    sidebar_collapsed: reactive[bool] = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the MediaWindow."""
@@ -88,6 +98,13 @@ class MediaWindow(Container):
         
         # Main content area
         with Container(classes="main-content"):
+            # Sidebar toggle button
+            yield Button(
+                get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE),
+                id="sidebar-toggle",
+                classes="sidebar-toggle"
+            )
+            
             # Search panel
             self.search_panel = MediaSearchPanel(
                 self.app_instance,
@@ -115,9 +132,16 @@ class MediaWindow(Container):
         """Called when the MediaWindow is mounted."""
         logger.info("MediaWindow v2 mounted")
         
-        # Set initial media type if available
-        if self.media_types and "All Media" in self.media_types:
-            self.activate_media_type("all-media", "All Media")
+        # Don't activate initial view here - let activate_initial_view handle it
+    
+    def watch_sidebar_collapsed(self, collapsed: bool) -> None:
+        """React to sidebar collapse changes."""
+        self.nav_panel.collapsed = collapsed
+    
+    @on(Button.Pressed, "#sidebar-toggle")
+    def handle_sidebar_toggle(self) -> None:
+        """Handle sidebar toggle button press."""
+        self.sidebar_collapsed = not self.sidebar_collapsed
     
     @on(MediaTypeSelectedEvent)
     def handle_media_type_selected(self, event: MediaTypeSelectedEvent) -> None:
@@ -131,7 +155,7 @@ class MediaWindow(Container):
         logger.info(f"Search triggered: term='{event.search_term}', keywords='{event.keyword_filter}'")
         
         if self.active_media_type:
-            # Perform search directly - call the worker method since it's already decorated
+            # Perform search
             self._perform_search(
                 self.active_media_type,
                 event.search_term,
@@ -193,6 +217,7 @@ class MediaWindow(Container):
     
     def activate_media_type(self, type_slug: str, display_name: str) -> None:
         """Activate a media type and perform initial search."""
+        logger.info(f"activate_media_type called: type_slug='{type_slug}', display_name='{display_name}'")
         self.active_media_type = type_slug
         
         # Update navigation panel
@@ -204,7 +229,8 @@ class MediaWindow(Container):
         # Clear viewer
         self.viewer_panel.clear_display()
         
-        # Perform search - call the worker method directly since it's already decorated with @work
+        # Perform search
+        logger.info(f"About to call _perform_search for type '{type_slug}'")
         self._perform_search(type_slug, "", "")
     
     def activate_initial_view(self) -> None:
@@ -241,66 +267,72 @@ class MediaWindow(Container):
             
             self.activate_media_type(type_slug, display_name)
     
-    @work(thread=True)
     def _perform_search(self, type_slug: str, search_term: str, keyword_filter: str) -> None:
-        """Perform media search in background thread."""
-        try:
-            if not self.app_instance.media_db:
-                logger.error("Media DB service not available")
-                return
-            
-            # Skip search for special windows
-            if type_slug in ["collections-tags", "multi-item-review"]:
-                logger.info(f"Skipping search for special window: {type_slug}")
-                return
-            
-            # Set loading state
-            self.app_instance.call_from_thread(self.list_panel.set_loading, True)
-            
-            # Prepare search parameters
-            media_types_filter = None
-            if type_slug not in ["all-media", "analysis-review"]:
-                db_media_type = type_slug.replace('-', '_')
-                media_types_filter = [db_media_type]
-            
-            # Search for media items
-            results = self.app_instance.media_db.search_media(
-                search_query=search_term,
-                media_types=media_types_filter,
-                keywords=keyword_filter.split(",") if keyword_filter else None,
-                page=self.list_panel.current_page,
-                results_per_page=self.list_panel.items_per_page,
-                include_deleted=self.search_panel.show_deleted
-            )
-            
-            if results:
-                media_items = results.get("results", [])
-                total_count = results.get("total_count", 0)
-                page = results.get("page", 1)
-                results_per_page = results.get("results_per_page", 20)
+        """Trigger media search in background."""
+        logger.info(f"_perform_search called: type_slug='{type_slug}', search_term='{search_term}', keyword_filter='{keyword_filter}'")
+        
+        # Use run_worker with an async coroutine
+        async def perform_search():
+            logger.info(f"perform_search coroutine executing for type '{type_slug}'")
+            try:
+                if not self.app_instance.media_db:
+                    logger.error("Media DB service not available")
+                    return
                 
-                # Calculate total pages
-                total_pages = (total_count + results_per_page - 1) // results_per_page
+                # Skip search for special windows
+                if type_slug in ["collections-tags", "multi-item-review"]:
+                    logger.info(f"Skipping search for special window: {type_slug}")
+                    return
                 
-                # Update the list panel
-                self.app_instance.call_from_thread(
-                    self.update_search_results,
-                    media_items,
-                    page,
-                    total_pages
+                # Set loading state
+                self.list_panel.set_loading(True)
+                
+                # Prepare search parameters
+                media_types_filter = None
+                if type_slug not in ["all-media", "analysis-review"]:
+                    db_media_type = type_slug.replace('-', '_')
+                    media_types_filter = [db_media_type]
+                
+                # Parse keywords
+                keywords_list = None
+                if keyword_filter:
+                    keywords_list = [k.strip() for k in keyword_filter.split(',') if k.strip()]
+                
+                # Search for media items using search_media_db method
+                results, total_matches = self.app_instance.media_db.search_media_db(
+                    search_query=search_term if search_term else None,
+                    media_types=media_types_filter,
+                    search_fields=['title', 'content', 'author', 'url', 'type', 'analysis_content'],
+                    must_have_keywords=keywords_list,
+                    sort_by="last_modified_desc",
+                    page=self.list_panel.current_page,
+                    results_per_page=self.list_panel.items_per_page,
+                    include_trash=False,
+                    include_deleted=self.search_panel.show_deleted
                 )
                 
-                logger.info(f"Found {len(media_items)} items for type '{type_slug}' (page {page}/{total_pages})")
-            else:
-                # No results
-                self.app_instance.call_from_thread(
-                    self.update_search_results,
-                    [],
-                    1,
-                    1
-                )
-                logger.info(f"No media items found for type '{type_slug}'")
+                logger.info(f"Search returned {len(results)} results, total matches: {total_matches}")
                 
-        except Exception as e:
-            logger.error(f"Error during media search: {e}", exc_info=True)
-            self.app_instance.call_from_thread(self.list_panel.set_loading, False)
+                if results:
+                    # Calculate total pages
+                    total_pages = (total_matches + self.list_panel.items_per_page - 1) // self.list_panel.items_per_page
+                    
+                    # Update the list panel
+                    self.update_search_results(
+                        results,
+                        self.list_panel.current_page,
+                        total_pages
+                    )
+                    
+                    logger.info(f"Found {len(results)} items for type '{type_slug}' (page {self.list_panel.current_page}/{total_pages})")
+                else:
+                    # No results
+                    self.update_search_results([], 1, 1)
+                    logger.info(f"No media items found for type '{type_slug}'")
+                    
+            except Exception as e:
+                logger.error(f"Error during media search: {e}", exc_info=True)
+                self.list_panel.set_loading(False)
+        
+        # Run the worker
+        self.run_worker(perform_search(), exclusive=True)
