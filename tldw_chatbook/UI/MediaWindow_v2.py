@@ -167,7 +167,19 @@ class MediaWindow(Container):
         """Handle media item selection from list panel."""
         logger.info(f"Media item selected: {event.media_id}")
         self.selected_media_id = event.media_id
-        self.viewer_panel.load_media(event.media_data)
+        
+        # Fetch full media data including content
+        if self.app_instance.media_db:
+            full_media_data = self.app_instance.media_db.get_media_by_id(event.media_id, include_trash=True)
+            if full_media_data:
+                self.viewer_panel.load_media(full_media_data)
+            else:
+                logger.error(f"Failed to fetch full data for media ID {event.media_id}")
+                # Fall back to partial data
+                self.viewer_panel.load_media(event.media_data)
+        else:
+            # No database available, use partial data
+            self.viewer_panel.load_media(event.media_data)
     
     @on(MediaMetadataUpdateEvent)
     async def handle_metadata_update(self, event: MediaMetadataUpdateEvent) -> None:

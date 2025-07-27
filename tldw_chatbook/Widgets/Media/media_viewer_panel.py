@@ -80,14 +80,20 @@ class MediaViewerPanel(Container):
         color: $text;
     }
     
+    MediaViewerPanel Collapsible {
+        margin-top: 1;
+    }
+    
     MediaViewerPanel .metadata-buttons {
         layout: horizontal;
         height: 3;
-        margin-top: 1;
+        width: 100%;
+        align: center middle;
     }
     
     MediaViewerPanel .metadata-buttons Button {
         min-width: 10;
+        margin: 0 1;
     }
     
     MediaViewerPanel .metadata-buttons #edit-button {
@@ -206,9 +212,10 @@ class MediaViewerPanel(Container):
                 # View mode
                 with Container(id="metadata-view", classes="metadata-section"):
                     yield Static("", id="metadata-display", classes="metadata-display")
-                    with Horizontal(classes="metadata-buttons"):
-                        yield Button("Edit", id="edit-button", variant="primary")
-                        yield Button("Delete", id="delete-button", variant="error")
+                    with Collapsible(title="Actions", collapsed=True):
+                        with Horizontal(classes="metadata-buttons"):
+                            yield Button("Edit", id="edit-button", variant="primary")
+                            yield Button("Delete", id="delete-button", variant="error")
                 
                 # Edit mode (hidden by default)
                 with Container(id="metadata-edit", classes="edit-section hidden"):
