@@ -11,9 +11,9 @@
 
 .llm-nav-pane { /* Style for the left navigation pane */
     dock: left;
-    width: 25%; /* Or your preferred width */
+    width: auto;
     min-width: 25;
-    max-width: 60; /* Example */
+    max-width: 60;
     height: 100%;
     background: $boost; /* Or $surface-darken-1 or $surface-lighten-1 */
     padding: 1;
@@ -27,6 +27,8 @@
     margin-bottom: 1;
     border: none;
     height: 3;
+    text-align: left;
+    padding: 0 1;
 }
 .llm-nav-pane .llm-nav-button:hover {
     background: $accent 70%; /* Example hover */

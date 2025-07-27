@@ -11,7 +11,7 @@
 
 .search-nav-pane { /* Style for the left navigation pane in Search Tab */
     dock: left;
-    width: 25%;
+    width: auto;
     min-width: 25;
     max-width: 60;
     height: 100%;

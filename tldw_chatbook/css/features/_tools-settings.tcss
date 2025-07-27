@@ -11,7 +11,7 @@
 
 .tools-nav-pane {
     dock: left;
-    width: 25%; /* Adjust as needed */
+    width: auto; /* Changed from 25% */
     min-width: 25; /* Example min-width */
     max-width: 60; /* Example max-width */
     height: 100%;
