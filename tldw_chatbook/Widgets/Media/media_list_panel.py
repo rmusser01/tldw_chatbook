@@ -39,7 +39,7 @@ class MediaListPanel(Container):
     
     DEFAULT_CSS = """
     MediaListPanel {
-        width: 35%;
+        width: 1fr;
         height: 100%;
         border-right: solid $primary;
         layout: vertical;

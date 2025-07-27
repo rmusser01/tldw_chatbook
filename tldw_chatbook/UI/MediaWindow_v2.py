@@ -29,7 +29,9 @@ from ..Widgets.Media.media_navigation_panel import MediaTypeSelectedEvent
 from ..Event_Handlers.media_events import (
     MediaMetadataUpdateEvent,
     MediaDeleteConfirmationEvent,
-    MediaUndeleteEvent
+    MediaUndeleteEvent,
+    MediaListCollapseEvent,
+    SidebarCollapseEvent
 )
 
 if TYPE_CHECKING:
@@ -61,6 +63,10 @@ class MediaWindow(Container):
         height: 1fr;
         width: 100%;
     }
+    
+    MediaWindow #media-list-panel.collapsed {
+        display: none;
+    }
     """
     
     # Reactive properties
@@ -68,6 +74,7 @@ class MediaWindow(Container):
     selected_media_id: reactive[Optional[int]] = reactive(None)
     media_active_view: reactive[Optional[str]] = reactive(None)
     sidebar_collapsed: reactive[bool] = reactive(False)
+    list_collapsed: reactive[bool] = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the MediaWindow."""
@@ -123,6 +130,14 @@ class MediaWindow(Container):
     def watch_sidebar_collapsed(self, collapsed: bool) -> None:
         """React to sidebar collapse changes."""
         self.nav_panel.collapsed = collapsed
+    
+    def watch_list_collapsed(self, collapsed: bool) -> None:
+        """React to list collapse changes."""
+        # Toggle display of list panel
+        if collapsed:
+            self.list_panel.add_class("collapsed")
+        else:
+            self.list_panel.remove_class("collapsed")
     
     @on(MediaTypeSelectedEvent)
     def handle_media_type_selected(self, event: MediaTypeSelectedEvent) -> None:
@@ -207,6 +222,33 @@ class MediaWindow(Container):
                 search_term,
                 keyword_filter
             )
+    
+    @on(MediaListCollapseEvent)
+    def handle_list_collapse(self) -> None:
+        """Handle list collapse toggle."""
+        self.list_collapsed = not self.list_collapsed
+        # Update button text
+        try:
+            button = self.viewer_panel.query_one("#collapse-media-list", Button)
+            button.label = "▶" if self.list_collapsed else "◀"
+        except Exception:
+            pass
+    
+    @on(SidebarCollapseEvent)
+    def handle_sidebar_collapse(self) -> None:
+        """Handle sidebar collapse toggle."""
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        # Update button text
+        try:
+            button = self.search_panel.query_one("#media-sidebar-toggle", Button)
+            from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE
+            # Toggle between collapsed and expanded state
+            if self.sidebar_collapsed:
+                button.label = "▶"  # Arrow pointing right when collapsed
+            else:
+                button.label = get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE)
+        except Exception:
+            pass
     
     def activate_media_type(self, type_slug: str, display_name: str) -> None:
         """Activate a media type and perform initial search."""
@@ -297,7 +339,7 @@ class MediaWindow(Container):
                 keywords_list = None
                 if keyword_filter:
                     keywords_list = [k.strip() for k in keyword_filter.split(',') if k.strip()]
-                 
+
                 # Search for media items using search_media_db method
                 results, total_matches = self.app_instance.media_db.search_media_db(
                     search_query=search_term if search_term else None,

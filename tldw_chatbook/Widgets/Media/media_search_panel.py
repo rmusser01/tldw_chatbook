@@ -253,21 +253,9 @@ class MediaSearchPanel(Container):
     @on(Button.Pressed, "#media-sidebar-toggle")
     def handle_sidebar_toggle(self) -> None:
         """Handle sidebar toggle button press."""
-        # Find the MediaWindow parent and toggle its sidebar
-        from ...UI.MediaWindow_v2 import MediaWindow
-        try:
-            # Walk up the widget tree to find MediaWindow
-            current = self.parent
-            while current is not None:
-                if isinstance(current, MediaWindow):
-                    current.sidebar_collapsed = not current.sidebar_collapsed
-                    logger.debug(f"Toggled sidebar: collapsed={current.sidebar_collapsed}")
-                    break
-                current = current.parent
-            else:
-                logger.warning("Could not find MediaWindow parent")
-        except Exception as e:
-            logger.error(f"Error toggling sidebar: {e}")
+        # Post event to toggle sidebar
+        from ...Event_Handlers.media_events import SidebarCollapseEvent
+        self.post_message(SidebarCollapseEvent())
     
     def perform_search(self) -> None:
         """Trigger a search with current criteria."""

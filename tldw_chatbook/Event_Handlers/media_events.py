@@ -68,6 +68,16 @@ class MediaUndeleteEvent(Message):
         self.media_id = media_id
         self.type_slug = type_slug
 
+
+class MediaListCollapseEvent(Message):
+    """Event fired when media list should be collapsed/expanded."""
+    pass
+
+
+class SidebarCollapseEvent(Message):
+    """Event fired when sidebar should be collapsed/expanded."""
+    pass
+
 #
 # Functions:
 

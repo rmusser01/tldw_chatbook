@@ -42,13 +42,30 @@ class MediaViewerPanel(Container):
     
     DEFAULT_CSS = """
     MediaViewerPanel {
-        width: 65%;
+        width: 2fr;
         height: 100%;
         layout: vertical;
     }
     
     MediaViewerPanel .viewer-header {
         display: none;
+    }
+    
+    MediaViewerPanel .tab-header {
+        height: 3;
+        layout: horizontal;
+        align-vertical: middle;
+        padding: 0;
+        margin-bottom: 0;
+    }
+    
+    MediaViewerPanel .collapse-media-list {
+        height: 3;
+        width: auto;
+        min-width: 5;
+        margin: 0 1 0 0;
+        background: $boost;
+        border: solid $primary;
     }
     
     MediaViewerPanel .metadata-section {
@@ -200,6 +217,14 @@ class MediaViewerPanel(Container):
         # Header
         with Container(classes="viewer-header"):
             yield Label("Media Viewer", classes="viewer-title")
+        
+        # Tab header with collapse button
+        with Horizontal(classes="tab-header"):
+            yield Button(
+                "◀",
+                id="collapse-media-list",
+                classes="collapse-media-list"
+            )
         
         # Main content area with tabs
         with TabbedContent():
@@ -551,6 +576,13 @@ class MediaViewerPanel(Container):
     def handle_format_change(self, event: Checkbox.Changed) -> None:
         """Handle reading format checkbox change."""
         self.format_for_reading = event.value
+    
+    @on(Button.Pressed, "#collapse-media-list")
+    def handle_collapse_media_list(self) -> None:
+        """Handle collapse media list button press."""
+        # Post a custom event that MediaWindow can listen for
+        from ...Event_Handlers.media_events import MediaListCollapseEvent
+        self.post_message(MediaListCollapseEvent())
     
     def search_content(self, search_term: str) -> None:
         """Search for term in content."""
