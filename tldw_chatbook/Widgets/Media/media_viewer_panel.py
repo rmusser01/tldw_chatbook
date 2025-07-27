@@ -356,7 +356,11 @@ class MediaViewerPanel(Container):
             # Apply search highlighting if active
             if self.search_matches:
                 content = self._highlight_matches(content)
+                # Update search status
+                self._update_search_status()
             
+            # Clear and update to ensure proper refresh
+            content_display.update("")
             content_display.update(content)
         except Exception as e:
             logger.error(f"Error updating content display: {e}")
@@ -409,6 +413,11 @@ class MediaViewerPanel(Container):
             self.query_one("#metadata-display", Static).update("*No item selected*")
             self.query_one("#content-display", Markdown).update("*No item selected*")
             self.query_one("#analysis-display", Markdown).update("*No item selected*")
+            # Clear search when no item is selected
+            self.clear_search()
+            # Clear search input
+            search_input = self.query_one("#content-search-input", Input)
+            search_input.value = ""
         except:
             pass
     
@@ -424,8 +433,35 @@ class MediaViewerPanel(Container):
     
     def _highlight_matches(self, content: str) -> str:
         """Highlight search matches in content."""
-        # TODO: Implement match highlighting
-        return content
+        if not self.search_matches:
+            return content
+            
+        # Sort matches by position
+        sorted_matches = sorted(self.search_matches)
+        
+        # Build highlighted content
+        result = []
+        last_end = 0
+        
+        for i, (start, end) in enumerate(sorted_matches):
+            # Add text before match
+            result.append(content[last_end:start])
+            
+            # Add highlighted match
+            match_text = content[start:end]
+            if i == self.current_match:
+                # Current match gets special highlighting with inline code style
+                result.append(f" **`▶ {match_text} ◀`** ")
+            else:
+                # Other matches get regular highlighting
+                result.append(f" `{match_text}` ")
+            
+            last_end = end
+            
+        # Add remaining text
+        result.append(content[last_end:])
+        
+        return ''.join(result)
     
     @on(Button.Pressed, "#edit-button")
     def handle_edit_button(self) -> None:
@@ -492,15 +528,23 @@ class MediaViewerPanel(Container):
     @on(Button.Pressed, "#prev-match")
     def handle_prev_match(self) -> None:
         """Navigate to previous search match."""
-        if self.search_matches and self.current_match > 0:
-            self.current_match -= 1
+        if self.search_matches:
+            if self.current_match > 0:
+                self.current_match -= 1
+            else:
+                # Wrap around to last match
+                self.current_match = len(self.search_matches) - 1
             self.highlight_current_match()
     
     @on(Button.Pressed, "#next-match")
     def handle_next_match(self) -> None:
         """Navigate to next search match."""
-        if self.search_matches and self.current_match < len(self.search_matches) - 1:
-            self.current_match += 1
+        if self.search_matches:
+            if self.current_match < len(self.search_matches) - 1:
+                self.current_match += 1
+            else:
+                # Wrap around to first match
+                self.current_match = 0
             self.highlight_current_match()
     
     @on(Checkbox.Changed, "#format-reading-checkbox")
@@ -510,8 +554,34 @@ class MediaViewerPanel(Container):
     
     def search_content(self, search_term: str) -> None:
         """Search for term in content."""
-        # TODO: Implement content search
-        pass
+        if not self.media_data or not search_term:
+            self.clear_search()
+            return
+            
+        content = self.media_data.get('content', '')
+        if not content:
+            self.search_matches = []
+            self.current_match = -1
+            self._update_search_status()
+            return
+            
+        # Find all matches (case-insensitive)
+        search_lower = search_term.lower()
+        content_lower = content.lower()
+        
+        matches = []
+        start = 0
+        while True:
+            pos = content_lower.find(search_lower, start)
+            if pos == -1:
+                break
+            matches.append((pos, pos + len(search_term)))
+            start = pos + 1
+            
+        self.search_matches = matches
+        self.current_match = 0 if matches else -1
+        self._update_search_status()
+        self.update_content_display()
     
     def clear_search(self) -> None:
         """Clear search results."""
@@ -520,12 +590,31 @@ class MediaViewerPanel(Container):
         self.update_content_display()
     
     def highlight_current_match(self) -> None:
-        """Highlight the current search match."""
-        # TODO: Implement match highlighting
-        pass
+        """Highlight the current search match and scroll to it."""
+        self.update_content_display()
+        # TODO: Implement scrolling to match position
+    
+    def _update_search_status(self) -> None:
+        """Update the search status display."""
+        try:
+            status_widget = self.query_one("#search-status", Static)
+            if not self.search_matches:
+                status_widget.update("")
+            else:
+                current = self.current_match + 1 if self.current_match >= 0 else 0
+                total = len(self.search_matches)
+                status_widget.update(f"{current}/{total}")
+        except Exception:
+            pass
     
     def load_media(self, media_data: Dict[str, Any]) -> None:
         """Load new media data into the viewer."""
         self.media_data = media_data
         self.edit_mode = False
         self.clear_search()
+        # Clear search input when loading new media
+        try:
+            search_input = self.query_one("#content-search-input", Input)
+            search_input.value = ""
+        except:
+            pass

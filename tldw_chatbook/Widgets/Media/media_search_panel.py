@@ -42,7 +42,8 @@ class MediaSearchPanel(Container):
     DEFAULT_CSS = """
     MediaSearchPanel {
         dock: top;
-        height: 9;
+        height: auto;
+        min-height: 7;
         padding: 1;
         background: $boost;
         border-bottom: thick $background-darken-1;
@@ -70,9 +71,8 @@ class MediaSearchPanel(Container):
     }
     
     MediaSearchPanel .keyword-input {
-        width: 5fr;
         height: 3;
-        margin-right: 1;
+        margin: 0 1;
     }
     
     MediaSearchPanel .search-button {
@@ -82,9 +82,12 @@ class MediaSearchPanel(Container):
     }
     
     MediaSearchPanel .filter-row {
-        layout: horizontal;
+        layout: grid;
+        grid-size: 3 1;
+        grid-columns: auto 2fr 1fr;
         height: 3;
         align-vertical: middle;
+        grid-gutter: 0;
     }
     
     MediaSearchPanel .filter-label {
@@ -93,15 +96,24 @@ class MediaSearchPanel(Container):
         padding: 0 1;
     }
     
+    MediaSearchPanel .checkbox-container {
+        height: 3;
+        width: 100%;
+        layout: vertical;
+    }
+    
     MediaSearchPanel .show-deleted-checkbox {
-        width: auto;
-        margin-right: 2;
+        height: 3;
+        width: 100%;
     }
     
     MediaSearchPanel .active-filters {
-        width: 1fr;
+        width: 100%;
+        height: 1;
         text-align: right;
         color: $text-muted;
+        padding: 0 1;
+        margin: 0;
     }
     """
     
@@ -135,21 +147,24 @@ class MediaSearchPanel(Container):
             )
             yield Button("Search", id="search-button", classes="search-button", variant="primary")
         
-        # Filter row
-        with Horizontal(classes="filter-row"):
+        # Filter row with grid layout for better control
+        with Container(classes="filter-row"):
             yield Label("Keywords:", classes="filter-label")
             yield Input(
                 placeholder="Enter keywords separated by commas",
                 id="keyword-input",
                 classes="keyword-input"
             )
-            yield Checkbox(
-                "Show deleted items",
-                id="show-deleted-checkbox",
-                classes="show-deleted-checkbox",
-                value=False
-            )
-            yield Static("", id="active-filters", classes="active-filters")
+            with Container(classes="checkbox-container"):
+                yield Checkbox(
+                    "Show deleted",
+                    id="show-deleted-checkbox",
+                    classes="show-deleted-checkbox",
+                    value=False
+                )
+        
+        # Active filters display on separate line
+        yield Static("", id="active-filters", classes="active-filters")
     
     def watch_search_term(self, search_term: str) -> None:
         """Update search input when search term changes."""

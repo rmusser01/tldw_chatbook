@@ -297,7 +297,7 @@ class MediaWindow(Container):
                 keywords_list = None
                 if keyword_filter:
                     keywords_list = [k.strip() for k in keyword_filter.split(',') if k.strip()]
-                
+                 
                 # Search for media items using search_media_db method
                 results, total_matches = self.app_instance.media_db.search_media_db(
                     search_query=search_term if search_term else None,
