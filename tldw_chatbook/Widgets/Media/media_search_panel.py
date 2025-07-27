@@ -13,7 +13,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.reactive import reactive
-from textual.widgets import Input, Label, Checkbox, Button, Static
+from textual.widgets import Input, Label, Checkbox, Button, Static, Collapsible
 from textual.message import Message
 from loguru import logger
 
@@ -43,7 +43,6 @@ class MediaSearchPanel(Container):
     MediaSearchPanel {
         dock: top;
         height: auto;
-        min-height: 7;
         padding: 1;
         background: $boost;
         border-bottom: thick $background-darken-1;
@@ -58,7 +57,7 @@ class MediaSearchPanel(Container):
     MediaSearchPanel .media-sidebar-toggle {
         height: 3;
         width: auto;
-        min-width: 5;
+        min-width: 10;
         margin-right: 1;
         background: $boost;
         border: solid $primary;
@@ -107,6 +106,10 @@ class MediaSearchPanel(Container):
         width: 100%;
     }
     
+    MediaSearchPanel Collapsible {
+        margin-top: 1;
+    }
+    
     MediaSearchPanel .active-filters {
         width: 100%;
         height: 1;
@@ -147,24 +150,26 @@ class MediaSearchPanel(Container):
             )
             yield Button("Search", id="search-button", classes="search-button", variant="primary")
         
-        # Filter row with grid layout for better control
-        with Container(classes="filter-row"):
-            yield Label("Keywords:", classes="filter-label")
-            yield Input(
-                placeholder="Enter keywords separated by commas",
-                id="keyword-input",
-                classes="keyword-input"
-            )
-            with Container(classes="checkbox-container"):
-                yield Checkbox(
-                    "Show deleted",
-                    id="show-deleted-checkbox",
-                    classes="show-deleted-checkbox",
-                    value=False
+        # Additional options in collapsible
+        with Collapsible(title="Additional Options", collapsed=True):
+            # Filter row with grid layout for better control
+            with Container(classes="filter-row"):
+                yield Label("Keywords:", classes="filter-label")
+                yield Input(
+                    placeholder="Enter keywords separated by commas",
+                    id="keyword-input",
+                    classes="keyword-input"
                 )
-        
-        # Active filters display on separate line
-        yield Static("", id="active-filters", classes="active-filters")
+                with Container(classes="checkbox-container"):
+                    yield Checkbox(
+                        "Show deleted",
+                        id="show-deleted-checkbox",
+                        classes="show-deleted-checkbox",
+                        value=False
+                    )
+            
+            # Active filters display on separate line
+            yield Static("", id="active-filters", classes="active-filters")
     
     def watch_search_term(self, search_term: str) -> None:
         """Update search input when search term changes."""
