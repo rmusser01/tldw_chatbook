@@ -154,9 +154,9 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
     def __init__(self, app_instance: "TldwCli", id: str = None):
         super().__init__(id=id)
         self.app_instance = app_instance
-        self.db = app_instance.main_db
         self.search_results: List[Dict[str, Any]] = []
-        self.search_history_db = SearchHistoryDB()
+        history_db_path = get_user_data_dir() / "search_history.db"
+        self.search_history_db = SearchHistoryDB(history_db_path)
         self.active_searches = 0
         self.current_page = 1
         self.results_per_page = 10
@@ -182,7 +182,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                 yield Static("🔍 RAG Search Engine", classes="search-title-enhanced")
                 yield Static(
                     f"[bold cyan]Collections:[/bold cyan] {len(self.available_collections)} | "
-                    f"[bold green]History:[/bold green] {self.search_history_db.get_total_searches()}",
+                    f"[bold green]History:[/bold green] 0",
                     id="search-stats",
                     classes="search-stats"
                 )
@@ -210,7 +210,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                 with Vertical(classes="option-group"):
                                     yield Label("Search Mode", classes="option-label")
                                     yield Select(
-                                        [(mode, label) for mode, label in SEARCH_MODES.items()],
+                                        [(label, mode) for mode, label in SEARCH_MODES.items()],
                                         value="plain",
                                         id="search-mode-select",
                                         classes="search-mode-select"
@@ -220,7 +220,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                 with Vertical(classes="option-group"):
                                     yield Label("Collection", classes="option-label")
                                     yield Select(
-                                        [("all", "All Collections")] + [(c, c) for c in self.available_collections],
+                                        [("All Collections", "all")] + [(c, c) for c in self.available_collections],
                                         value="all",
                                         id="collection-select",
                                         classes="collection-select"
@@ -262,7 +262,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                         with Vertical(classes="option-group"):
                                             yield Label("Strategy", classes="option-label")
                                             yield Select(
-                                                PARENT_STRATEGIES,
+                                                [(label, value) for value, label in PARENT_STRATEGIES],
                                                 value="full",
                                                 id="parent-strategy-select",
                                                 classes="parent-strategy-select"
@@ -363,10 +363,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                             yield Label("Time Range:", classes="history-label")
                             yield Select(
                                 [
-                                    ("7", "Last 7 days"),
-                                    ("30", "Last 30 days"),
-                                    ("90", "Last 90 days"),
-                                    ("all", "All time")
+                                    ("Last 7 days", "7"),
+                                    ("Last 30 days", "30"),
+                                    ("Last 90 days", "90"),
+                                    ("All time", "all")
                                 ],
                                 value="30",
                                 id="history-range-select"
@@ -407,10 +407,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                 
                                 yield Select(
                                     [
-                                        ("media", "Index Media"),
-                                        ("conversations", "Index Conversations"),
-                                        ("notes", "Index Notes"),
-                                        ("all", "Index All Content")
+                                        ("Index Media", "media"),
+                                        ("Index Conversations", "conversations"),
+                                        ("Index Notes", "notes"),
+                                        ("Index All Content", "all")
                                     ],
                                     value="all",
                                     id="index-source-select",
@@ -435,35 +435,15 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                 yield Static("📊 Index Statistics", classes="statistics-title")
                                 yield DataTable(id="index-stats-table", classes="index-stats-table")
         
-        # Setup UI components
+
+    def on_mount(self) -> None:
+        """Called when the widget is mounted"""
+        # Setup UI components after all widgets are created
         self._setup_history_table()
         self._setup_analytics()
         self._setup_collections_list()
         self._setup_index_stats()
         self._setup_aria_labels()
-
-    # The rest of the methods would continue here...
-    # I'll include just the key method signatures to show the structure
-    
-    def _setup_history_table(self) -> None:
-        """Setup the search history table"""
-        pass
-    
-    def _setup_analytics(self) -> None:
-        """Setup analytics display"""
-        pass
-    
-    def _setup_collections_list(self) -> None:
-        """Setup collections list"""
-        pass
-    
-    def _setup_index_stats(self) -> None:
-        """Setup index statistics table"""
-        pass
-    
-    def _setup_aria_labels(self) -> None:
-        """Setup accessibility labels for screen readers"""
-        pass
     
     # Setup methods implementation
     def _setup_history_table(self) -> None:
@@ -482,7 +462,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             f"Total Searches\n[bold cyan]{analytics['total_searches']}[/bold cyan]"
         )
         self.query_one("#avg-results-stat").update(
-            f"Avg Results\n[bold green]{analytics['avg_results']:.1f}[/bold green]"
+            f"Avg Results\n[bold green]{analytics['avg_result_count']:.1f}[/bold green]"
         )
         
         # Popular queries
@@ -846,7 +826,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             logger.error(f"Error getting search analytics: {e}")
             return {
                 "total_searches": 0,
-                "avg_results": 0,
+                "avg_result_count": 0,
                 "popular_queries": [],
                 "search_trend": "stable"
             }
