@@ -443,7 +443,6 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         self._setup_analytics()
         self._setup_collections_list()
         self._setup_index_stats()
-        self._setup_aria_labels()
     
     # Setup methods implementation
     def _setup_history_table(self) -> None:
