@@ -171,6 +171,15 @@ class MediaWindow(Container):
         if self.app_instance.media_db:
             full_media_data = self.app_instance.media_db.get_media_by_id(event.media_id, include_trash=True)
             if full_media_data:
+                # Also fetch the latest document version to get analysis
+                try:
+                    from ..DB.Client_Media_DB_v2 import get_document_version
+                    doc_version = get_document_version(self.app_instance.media_db, event.media_id, include_content=False)
+                    if doc_version and doc_version.get('analysis_content'):
+                        full_media_data['analysis'] = doc_version['analysis_content']
+                except Exception as e:
+                    logger.debug(f"Could not fetch document version for analysis: {e}")
+                
                 self.viewer_panel.load_media(full_media_data)
             else:
                 logger.error(f"Failed to fetch full data for media ID {event.media_id}")
@@ -271,8 +280,8 @@ class MediaWindow(Container):
                     self.app_instance.notify("Media item not found", severity="error")
                     return
                 
-                # Import LLM functions
-                from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+                # Import LLM functions based on provider
+                response = None
                 
                 # Prepare messages
                 messages = []
@@ -281,31 +290,69 @@ class MediaWindow(Container):
                 if event.user_prompt:
                     messages.append({"role": "user", "content": event.user_prompt})
                 
-                # Call LLM
                 logger.info(f"Calling {event.provider} with model {event.model} for analysis")
-                response = await chat_with_provider(
-                    event.provider,
-                    messages,
-                    event.model,
-                    temperature=0.7,
-                    streaming=False  # For simplicity, not streaming
-                )
+                
+                # Call appropriate LLM based on provider
+                if event.provider == "openai":
+                    from ..LLM_Calls.LLM_API_Calls import chat_with_openai
+                    def call_llm():
+                        return chat_with_openai(
+                            input_data=messages,
+                            model=event.model,
+                            temp=0.7,
+                            streaming=False
+                        )
+                elif event.provider == "anthropic":
+                    from ..LLM_Calls.Anthropic_API_Calls import chat_with_anthropic
+                    def call_llm():
+                        return chat_with_anthropic(
+                            input_data=messages,
+                            model=event.model,
+                            temp=0.7,
+                            streaming=False
+                        )
+                elif event.provider == "google":
+                    from ..LLM_Calls.Google_Gemini_API_Calls import chat_with_google
+                    def call_llm():
+                        return chat_with_google(
+                            input_data=messages,
+                            model=event.model,
+                            temp=0.7,
+                            streaming=False
+                        )
+                elif event.provider == "deepseek":
+                    from ..LLM_Calls.DeepSeek_API_Calls import chat_with_deepseek
+                    def call_llm():
+                        return chat_with_deepseek(
+                            input_data=messages,
+                            model=event.model,
+                            temp=0.7,
+                            streaming=False
+                        )
+                elif event.provider == "local":
+                    from ..LLM_Calls.Local_API_Calls import chat_with_local_model
+                    def call_llm():
+                        return chat_with_local_model(
+                            input_data=messages,
+                            model=event.model,
+                            temp=0.7,
+                            streaming=False
+                        )
+                else:
+                    self.app_instance.notify(f"Unsupported provider: {event.provider}", severity="error")
+                    return
+                
+                # Run in thread since it's a sync function
+                import asyncio
+                response = await asyncio.to_thread(call_llm)
                 
                 if response and isinstance(response, str):
-                    # Update viewer with analysis
-                    self.viewer_panel.current_analysis = response
-                    self.viewer_panel.has_existing_analysis = False  # New analysis, not saved yet
-                    
-                    # Update display
+                    # Update display directly
                     try:
                         analysis_display = self.viewer_panel.query_one("#analysis-display", Markdown)
                         analysis_display.update(response)
-                        
-                        # Show action buttons
-                        actions = self.viewer_panel.query_one("#analysis-actions", Horizontal)
-                        actions.display = True
-                        
-                        # Update button states
+                        # Update the viewer panel's current analysis state
+                        self.viewer_panel.current_analysis = response
                         self.viewer_panel._update_analysis_button_states()
                     except Exception as e:
                         logger.error(f"Error updating analysis display: {e}")
@@ -313,6 +360,12 @@ class MediaWindow(Container):
                     self.app_instance.notify("Analysis generated successfully", severity="information")
                 else:
                     self.app_instance.notify("Failed to generate analysis", severity="error")
+                    # Reset analysis display on failure
+                    try:
+                        analysis_display = self.viewer_panel.query_one("#analysis-display", Markdown)
+                        analysis_display.update("*Analysis generation failed*")
+                    except:
+                        pass
                     
             except Exception as e:
                 logger.error(f"Error performing analysis: {e}", exc_info=True)
@@ -331,23 +384,24 @@ class MediaWindow(Container):
                 self.app_instance.notify("Media database not available", severity="error")
                 return
             
-            # Save analysis using create_document_version
-            success = self.app_instance.media_db.create_document_version(
+            # Get the current content
+            media_data = self.app_instance.media_db.get_media_by_id(event.media_id)
+            if not media_data:
+                self.app_instance.notify("Media item not found", severity="error")
+                return
+            
+            # Create a new document version with the analysis
+            version_info = self.app_instance.media_db.create_document_version(
                 media_id=event.media_id,
+                content=media_data.get('content', ''),
                 analysis_content=event.analysis_content
             )
             
-            if success:
-                self.app_instance.notify("Analysis saved successfully", severity="information")
-                
-                # Update viewer state
+            if version_info:
+                self.app_instance.notify("Analysis saved successfully", severity="success")
+                # Update the viewer to show it's now saved
                 self.viewer_panel.has_existing_analysis = True
                 self.viewer_panel._update_analysis_button_states()
-                
-                # Refresh the media data to reflect the saved analysis
-                media_data = self.app_instance.media_db.get_media_by_id(event.media_id)
-                if media_data:
-                    self.viewer_panel.media_data = media_data
             else:
                 self.app_instance.notify("Failed to save analysis", severity="error")
                 
@@ -365,26 +419,28 @@ class MediaWindow(Container):
                 self.app_instance.notify("Media database not available", severity="error")
                 return
             
-            # Update existing analysis
-            success = self.app_instance.media_db.update_media_metadata(
+            # Get the current content
+            media_data = self.app_instance.media_db.get_media_by_id(event.media_id)
+            if not media_data:
+                self.app_instance.notify("Media item not found", severity="error")
+                return
+            
+            # Create a new document version with the updated analysis
+            # This will overwrite the analysis for this media item
+            version_info = self.app_instance.media_db.create_document_version(
                 media_id=event.media_id,
-                analysis=event.analysis_content
+                content=media_data.get('content', ''),
+                analysis_content=event.analysis_content
             )
             
-            if success[0]:  # update_media_metadata returns (success, message)
-                self.app_instance.notify("Analysis updated successfully", severity="information")
-                
-                # Update viewer state
+            if version_info:
+                self.app_instance.notify("Analysis overwritten successfully", severity="success")
+                # Update the viewer state
                 self.viewer_panel.has_existing_analysis = True
-                self.viewer_panel.analysis_edit_mode = False
+                self.viewer_panel.current_analysis = event.analysis_content
                 self.viewer_panel._update_analysis_button_states()
-                
-                # Refresh the media data
-                media_data = self.app_instance.media_db.get_media_by_id(event.media_id)
-                if media_data:
-                    self.viewer_panel.media_data = media_data
             else:
-                self.app_instance.notify(f"Failed to update analysis: {success[1]}", severity="error")
+                self.app_instance.notify("Failed to overwrite analysis", severity="error")
                 
         except Exception as e:
             logger.error(f"Error overwriting analysis: {e}", exc_info=True)

@@ -198,6 +198,60 @@ class MediaViewerPanel(Container):
     MediaViewerPanel TabPane {
         padding: 1;
     }
+    
+    MediaViewerPanel .analysis-controls {
+        padding: 1;
+        background: $boost;
+        margin-bottom: 1;
+        height: auto;
+    }
+    
+    MediaViewerPanel .analysis-display-scroll {
+        height: 1fr;
+        padding: 1;
+    }
+    
+    MediaViewerPanel .provider-row {
+        layout: horizontal;
+        height: 3;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+    
+    MediaViewerPanel .provider-row Select {
+        width: 1fr;
+        margin-right: 1;
+    }
+    
+    MediaViewerPanel .prompt-label {
+        margin-top: 1;
+        margin-bottom: 0;
+        text-style: bold;
+    }
+    
+    MediaViewerPanel .prompt-textarea {
+        height: 6;
+        margin-bottom: 1;
+        width: 100%;
+    }
+    
+    MediaViewerPanel #generate-analysis-btn {
+        width: auto;
+        margin: 1;
+        height: 3;
+    }
+    
+    MediaViewerPanel .analysis-actions {
+        layout: horizontal;
+        height: 3;
+        margin-top: 1;
+        padding: 1;
+    }
+    
+    MediaViewerPanel .analysis-actions Button {
+        margin-right: 1;
+        min-width: 10;
+    }
     """
     
     # Reactive properties
@@ -206,6 +260,9 @@ class MediaViewerPanel(Container):
     format_for_reading: reactive[bool] = reactive(False)
     search_matches: reactive[List[Tuple[int, int]]] = reactive([])
     current_match: reactive[int] = reactive(-1)
+    current_analysis: reactive[Optional[str]] = reactive(None)
+    has_existing_analysis: reactive[bool] = reactive(False)
+    analysis_edit_mode: reactive[bool] = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         """Initialize the viewer panel."""
@@ -282,10 +339,76 @@ class MediaViewerPanel(Container):
                 with VerticalScroll(classes="content-viewer"):
                     yield Markdown("", id="content-display")
             
-            # Analysis tab
+            # Analysis tab - full implementation
             with TabPane("Analysis", id="analysis-tab"):
-                with VerticalScroll(classes="content-viewer"):
-                    yield Markdown("", id="analysis-display")
+                with VerticalScroll():
+                    # Analysis controls container
+                    with Container(classes="analysis-controls"):
+                        # Provider and Model selection row
+                        with Horizontal(classes="provider-row"):
+                            yield Select(
+                                [(provider, provider) for provider in ["OpenAI", "Anthropic", "Google", "DeepSeek", "Local"]],
+                                prompt="Select Provider",
+                                id="analysis-provider-select"
+                            )
+                            yield Select(
+                                [],  # Will be populated based on provider
+                                prompt="Select Model",
+                                id="analysis-model-select"
+                            )
+                        
+                        # Prompt search and filtering
+                        yield Label("Search Prompts:", classes="prompt-label")
+                        yield Input(
+                            placeholder="Search for prompts...",
+                            id="prompt-search-input"
+                        )
+                        
+                        yield Label("Filter by Keywords:", classes="prompt-label")
+                        yield Input(
+                            placeholder="Enter keywords separated by commas...",
+                            id="prompt-keyword-input"
+                        )
+                        
+                        # Prompt selection dropdown
+                        yield Select(
+                            [],  # Will be populated by search results
+                            prompt="Select a prompt",
+                            id="prompt-select"
+                        )
+                        
+                        # System prompt
+                        yield Label("System Prompt:", classes="prompt-label")
+                        yield TextArea(
+                            "",
+                            id="system-prompt-area",
+                            classes="prompt-textarea"
+                        )
+                        
+                        # User prompt
+                        yield Label("User Prompt:", classes="prompt-label")
+                        yield TextArea(
+                            "",
+                            id="user-prompt-area",
+                            classes="prompt-textarea"
+                        )
+                        
+                        # Generate button
+                        yield Button(
+                            "Generate Analysis",
+                            id="generate-analysis-btn",
+                            variant="primary"
+                        )
+                    
+                    # Analysis display area
+                    with VerticalScroll(classes="analysis-display-scroll"):
+                        yield Markdown("", id="analysis-display")
+                        
+                        # Analysis action buttons
+                        with Horizontal(classes="analysis-actions"):
+                            yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
+                            yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
+                            yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
     
     def watch_media_data(self, media_data: Optional[Dict[str, Any]]) -> None:
         """Update display when media data changes."""
@@ -407,9 +530,16 @@ class MediaViewerPanel(Container):
             
             if not analysis:
                 analysis_display.update("*No analysis available*")
-                return
+                self.has_existing_analysis = False
+                self.current_analysis = None
+            else:
+                analysis_display.update(analysis)
+                self.has_existing_analysis = True
+                self.current_analysis = analysis
+                
+            # Update button states
+            self._update_analysis_button_states()
             
-            analysis_display.update(analysis)
         except Exception as e:
             logger.error(f"Error updating analysis display: {e}")
     
@@ -651,41 +781,18 @@ class MediaViewerPanel(Container):
             search_input.value = ""
         except:
             pass
+        # Populate providers
+        try:
+            self.populate_providers()
+        except Exception as e:
+            logger.debug(f"Could not populate providers: {e}")
     
     # Analysis Methods
     def populate_providers(self) -> None:
         """Populate the provider dropdown with available LLM providers."""
-        try:
-            logger.debug("Populating providers...")
-            # Import here to avoid circular imports
-            from ...config import get_cli_setting
-            
-            # Get available providers from config
-            providers = []
-            
-            # Check each provider type
-            if get_cli_setting("API", "openai_api_key"):
-                providers.append(("OpenAI", "OpenAI"))
-            if get_cli_setting("API", "anthropic_api_key"):
-                providers.append(("Anthropic", "Anthropic"))
-            if get_cli_setting("API", "google_api_key"):
-                providers.append(("Google", "Google"))
-            if get_cli_setting("API", "openrouter_api_key"):
-                providers.append(("OpenRouter", "OpenRouter"))
-            if get_cli_setting("API", "deepseek_api_key"):
-                providers.append(("DeepSeek", "DeepSeek"))
-            if get_cli_setting("API", "local_llm_enabled"):
-                providers.append(("Local", "Local LLM"))
-            
-            logger.debug(f"Found {len(providers)} providers")
-            
-            # Update the provider select
-            provider_select = self.query_one("#analysis-provider-select", Select)
-            provider_select.set_options(providers)
-            logger.debug("Provider select updated")
-            
-        except Exception as e:
-            logger.error(f"Error populating providers: {e}", exc_info=True)
+        # For now, we already have static providers in the UI
+        # This method can be expanded later to dynamically load from config
+        pass
     
     def update_models_for_provider(self, provider: str) -> None:
         """Update model dropdown based on selected provider."""
@@ -791,17 +898,22 @@ class MediaViewerPanel(Container):
             
             # Replace placeholders with actual media content
             if self.media_data:
+                # Truncate content if too long
+                content = self.media_data.get('content', '')
+                if len(content) > 10000:
+                    content = content[:10000] + "\n\n[Content truncated...]"
+                
                 replacements = {
                     "{title}": self.media_data.get('title', 'Untitled'),
-                    "{content}": self.media_data.get('content', ''),
+                    "{content}": content,
                     "{type}": self.media_data.get('type', ''),
                     "{author}": self.media_data.get('author', ''),
                     "{url}": self.media_data.get('url', ''),
                 }
                 
                 for placeholder, value in replacements.items():
-                    system_prompt = system_prompt.replace(placeholder, value)
-                    user_prompt = user_prompt.replace(placeholder, value)
+                    system_prompt = system_prompt.replace(placeholder, str(value))
+                    user_prompt = user_prompt.replace(placeholder, str(value))
             
             return system_prompt, user_prompt
             
@@ -886,15 +998,14 @@ class MediaViewerPanel(Container):
             provider_select = self.query_one("#analysis-provider-select", Select)
             model_select = self.query_one("#analysis-model-select", Select)
             
-            if not provider_select.value or provider_select.value == Select.BLANK:
-                self.app_instance.notify("Please select a provider", severity="warning")
+            provider = provider_select.value if provider_select.value != Select.BLANK else None
+            model = model_select.value if model_select.value != Select.BLANK else None
+            
+            if not provider or not model:
+                self.app_instance.notify("Please select a provider and model", severity="warning")
                 return
             
-            if not model_select.value or model_select.value == Select.BLANK:
-                self.app_instance.notify("Please select a model", severity="warning")
-                return
-            
-            # Prepare prompts
+            # Get prompts from text areas
             system_prompt, user_prompt = self.prepare_analysis_messages()
             
             if not system_prompt and not user_prompt:
@@ -905,8 +1016,8 @@ class MediaViewerPanel(Container):
             from ...Event_Handlers.media_events import MediaAnalysisRequestEvent
             self.post_message(MediaAnalysisRequestEvent(
                 media_id=self.media_data['id'],
-                provider=provider_select.value,
-                model=model_select.value,
+                provider=provider.lower(),  # Normalize provider name
+                model=model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 type_slug=""  # Will be set by MediaWindow
@@ -915,6 +1026,10 @@ class MediaViewerPanel(Container):
             # Show loading state
             analysis_display = self.query_one("#analysis-display", Markdown)
             analysis_display.update("*Generating analysis...*")
+            
+            # Store current analysis as None while generating
+            self.current_analysis = None
+            self._update_analysis_button_states()
             
         except Exception as e:
             logger.error(f"Error generating analysis: {e}")
