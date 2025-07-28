@@ -276,6 +276,11 @@ class MediaViewerPanel(Container):
         self.app_instance = app_instance
         self._original_data = None
         
+    def on_mount(self) -> None:
+        """Called when the widget is mounted."""
+        # Populate providers on mount
+        self.populate_providers()
+        
     def compose(self) -> ComposeResult:
         """Compose the viewer panel UI."""
         # Header
@@ -350,7 +355,7 @@ class MediaViewerPanel(Container):
                 # Provider and Model selection row
                 with Horizontal(classes="provider-row"):
                     yield Select(
-                        [(provider, provider) for provider in ["OpenAI", "Anthropic", "Google", "DeepSeek", "Local"]],
+                        [],  # Will be populated on mount
                         prompt="Select Provider",
                         id="analysis-provider-select"
                     )
@@ -792,39 +797,42 @@ class MediaViewerPanel(Container):
     # Analysis Methods
     def populate_providers(self) -> None:
         """Populate the provider dropdown with available LLM providers."""
-        # For now, we already have static providers in the UI
-        # This method can be expanded later to dynamically load from config
-        pass
+        try:
+            from ...config import get_cli_providers_and_models
+            
+            providers_models = get_cli_providers_and_models()
+            if providers_models:
+                provider_options = [(provider, provider) for provider in providers_models.keys()]
+                provider_select = self.query_one("#analysis-provider-select", Select)
+                provider_select.set_options(provider_options)
+                
+                # Select first provider if available
+                if provider_options:
+                    provider_select.value = provider_options[0][0]
+                    self.update_models_for_provider(provider_options[0][0])
+        except Exception as e:
+            logger.error(f"Error populating providers: {e}")
     
     def update_models_for_provider(self, provider: str) -> None:
         """Update model dropdown based on selected provider."""
         try:
-            from ...config import get_cli_setting
+            from ...config import get_cli_providers_and_models
             
-            models = []
+            providers_models = get_cli_providers_and_models()
+            models_list = providers_models.get(provider, [])
             
-            if provider == "OpenAI":
-                # Get OpenAI models
-                models_str = get_cli_setting("API", "available_openai_models", "gpt-4o,gpt-4o-mini,gpt-4-turbo")
-                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
-            elif provider == "Anthropic":
-                # Get Anthropic models
-                models_str = get_cli_setting("API", "available_anthropic_models", "claude-3-5-sonnet-20241022,claude-3-opus-20240229,claude-3-haiku-20240307")
-                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
-            elif provider == "Google":
-                # Get Google models
-                models_str = get_cli_setting("API", "available_google_models", "gemini-2.0-flash,gemini-1.5-pro,gemini-1.5-flash")
-                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
-            elif provider == "DeepSeek":
-                models = [("deepseek-reasoner", "DeepSeek Reasoner"), ("deepseek-chat", "DeepSeek Chat")]
-            elif provider == "Local":
-                # Get local model endpoint
-                endpoint = get_cli_setting("local-llm", "endpoint", "")
-                models = [("local", f"Local Model ({endpoint})")]
-            
-            # Update model select
-            model_select = self.query_one("#analysis-model-select", Select)
-            model_select.set_options(models)
+            if models_list:
+                model_options = [(model, model) for model in models_list]
+                model_select = self.query_one("#analysis-model-select", Select)
+                model_select.set_options(model_options)
+                
+                # Select first model if available
+                if model_options:
+                    model_select.value = model_options[0][0]
+            else:
+                # No models available for this provider
+                model_select = self.query_one("#analysis-model-select", Select)
+                model_select.set_options([])
             
         except Exception as e:
             logger.error(f"Error updating models for provider {provider}: {e}")
