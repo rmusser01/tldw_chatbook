@@ -3026,6 +3026,61 @@ class IngestWindow(Container):
             # Process audio files
             status_area.load_text("Processing audio files...\n")
             
+            # Create transcription progress callback for audio
+            def audio_transcription_progress(progress: float, status: str, data: Optional[Dict] = None):
+                """Handle transcription progress updates for audio."""
+                # Build detailed progress message
+                progress_msg = f"  → Transcription: {status} [{progress:.0f}%]"
+                
+                # Add additional details based on the data available
+                if data:
+                    # Language detection info
+                    if "language" in data and progress < 10:
+                        lang = data["language"]
+                        conf = data.get("confidence", 0)
+                        progress_msg = f"  → Transcription: Detected language: {lang} (confidence: {conf:.2%}) [{progress:.0f}%]"
+                    
+                    # Time-based progress
+                    elif "current_time" in data and "total_time" in data:
+                        current = data["current_time"]
+                        total = data["total_time"]
+                        segments = data.get("segment_num", 0)
+                        progress_msg = f"  → Transcription: Processing audio {current:.1f}s / {total:.1f}s ({segments} segments) [{progress:.0f}%]"
+                        
+                        # Add segment preview if available
+                        if data.get("segment_text"):
+                            preview = data["segment_text"][:50].strip()
+                            if len(data["segment_text"]) > 50:
+                                preview += "..."
+                            if preview:
+                                progress_msg += f'\n      Latest: "{preview}"'
+                    
+                    # Completion info
+                    elif progress >= 100 and "total_segments" in data:
+                        segments = data.get("total_segments", 0)
+                        chars = data.get("total_chars", 0)
+                        duration = data.get("duration", 0)
+                        if duration > 0:
+                            progress_msg = f"  → Transcription: Complete! {segments} segments, {chars:,} characters, {duration:.1f}s audio [{progress:.0f}%]"
+                        else:
+                            progress_msg = f"  → Transcription: Complete! {segments} segments, {chars:,} characters [{progress:.0f}%]"
+                    
+                    # Model-specific info
+                    elif "model" in data and progress == 100:
+                        model = data.get("model", "unknown")
+                        segments = data.get("total_segments", 0)
+                        chars = data.get("total_chars", 0)
+                        progress_msg = f"  → Transcription: Complete with {model}! {segments} segments, {chars:,} characters [{progress:.0f}%]"
+                
+                # Update status area with progress
+                try:
+                    self.app_instance.call_from_thread(
+                        self._update_audio_transcription_progress,
+                        progress_msg
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to update audio progress: {e}")
+            
             results = processor.process_audio_files(
                 inputs=all_inputs,
                 transcription_provider=transcription_provider,
@@ -3054,7 +3109,8 @@ class IngestWindow(Container):
                 cookies=cookies,
                 keep_original=keep_original,
                 custom_title=title_override,
-                author=author
+                author=author,
+                transcription_progress_callback=audio_transcription_progress
             )
             
             # Display results
@@ -3331,16 +3387,48 @@ class IngestWindow(Container):
                             # Create transcription progress callback
                             def transcription_progress(progress: float, status: str, data: Optional[Dict] = None):
                                 """Handle transcription progress updates."""
-                                # Update the last line with progress info
+                                # Build detailed progress message
                                 progress_msg = f"  → Transcription: {status} [{progress:.0f}%]"
                                 
-                                # Add segment preview if available
-                                if data and data.get("segment_text"):
-                                    preview = data["segment_text"][:40].strip()
-                                    if len(data["segment_text"]) > 40:
-                                        preview += "..."
-                                    if preview:  # Only add if there's actual text
-                                        progress_msg += f' - "{preview}"'
+                                # Add additional details based on the data available
+                                if data:
+                                    # Language detection info
+                                    if "language" in data and progress < 10:
+                                        lang = data["language"]
+                                        conf = data.get("confidence", 0)
+                                        progress_msg = f"  → Transcription: Detected language: {lang} (confidence: {conf:.2%}) [{progress:.0f}%]"
+                                    
+                                    # Time-based progress
+                                    elif "current_time" in data and "total_time" in data:
+                                        current = data["current_time"]
+                                        total = data["total_time"]
+                                        segments = data.get("segment_num", 0)
+                                        progress_msg = f"  → Transcription: Processing audio {current:.1f}s / {total:.1f}s ({segments} segments) [{progress:.0f}%]"
+                                        
+                                        # Add segment preview if available
+                                        if data.get("segment_text"):
+                                            preview = data["segment_text"][:50].strip()
+                                            if len(data["segment_text"]) > 50:
+                                                preview += "..."
+                                            if preview:
+                                                progress_msg += f'\n      Latest: "{preview}"'
+                                    
+                                    # Completion info
+                                    elif progress >= 100 and "total_segments" in data:
+                                        segments = data.get("total_segments", 0)
+                                        chars = data.get("total_chars", 0)
+                                        duration = data.get("duration", 0)
+                                        if duration > 0:
+                                            progress_msg = f"  → Transcription: Complete! {segments} segments, {chars:,} characters, {duration:.1f}s audio [{progress:.0f}%]"
+                                        else:
+                                            progress_msg = f"  → Transcription: Complete! {segments} segments, {chars:,} characters [{progress:.0f}%]"
+                                    
+                                    # Model-specific info
+                                    elif "model" in data and progress == 100:
+                                        model = data.get("model", "unknown")
+                                        segments = data.get("total_segments", 0)
+                                        chars = data.get("total_chars", 0)
+                                        progress_msg = f"  → Transcription: Complete with {model}! {segments} segments, {chars:,} characters [{progress:.0f}%]"
                                 
                                 # Log that we're updating progress
                                 logger.debug(f"Updating UI with: {progress_msg}")
@@ -3367,28 +3455,29 @@ class IngestWindow(Container):
                                     logger.debug(f"Transcription progress: {progress:.0f}% - {status} - segment {data.get('segment_num', 0)}")
                             
                             # Process single video with progress callback
-                            single_result = processor.process_videos(
-                                inputs=[input_item],
-                                download_video_flag=options["download_video"] and not options["extract_audio_only"],
-                                transcription_progress_callback=transcription_progress,
-                                start_time=options["start_time"],
-                                end_time=options["end_time"],
-                                transcription_provider=options["transcription_provider"],
-                                transcription_model=options["transcription_model"],
-                                transcription_language=options["transcription_language"],
-                                translation_target_language=options["translation_target"],
-                                perform_chunking=options["perform_chunking"],
-                                chunk_method=options["chunk_method"],
-                                max_chunk_size=options["chunk_size"],
-                                chunk_overlap=options["chunk_overlap"],
-                                use_adaptive_chunking=options["use_adaptive_chunking"],
-                                use_multi_level_chunking=options["use_multi_level_chunking"],
-                                chunk_language=options["chunk_language"] or options["transcription_language"],
-                                diarize=options["diarize"],
-                                vad_use=options["vad_filter"],
-                                timestamp_option=options["timestamps"],
-                                perform_analysis=options["perform_analysis"],
-                                api_name=options.get("api_name"),
+                            try:
+                                single_result = processor.process_videos(
+                                    inputs=[input_item],
+                                    download_video_flag=options["download_video"] and not options["extract_audio_only"],
+                                    transcription_progress_callback=transcription_progress,
+                                    start_time=options["start_time"],
+                                    end_time=options["end_time"],
+                                    transcription_provider=options["transcription_provider"],
+                                    transcription_model=options["transcription_model"],
+                                    transcription_language=options["transcription_language"],
+                                    translation_target_language=options["translation_target"],
+                                    perform_chunking=options["perform_chunking"],
+                                    chunk_method=options["chunk_method"],
+                                    max_chunk_size=options["chunk_size"],
+                                    chunk_overlap=options["chunk_overlap"],
+                                    use_adaptive_chunking=options["use_adaptive_chunking"],
+                                    use_multi_level_chunking=options["use_multi_level_chunking"],
+                                    chunk_language=options["chunk_language"] or options["transcription_language"],
+                                    diarize=options["diarize"],
+                                    vad_use=options["vad_filter"],
+                                    timestamp_option=options["timestamps"],
+                                    perform_analysis=options["perform_analysis"],
+                                    api_name=options.get("api_name"),
                                 api_key=options.get("api_key"),
                                 analysis_model=options.get("analysis_model"),
                                 custom_prompt=options["custom_prompt"],
@@ -3400,7 +3489,23 @@ class IngestWindow(Container):
                                 custom_title=options["title_override"],
                                 author=options["author"],
                                 keywords=options["keywords"]
-                            )
+                                )
+                            except Exception as e:
+                                logger.error(f"Error in process_videos call: {type(e).__name__}: {str(e)}", exc_info=True)
+                                # Create error result
+                                single_result = {
+                                    "processed_count": 0,
+                                    "errors_count": 1,
+                                    "errors": [str(e)],
+                                    "results": [{
+                                        "status": "Error",
+                                        "input_ref": input_item,
+                                        "error": str(e),
+                                        "media_type": "video"
+                                    }]
+                                }
+                                # Re-raise to be caught by outer exception handler
+                                raise
                             
                             # Log result details
                             logger.debug(f"Process result for {input_item}: {single_result}")
@@ -3592,14 +3697,30 @@ class IngestWindow(Container):
             current_text = status_area.text
             lines = current_text.split('\n')
             
+            # Handle multi-line progress messages
+            new_lines = text.rstrip().split('\n')
+            
             # Find the last transcription line and update it
+            transcription_line_found = False
             for i in range(len(lines) - 1, -1, -1):
                 if "→ Transcription:" in lines[i] or "→ Transcribing audio" in lines[i]:
-                    lines[i] = text.rstrip()
+                    # Replace this line with the first line of new text
+                    lines[i] = new_lines[0]
+                    transcription_line_found = True
+                    
+                    # If there's a "Latest:" preview line after, remove it
+                    if i + 1 < len(lines) and "Latest:" in lines[i + 1]:
+                        lines.pop(i + 1)
+                    
+                    # Insert any additional lines (like the "Latest:" preview)
+                    if len(new_lines) > 1:
+                        for j, extra_line in enumerate(new_lines[1:], 1):
+                            lines.insert(i + j, extra_line)
                     break
-            else:
-                # If no transcription line found, append
-                lines.append(text.rstrip())
+            
+            if not transcription_line_found:
+                # If no transcription line found, append all new lines
+                lines.extend(new_lines)
             
             # Ensure we don't have extra blank lines at the end
             while len(lines) > 1 and lines[-1] == '':
@@ -3610,6 +3731,48 @@ class IngestWindow(Container):
             status_area.scroll_end(animate=False)
         except Exception as e:
             logger.error(f"Error updating transcription progress: {e}")
+    
+    def _update_audio_transcription_progress(self, text: str) -> None:
+        """Update the last line in status area for audio transcription progress."""
+        try:
+            status_area = self.query_one("#local-status-audio", TextArea)
+            current_text = status_area.text
+            lines = current_text.split('\n')
+            
+            # Handle multi-line progress messages
+            new_lines = text.rstrip().split('\n')
+            
+            # Find the last transcription line and update it
+            transcription_line_found = False
+            for i in range(len(lines) - 1, -1, -1):
+                if "→ Transcription:" in lines[i]:
+                    # Replace this line with the first line of new text
+                    lines[i] = new_lines[0]
+                    transcription_line_found = True
+                    
+                    # If there's a "Latest:" preview line after, remove it
+                    if i + 1 < len(lines) and "Latest:" in lines[i + 1]:
+                        lines.pop(i + 1)
+                    
+                    # Insert any additional lines (like the "Latest:" preview)
+                    if len(new_lines) > 1:
+                        for j, extra_line in enumerate(new_lines[1:], 1):
+                            lines.insert(i + j, extra_line)
+                    break
+            
+            if not transcription_line_found:
+                # If no transcription line found, append all new lines
+                lines.extend(new_lines)
+            
+            # Ensure we don't have extra blank lines at the end
+            while len(lines) > 1 and lines[-1] == '':
+                lines.pop()
+            
+            status_area.load_text('\n'.join(lines))
+            # Scroll to bottom to show latest progress
+            status_area.scroll_end(animate=False)
+        except Exception as e:
+            logger.error(f"Error updating audio transcription progress: {e}")
             # Fallback to append if update fails
             try:
                 self._append_to_status_area(f"\n{text}")

@@ -495,15 +495,18 @@ class LocalVideoProcessor:
             
             # Process audio using audio processor
             logger.info(f"Starting audio processing for extracted audio: {audio_path}")
-            logger.debug(f"Audio processing parameters: provider={kwargs.get('transcription_provider')}, model={kwargs.get('transcription_model')}")
+            logger.info(f"Audio file details - exists: {os.path.exists(audio_path)}, size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes")
+            logger.info(f"Audio processing parameters: provider={kwargs.get('transcription_provider')}, model={kwargs.get('transcription_model')}, language={kwargs.get('transcription_language')}")
             
             # Get transcription progress callback if provided
             transcription_callback = kwargs.pop('transcription_progress_callback', None)
             
             # Notify about audio extraction completion if we have a callback
             if transcription_callback and file_ext not in audio_extensions:
+                logger.info("Notifying callback about audio extraction completion")
                 transcription_callback(0, "Audio extracted, starting transcription...", None)
             
+            logger.info("Calling audio processor _process_single_audio()")
             audio_result = self.audio_processor._process_single_audio(
                 input_item=audio_path,
                 processing_dir=temp_dir,
@@ -512,6 +515,7 @@ class LocalVideoProcessor:
                 original_url=input_item if is_url else None,  # Pass original URL for proper storage
                 **kwargs
             )
+            logger.info("Audio processor _process_single_audio() returned")
             
             logger.debug(f"Audio processing completed, result status: {audio_result.get('status') if audio_result else 'None'}")
             
@@ -615,8 +619,16 @@ class LocalVideoProcessor:
         extraction_start_time = time.time()
         log_counter("video_processing_audio_extraction_attempt")
         
+        logger.info(f"Extracting audio from video: {video_path}")
+        logger.info(f"Video file exists: {os.path.exists(video_path)}, size: {os.path.getsize(video_path) if os.path.exists(video_path) else 'N/A'} bytes")
+        
         # Find ffmpeg
-        ffmpeg_cmd = self._find_ffmpeg()
+        try:
+            ffmpeg_cmd = self._find_ffmpeg()
+            logger.info(f"Found ffmpeg at: {ffmpeg_cmd}")
+        except FileNotFoundError as e:
+            logger.error(f"ffmpeg not found: {str(e)}")
+            raise
         
         # Output path
         base_name = Path(video_path).stem
@@ -655,16 +667,28 @@ class LocalVideoProcessor:
         ])
         
         try:
+            logger.info(f"Running ffmpeg command: {' '.join(command)}")
+            logger.info(f"Extracting audio to: {audio_path}")
+            
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
                 check=True
             )
-            logger.info(f"Extracted audio to: {audio_path}")
+            
+            logger.info(f"ffmpeg completed successfully")
+            logger.info(f"Audio file created: {audio_path}, exists: {os.path.exists(audio_path)}, size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes")
+            
+            if not os.path.exists(audio_path):
+                raise VideoProcessingError(f"Audio extraction succeeded but output file not found: {audio_path}")
+            
             return audio_path
             
         except subprocess.CalledProcessError as e:
+            logger.error(f"ffmpeg failed with exit code {e.returncode}")
+            logger.error(f"ffmpeg stderr: {e.stderr}")
+            logger.error(f"ffmpeg stdout: {e.stdout}")
             raise VideoProcessingError(
                 f"Failed to extract audio: {e.stderr}"
             ) from e

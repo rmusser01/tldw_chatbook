@@ -15,7 +15,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.widgets import (
     Static, Button, Label, Input, TextArea, Markdown,
-    Checkbox, Collapsible, TabbedContent, TabPane
+    Checkbox, Collapsible, TabbedContent, TabPane, Select
 )
 from textual.message import Message
 from loguru import logger
@@ -192,6 +192,7 @@ class MediaViewerPanel(Container):
     
     MediaViewerPanel TabbedContent {
         height: 1fr;
+        width: 100%;
     }
     
     MediaViewerPanel TabPane {
@@ -650,3 +651,357 @@ class MediaViewerPanel(Container):
             search_input.value = ""
         except:
             pass
+    
+    # Analysis Methods
+    def populate_providers(self) -> None:
+        """Populate the provider dropdown with available LLM providers."""
+        try:
+            logger.debug("Populating providers...")
+            # Import here to avoid circular imports
+            from ...config import get_cli_setting
+            
+            # Get available providers from config
+            providers = []
+            
+            # Check each provider type
+            if get_cli_setting("API", "openai_api_key"):
+                providers.append(("OpenAI", "OpenAI"))
+            if get_cli_setting("API", "anthropic_api_key"):
+                providers.append(("Anthropic", "Anthropic"))
+            if get_cli_setting("API", "google_api_key"):
+                providers.append(("Google", "Google"))
+            if get_cli_setting("API", "openrouter_api_key"):
+                providers.append(("OpenRouter", "OpenRouter"))
+            if get_cli_setting("API", "deepseek_api_key"):
+                providers.append(("DeepSeek", "DeepSeek"))
+            if get_cli_setting("API", "local_llm_enabled"):
+                providers.append(("Local", "Local LLM"))
+            
+            logger.debug(f"Found {len(providers)} providers")
+            
+            # Update the provider select
+            provider_select = self.query_one("#analysis-provider-select", Select)
+            provider_select.set_options(providers)
+            logger.debug("Provider select updated")
+            
+        except Exception as e:
+            logger.error(f"Error populating providers: {e}", exc_info=True)
+    
+    def update_models_for_provider(self, provider: str) -> None:
+        """Update model dropdown based on selected provider."""
+        try:
+            from ...config import get_cli_setting
+            
+            models = []
+            
+            if provider == "OpenAI":
+                # Get OpenAI models
+                models_str = get_cli_setting("API", "available_openai_models", "gpt-4o,gpt-4o-mini,gpt-4-turbo")
+                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
+            elif provider == "Anthropic":
+                # Get Anthropic models
+                models_str = get_cli_setting("API", "available_anthropic_models", "claude-3-5-sonnet-20241022,claude-3-opus-20240229,claude-3-haiku-20240307")
+                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
+            elif provider == "Google":
+                # Get Google models
+                models_str = get_cli_setting("API", "available_google_models", "gemini-2.0-flash,gemini-1.5-pro,gemini-1.5-flash")
+                models = [(m.strip(), m.strip()) for m in models_str.split(",")]
+            elif provider == "DeepSeek":
+                models = [("deepseek-reasoner", "DeepSeek Reasoner"), ("deepseek-chat", "DeepSeek Chat")]
+            elif provider == "Local":
+                # Get local model endpoint
+                endpoint = get_cli_setting("local-llm", "endpoint", "")
+                models = [("local", f"Local Model ({endpoint})")]
+            
+            # Update model select
+            model_select = self.query_one("#analysis-model-select", Select)
+            model_select.set_options(models)
+            
+        except Exception as e:
+            logger.error(f"Error updating models for provider {provider}: {e}")
+    
+    @work(thread=True)
+    def search_prompts(self, search_term: str, keywords: str = "") -> None:
+        """Search for prompts in the database."""
+        try:
+            from ...DB.Prompts_DB import get_prompts_db
+            
+            prompts_db = get_prompts_db()
+            if not prompts_db:
+                return
+            
+            # Parse keywords
+            keyword_list = [k.strip() for k in keywords.split(",") if k.strip()] if keywords else []
+            
+            # Search prompts
+            if keyword_list:
+                results = prompts_db.search_prompts_by_keyword(keyword_list, search_term)
+            else:
+                results = prompts_db.search_prompts(search_term) if search_term else prompts_db.get_all_prompts()
+            
+            # Format results for Select widget
+            options = [(str(p['id']), f"{p['name']} - {p['description'][:50]}...") for p in results]
+            
+            # Update select widget from thread
+            self.call_from_thread(self._update_prompt_select, options)
+            
+        except Exception as e:
+            logger.error(f"Error searching prompts: {e}")
+    
+    def _update_prompt_select(self, options: List[Tuple[str, str]]) -> None:
+        """Update prompt select options from thread."""
+        try:
+            prompt_select = self.query_one("#prompt-select", Select)
+            prompt_select.set_options(options)
+        except:
+            pass
+    
+    def load_prompt_details(self, prompt_id: str) -> None:
+        """Load selected prompt into text areas."""
+        try:
+            from ...DB.Prompts_DB import get_prompts_db
+            
+            prompts_db = get_prompts_db()
+            if not prompts_db:
+                return
+            
+            # Get prompt details
+            prompt = prompts_db.get_prompt_details(int(prompt_id))
+            if not prompt:
+                return
+            
+            # Update text areas
+            system_area = self.query_one("#system-prompt-area", TextArea)
+            user_area = self.query_one("#user-prompt-area", TextArea)
+            
+            system_area.text = prompt.get('system_prompt', '')
+            user_area.text = prompt.get('user_prompt', '')
+            
+        except Exception as e:
+            logger.error(f"Error loading prompt details: {e}")
+    
+    def prepare_analysis_messages(self) -> Tuple[str, str]:
+        """Prepare system and user prompts with media content."""
+        try:
+            system_area = self.query_one("#system-prompt-area", TextArea)
+            user_area = self.query_one("#user-prompt-area", TextArea)
+            
+            system_prompt = system_area.text
+            user_prompt = user_area.text
+            
+            # Replace placeholders with actual media content
+            if self.media_data:
+                replacements = {
+                    "{title}": self.media_data.get('title', 'Untitled'),
+                    "{content}": self.media_data.get('content', ''),
+                    "{type}": self.media_data.get('type', ''),
+                    "{author}": self.media_data.get('author', ''),
+                    "{url}": self.media_data.get('url', ''),
+                }
+                
+                for placeholder, value in replacements.items():
+                    system_prompt = system_prompt.replace(placeholder, value)
+                    user_prompt = user_prompt.replace(placeholder, value)
+            
+            return system_prompt, user_prompt
+            
+        except Exception as e:
+            logger.error(f"Error preparing analysis messages: {e}")
+            return "", ""
+    
+    def _update_analysis_button_states(self) -> None:
+        """Update analysis button states based on current state."""
+        try:
+            save_btn = self.query_one("#save-analysis-btn", Button)
+            edit_btn = self.query_one("#edit-analysis-btn", Button)
+            overwrite_btn = self.query_one("#overwrite-analysis-btn", Button)
+            
+            if self.analysis_edit_mode:
+                save_btn.disabled = True
+                edit_btn.label = "Cancel Edit"
+                overwrite_btn.disabled = False
+            else:
+                save_btn.disabled = not self.current_analysis or self.has_existing_analysis
+                edit_btn.label = "Edit"
+                edit_btn.disabled = not self.current_analysis
+                overwrite_btn.disabled = not self.has_existing_analysis
+                
+        except Exception:
+            pass
+    
+    # Analysis Event Handlers
+    @on(Select.Changed, "#analysis-provider-select")
+    def handle_provider_change(self, event: Select.Changed) -> None:
+        """Handle provider selection change."""
+        if event.value and event.value != Select.BLANK:
+            self.update_models_for_provider(event.value)
+    
+    @on(Select.Changed, "#analysis-model-select")
+    def handle_model_change(self, event: Select.Changed) -> None:
+        """Handle model selection change."""
+        # Just store the selection, no additional action needed
+        pass
+    
+    @on(Input.Changed, "#prompt-search-input")
+    def handle_prompt_search(self, event: Input.Changed) -> None:
+        """Handle prompt search input with debouncing."""
+        # Get keyword filter value
+        try:
+            keyword_input = self.query_one("#prompt-keyword-input", Input)
+            keywords = keyword_input.value
+        except:
+            keywords = ""
+        
+        # Trigger search
+        self.search_prompts(event.value, keywords)
+    
+    @on(Input.Changed, "#prompt-keyword-input")
+    def handle_prompt_keyword_change(self, event: Input.Changed) -> None:
+        """Handle prompt keyword filter change."""
+        # Get search term
+        try:
+            search_input = self.query_one("#prompt-search-input", Input)
+            search_term = search_input.value
+        except:
+            search_term = ""
+        
+        # Trigger search
+        self.search_prompts(search_term, event.value)
+    
+    @on(Select.Changed, "#prompt-select")
+    def handle_prompt_selection(self, event: Select.Changed) -> None:
+        """Handle prompt selection."""
+        if event.value and event.value != Select.BLANK:
+            self.load_prompt_details(event.value)
+    
+    @on(Button.Pressed, "#generate-analysis-btn")
+    def handle_generate_analysis(self) -> None:
+        """Handle generate analysis button press."""
+        if not self.media_data:
+            self.app_instance.notify("No media item selected", severity="warning")
+            return
+        
+        try:
+            # Get selected provider and model
+            provider_select = self.query_one("#analysis-provider-select", Select)
+            model_select = self.query_one("#analysis-model-select", Select)
+            
+            if not provider_select.value or provider_select.value == Select.BLANK:
+                self.app_instance.notify("Please select a provider", severity="warning")
+                return
+            
+            if not model_select.value or model_select.value == Select.BLANK:
+                self.app_instance.notify("Please select a model", severity="warning")
+                return
+            
+            # Prepare prompts
+            system_prompt, user_prompt = self.prepare_analysis_messages()
+            
+            if not system_prompt and not user_prompt:
+                self.app_instance.notify("Please provide at least one prompt", severity="warning")
+                return
+            
+            # Post analysis request event
+            from ...Event_Handlers.media_events import MediaAnalysisRequestEvent
+            self.post_message(MediaAnalysisRequestEvent(
+                media_id=self.media_data['id'],
+                provider=provider_select.value,
+                model=model_select.value,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                type_slug=""  # Will be set by MediaWindow
+            ))
+            
+            # Show loading state
+            analysis_display = self.query_one("#analysis-display", Markdown)
+            analysis_display.update("*Generating analysis...*")
+            
+        except Exception as e:
+            logger.error(f"Error generating analysis: {e}")
+            self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
+    
+    @on(Button.Pressed, "#save-analysis-btn")
+    def handle_save_analysis(self) -> None:
+        """Handle save analysis button press."""
+        if not self.current_analysis or not self.media_data:
+            return
+        
+        from ...Event_Handlers.media_events import MediaAnalysisSaveEvent
+        self.post_message(MediaAnalysisSaveEvent(
+            media_id=self.media_data['id'],
+            analysis_content=self.current_analysis,
+            type_slug=""  # Will be set by MediaWindow
+        ))
+    
+    @on(Button.Pressed, "#edit-analysis-btn")
+    def handle_edit_analysis(self) -> None:
+        """Handle edit analysis button press."""
+        if not self.current_analysis:
+            return
+        
+        self.analysis_edit_mode = not self.analysis_edit_mode
+        
+        if self.analysis_edit_mode:
+            # Switch to edit mode - convert markdown to textarea
+            try:
+                analysis_display = self.query_one("#analysis-display", Markdown)
+                # Store current markdown content
+                current_content = self.current_analysis
+                
+                # Replace markdown with textarea
+                parent = analysis_display.parent
+                analysis_display.remove()
+                
+                edit_area = TextArea(current_content, id="analysis-edit-area")
+                parent.mount(edit_area, before=0)
+                
+            except Exception as e:
+                logger.error(f"Error entering edit mode: {e}")
+        else:
+            # Exit edit mode - convert textarea back to markdown
+            try:
+                edit_area = self.query_one("#analysis-edit-area", TextArea)
+                # Get edited content
+                self.current_analysis = edit_area.text
+                
+                # Replace textarea with markdown
+                parent = edit_area.parent
+                edit_area.remove()
+                
+                analysis_display = Markdown(self.current_analysis, id="analysis-display")
+                parent.mount(analysis_display, before=0)
+                
+            except Exception as e:
+                logger.error(f"Error exiting edit mode: {e}")
+        
+        self._update_analysis_button_states()
+    
+    @on(Button.Pressed, "#overwrite-analysis-btn")
+    def handle_overwrite_analysis(self) -> None:
+        """Handle overwrite analysis button press."""
+        if not self.media_data:
+            return
+        
+        # Get current content from edit area if in edit mode
+        if self.analysis_edit_mode:
+            try:
+                edit_area = self.query_one("#analysis-edit-area", TextArea)
+                analysis_content = edit_area.text
+            except:
+                analysis_content = self.current_analysis
+        else:
+            analysis_content = self.current_analysis
+        
+        if not analysis_content:
+            return
+        
+        from ...Event_Handlers.media_events import MediaAnalysisOverwriteEvent
+        self.post_message(MediaAnalysisOverwriteEvent(
+            media_id=self.media_data['id'],
+            analysis_content=analysis_content,
+            type_slug=""  # Will be set by MediaWindow
+        ))
+        
+        # Exit edit mode if active
+        if self.analysis_edit_mode:
+            self.handle_edit_analysis()

@@ -78,6 +78,40 @@ class SidebarCollapseEvent(Message):
     """Event fired when sidebar should be collapsed/expanded."""
     pass
 
+
+class MediaAnalysisRequestEvent(Message):
+    """Event fired when requesting LLM analysis of media content."""
+    
+    def __init__(self, media_id: int, provider: str, model: str, 
+                 system_prompt: str, user_prompt: str, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.provider = provider
+        self.model = model
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+        self.type_slug = type_slug
+
+
+class MediaAnalysisSaveEvent(Message):
+    """Event fired when saving new analysis content."""
+    
+    def __init__(self, media_id: int, analysis_content: str, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.analysis_content = analysis_content
+        self.type_slug = type_slug
+
+
+class MediaAnalysisOverwriteEvent(Message):
+    """Event fired when overwriting existing analysis content."""
+    
+    def __init__(self, media_id: int, analysis_content: str, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.analysis_content = analysis_content
+        self.type_slug = type_slug
+
 #
 # Functions:
 

@@ -13,7 +13,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Callable
 from urllib.parse import urlparse
 from loguru import logger
 #
@@ -233,7 +233,8 @@ class LocalAudioProcessor:
         keep_original: bool = False,
         custom_title: Optional[str] = None,
         author: Optional[str] = None,
-        temp_dir: Optional[str] = None
+        temp_dir: Optional[str] = None,
+        transcription_progress_callback: Optional[Callable[[float, str, Optional[Dict]], None]] = None
     ) -> Dict[str, Any]:
         """
         Process multiple audio inputs (URLs or local files).
@@ -277,7 +278,8 @@ class LocalAudioProcessor:
                         use_cookies=use_cookies,
                         cookies=cookies,
                         custom_title=custom_title,
-                        author=author
+                        author=author,
+                        transcription_progress_callback=transcription_progress_callback
                     )
                     results.append(result)
                     
