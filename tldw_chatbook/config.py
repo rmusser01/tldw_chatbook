@@ -1867,6 +1867,24 @@ top_p = 0.9
 min_p = 0.0 # Check if API supports this
 top_k = 100 # Check if API supports this
 
+[analysis_defaults]
+# Default settings specifically for the Media Analysis feature
+provider = "OpenAI"
+model = "gpt-4o"
+temperature = 0.7
+top_p = 0.95
+min_p = 0.05
+top_k = 50
+system_prompt = "You are an AI assistant specialized in analyzing and summarizing media content. Provide comprehensive, insightful analysis with clear structure and key takeaways."
+max_tokens = 4096
+# Prompt search/filter defaults
+default_prompt_search = ""
+default_keyword_filter = ""
+# Auto-save analysis after generation
+auto_save = false
+# Show analysis button in media viewer by default
+show_analysis_button = true
+
 [notes]
 # Default settings for the Notes tab
 sync_directory = "~/Documents/Notes"  # Default directory for notes synchronization

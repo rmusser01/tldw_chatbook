@@ -280,67 +280,77 @@ class MediaWindow(Container):
                     self.app_instance.notify("Media item not found", severity="error")
                     return
                 
-                # Import LLM functions based on provider
-                response = None
-                
-                # Prepare messages
-                messages = []
-                if event.system_prompt:
-                    messages.append({"role": "system", "content": event.system_prompt})
-                if event.user_prompt:
-                    messages.append({"role": "user", "content": event.user_prompt})
-                
+                # Use the same chat_wrapper as the chat window
                 logger.info(f"Calling {event.provider} with model {event.model} for analysis")
                 
-                # Call appropriate LLM based on provider
-                if event.provider == "openai":
-                    from ..LLM_Calls.LLM_API_Calls import chat_with_openai
-                    def call_llm():
-                        return chat_with_openai(
-                            input_data=messages,
-                            model=event.model,
-                            temp=0.7,
-                            streaming=False
-                        )
-                elif event.provider == "anthropic":
-                    from ..LLM_Calls.Anthropic_API_Calls import chat_with_anthropic
-                    def call_llm():
-                        return chat_with_anthropic(
-                            input_data=messages,
-                            model=event.model,
-                            temp=0.7,
-                            streaming=False
-                        )
-                elif event.provider == "google":
-                    from ..LLM_Calls.Google_Gemini_API_Calls import chat_with_google
-                    def call_llm():
-                        return chat_with_google(
-                            input_data=messages,
-                            model=event.model,
-                            temp=0.7,
-                            streaming=False
-                        )
-                elif event.provider == "deepseek":
-                    from ..LLM_Calls.DeepSeek_API_Calls import chat_with_deepseek
-                    def call_llm():
-                        return chat_with_deepseek(
-                            input_data=messages,
-                            model=event.model,
-                            temp=0.7,
-                            streaming=False
-                        )
-                elif event.provider == "local":
-                    from ..LLM_Calls.Local_API_Calls import chat_with_local_model
-                    def call_llm():
-                        return chat_with_local_model(
-                            input_data=messages,
-                            model=event.model,
-                            temp=0.7,
-                            streaming=False
-                        )
-                else:
-                    self.app_instance.notify(f"Unsupported provider: {event.provider}", severity="error")
+                # Prepare the chat history format expected by chat_wrapper
+                chat_history = []
+                
+                # Get API key using the same method as chat
+                api_key_for_call = None
+                provider_settings_key = event.provider.lower().replace(" ", "_")
+                provider_config_settings = self.app_instance.app_config.get("api_settings", {}).get(provider_settings_key, {})
+                
+                # First check direct api_key field
+                if "api_key" in provider_config_settings:
+                    config_api_key = provider_config_settings.get("api_key", "").strip()
+                    if config_api_key and config_api_key != "<API_KEY_HERE>":
+                        api_key_for_call = config_api_key
+                        logger.debug(f"Using API key for '{event.provider}' from config file field.")
+                
+                # If not found, check environment variable
+                if not api_key_for_call:
+                    env_var_name = provider_config_settings.get("api_key_env_var", "").strip()
+                    if env_var_name:
+                        import os
+                        env_api_key = os.environ.get(env_var_name, "").strip()
+                        if env_api_key:
+                            api_key_for_call = env_api_key
+                            logger.debug(f"Using API key for '{event.provider}' from ENV var '{env_var_name}'.")
+                
+                # Check if key is required
+                providers_requiring_key = ["OpenAI", "Anthropic", "Google", "MistralAI", "Groq", "Cohere", "OpenRouter", "HuggingFace", "DeepSeek"]
+                if event.provider in providers_requiring_key and not api_key_for_call:
+                    self.app_instance.notify(f"API Key for {event.provider} is missing.", severity="error")
                     return
+                
+                # Use chat_wrapper with the same parameters as the chat window
+                def call_llm():
+                    return self.app_instance.chat_wrapper(
+                        message=event.user_prompt or "",
+                        history=chat_history,
+                        media_content={},  # No media for analysis
+                        api_endpoint=event.provider,
+                        api_key=api_key_for_call,
+                        custom_prompt="",
+                        temperature=event.temperature,
+                        system_message=event.system_prompt or "",
+                        streaming=False,  # No streaming for analysis
+                        minp=event.min_p,
+                        model=event.model,
+                        topp=event.top_p,
+                        topk=50,
+                        llm_max_tokens=event.max_tokens,
+                        llm_seed=None,
+                        llm_stop=None,
+                        llm_response_format=None,
+                        llm_n=1,
+                        llm_user_identifier=None,
+                        llm_logprobs=False,
+                        llm_top_logprobs=None,
+                        llm_logit_bias=None,
+                        llm_presence_penalty=0,
+                        llm_frequency_penalty=0,
+                        llm_tools=None,
+                        llm_tool_choice=None,
+                        llm_fixed_tokens_kobold=None,
+                        current_image_input={},
+                        selected_parts=[],
+                        chatdict_entries=None,
+                        max_tokens=500,
+                        strategy="sorted_evenly",
+                        strip_thinking_tags=False
+                    )
                 
                 # Run in thread since it's a sync function
                 import asyncio

@@ -83,7 +83,9 @@ class MediaAnalysisRequestEvent(Message):
     """Event fired when requesting LLM analysis of media content."""
     
     def __init__(self, media_id: int, provider: str, model: str, 
-                 system_prompt: str, user_prompt: str, type_slug: str) -> None:
+                 system_prompt: str, user_prompt: str, type_slug: str,
+                 temperature: float = 0.7, top_p: float = 0.95, 
+                 min_p: float = 0.05, max_tokens: int = 4096) -> None:
         super().__init__()
         self.media_id = media_id
         self.provider = provider
@@ -91,6 +93,10 @@ class MediaAnalysisRequestEvent(Message):
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         self.type_slug = type_slug
+        self.temperature = temperature
+        self.top_p = top_p
+        self.min_p = min_p
+        self.max_tokens = max_tokens
 
 
 class MediaAnalysisSaveEvent(Message):

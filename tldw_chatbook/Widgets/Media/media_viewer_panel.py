@@ -95,6 +95,12 @@ class MediaViewerPanel(Container):
     
     MediaViewerPanel Collapsible {
         margin-top: 1;
+        height: auto;
+    }
+    
+    MediaViewerPanel Collapsible > Container {
+        height: auto;
+        padding: 0;
     }
     
     MediaViewerPanel .metadata-buttons {
@@ -229,6 +235,48 @@ class MediaViewerPanel(Container):
         margin-right: 1;
     }
     
+    MediaViewerPanel .compact-collapsible {
+        height: auto;
+        padding: 0;
+        margin-bottom: 1;
+    }
+    
+    MediaViewerPanel .compact-collapsible > Container {
+        height: auto;
+        padding: 1 0;
+    }
+    
+    MediaViewerPanel .compact-collapsible CollapsibleTitle {
+        padding: 0 1;
+    }
+    
+    MediaViewerPanel .api-params-row {
+        layout: horizontal;
+        height: auto;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+    
+    MediaViewerPanel .param-group {
+        layout: vertical;
+        width: 1fr;
+        height: auto;
+        margin: 0 1;
+    }
+    
+    MediaViewerPanel .param-group Label {
+        margin-bottom: 0;
+        text-style: bold;
+        color: $text-muted;
+        height: 1;
+    }
+    
+    MediaViewerPanel .param-group Input {
+        width: 100%;
+        height: 3;
+        margin-bottom: 0;
+    }
+    
     MediaViewerPanel .prompt-label {
         margin-top: 1;
         margin-bottom: 0;
@@ -352,18 +400,51 @@ class MediaViewerPanel(Container):
             
             # Analysis tab
             with TabPane("Analysis", id="analysis-tab"):
-                # Provider and Model selection row
-                with Horizontal(classes="provider-row"):
-                    yield Select(
-                        [],  # Will be populated on mount
-                        prompt="Select Provider",
-                        id="analysis-provider-select"
-                    )
-                    yield Select(
-                        [],  # Will be populated based on provider
-                        prompt="Select Model",
-                        id="analysis-model-select"
-                    )
+                # API Settings in a Collapsible
+                with Collapsible(title="API Settings", collapsed=False, id="analysis-api-settings", classes="compact-collapsible"):
+                    # Provider and Model selection row
+                    with Horizontal(classes="provider-row"):
+                        yield Select(
+                            [],  # Will be populated on mount
+                            prompt="Select Provider",
+                            id="analysis-provider-select"
+                        )
+                        yield Select(
+                            [],  # Will be populated based on provider
+                            prompt="Select Model",
+                            id="analysis-model-select"
+                        )
+                    
+                    # Temperature, Top-P, Min-P, Max Tokens settings row
+                    with Horizontal(classes="api-params-row"):
+                        with Vertical(classes="param-group"):
+                            yield Label("Temperature")
+                            yield Input(
+                                placeholder="0.7",
+                                id="analysis-temperature",
+                                value="0.7"
+                            )
+                        with Vertical(classes="param-group"):
+                            yield Label("Top P")
+                            yield Input(
+                                placeholder="0.95",
+                                id="analysis-top-p",
+                                value="0.95"
+                            )
+                        with Vertical(classes="param-group"):
+                            yield Label("Min P")
+                            yield Input(
+                                placeholder="0.05",
+                                id="analysis-min-p",
+                                value="0.05"
+                            )
+                        with Vertical(classes="param-group"):
+                            yield Label("Max Tokens")
+                            yield Input(
+                                placeholder="4096",
+                                id="analysis-max-tokens",
+                                value="4096"
+                            )
                 
                 # Prompt search and filtering
                 yield Label("Search Prompts:", classes="prompt-label")
@@ -798,33 +879,68 @@ class MediaViewerPanel(Container):
     def populate_providers(self) -> None:
         """Populate the provider dropdown with available LLM providers."""
         try:
-            from ...config import get_cli_providers_and_models
+            from ...config import get_cli_providers_and_models, get_cli_app_config
             
             providers_models = get_cli_providers_and_models()
+            config = get_cli_app_config()
+            analysis_defaults = config.get('analysis_defaults', {})
+            
             if providers_models:
                 provider_options = [(provider, provider) for provider in providers_models.keys()]
                 provider_select = self.query_one("#analysis-provider-select", Select)
                 provider_select.set_options(provider_options)
                 
-                # Select first provider if available
-                if provider_options:
+                # Set default provider from config or use first available
+                default_provider = analysis_defaults.get('provider', provider_options[0][0] if provider_options else None)
+                if default_provider and any(p[0] == default_provider for p in provider_options):
+                    provider_select.value = default_provider
+                    self.update_models_for_provider(default_provider)
+                elif provider_options:
                     provider_select.value = provider_options[0][0]
                     self.update_models_for_provider(provider_options[0][0])
+                    
+            # Set default temperature, top_p, min_p, max_tokens
+            temp_input = self.query_one("#analysis-temperature", Input)
+            temp_input.value = str(analysis_defaults.get('temperature', '0.7'))
+            
+            top_p_input = self.query_one("#analysis-top-p", Input)
+            top_p_input.value = str(analysis_defaults.get('top_p', '0.95'))
+            
+            min_p_input = self.query_one("#analysis-min-p", Input)
+            min_p_input.value = str(analysis_defaults.get('min_p', '0.05'))
+            
+            max_tokens_input = self.query_one("#analysis-max-tokens", Input)
+            max_tokens_input.value = str(analysis_defaults.get('max_tokens', '4096'))
+            
+            # Set default system prompt
+            system_prompt_area = self.query_one("#system-prompt-area", TextArea)
+            system_prompt_area.text = analysis_defaults.get('system_prompt', 'You are an AI assistant specialized in analyzing media content.')
+            
         except Exception as e:
             logger.error(f"Error populating providers: {e}")
     
     def update_models_for_provider(self, provider: str) -> None:
         """Update model dropdown based on selected provider."""
         try:
-            from ...config import get_cli_providers_and_models
+            from ...config import get_cli_providers_and_models, get_cli_app_config
             
             providers_models = get_cli_providers_and_models()
+            config = get_cli_app_config()
+            analysis_defaults = config.get('analysis_defaults', {})
+            
             models_list = providers_models.get(provider, [])
             
             if models_list:
                 model_options = [(model, model) for model in models_list]
                 model_select = self.query_one("#analysis-model-select", Select)
                 model_select.set_options(model_options)
+                
+                # Set default model from config or use first available
+                default_model = analysis_defaults.get('model')
+                if default_model and any(m[0] == default_model for m in model_options):
+                    model_select.value = default_model
+                else:
+                    model_select.value = model_options[0][0]
                 
                 # Select first model if available
                 if model_options:
@@ -1022,6 +1138,27 @@ class MediaViewerPanel(Container):
                 self.app_instance.notify("Please provide at least one prompt", severity="warning")
                 return
             
+            # Get temperature, top_p, min_p, max_tokens values
+            try:
+                temperature = float(self.query_one("#analysis-temperature", Input).value or "0.7")
+            except ValueError:
+                temperature = 0.7
+            
+            try:
+                top_p = float(self.query_one("#analysis-top-p", Input).value or "0.95")
+            except ValueError:
+                top_p = 0.95
+            
+            try:
+                min_p = float(self.query_one("#analysis-min-p", Input).value or "0.05")
+            except ValueError:
+                min_p = 0.05
+            
+            try:
+                max_tokens = int(self.query_one("#analysis-max-tokens", Input).value or "4096")
+            except ValueError:
+                max_tokens = 4096
+            
             # Post analysis request event
             from ...Event_Handlers.media_events import MediaAnalysisRequestEvent
             self.post_message(MediaAnalysisRequestEvent(
@@ -1030,6 +1167,10 @@ class MediaViewerPanel(Container):
                 model=model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                temperature=temperature,
+                top_p=top_p,
+                min_p=min_p,
+                max_tokens=max_tokens,
                 type_slug=""  # Will be set by MediaWindow
             ))
             
