@@ -438,6 +438,14 @@ class ChatWindowEnhanced(Container):
         # Settings Sidebar (Left)
         yield from create_settings_sidebar(TAB_CHAT, self.app_instance.app_config)
 
+        # Left sidebar toggle button
+        yield Button(
+            get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
+            id="toggle-chat-left-sidebar",
+            classes="chat-sidebar-toggle-button",
+            tooltip="Toggle left sidebar (Ctrl+[)"
+        )
+
         # Check if tabs are enabled
         enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
         
@@ -461,12 +469,6 @@ class ChatWindowEnhanced(Container):
                 )
                 
                 with Horizontal(id="chat-input-area"):
-                    yield Button(
-                        get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
-                        id="toggle-chat-left-sidebar",
-                        classes="sidebar-toggle",
-                        tooltip="Toggle left sidebar (Ctrl+[)"
-                    )
                     yield TextArea(id="chat-input", classes="chat-input")
                     
                     # Microphone button for voice input
@@ -503,12 +505,14 @@ class ChatWindowEnhanced(Container):
                         tooltip="Suggest a response"
                     )
                     logger.debug("'respond-for-me-button' composed.")
-                    yield Button(
-                        get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
-                        id="toggle-chat-right-sidebar",
-                        classes="sidebar-toggle",
-                        tooltip="Toggle right sidebar (Ctrl+])"
-                    )
+
+        # Right sidebar toggle button
+        yield Button(
+            get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
+            id="toggle-chat-right-sidebar",
+            classes="chat-sidebar-toggle-button",
+            tooltip="Toggle right sidebar (Ctrl+])"
+        )
 
         # Character Details Sidebar (Right)
         yield from create_chat_right_sidebar(
@@ -571,17 +575,15 @@ class ChatWindowEnhanced(Container):
         try:
             input_area = self.query_one("#chat-input-area", Horizontal)
             
-            # Get all the buttons in the desired order
+            # Get all the buttons in the desired order (sidebar toggles are no longer here)
             send_stop_button = self.query_one("#send-stop-chat", Button)
             attach_button = self.query_one("#attach-image", Button)
             respond_button = self.query_one("#respond-for-me-button", Button)
-            right_sidebar_button = self.query_one("#toggle-chat-right-sidebar", Button)
             
             # Move them to the end in the correct order
             await send_stop_button.move(parent=input_area, after=-1)
             await attach_button.move(parent=input_area, after=-1)
             await respond_button.move(parent=input_area, after=-1)
-            await right_sidebar_button.move(parent=input_area, after=-1)
             
         except Exception as e:
             logger.debug(f"Could not rearrange buttons: {e}")

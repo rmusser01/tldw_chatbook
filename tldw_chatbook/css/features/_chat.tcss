@@ -4,6 +4,20 @@
  * Chat tab specific styles
  * ======================================== */
 
+/* --- Chat sidebar toggle buttons --- */
+.chat-sidebar-toggle-button {
+    width: 5;              /* Thin vertical button */
+    height: 100%;          /* Full height of parent */
+    min-width: 0;          /* Override button minimum width */
+    border: none;          /* Remove border */
+    background: $surface-darken-1;
+    color: $text;
+}
+
+.chat-sidebar-toggle-button:hover {
+    background: $surface;
+}
+
 /* --- Chat Window specific layouts --- */
 #chat-main-content {
     layout: vertical;
