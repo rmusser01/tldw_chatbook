@@ -17,10 +17,12 @@ from ..Widgets.settings_sidebar import create_settings_sidebar
 from ..Widgets.chat_right_sidebar import create_chat_right_sidebar
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
 from ..Widgets.chat_tab_container import ChatTabContainer
+from ..Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
 from ..config import get_cli_setting
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
     EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON, EMOJI_STOP, FALLBACK_STOP
+from ..Event_Handlers.Audio_Events import DictationStartedEvent, DictationStoppedEvent
 
 # Configure logger with context
 logger = logger.bind(module="Chat_Window_Enhanced")
@@ -43,6 +45,7 @@ class ChatWindowEnhanced(Container):
         ("ctrl+shift+left", "resize_sidebar_shrink", "Shrink sidebar"),
         ("ctrl+shift+right", "resize_sidebar_expand", "Expand sidebar"),
         ("ctrl+e", "edit_focused_message", "Edit focused message"),
+        ("ctrl+m", "toggle_voice_input", "Toggle voice input"),
     ]
     
     # CSS for hidden elements
@@ -75,6 +78,11 @@ class ChatWindowEnhanced(Container):
         self.app_instance = app_instance
         self.pending_attachment = None  # New unified attachment system
         self.pending_image = None  # Deprecated - kept for backward compatibility
+        
+        # Voice input state
+        self.voice_input_widget: Optional[VoiceInputWidget] = None
+        self.is_voice_recording = False
+        
         logger.debug("ChatWindowEnhanced initialized.")
     
     async def on_mount(self) -> None:
@@ -461,6 +469,16 @@ class ChatWindowEnhanced(Container):
                     )
                     yield TextArea(id="chat-input", classes="chat-input")
                     
+                    # Microphone button for voice input
+                    show_mic_button = get_cli_setting("chat.voice", "show_mic_button", True)
+                    if show_mic_button:
+                        yield Button(
+                            get_char("🎤", "⚫"),
+                            id="mic-button",
+                            classes="mic-button",
+                            tooltip="Voice input (Ctrl+M)"
+                        )
+                    
                     yield Button(
                         get_char(EMOJI_SEND if self.is_send_button else EMOJI_STOP, 
                                 FALLBACK_SEND if self.is_send_button else FALLBACK_STOP),
@@ -746,6 +764,63 @@ class ChatWindowEnhanced(Container):
             # Hide indicator
             indicator = self.query_one("#image-attachment-indicator")
             indicator.add_class("hidden")
+    
+    def handle_mic_button(self, event: Button.Pressed) -> None:
+        """Handle microphone button press for voice input."""
+        # Call the toggle action
+        self.action_toggle_voice_input()
+    
+    def action_toggle_voice_input(self) -> None:
+        """Toggle voice input recording."""
+        if not self.voice_input_widget:
+            # Create voice input widget if not exists
+            self._create_voice_input_widget()
+        
+        if self.is_voice_recording:
+            # Stop recording
+            self.voice_input_widget.stop_recording()
+            self.is_voice_recording = False
+        else:
+            # Start recording
+            self.voice_input_widget.start_recording()
+            self.is_voice_recording = True
+    
+    def _create_voice_input_widget(self):
+        """Create the voice input widget."""
+        try:
+            self.voice_input_widget = VoiceInputWidget(
+                show_device_selector=False,
+                show_transcript_preview=False,
+                transcription_provider=get_cli_setting('transcription', 'default_provider', 'auto'),
+                transcription_model=get_cli_setting('transcription', 'default_model', None),
+                language=get_cli_setting('transcription', 'default_language', 'en')
+            )
+            # Mount it hidden
+            self.mount(self.voice_input_widget)
+            self.voice_input_widget.display = False
+        except Exception as e:
+            logger.error(f"Failed to create voice input widget: {e}")
+            self.app_instance.notify("Voice input unavailable", severity="error")
+    
+    def on_voice_input_message(self, event: VoiceInputMessage) -> None:
+        """Handle voice input messages."""
+        if event.is_final and event.text:
+            # Add transcribed text to chat input
+            try:
+                chat_input = self.query_one("#chat-input", TextArea)
+                current_text = chat_input.text
+                
+                # Add space if there's existing text
+                if current_text and not current_text.endswith(' '):
+                    event.text = ' ' + event.text
+                
+                # Append transcribed text
+                chat_input.load_text(current_text + event.text)
+                
+                # Focus the input
+                chat_input.focus()
+            except Exception as e:
+                logger.error(f"Failed to add voice input to chat: {e}")
 
 #
 # End of Chat_Window_Enhanced.py

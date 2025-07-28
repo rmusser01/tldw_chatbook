@@ -197,6 +197,7 @@ class MediaViewerPanel(Container):
     
     MediaViewerPanel TabPane {
         padding: 1;
+        overflow-y: auto;
     }
     
     MediaViewerPanel .analysis-controls {
@@ -209,6 +210,11 @@ class MediaViewerPanel(Container):
     MediaViewerPanel .analysis-display-scroll {
         height: 1fr;
         padding: 1;
+    }
+    
+    MediaViewerPanel #analysis-display {
+        min-height: 10;
+        margin: 1;
     }
     
     MediaViewerPanel .provider-row {
@@ -339,76 +345,72 @@ class MediaViewerPanel(Container):
                 with VerticalScroll(classes="content-viewer"):
                     yield Markdown("", id="content-display")
             
-            # Analysis tab - full implementation
+            # Analysis tab
             with TabPane("Analysis", id="analysis-tab"):
-                with VerticalScroll():
-                    # Analysis controls container
-                    with Container(classes="analysis-controls"):
-                        # Provider and Model selection row
-                        with Horizontal(classes="provider-row"):
-                            yield Select(
-                                [(provider, provider) for provider in ["OpenAI", "Anthropic", "Google", "DeepSeek", "Local"]],
-                                prompt="Select Provider",
-                                id="analysis-provider-select"
-                            )
-                            yield Select(
-                                [],  # Will be populated based on provider
-                                prompt="Select Model",
-                                id="analysis-model-select"
-                            )
-                        
-                        # Prompt search and filtering
-                        yield Label("Search Prompts:", classes="prompt-label")
-                        yield Input(
-                            placeholder="Search for prompts...",
-                            id="prompt-search-input"
-                        )
-                        
-                        yield Label("Filter by Keywords:", classes="prompt-label")
-                        yield Input(
-                            placeholder="Enter keywords separated by commas...",
-                            id="prompt-keyword-input"
-                        )
-                        
-                        # Prompt selection dropdown
-                        yield Select(
-                            [],  # Will be populated by search results
-                            prompt="Select a prompt",
-                            id="prompt-select"
-                        )
-                        
-                        # System prompt
-                        yield Label("System Prompt:", classes="prompt-label")
-                        yield TextArea(
-                            "",
-                            id="system-prompt-area",
-                            classes="prompt-textarea"
-                        )
-                        
-                        # User prompt
-                        yield Label("User Prompt:", classes="prompt-label")
-                        yield TextArea(
-                            "",
-                            id="user-prompt-area",
-                            classes="prompt-textarea"
-                        )
-                        
-                        # Generate button
-                        yield Button(
-                            "Generate Analysis",
-                            id="generate-analysis-btn",
-                            variant="primary"
-                        )
-                    
-                    # Analysis display area
-                    with VerticalScroll(classes="analysis-display-scroll"):
-                        yield Markdown("", id="analysis-display")
-                        
-                        # Analysis action buttons
-                        with Horizontal(classes="analysis-actions"):
-                            yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
-                            yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
-                            yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
+                # Provider and Model selection row
+                with Horizontal(classes="provider-row"):
+                    yield Select(
+                        [(provider, provider) for provider in ["OpenAI", "Anthropic", "Google", "DeepSeek", "Local"]],
+                        prompt="Select Provider",
+                        id="analysis-provider-select"
+                    )
+                    yield Select(
+                        [],  # Will be populated based on provider
+                        prompt="Select Model",
+                        id="analysis-model-select"
+                    )
+                
+                # Prompt search and filtering
+                yield Label("Search Prompts:", classes="prompt-label")
+                yield Input(
+                    placeholder="Search for prompts...",
+                    id="prompt-search-input"
+                )
+                
+                yield Label("Filter by Keywords:", classes="prompt-label")
+                yield Input(
+                    placeholder="Enter keywords separated by commas...",
+                    id="prompt-keyword-input"
+                )
+                
+                # Prompt selection dropdown
+                yield Select(
+                    [],  # Will be populated by search results
+                    prompt="Select a prompt",
+                    id="prompt-select"
+                )
+                
+                # System prompt
+                yield Label("System Prompt:", classes="prompt-label")
+                yield TextArea(
+                    "",
+                    id="system-prompt-area",
+                    classes="prompt-textarea"
+                )
+                
+                # User prompt
+                yield Label("User Prompt:", classes="prompt-label")
+                yield TextArea(
+                    "",
+                    id="user-prompt-area",
+                    classes="prompt-textarea"
+                )
+                
+                # Generate button
+                yield Button(
+                    "Generate Analysis",
+                    id="generate-analysis-btn",
+                    variant="primary"
+                )
+                
+                # Analysis display area
+                yield Markdown("", id="analysis-display")
+                
+                # Analysis action buttons
+                with Horizontal(classes="analysis-actions"):
+                    yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
+                    yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
+                    yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
     
     def watch_media_data(self, media_data: Optional[Dict[str, Any]]) -> None:
         """Update display when media data changes."""

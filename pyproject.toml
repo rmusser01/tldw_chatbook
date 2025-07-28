@@ -195,6 +195,11 @@ nemo = [
     "torch",  # Required by NeMo
     "torchaudio",  # Required for audio processing
 ]
+speech_recording = [
+    "pyaudio>=0.2.14",  # Primary audio backend
+    "sounddevice>=0.4.6",  # Fallback audio backend
+    "webrtcvad>=2.0.10",  # Voice activity detection
+]
 ocr_docext = [
     "docext",  # NanoNets document extraction toolkit
     "gradio_client",  # For API-based usage
