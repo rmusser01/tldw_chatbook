@@ -207,8 +207,13 @@ class MediaViewerPanel(Container):
     }
     
     MediaViewerPanel TabPane {
+        padding: 0;
+        height: 100%;
+    }
+    
+    MediaViewerPanel .analysis-scroll-container {
+        height: 100%;
         padding: 1;
-        overflow-y: auto;
     }
     
     MediaViewerPanel .analysis-controls {
@@ -227,6 +232,9 @@ class MediaViewerPanel(Container):
         min-height: 20;
         margin: 1;
         height: auto;
+        padding: 1;
+        border: solid $primary;
+        background: $surface;
     }
     
     MediaViewerPanel .provider-row {
@@ -412,8 +420,10 @@ class MediaViewerPanel(Container):
             
             # Analysis tab
             with TabPane("Analysis", id="analysis-tab"):
-                # API Settings in a Collapsible
-                with Collapsible(title="API Settings", collapsed=False, id="analysis-api-settings", classes="compact-collapsible"):
+                # Wrap all content in a VerticalScroll container
+                with VerticalScroll(classes="analysis-scroll-container"):
+                    # API Settings in a Collapsible
+                    with Collapsible(title="API Settings", collapsed=False, id="analysis-api-settings", classes="compact-collapsible"):
                         # Provider and Model selection row
                         with Horizontal(classes="provider-row"):
                             yield Select(
@@ -427,91 +437,91 @@ class MediaViewerPanel(Container):
                                 id="analysis-model-select"
                             )
                     
-                        # Temperature, Top-P, Min-P, Max Tokens settings row
-                        with Horizontal(classes="api-params-row"):
-                            with Vertical(classes="param-group"):
-                                yield Label("Temperature")
-                                yield Input(
-                                    placeholder="0.7",
-                                    id="analysis-temperature",
-                                    value="0.7"
-                                )
-                            with Vertical(classes="param-group"):
-                                yield Label("Top P")
-                                yield Input(
-                                    placeholder="0.95",
-                                    id="analysis-top-p",
-                                    value="0.95"
-                                )
-                            with Vertical(classes="param-group"):
-                                yield Label("Min P")
-                                yield Input(
-                                    placeholder="0.05",
-                                    id="analysis-min-p",
-                                    value="0.05"
-                                )
-                            with Vertical(classes="param-group"):
-                                yield Label("Max Tokens")
-                                yield Input(
-                                    placeholder="4096",
-                                    id="analysis-max-tokens",
-                                    value="4096"
-                                )
-                
-                # Prompt search and filtering
-                yield Label("Search Prompts:", classes="prompt-label")
-                yield Input(
-                    placeholder="Search for prompts...",
-                    id="prompt-search-input"
-                )
+                            # Temperature, Top-P, Min-P, Max Tokens settings row
+                            with Horizontal(classes="api-params-row"):
+                                with Vertical(classes="param-group"):
+                                    yield Label("Temperature")
+                                    yield Input(
+                                        placeholder="0.7",
+                                        id="analysis-temperature",
+                                        value="0.7"
+                                    )
+                                with Vertical(classes="param-group"):
+                                    yield Label("Top P")
+                                    yield Input(
+                                        placeholder="0.95",
+                                        id="analysis-top-p",
+                                        value="0.95"
+                                    )
+                                with Vertical(classes="param-group"):
+                                    yield Label("Min P")
+                                    yield Input(
+                                        placeholder="0.05",
+                                        id="analysis-min-p",
+                                        value="0.05"
+                                    )
+                                with Vertical(classes="param-group"):
+                                    yield Label("Max Tokens")
+                                    yield Input(
+                                        placeholder="4096",
+                                        id="analysis-max-tokens",
+                                        value="4096"
+                                    )
                     
-                yield Label("Filter by Keywords:", classes="prompt-label")
-                yield Input(
-                    placeholder="Enter keywords separated by commas...",
-                    id="prompt-keyword-input"
-                )
-                
-                # Prompt selection dropdown
-                yield Select(
-                    [],  # Will be populated by search results
-                    prompt="Select a prompt",
-                    id="prompt-select"
-                )
-                
-                # System prompt
-                yield Label("System Prompt:", classes="prompt-label")
-                yield TextArea(
-                    "",
-                    id="system-prompt-area",
-                    classes="prompt-textarea"
-                )
-                
-                # User prompt
-                yield Label("User Prompt:", classes="prompt-label")
-                yield TextArea(
-                    "",
-                    id="user-prompt-area",
-                    classes="prompt-textarea"
-                )
-                
-                # Generate button
-                yield Button(
-                    "Generate Analysis",
-                    id="generate-analysis-btn",
-                    variant="primary"
-                )
-                
-                # Analysis display area
-                yield Markdown("", id="analysis-display")
-                
-                # Analysis action buttons
-                with Horizontal(classes="analysis-actions"):
-                    yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
-                    yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
-                    yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
-                
-                # Add some padding at the bottom to ensure scrolling works
-                yield Static("", classes="bottom-spacer")
+                    # Prompt search and filtering
+                    yield Label("Search Prompts:", classes="prompt-label")
+                    yield Input(
+                        placeholder="Search for prompts...",
+                        id="prompt-search-input"
+                    )
+                        
+                    yield Label("Filter by Keywords:", classes="prompt-label")
+                    yield Input(
+                        placeholder="Enter keywords separated by commas...",
+                        id="prompt-keyword-input"
+                    )
+                    
+                    # Prompt selection dropdown
+                    yield Select(
+                        [],  # Will be populated by search results
+                        prompt="Select a prompt",
+                        id="prompt-select"
+                    )
+                    
+                    # System prompt
+                    yield Label("System Prompt:", classes="prompt-label")
+                    yield TextArea(
+                        "",
+                        id="system-prompt-area",
+                        classes="prompt-textarea"
+                    )
+                    
+                    # User prompt
+                    yield Label("User Prompt:", classes="prompt-label")
+                    yield TextArea(
+                        "",
+                        id="user-prompt-area",
+                        classes="prompt-textarea"
+                    )
+                    
+                    # Generate button
+                    yield Button(
+                        "Generate Analysis",
+                        id="generate-analysis-btn",
+                        variant="primary"
+                    )
+                    
+                    # Analysis display area
+                    yield Markdown("", id="analysis-display")
+                    
+                    # Analysis action buttons
+                    with Horizontal(classes="analysis-actions"):
+                        yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
+                        yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
+                        yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
+                    
+                    # Add some padding at the bottom to ensure scrolling works
+                    yield Static("", classes="bottom-spacer")
     
     def watch_media_data(self, media_data: Optional[Dict[str, Any]]) -> None:
         """Update display when media data changes."""
