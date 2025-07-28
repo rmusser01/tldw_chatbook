@@ -84,6 +84,12 @@
     /*width: 100%;      Optional: make it full width like other sidebar buttons */
 }
 
+/* Clone Chat Button in chat-right-sidebar */
+.clone-chat-button {
+    margin-top: 1;   /* Add space above the button */
+    width: 100%;     /* Full width like other sidebar buttons */
+}
+
 /* chat-right-sidebar Specific Styles */
 #chat-right-sidebar #chat-conversation-title-input { /* Title input */
     /* width: 100%; (from .sidebar-input) */

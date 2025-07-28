@@ -86,6 +86,15 @@ def create_chat_right_sidebar(id_prefix: str, initial_ephemeral_state: bool = Tr
                 variant="success",
                 disabled=not initial_ephemeral_state # Enabled if ephemeral, disabled if already saved
             )
+            
+            # Button to clone/fork current chat
+            yield Button(
+                "🔄 Clone Current Chat",
+                id=f"{id_prefix}-clone-current-chat-button",
+                classes="sidebar-button clone-chat-button",
+                variant="default",
+                tooltip="Create a copy of the current chat to explore different paths"
+            )
 
             # Button to convert entire conversation to note
             yield Button(

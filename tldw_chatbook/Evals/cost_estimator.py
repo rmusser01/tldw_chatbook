@@ -18,7 +18,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 from loguru import logger
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from ..Metrics.metrics_logger import log_counter, log_histogram
 
 @dataclass
 class ModelPricing:

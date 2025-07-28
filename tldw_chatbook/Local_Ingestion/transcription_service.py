@@ -594,7 +594,12 @@ class TranscriptionService:
             raise TranscriptionError("faster-whisper is not installed")
         
         logger.info(f"Starting faster-whisper transcription: model={model}, language={language}, source_lang={source_lang}, target_lang={target_lang}")
+        logger.info(f"Audio file path: {audio_path}, exists: {os.path.exists(audio_path)}, size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'} bytes")
         logger.debug(f"VAD filter: {vad_filter}, additional kwargs: {kwargs}")
+        
+        # Verify audio file exists and is readable
+        if not os.path.exists(audio_path):
+            raise TranscriptionError(f"Audio file not found: {audio_path}")
         
         # Get or create model instance with thread safety
         cache_key = (model, self.config['device'], self.config['compute_type'])
@@ -602,6 +607,15 @@ class TranscriptionService:
         with self._model_cache_lock:
             if cache_key not in self._model_cache:
                 logger.info(f"Loading Whisper model: {model} (device: {self.config['device']}, compute_type: {self.config['compute_type']})")
+                
+                # Report model loading progress
+                if progress_callback:
+                    try:
+                        progress_callback(0, f"Loading Whisper model: {model} (this may take a few minutes on first use)...", 
+                                        {"stage": "model_loading", "model": model})
+                    except Exception as e:
+                        logger.warning(f"Progress callback error during model loading: {e}")
+                
                 model_load_start = time.time()
                 try:
                     # Use protect_file_descriptors to handle the file descriptor issue
@@ -615,6 +629,14 @@ class TranscriptionService:
                         )
                     model_load_time = time.time() - model_load_start
                     logger.info(f"Whisper model loaded successfully in {model_load_time:.2f} seconds")
+                    
+                    # Report model loaded
+                    if progress_callback:
+                        try:
+                            progress_callback(2, f"Model loaded successfully in {model_load_time:.1f}s", 
+                                            {"stage": "model_loaded", "load_time": model_load_time})
+                        except Exception as e:
+                            logger.warning(f"Progress callback error after model loading: {e}")
                 except Exception as e:
                     logger.error(f"Failed to load Whisper model: {str(e)}", exc_info=True)
                     # Provide more helpful error message
@@ -661,14 +683,22 @@ class TranscriptionService:
             # Perform transcription
             if progress_callback:
                 try:
-                    progress_callback(0, "Starting transcription...", None)
+                    device_info = f" on {self.config['device'].upper()}" if self.config['device'] != 'cpu' else " on CPU (this may take several minutes)"
+                    progress_callback(3, f"Starting transcription{device_info}...", 
+                                    {"device": self.config['device'], "compute_type": self.config['compute_type']})
                 except Exception as e:
                     logger.warning(f"Progress callback error (ignored): {e}")
             
             logger.info(f"Starting Whisper transcription with options: {options}")
             transcribe_start = time.time()
             
-            segments_generator, info = whisper_model.transcribe(audio_path, **options)
+            try:
+                logger.info(f"Calling whisper_model.transcribe() on file: {audio_path}")
+                segments_generator, info = whisper_model.transcribe(audio_path, **options)
+                logger.info(f"whisper_model.transcribe() returned successfully, got generator and info")
+            except Exception as e:
+                logger.error(f"whisper_model.transcribe() failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                raise TranscriptionError(f"Whisper transcription failed: {str(e)}") from e
             
             logger.debug(f"Whisper transcription started, processing segments...")
             
@@ -698,6 +728,7 @@ class TranscriptionService:
             segment_count = 0
             last_progress = 5  # Start after language detection
             segment_start_time = time.time()
+            last_update_time = time.time()
             
             for segment in segments_generator:
                 segment_dict = {
@@ -722,20 +753,28 @@ class TranscriptionService:
                 if progress_callback and total_duration > 0:
                     # Calculate progress based on time (5-95% range, leaving room for finalization)
                     time_progress = 5 + (segment.end / total_duration) * 90
+                    current_time = time.time()
                     
-                    # Only update if progress increased by at least 1%
-                    if time_progress - last_progress >= 1:
+                    # Update if progress increased by at least 1% OR if 5 seconds have passed since last update
+                    if time_progress - last_progress >= 1 or (current_time - last_update_time) >= 5:
                         try:
+                            # Add processing speed info
+                            elapsed = current_time - transcribe_start
+                            speed = segment.end / elapsed if elapsed > 0 else 0
+                            speed_text = f" ({speed:.1f}x speed)" if speed > 0 else ""
+                            
                             progress_callback(
                                 time_progress,
-                                f"Transcribing: {segment.end:.1f}s / {total_duration:.1f}s",
+                                f"Transcribing: {segment.end:.1f}s / {total_duration:.1f}s{speed_text}",
                                 {
                                     "segment_num": segment_count,
                                     "segment_text": segment.text.strip(),
                                     "current_time": segment.end,
-                                    "total_time": total_duration
+                                    "total_time": total_duration,
+                                    "processing_speed": speed
                                 }
                             )
+                            last_update_time = current_time
                         except Exception as e:
                             logger.warning(f"Progress callback error (ignored): {e}")
                         last_progress = time_progress

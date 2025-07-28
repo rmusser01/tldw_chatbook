@@ -310,6 +310,8 @@ class _HuggingFaceEmbedder:
                 # Check if torch is available before using it
                 if torch is not None:
                     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+                    # Store dtype as instance variable for use in error handlers
+                    self._dtype = dtype
                 else:
                     # This shouldn't happen due to the check in _build, but just in case
                     raise ImportError("torch is required for HuggingFace embeddings")
@@ -363,7 +365,7 @@ class _HuggingFaceEmbedder:
                 # Reload the model with explicit device placement
                 self._model = AutoModel.from_pretrained(
                     cfg.model_name_or_path,
-                    torch_dtype=dtype,
+                    torch_dtype=self._dtype,
                     trust_remote_code=cfg.trust_remote_code,
                     cache_dir=cache_dir,
                     revision=cfg.revision,
@@ -390,7 +392,7 @@ class _HuggingFaceEmbedder:
                 # Reload with explicit settings to avoid meta tensors
                 self._model = AutoModel.from_pretrained(
                     cfg.model_name_or_path,
-                    torch_dtype=dtype,
+                    torch_dtype=self._dtype,
                     trust_remote_code=cfg.trust_remote_code,
                     cache_dir=cache_dir,
                     revision=cfg.revision,

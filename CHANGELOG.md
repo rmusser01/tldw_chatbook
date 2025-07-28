@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial features pending documentation
 
+## [0.1.4.1] - 2025-07-27
+### Fixed
+- Media Views
+- CSS Adjustments
+- faster-whisper ingestion
+
+
+## [0.1.4.0] - 2025-07-24
+### Added
+- Higgs tts
+- clone chat button
+
+### Fixed
+- model checkpoints added to gitignore
+
+
 ## [0.1.3.7] - 2025-07-21
 ### Added
 - vibe-coded speaker diarization implementation (Un-tested, need to verify/wire up)

@@ -1,0 +1,177 @@
+{
+    "name": "Fantasy Realm Codex",
+    "description": "A comprehensive guide to a fantasy world with magic, kingdoms, and mythical creatures",
+    "scan_depth": 3,
+    "token_budget": 800,
+    "recursive_scanning": true,
+    "entries": [
+        {
+            "keys": ["Arcanum", "magical kingdom", "kingdom of magic"],
+            "content": "The Kingdom of Arcanum is the most powerful magical nation in the realm. Founded 3,000 years ago by the Archmage Celestius, it is governed by the Council of Eight - the most powerful wizards of each school of magic. The capital city, Stellaris, floats on a massive crystal platform above the Ethereal Lake. All citizens possess some magical ability, and non-magical visitors require special permits.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 0,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "locations",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["dragon", "dragons", "wyrm", "drake"],
+            "content": "Dragons in this realm are ancient, highly intelligent beings who value knowledge above material wealth. They can live for millennia and possess the ability to take human form. Dragons are organized into five Great Flights based on their elemental affinity: Crimson (fire), Azure (water), Verdant (earth), Argent (air), and Obsidian (shadow). Each flight has different philosophies and relationships with mortals. Dragons must be addressed with their full titles to show proper respect.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 5,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "creatures",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["magic system", "how magic works", "spellcasting"],
+            "content": "Magic in this world draws from the Ethereal Weave, an invisible field of energy that permeates all things. Mages must attune themselves to specific threads of the Weave through years of study. The eight schools of magic are: Elementalism (controlling elements), Transmutation (changing matter), Divination (knowledge and foresight), Illusion (deception and misdirection), Necromancy (death and undeath), Enchantment (imbuing objects), Summoning (calling beings), and Restoration (healing and protection). Overuse of magic causes 'Weave Burn' - physical exhaustion and temporary loss of magical ability.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 1,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "magic",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["Shadowmere", "dark kingdom", "cursed lands"],
+            "content": "The Shadowmere is a cursed region perpetually shrouded in twilight. Once a prosperous kingdom called Lumengarde, it fell to darkness 500 years ago when King Aldric attempted to harness forbidden magic. Now ruled by the Lich King Aldric from his Bone Citadel, the land is home to undead, dark creatures, and those who practice forbidden arts. Despite its evil reputation, Shadowmere maintains diplomatic relations with other kingdoms through the Treaty of Twilight, which prevents open warfare.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 10,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "locations",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["elves", "elven", "elf"],
+            "content": "Elves in this realm are divided into three distinct cultures: High Elves (masters of arcane magic living in crystal spire cities), Wood Elves (nature guardians dwelling in the Great Forest), and Dark Elves (underground dwellers who rejected surface life). All elves share pointed ears, enhanced senses, and lifespans of 800-1000 years. They reach maturity at 100 years and can see perfectly in low light. Elven society values art, magic, and philosophy over material wealth.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 6,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "races",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["Gods", "deities", "pantheon", "divine"],
+            "content": "The pantheon consists of twelve major deities: Solarius (sun and justice), Lunara (moon and dreams), Tempestas (storms and change), Terra (earth and nature), Ignis (fire and war), Aqua (water and healing), Mortis (death and judgment), Vita (life and fertility), Scientia (knowledge and magic), Fortuna (luck and fate), Artificius (craft and creation), and Umbra (shadows and secrets). Gods cannot directly interfere in mortal affairs but work through chosen champions and subtle influence. Each deity has their own holy days, rituals, and clerical orders.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 2,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "religion",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["adventurers guild", "guild", "adventurers"],
+            "content": "The Adventurers' Guild is an international organization that provides contracts, training, and support for those who take on dangerous quests. Members are ranked from Copper (novice) through Bronze, Silver, Gold, Platinum, to Adamantine (legendary). The Guild maintains halls in every major city, offering job boards, equipment shops, healing services, and taverns. Guild membership requires passing tests of combat, knowledge, and moral character. The Guild's motto: 'Fortune Favors the Bold, but Wisdom Keeps Them Alive.'",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 15,
+            "selective": true,
+            "secondary_keys": ["quest", "job", "contract", "rank"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "organizations",
+                "importance": "moderate"
+            }
+        },
+        {
+            "keys": ["prophecy", "chosen one", "ancient prophecy"],
+            "content": "The Prophecy of the Convergence, spoken by the Oracle of Delphi 1,000 years ago, states: 'When shadow covers sun and moon as one, when dragons wake from slumber deep, when dead kings rise from eternal sleep, then shall the Chosen bear the Mark of Stars, to unite the realms or see them fall to wars.' This prophecy is taken very seriously by all kingdoms, with many claiming to have found the Chosen One over the centuries. The Mark of Stars is said to appear as a constellation-shaped birthmark.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 3,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "lore",
+                "importance": "critical"
+            }
+        },
+        {
+            "keys": ["currency", "money", "coins", "gold"],
+            "content": "The realm uses a standardized currency system established by the Merchant's Covenant 200 years ago. The denominations are: Copper Pennies (cp), Silver Moons (sp) worth 10cp, Gold Suns (gp) worth 10sp, and Platinum Dragons (pp) worth 10gp. Additionally, magical services often require Ethereal Shards - crystallized magical energy that can be used as both currency and spell components. One Ethereal Shard equals approximately 5gp in value.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 20,
+            "selective": true,
+            "secondary_keys": ["buy", "sell", "cost", "price", "worth"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "economy",
+                "importance": "minor"
+            }
+        },
+        {
+            "keys": ["calendar", "months", "time", "year"],
+            "content": "The realm follows the Celestial Calendar with 13 months of 28 days each, totaling 364 days, plus one 'Day of Convergence' that exists outside normal time. The months are named after the gods: Solarius (spring begins), Vitara, Terran, Ignisem, Aquanis, Fortunis, Artificiem, Scientis, Lunaris (autumn begins), Mortisem, Umbran, Tempestas, and Convergence (winter's end). Each week has seven days named after celestial bodies. The current year is 3,247 After Founding (AF).",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 25,
+            "selective": true,
+            "secondary_keys": ["date", "day", "month", "season"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "world_info",
+                "importance": "minor"
+            }
+        },
+        {
+            "keys": ["magical artifacts", "legendary items", "artifacts"],
+            "content": "Five Legendary Artifacts shape the balance of power: The Crown of Dominion (grants authority over dragons), the Staff of the Worldweaver (can alter reality itself), the Sword of Souls (can cut through any material or magic), the Chalice of Eternal Life (grants immortality), and the Orb of All-Seeing (reveals any truth). These artifacts were scattered and hidden after the War of Ascension 2,000 years ago. Many seek them, but they are protected by powerful guardians and deadly trials.",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 4,
+            "selective": false,
+            "secondary_keys": [],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "items",
+                "importance": "major"
+            }
+        },
+        {
+            "keys": ["common phrases", "greetings", "expressions"],
+            "content": "Common expressions in the realm include: 'By the Twelve!' (surprise/oath), 'May the Stars guide you' (farewell blessing), 'Shadow take it!' (curse), 'As sure as dragons fly' (certainly), 'Worth its weight in Ethereal' (very valuable), 'Weave be willing' (hopefully), 'Don't count your drakes before they hatch' (don't assume success), 'Copper to platinum' (rags to riches), 'Meeting at the crossroads' (fateful encounter), 'Dancing with shadows' (taking risks).",
+            "enabled": true,
+            "position": "before_char",
+            "insertion_order": 30,
+            "selective": true,
+            "secondary_keys": ["say", "speak", "greeting", "farewell"],
+            "case_sensitive": false,
+            "extensions": {
+                "category": "culture",
+                "importance": "flavor"
+            }
+        }
+    ]
+}

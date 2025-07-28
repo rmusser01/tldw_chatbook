@@ -1880,10 +1880,9 @@ async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Bu
             app.notify("Chat log not found, cannot save.", severity="error")
             return
 
-        # Query both ChatMessage and ChatMessageEnhanced widgets
-        messages_in_log = list(chat_log_widget.query(ChatMessage))
-        enhanced_messages = list(chat_log_widget.query(ChatMessageEnhanced))
-        messages_in_log.extend(enhanced_messages)
+        # Query both ChatMessage and ChatMessageEnhanced widgets and sort by their order in the chat log
+        all_messages = list(chat_log_widget.query(ChatMessage)) + list(chat_log_widget.query(ChatMessageEnhanced))
+        messages_in_log = sorted(all_messages, key=lambda w: chat_log_widget.children.index(w))
         loguru_logger.debug(f"Found {len(messages_in_log)} messages in chat log (including enhanced)")
 
         if not messages_in_log:
@@ -2070,6 +2069,119 @@ async def handle_chat_convert_to_note_button_pressed(app: 'TldwCli', event: Butt
     except Exception as e:
         loguru_logger.error(f"Error converting conversation to note: {e}", exc_info=True)
         app.notify(f"Failed to convert conversation: {str(e)}", severity="error")
+
+
+async def handle_chat_clone_current_chat_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+    """Clone the current chat conversation to create a new copy."""
+    loguru_logger.info("Clone Current Chat button pressed.")
+    
+    # Check if there's a conversation to clone
+    if not app.current_chat_conversation_id and app.current_chat_is_ephemeral:
+        # For ephemeral chats, we need messages in the UI
+        try:
+            chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+            all_messages = list(chat_log_widget.query(ChatMessage)) + list(chat_log_widget.query(ChatMessageEnhanced))
+            messages_in_log = sorted(all_messages, key=lambda w: chat_log_widget.children.index(w))
+            
+            if not messages_in_log:
+                app.notify("No messages to clone.", severity="warning")
+                return
+        except QueryError:
+            app.notify("Chat log not found.", severity="error")
+            return
+    elif not app.current_chat_conversation_id:
+        app.notify("No conversation to clone.", severity="warning")
+        return
+    
+    if not app.chachanotes_db:
+        app.notify("Database service not available.", severity="error")
+        loguru_logger.error("chachanotes_db not available for cloning chat.")
+        return
+    
+    db = app.chachanotes_db
+    
+    try:
+        # Get current conversation details
+        if app.current_chat_conversation_id and not app.current_chat_is_ephemeral:
+            # Clone from saved conversation
+            conv_details = db.get_conversation_by_id(app.current_chat_conversation_id)
+            if not conv_details:
+                app.notify("Conversation not found in database.", severity="error")
+                return
+            
+            # Get all messages from the conversation
+            messages = db.get_messages_for_conversation(app.current_chat_conversation_id)
+            
+            # Prepare messages for cloning
+            messages_to_clone = []
+            for msg in messages:
+                messages_to_clone.append({
+                    'sender': msg['sender'],
+                    'content': msg['content'],
+                    'image_data': msg.get('image_data'),
+                    'image_mime_type': msg.get('image_mime_type')
+                })
+            
+            # Clone conversation metadata
+            original_title = conv_details.get('title', 'Untitled Chat')
+            character_id = conv_details.get('character_id', ccl.DEFAULT_CHARACTER_ID)
+            
+            # Get keywords
+            keywords_data = db.get_keywords_for_conversation(app.current_chat_conversation_id)
+            keywords_list = [kw['keyword'] for kw in keywords_data if not kw['keyword'].startswith("__")]
+            
+        else:
+            # Clone from ephemeral chat
+            chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+            all_messages = list(chat_log_widget.query(ChatMessage)) + list(chat_log_widget.query(ChatMessageEnhanced))
+            messages_in_log = sorted(all_messages, key=lambda w: chat_log_widget.children.index(w))
+            
+            messages_to_clone = []
+            for msg_widget in messages_in_log:
+                if msg_widget.generation_complete:
+                    messages_to_clone.append({
+                        'sender': msg_widget.role,
+                        'content': msg_widget.message_text,
+                        'image_data': msg_widget.image_data,
+                        'image_mime_type': msg_widget.image_mime_type
+                    })
+            
+            # Get metadata from UI
+            original_title = app.query_one("#chat-conversation-title-input", Input).value.strip() or "Untitled Chat"
+            character_id = app.current_chat_active_character_data.get('id') if app.current_chat_active_character_data else ccl.DEFAULT_CHARACTER_ID
+            
+            keywords_str = app.query_one("#chat-conversation-keywords-input", TextArea).text.strip()
+            keywords_list = [kw.strip() for kw in keywords_str.split(',') if kw.strip() and not kw.strip().startswith("__")]
+        
+        # Create new title for the clone
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+        new_title = f"[Clone] {original_title} - {timestamp}"
+        
+        # Create the cloned conversation
+        new_conv_id = ccl.create_conversation(
+            db,
+            title=new_title,
+            character_id=character_id,
+            initial_messages=messages_to_clone,
+            system_keywords=keywords_list,
+            user_name_for_placeholders=app.app_config.get("USERS_NAME", "User")
+        )
+        
+        if new_conv_id:
+            # Load the cloned conversation
+            await display_conversation_in_chat_tab_ui(app, new_conv_id)
+            app.current_chat_conversation_id = new_conv_id
+            app.current_chat_is_ephemeral = False
+            
+            app.notify(f"Chat cloned successfully! Now editing: {new_title[:50]}...", severity="success", timeout=3)
+            loguru_logger.info(f"Cloned conversation to new ID: {new_conv_id}")
+        else:
+            app.notify("Failed to clone chat.", severity="error")
+            loguru_logger.error("Failed to create cloned conversation - no ID returned")
+            
+    except Exception as e:
+        loguru_logger.error(f"Error cloning chat: {e}", exc_info=True)
+        app.notify(f"Failed to clone chat: {str(e)[:100]}", severity="error")
 
 
 async def handle_chat_save_details_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -2816,7 +2928,7 @@ async def handle_chat_load_character_button_pressed(app: 'TldwCli', event: Butto
             if active_char_data_dict: # Check if the dictionary is not None
                 try:
                     chat_log_widget = app.query_one("#chat-log", VerticalScroll)
-                    messages_in_log = list(chat_log_widget.query(ChatMessage))
+                    messages_in_log = list(chat_log_widget.query(ChatMessage)) + list(chat_log_widget.query(ChatMessageEnhanced))
 
                     character_has_spoken = False
                     if not messages_in_log:
@@ -3433,7 +3545,8 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
     chat_log: Optional[VerticalScroll] = None
     try:
         chat_log = app.query_one(f"#{prefix}-log", VerticalScroll)
-        all_messages_in_log = list(chat_log.query(ChatMessage))
+        all_messages = list(chat_log.query(ChatMessage)) + list(chat_log.query(ChatMessageEnhanced))
+        all_messages_in_log = sorted(all_messages, key=lambda w: chat_log.children.index(w))
 
         for msg_w in all_messages_in_log:
             # Map UI role to API role (user/assistant)
@@ -3699,7 +3812,8 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
         chat_log_widget: Optional[VerticalScroll] = None
         try:
             chat_log_widget = app.query_one(f"#{prefix}-log", VerticalScroll)
-            all_messages_in_log = list(chat_log_widget.query(ChatMessage))
+            all_messages = list(chat_log_widget.query(ChatMessage)) + list(chat_log_widget.query(ChatMessageEnhanced))
+            all_messages_in_log = sorted(all_messages, key=lambda w: chat_log_widget.children.index(w))
 
             if not all_messages_in_log:
                 app.notify("Cannot generate suggestion: Chat history is empty.", severity="warning", timeout=4)
@@ -4125,6 +4239,7 @@ CHAT_BUTTON_HANDLERS = {
     "chat-new-temp-chat-button": handle_chat_new_temp_chat_button_pressed,
     "chat-new-conversation-button": handle_chat_new_conversation_button_pressed,
     "chat-save-current-chat-button": handle_chat_save_current_chat_button_pressed,
+    "chat-clone-current-chat-button": handle_chat_clone_current_chat_button_pressed,
     "chat-save-conversation-details-button": handle_chat_save_details_button_pressed,
     "chat-convert-to-note-button": handle_chat_convert_to_note_button_pressed,
     "chat-conversation-load-selected-button": handle_chat_load_selected_button_pressed,

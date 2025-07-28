@@ -152,10 +152,44 @@ class OpenAITTSBackend(APITTSBackend):
             async with self.client.stream("POST", self.base_url, headers=headers, json=payload) as response:
                 response.raise_for_status()
                 
+                # Report that we're receiving data
+                await self._report_progress(
+                    progress=0.1,
+                    processed=0,
+                    total=len(request.input),
+                    status="Receiving audio from OpenAI"
+                )
+                
                 # Stream the audio data
                 chunk_size = 1024 if response_format == "pcm" else 8192
+                total_bytes = 0
+                chunk_count = 0
+                
                 async for chunk in response.aiter_bytes(chunk_size=chunk_size):
                     yield chunk
+                    total_bytes += len(chunk)
+                    chunk_count += 1
+                    
+                    # Update progress periodically
+                    if chunk_count % 10 == 0:
+                        # Estimate progress based on typical audio size
+                        estimated_progress = min(0.9, total_bytes / (len(request.input) * 100))
+                        await self._report_progress(
+                            progress=estimated_progress,
+                            processed=total_bytes,
+                            total=total_bytes,
+                            status=f"Streaming audio: {total_bytes / 1024:.1f} KB",
+                            metrics={"chunks": chunk_count}
+                        )
+                
+                # Report completion
+                await self._report_progress(
+                    progress=1.0,
+                    processed=total_bytes,
+                    total=total_bytes,
+                    status=f"Completed: {total_bytes / 1024:.1f} KB of {response_format} audio",
+                    metrics={"total_bytes": total_bytes, "chunks": chunk_count}
+                )
                     
             logger.info("OpenAITTSBackend: Successfully completed TTS generation")
             

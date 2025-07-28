@@ -16,9 +16,9 @@ EmbeddingsWindow {
 /* Navigation pane (left sidebar) */
 #embeddings-nav-pane {
     dock: left;
-    width: 25%;
-    min-width: 20;
-    max-width: 40;
+    width: auto;
+    min-width: 25;
+    max-width: 50;
     background: $boost;
     padding: 1 2;
     border-right: thick $background-darken-1;
@@ -63,6 +63,8 @@ EmbeddingsWindow {
     border: none;
     background: $panel;
     color: $text-muted;
+    text-align: left;
+    padding: 0 1;
 }
 
 .embeddings-nav-button:hover {

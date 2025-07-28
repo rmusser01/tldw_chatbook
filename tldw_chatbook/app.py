@@ -9,6 +9,11 @@ os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
+# Disable Textual logging in production
+# Set to a path to enable logging for debugging: os.environ['TEXTUAL_LOG'] = '/tmp/textual.log'
+if 'TEXTUAL_LOG' not in os.environ:
+    os.environ['TEXTUAL_LOG'] = ''  # Empty string disables logging
+
 # Imports
 import asyncio
 import concurrent.futures
@@ -130,11 +135,12 @@ from .UI.Stats_Window import StatsWindow
 from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
-from .UI.Evals_Window import EvalsWindow # Added EvalsWindow
+# Using v3 of EvalsWindow with two-column layout for Evaluation Setup
+from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
 from .UI.Tab_Bar import TabBar
-from .UI.MediaWindow import MediaWindow
+from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
 from .UI.Embeddings_Window import EmbeddingsWindow
 from .UI.Subscription_Window import SubscriptionWindow
@@ -878,6 +884,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
     evals_sidebar_collapsed: reactive[bool] = reactive(False) # Added for Evals tab
+    media_active_view: reactive[Optional[str]] = reactive(None)  # Added for Media tab navigation
 
     # Reactive variables for selected note details
     current_selected_note_id: reactive[Optional[str]] = reactive(None)
@@ -2827,8 +2834,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info("AppFooterStatus widget instance acquired.")
 
             await self.update_db_sizes()  # Initial population
-            self._db_size_update_timer = self.set_interval(60, self.update_db_sizes) # Periodic updates
-            self.loguru_logger.info("DB size update timer started for AppFooterStatus.")
+            self._db_size_update_timer = self.set_interval(120, self.update_db_sizes) # Update every 2 minutes
+            self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
             
             # Start token count updates
             # Initial update after a short delay to ensure UI is ready
@@ -3023,6 +3030,31 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     if hasattr(self._stts_handler, 'cleanup_tts_resources'):
                         await self._stts_handler.cleanup_tts_resources()
                     
+                    # Special handling for Higgs backend cleanup
+                    if self._stts_handler._stts_service:
+                        backend_manager = getattr(self._stts_handler._stts_service, 'backend_manager', None)
+                        if backend_manager:
+                            # Check if Higgs backend is loaded
+                            higgs_backends = [
+                                backend_id for backend_id in backend_manager._backends 
+                                if 'higgs' in backend_id.lower()
+                            ]
+                            
+                            if higgs_backends:
+                                self.loguru_logger.info(f"Found {len(higgs_backends)} Higgs backend(s) to clean up")
+                                
+                                # Give Higgs backends extra time to clean up
+                                for backend_id in higgs_backends:
+                                    backend = backend_manager._backends.get(backend_id)
+                                    if backend and hasattr(backend, 'close'):
+                                        try:
+                                            self.loguru_logger.info(f"Cleaning up Higgs backend: {backend_id}")
+                                            await asyncio.wait_for(backend.close(), timeout=10.0)
+                                        except asyncio.TimeoutError:
+                                            self.loguru_logger.warning(f"Higgs backend {backend_id} cleanup timed out")
+                                        except Exception as e:
+                                            self.loguru_logger.error(f"Error cleaning up Higgs backend {backend_id}: {e}")
+                    
                     self.loguru_logger.info("STTS service cleaned up")
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up STTS service: {e}")
@@ -3084,6 +3116,29 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             import threading
             import subprocess
             import signal
+            import platform
+            
+            # On macOS, force kill any afplay processes
+            if platform.system() == "Darwin":
+                try:
+                    # Find and kill any afplay processes spawned by this app
+                    import psutil
+                    current_pid = os.getpid()
+                    for proc in psutil.process_iter(['pid', 'name', 'ppid']):
+                        try:
+                            if proc.info['name'] == 'afplay' and proc.info['ppid'] == current_pid:
+                                self.loguru_logger.info(f"Killing orphaned afplay process: {proc.info['pid']}")
+                                proc.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                except ImportError:
+                    # Fallback if psutil not available - use subprocess
+                    try:
+                        # Kill all afplay processes (less precise but works)
+                        subprocess.run(['killall', 'afplay'], capture_output=True, timeout=1)
+                        self.loguru_logger.info("Killed all afplay processes")
+                    except Exception as e:
+                        self.loguru_logger.debug(f"Could not kill afplay processes: {e}")
             import concurrent.futures
             import asyncio
             
@@ -3112,9 +3167,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 except Exception as e:
                     self.loguru_logger.error(f"Error terminating subprocess: {e}")
             
-            # Force-set daemon flag on ThreadPoolExecutor threads
+            # Force-set daemon flag on ThreadPoolExecutor and AudioPlayer threads
             for thread in threading.enumerate():
-                if thread.name.startswith('ThreadPoolExecutor'):
+                if thread.name.startswith(('ThreadPoolExecutor', 'AudioPlayer')):
                     try:
                         thread.daemon = True
                         self.loguru_logger.info(f"Set daemon flag on {thread.name}")
@@ -3514,6 +3569,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error("Evals sidebar (#evals-nav-pane) not found for collapse toggle.")
         except Exception as e:
             self.loguru_logger.error(f"Error toggling Evals sidebar: {e}", exc_info=True)
+    
+    def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
+        """Notify MediaWindow when media_active_view changes."""
+        # Temporarily disabled - MediaWindow handles its own navigation via MediaTypeSelectedEvent
+        pass
+        # if not self._ui_ready:
+        #     self.loguru_logger.debug("watch_media_active_view: UI not ready.")
+        #     return
+        # 
+        # if self.current_tab == TAB_MEDIA:
+        #     try:
+        #         media_window = self.query_one(MediaWindow)
+        #         # Sync the MediaWindow's own media_active_view
+        #         media_window.media_active_view = new_view
+        #         # Call the watcher manually to trigger the view change
+        #         if new_view:
+        #             media_window.watch_media_active_view(old_view, new_view)
+        #         self.loguru_logger.info(f"Notified MediaWindow of view change: {old_view} -> {new_view}")
+        #     except QueryError:
+        #         self.loguru_logger.error("MediaWindow not found for view update.")
+        #     except Exception as e:
+        #         self.loguru_logger.error(f"Error updating MediaWindow view: {e}", exc_info=True)
 
     def show_ingest_view(self, view_id_to_show: Optional[str]):
         """
@@ -5559,15 +5636,48 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # Set flag to prevent new operations
         self._shutting_down = True
         
-        # Force stop any playing audio
+        # Force stop any playing audio and cleanup
         if hasattr(self, 'audio_player'):
             try:
                 import asyncio
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    asyncio.create_task(self.audio_player.stop())
+                    # Create cleanup tasks
+                    async def cleanup_audio():
+                        try:
+                            await asyncio.wait_for(self.audio_player.stop(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            loguru_logger.warning("Audio stop timed out")
+                        try:
+                            await asyncio.wait_for(self.audio_player.cleanup(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            loguru_logger.warning("Audio cleanup timed out")
+                    
+                    # Schedule cleanup
+                    asyncio.create_task(cleanup_audio())
+                else:
+                    # Synchronous cleanup if no event loop
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(self.audio_player.cleanup())
+                    loop.close()
+                loguru_logger.info("Audio player stopped and cleaned up")
             except Exception as e:
                 loguru_logger.error(f"Error stopping audio during quit: {e}")
+        
+        # Force cleanup Higgs backends immediately
+        if hasattr(self, '_stts_handler') and self._stts_handler:
+            try:
+                if hasattr(self._stts_handler, '_stts_service') and self._stts_handler._stts_service:
+                    backend_manager = getattr(self._stts_handler._stts_service, 'backend_manager', None)
+                    if backend_manager and hasattr(backend_manager, '_backends'):
+                        for backend_id, backend in list(backend_manager._backends.items()):
+                            if 'higgs' in backend_id.lower():
+                                loguru_logger.info(f"Signaling Higgs backend shutdown: {backend_id}")
+                                # Set shutdown event if available
+                                if hasattr(backend, '_shutdown_event'):
+                                    backend._shutdown_event.set()
+            except Exception as e:
+                loguru_logger.error(f"Error signaling Higgs shutdown: {e}")
         
         # Cancel media cleanup timer if it exists
         if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
@@ -5894,6 +6004,17 @@ def main_cli_runner():
         import threading
         import concurrent.futures
         
+        # Force kill any Higgs-related threads first
+        for thread in threading.enumerate():
+            thread_name = thread.name.lower()
+            if any(name in thread_name for name in ['higgs', 'boson', 'serve_engine', 'audio']):
+                loguru_logger.warning(f"Force killing thread: {thread.name}")
+                try:
+                    # Mark as daemon to not block exit
+                    thread.daemon = True
+                except Exception:
+                    pass
+        
         # Force daemon all threads
         for thread in threading.enumerate():
             if thread != threading.main_thread() and not thread.daemon:
@@ -5905,6 +6026,15 @@ def main_cli_runner():
         # Clear thread pool queues
         try:
             concurrent.futures.thread._threads_queues.clear()
+        except Exception:
+            pass
+        
+        # Force clear any PyTorch CUDA resources
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
         except Exception:
             pass
     

@@ -201,3 +201,5 @@ cython_debug/
 List.txt
 /pretrained_models/
 *.cpkt
+*.ckpt
+/higgs-audio/

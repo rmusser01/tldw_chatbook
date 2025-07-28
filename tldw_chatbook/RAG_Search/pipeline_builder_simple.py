@@ -248,8 +248,19 @@ def _execute_format_step(
 
 
 def _results_to_dicts(results: List[SearchResult]) -> List[Dict[str, Any]]:
-    """Convert SearchResult objects to dictionaries."""
-    return [r.to_dict() for r in results]
+    """Convert SearchResult objects to dictionaries, preserving citations if present."""
+    result_dicts = []
+    for r in results:
+        result_dict = r.to_dict()
+        
+        # Check if citations are stored in metadata
+        if result_dict.get('metadata', {}).get('_has_citations'):
+            citations = result_dict['metadata'].pop('_citations', [])
+            result_dict['metadata'].pop('_has_citations', None)
+            result_dict['citations'] = citations
+        
+        result_dicts.append(result_dict)
+    return result_dicts
 
 
 # Pipeline configurations for backward compatibility

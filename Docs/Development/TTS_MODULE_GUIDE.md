@@ -2,7 +2,7 @@
 
 ## Overview
 
-The TTS module in tldw_chatbook provides a flexible, extensible system for generating speech from text using multiple providers. It supports both cloud-based APIs (OpenAI, ElevenLabs) and local models (Kokoro, Chatterbox), with features like streaming audio generation, format conversion, text normalization, and advanced voice cloning capabilities.
+The TTS module in tldw_chatbook provides a flexible, extensible system for generating speech from text using multiple providers. It supports both cloud-based APIs (OpenAI, ElevenLabs) and local models (Kokoro, Chatterbox, Higgs), with features like streaming audio generation, format conversion, text normalization, advanced voice cloning, and multi-speaker dialog generation.
 
 ## Architecture
 
@@ -21,7 +21,9 @@ tldw_chatbook/TTS/
 │   ├── openai.py           # OpenAI TTS API
 │   ├── kokoro.py           # Local Kokoro model
 │   ├── elevenlabs.py       # ElevenLabs API
-│   └── chatterbox.py       # Chatterbox TTS (voice cloning)
+│   ├── chatterbox.py       # Chatterbox TTS (voice cloning)
+│   ├── higgs.py            # Higgs Audio V2 (advanced voice cloning)
+│   └── higgs_voice_manager.py # Voice profile management for Higgs
 └── utils/                   # Utility modules
     ├── __init__.py
     ├── download_models.py   # Model download utilities
@@ -156,6 +158,65 @@ ELEVENLABS_STYLE = 0.0
 ELEVENLABS_USE_SPEAKER_BOOST = true
 ```
 
+### Higgs Audio Backend
+
+**Features:**
+- State-of-the-art voice cloning from 15-30 second samples
+- Multi-speaker dialog generation
+- 15 built-in high-quality voices (professional, energetic, calm, etc.)
+- Real-time streaming audio generation
+- Voice profile management for custom voices
+- Support for mixed cloned and built-in voices in dialogs
+- Cross-lingual voice transfer
+
+**Configuration:**
+```toml
+[app_tts]
+HIGGS_MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
+HIGGS_DEVICE = "cuda"  # or "cpu", "mps" for Apple Silicon
+HIGGS_ENABLE_FLASH_ATTN = true
+HIGGS_MAX_NEW_TOKENS = 2048
+HIGGS_TEMPERATURE = 0.8
+HIGGS_TOP_P = 0.95
+HIGGS_REPETITION_PENALTY = 1.05
+HIGGS_GUIDANCE_SCALE = 1.0
+HIGGS_VOICE_SAMPLES_DIR = "~/.config/tldw_cli/higgs_voices"
+```
+
+**Voice Cloning:**
+```python
+# Create a voice profile
+success = await backend.create_voice_profile(
+    profile_name="custom_voice",
+    reference_audio_path="/path/to/sample.wav",
+    display_name="My Custom Voice"
+)
+
+# Use the cloned voice
+request = OpenAISpeechRequest(
+    input="Hello from my cloned voice!",
+    voice="custom_voice"
+)
+```
+
+**Multi-Speaker Dialog:**
+```python
+# Format text with speaker tags
+dialog_text = """[Speaker: professional_female]
+Welcome to our presentation.
+
+[Speaker: energetic_male]
+We're excited to share our findings!
+
+[Speaker: custom_voice]
+Let me add my perspective..."""
+
+request = OpenAISpeechRequest(
+    input=dialog_text,
+    voice="multi"  # Special voice for multi-speaker
+)
+```
+
 ## Installation
 
 ### Basic Installation
@@ -182,7 +243,22 @@ This installs:
 - torch: PyTorch runtime
 - faster-whisper: For validation (optional)
 
+### Higgs Audio Support
+For state-of-the-art voice cloning and multi-speaker generation:
+```bash
+pip install tldw_chatbook[higgs_tts]
+```
+
 This installs:
+- boson-multimodal: Higgs Audio V2 model
+- torch: PyTorch runtime
+- torchaudio: Audio processing and voice cloning
+- numpy/scipy: Audio manipulation
+- librosa: Advanced audio features
+- soundfile: Audio I/O
+- transformers: Text processing
+
+Local TTS installs:
 - kokoro-onnx: ONNX runtime for Kokoro
 - scipy: Audio processing
 - nltk: Text tokenization

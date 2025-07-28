@@ -44,13 +44,14 @@ pip install -e ".[embeddings_rag,chunker]"
 pip install -e ".[websearch]"
 
 # All optional features
-pip install -e ".[embeddings_rag,chunker,websearch,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,ocr_docext,debugging,mlx_whisper,diarization,coding_map,local_vllm,local_mlx,local_transformers]"
+pip install -e ".[embeddings_rag,chunker,websearch,audio,video,pdf,ebook,nemo,mcp,chatterbox,local_tts,higgs_tts,ocr_docext,debugging,mlx_whisper,diarization,coding_map,local_vllm,local_mlx,local_transformers]"
 
 # Common feature combinations
 pip install -e ".[audio,video]"  # Media transcription
 pip install -e ".[pdf,ebook]"    # Document processing
 pip install -e ".[embeddings_rag,audio]"  # RAG + transcription
 pip install -e ".[local_tts,chatterbox]"  # Text-to-speech
+pip install -e ".[higgs_tts]"  # Higgs Audio V2 TTS (high-quality, voice cloning)
 pip install -e ".[mcp]"  # Model Context Protocol integration
 pip install -e ".[mlx_whisper]"  # Apple Silicon optimized Whisper
 
@@ -83,6 +84,55 @@ pip install -e ".[dev]"
 | `diarization`                  | Speaker diarization for audio | torch, torchaudio, speechbrain |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
+
+### Special Installation: Higgs Audio TTS
+
+Higgs Audio V2 is a state-of-the-art TTS system with zero-shot voice cloning capabilities. Due to its architecture, it requires manual installation from GitHub before using the pip extras.
+
+#### Prerequisites
+- Python 3.11+
+- PyTorch (will be installed automatically)
+- 8GB+ RAM (16GB+ recommended)
+- ~6GB disk space for models
+
+#### Installation Steps
+
+**Option 1: Automated Installation (Recommended)**
+```bash
+# Unix/Linux/macOS
+./scripts/install_higgs.sh
+
+# Windows
+scripts\install_higgs.bat
+```
+
+**Option 2: Manual Installation**
+
+1. **Clone and install Higgs Audio (REQUIRED FIRST):**
+```bash
+git clone https://github.com/boson-ai/higgs-audio.git
+cd higgs-audio
+pip install -r requirements.txt
+pip install -e .
+cd ..
+```
+
+2. **Install tldw_chatbook with Higgs support:**
+```bash
+pip install -e ".[higgs_tts]"
+```
+
+3. **Verify installation:**
+```bash
+python scripts/verify_higgs_installation.py
+```
+
+#### Troubleshooting
+- If you get `ImportError: boson_multimodal not found`, ensure you completed step 1
+- For CUDA support, install PyTorch with CUDA before step 1
+- On macOS, you may need to install additional audio libraries: `brew install libsndfile`
+
+For detailed Higgs configuration and usage, see [Docs/Higgs-Audio-TTS-Guide.md](Docs/Higgs-Audio-TTS-Guide.md).
 
 ## Core Features (Always Available)
 
@@ -581,7 +631,8 @@ pip install -e .  # or with optional features
 </details>
 
 ### Inspiration
-https://github.com/darrenburns/elia
+- https://github.com/darrenburns/elia
+- https://github.com/paulrobello/parllama
 
 ## Contributing
 - Contributions are welcome! Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file for details on how to contribute to this project.(WIP)

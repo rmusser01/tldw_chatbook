@@ -26,6 +26,15 @@ RESULTS_PER_PAGE = 20
 #
 # Event Classes:
 
+class MediaTypeSelectedEvent(Message):
+    """Event fired when a media type is selected in the navigation panel."""
+    
+    def __init__(self, type_slug: str, display_name: str) -> None:
+        super().__init__()
+        self.type_slug = type_slug
+        self.display_name = display_name
+
+
 class MediaMetadataUpdateEvent(Message):
     """Event for updating media metadata."""
     
@@ -59,6 +68,50 @@ class MediaUndeleteEvent(Message):
         self.media_id = media_id
         self.type_slug = type_slug
 
+
+class MediaListCollapseEvent(Message):
+    """Event fired when media list should be collapsed/expanded."""
+    pass
+
+
+class SidebarCollapseEvent(Message):
+    """Event fired when sidebar should be collapsed/expanded."""
+    pass
+
+
+class MediaAnalysisRequestEvent(Message):
+    """Event fired when requesting LLM analysis of media content."""
+    
+    def __init__(self, media_id: int, provider: str, model: str, 
+                 system_prompt: str, user_prompt: str, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.provider = provider
+        self.model = model
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+        self.type_slug = type_slug
+
+
+class MediaAnalysisSaveEvent(Message):
+    """Event fired when saving new analysis content."""
+    
+    def __init__(self, media_id: int, analysis_content: str, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.analysis_content = analysis_content
+        self.type_slug = type_slug
+
+
+class MediaAnalysisOverwriteEvent(Message):
+    """Event fired when overwriting existing analysis content."""
+    
+    def __init__(self, media_id: int, analysis_content: str, type_slug: str) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.analysis_content = analysis_content
+        self.type_slug = type_slug
+
 #
 # Functions:
 
@@ -80,13 +133,9 @@ async def handle_media_nav_button_pressed(app: 'TldwCli', event: Button.Pressed)
         app.current_media_type_filter_slug = type_slug
         app.media_current_page = 1
         
-        # Special handling for Collections/Tags and Multi-Item Review windows
-        if type_slug in ["collections-tags", "multi-item-review"]:
-            # These windows handle their own initialization and don't need search
-            logger.info(f"Activated special window: {type_slug}")
-        else:
-            # Regular media types use the search and display function
-            await perform_media_search_and_display(app, type_slug, search_term="", keyword_filter="")
+        # The MediaWindow's watcher will handle the search via its watch_media_active_view method
+        # No need to call perform_media_search_and_display here as it would duplicate the work
+        logger.info(f"MediaWindow activated for type: {type_slug}")
 
     except Exception as e:
         logger.error(f"Error in handle_media_nav_button_pressed for '{button_id}': {e}", exc_info=True)

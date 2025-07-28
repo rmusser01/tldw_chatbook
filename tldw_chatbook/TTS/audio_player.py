@@ -102,8 +102,14 @@ class SimpleAudioPlayer:
         Returns:
             True if playback started successfully
         """
+        logger.debug(f"SimpleAudioPlayer.play called with: {file_path}")
+        logger.debug(f"Current state before stop: {self._current.state}, process: {self._current.process}")
+        
         # Stop any current playback
         self.stop()
+        
+        # Log state after stop
+        logger.debug(f"State after stop: {self._current.state}, process: {self._current.process}")
         
         # Validate file
         if not file_path.exists() or not file_path.is_file():
@@ -114,6 +120,22 @@ class SimpleAudioPlayer:
         if not self._player_cmd:
             logger.error("No audio player available")
             return False
+        
+        # Ensure clean state - force cleanup any zombie process
+        if self._current.process:
+            try:
+                # Check if process is zombie/defunct
+                if self._current.process.poll() is not None:
+                    logger.debug(f"Found zombie process with return code: {self._current.process.poll()}")
+                    self._current.process = None
+            except Exception as e:
+                logger.debug(f"Error checking process state: {e}")
+                self._current.process = None
+        
+        # Add a small delay on macOS to ensure previous afplay is fully terminated
+        if self._system == "Darwin" and self._player_name == "afplay":
+            import time
+            time.sleep(0.1)
         
         try:
             if self._system == "Windows":
@@ -298,8 +320,19 @@ class SimpleAudioPlayer:
                             self._current.process.wait(timeout=0.5)
                         except subprocess.TimeoutExpired:
                             logger.warning("Process kill timed out")
+                            # For macOS, try using os.killpg if process is stuck
+                            if self._system == "Darwin":
+                                try:
+                                    import os
+                                    import signal
+                                    os.killpg(os.getpgid(self._current.process.pid), signal.SIGKILL)
+                                except Exception as e:
+                                    logger.debug(f"Failed to kill process group: {e}")
                     except Exception as e:
                         logger.error(f"Error stopping playback: {e}")
+                    finally:
+                        # Always nullify the process handle
+                        self._current.process = None
                 
                 # Clean up mpv socket if exists
                 if self._player_name == "mpv" and hasattr(self, '_mpv_socket'):
@@ -311,10 +344,13 @@ class SimpleAudioPlayer:
                 # Always reset all state when cleaning up
                 self._current.process = None
                 self._current.state = PlaybackState.IDLE
+                self._current.file_path = None  # Clear the file path too
                 self._current.start_time = None
                 self._current.pause_time = None
+                self._current.total_pause_duration = 0.0
                 self._current.position = 0.0
-                logger.info("Playback stopped/cleaned up")
+                self._current.duration = None
+                logger.info("Playback stopped/cleaned up - all state reset")
                 return True
             else:
                 logger.debug(f"Cannot stop - process exists: {self._current.process is not None}, state: {self._current.state}")
@@ -419,17 +455,15 @@ class AsyncAudioPlayer:
         """Get or create thread pool executor"""
         if self._executor is None:
             import concurrent.futures
-            # Create a daemon thread pool that won't block exit
+            
+            # Create a simple thread pool without custom initializer
+            # The threads will be daemon by default in Python 3.7+
             self._executor = concurrent.futures.ThreadPoolExecutor(
                 max_workers=1,
-                thread_name_prefix="AudioPlayer",
-                initializer=lambda: None
+                thread_name_prefix="AudioPlayer"
             )
-            # Mark threads as daemon
-            import threading
-            for thread in threading.enumerate():
-                if thread.name.startswith("AudioPlayer"):
-                    thread.daemon = True
+            logger.debug("Created AudioPlayer thread pool executor")
+        
         return self._executor
     
     async def play(self, file_path: Path) -> bool:
@@ -474,14 +508,32 @@ class AsyncAudioPlayer:
     
     async def cleanup(self) -> None:
         """Clean up resources asynchronously"""
-        await self.stop()
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(self._get_executor(), self._player.cleanup)
-        
-        # Shutdown our executor
-        if self._executor:
-            self._executor.shutdown(wait=False)
-            self._executor = None
+        try:
+            # Stop any active playback
+            await self.stop()
+            
+            # Clean up the underlying player
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(self._get_executor(), self._player.cleanup)
+            
+            # Force cleanup any remaining threads
+            if self._executor:
+                try:
+                    # First try graceful shutdown with short timeout
+                    self._executor.shutdown(wait=True, cancel_futures=True)
+                except Exception:
+                    # If that fails, force shutdown
+                    self._executor.shutdown(wait=False)
+                finally:
+                    self._executor = None
+                    
+            logger.debug("AsyncAudioPlayer cleaned up successfully")
+        except Exception as e:
+            logger.error(f"Error during AsyncAudioPlayer cleanup: {e}")
+            # Force cleanup even on error
+            if self._executor:
+                self._executor.shutdown(wait=False)
+                self._executor = None
 
 #
 # End of audio_player.py
