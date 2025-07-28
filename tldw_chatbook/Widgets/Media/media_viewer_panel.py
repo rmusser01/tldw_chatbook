@@ -201,6 +201,11 @@ class MediaViewerPanel(Container):
         width: 100%;
     }
     
+    MediaViewerPanel TabbedContent > ContentSwitcher {
+        height: 1fr;
+        width: 100%;
+    }
+    
     MediaViewerPanel TabPane {
         padding: 1;
         overflow-y: auto;
@@ -219,8 +224,9 @@ class MediaViewerPanel(Container):
     }
     
     MediaViewerPanel #analysis-display {
-        min-height: 10;
+        min-height: 20;
         margin: 1;
+        height: auto;
     }
     
     MediaViewerPanel .provider-row {
@@ -299,12 +305,18 @@ class MediaViewerPanel(Container):
         layout: horizontal;
         height: 3;
         margin-top: 1;
+        margin-bottom: 1;
         padding: 1;
     }
     
     MediaViewerPanel .analysis-actions Button {
         margin-right: 1;
         min-width: 10;
+    }
+    
+    MediaViewerPanel .bottom-spacer {
+        height: 2;
+        width: 100%;
     }
     """
     
@@ -402,49 +414,49 @@ class MediaViewerPanel(Container):
             with TabPane("Analysis", id="analysis-tab"):
                 # API Settings in a Collapsible
                 with Collapsible(title="API Settings", collapsed=False, id="analysis-api-settings", classes="compact-collapsible"):
-                    # Provider and Model selection row
-                    with Horizontal(classes="provider-row"):
-                        yield Select(
-                            [],  # Will be populated on mount
-                            prompt="Select Provider",
-                            id="analysis-provider-select"
-                        )
-                        yield Select(
-                            [],  # Will be populated based on provider
-                            prompt="Select Model",
-                            id="analysis-model-select"
-                        )
+                        # Provider and Model selection row
+                        with Horizontal(classes="provider-row"):
+                            yield Select(
+                                [],  # Will be populated on mount
+                                prompt="Select Provider",
+                                id="analysis-provider-select"
+                            )
+                            yield Select(
+                                [],  # Will be populated based on provider
+                                prompt="Select Model",
+                                id="analysis-model-select"
+                            )
                     
-                    # Temperature, Top-P, Min-P, Max Tokens settings row
-                    with Horizontal(classes="api-params-row"):
-                        with Vertical(classes="param-group"):
-                            yield Label("Temperature")
-                            yield Input(
-                                placeholder="0.7",
-                                id="analysis-temperature",
-                                value="0.7"
-                            )
-                        with Vertical(classes="param-group"):
-                            yield Label("Top P")
-                            yield Input(
-                                placeholder="0.95",
-                                id="analysis-top-p",
-                                value="0.95"
-                            )
-                        with Vertical(classes="param-group"):
-                            yield Label("Min P")
-                            yield Input(
-                                placeholder="0.05",
-                                id="analysis-min-p",
-                                value="0.05"
-                            )
-                        with Vertical(classes="param-group"):
-                            yield Label("Max Tokens")
-                            yield Input(
-                                placeholder="4096",
-                                id="analysis-max-tokens",
-                                value="4096"
-                            )
+                        # Temperature, Top-P, Min-P, Max Tokens settings row
+                        with Horizontal(classes="api-params-row"):
+                            with Vertical(classes="param-group"):
+                                yield Label("Temperature")
+                                yield Input(
+                                    placeholder="0.7",
+                                    id="analysis-temperature",
+                                    value="0.7"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Top P")
+                                yield Input(
+                                    placeholder="0.95",
+                                    id="analysis-top-p",
+                                    value="0.95"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Min P")
+                                yield Input(
+                                    placeholder="0.05",
+                                    id="analysis-min-p",
+                                    value="0.05"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Max Tokens")
+                                yield Input(
+                                    placeholder="4096",
+                                    id="analysis-max-tokens",
+                                    value="4096"
+                                )
                 
                 # Prompt search and filtering
                 yield Label("Search Prompts:", classes="prompt-label")
@@ -452,7 +464,7 @@ class MediaViewerPanel(Container):
                     placeholder="Search for prompts...",
                     id="prompt-search-input"
                 )
-                
+                    
                 yield Label("Filter by Keywords:", classes="prompt-label")
                 yield Input(
                     placeholder="Enter keywords separated by commas...",
@@ -497,6 +509,9 @@ class MediaViewerPanel(Container):
                     yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
                     yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
                     yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
+                
+                # Add some padding at the bottom to ensure scrolling works
+                yield Static("", classes="bottom-spacer")
     
     def watch_media_data(self, media_data: Optional[Dict[str, Any]]) -> None:
         """Update display when media data changes."""
@@ -879,10 +894,10 @@ class MediaViewerPanel(Container):
     def populate_providers(self) -> None:
         """Populate the provider dropdown with available LLM providers."""
         try:
-            from ...config import get_cli_providers_and_models, get_cli_app_config
+            from ...config import get_cli_providers_and_models, load_settings
             
             providers_models = get_cli_providers_and_models()
-            config = get_cli_app_config()
+            config = load_settings()
             analysis_defaults = config.get('analysis_defaults', {})
             
             if providers_models:
@@ -922,10 +937,10 @@ class MediaViewerPanel(Container):
     def update_models_for_provider(self, provider: str) -> None:
         """Update model dropdown based on selected provider."""
         try:
-            from ...config import get_cli_providers_and_models, get_cli_app_config
+            from ...config import get_cli_providers_and_models, load_settings
             
             providers_models = get_cli_providers_and_models()
-            config = get_cli_app_config()
+            config = load_settings()
             analysis_defaults = config.get('analysis_defaults', {})
             
             models_list = providers_models.get(provider, [])
