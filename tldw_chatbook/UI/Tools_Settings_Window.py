@@ -564,103 +564,104 @@ class ToolsSettingsWindow(Container):
     
     def _compose_config_file_settings(self) -> ComposeResult:
         """Compose the Configuration File Settings UI with organized sections."""
-        yield Static("Configuration File Settings", classes="section-title")
-        yield Static("Edit all configuration values with organized sections or raw TOML", classes="section-description")
-        
-        with TabbedContent(id="config-tabs"):
-            # Raw TOML Editor Tab
-            with TabPane("Raw TOML", id="tab-raw-toml"):
-                yield Static("Direct TOML Configuration Editor", classes="tab-description")
-                config_text = ""
-                try:
-                    if self.config_data:
-                        config_text = toml.dumps(self.config_data)
-                    else:
-                        config_text = "# No configuration data loaded"
-                except Exception as e:
-                    config_text = f"# Error loading configuration: {e}\n# Please check the configuration file."
-                yield TextArea(
-                    text=config_text,
-                    read_only=False,
-                    id="config-text-area",
-                    classes="config-editor"
-                )
-                with Container(classes="config-button-container"):
-                    yield Button("Save TOML", id="save-config-button", variant="primary")
-                    yield Button("Reload", id="reload-config-button")
-                    yield Button("Validate", id="validate-config-button")
+        with Container(classes="config-file-settings-inner"):
+            yield Static("Configuration File Settings", classes="section-title")
+            yield Static("Edit all configuration values with organized sections or raw TOML", classes="section-description")
             
-            # General Configuration Tab
-            with TabPane("General", id="tab-general-config"):
-                yield Static("Application General Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_general_config_form()
+            with TabbedContent(id="config-tabs"):
+                # Raw TOML Editor Tab
+                with TabPane("Raw TOML", id="tab-raw-toml"):
+                    yield Static("Direct TOML Configuration Editor", classes="tab-description")
+                    config_text = ""
+                    try:
+                        if self.config_data:
+                            config_text = toml.dumps(self.config_data)
+                        else:
+                            config_text = "# No configuration data loaded"
+                    except Exception as e:
+                        config_text = f"# Error loading configuration: {e}\n# Please check the configuration file."
+                    yield TextArea(
+                        text=config_text,
+                        read_only=False,
+                        id="config-text-area",
+                        classes="config-editor"
+                    )
+                    with Container(classes="config-button-container"):
+                        yield Button("Save TOML", id="save-config-button", variant="primary")
+                        yield Button("Reload", id="reload-config-button")
+                        yield Button("Validate", id="validate-config-button")
             
-            # API Settings Tab
-            with TabPane("API Settings", id="tab-api-config"):
-                yield Static("API Provider Configurations", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_api_config_form()
+                # General Configuration Tab
+                with TabPane("General", id="tab-general-config"):
+                    yield Static("Application General Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_general_config_form()
             
-            # Database Settings Tab
-            with TabPane("Database", id="tab-database-config"):
-                yield Static("Database Configuration", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_database_config_form()
+                # API Settings Tab
+                with TabPane("API Settings", id="tab-api-config"):
+                    yield Static("API Provider Configurations", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_api_config_form()
             
-            # RAG Settings Tab
-            with TabPane("RAG Settings", id="tab-rag-config"):
-                yield Static("Retrieval-Augmented Generation Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_rag_config_form()
+                # Database Settings Tab
+                with TabPane("Database", id="tab-database-config"):
+                    yield Static("Database Configuration", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_database_config_form()
             
-            # Providers Tab
-            with TabPane("Providers", id="tab-providers-config"):
-                yield Static("Available Models by Provider", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_providers_config_form()
+                # RAG Settings Tab
+                with TabPane("RAG Settings", id="tab-rag-config"):
+                    yield Static("Retrieval-Augmented Generation Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_rag_config_form()
             
-            # Chat Configuration Tab
-            with TabPane("Chat", id="tab-chat-config"):
-                yield Static("Chat Default Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_chat_config_form()
+                # Providers Tab
+                with TabPane("Providers", id="tab-providers-config"):
+                    yield Static("Available Models by Provider", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_providers_config_form()
             
-            # Character Configuration Tab
-            with TabPane("Character", id="tab-character-config"):
-                yield Static("Character Default Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_character_config_form()
+                # Chat Configuration Tab
+                with TabPane("Chat", id="tab-chat-config"):
+                    yield Static("Chat Default Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_chat_config_form()
             
-            # Notes Configuration Tab
-            with TabPane("Notes", id="tab-notes-config"):
-                yield Static("Notes Synchronization Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_notes_config_form()
+                # Character Configuration Tab
+                with TabPane("Character", id="tab-character-config"):
+                    yield Static("Character Default Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_character_config_form()
             
-            # TTS Configuration Tab
-            with TabPane("TTS", id="tab-tts-config"):
-                yield Static("Text-to-Speech Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_tts_config_form()
+                # Notes Configuration Tab
+                with TabPane("Notes", id="tab-notes-config"):
+                    yield Static("Notes Synchronization Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_notes_config_form()
             
-            # Embedding Configuration Tab
-            with TabPane("Embeddings", id="tab-embedding-config"):
-                yield Static("Embedding Model Settings", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_embedding_config_form()
+                # TTS Configuration Tab
+                with TabPane("TTS", id="tab-tts-config"):
+                    yield Static("Text-to-Speech Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_tts_config_form()
             
-            # Advanced Tab
-            with TabPane("Advanced", id="tab-advanced-config"):
-                yield Static("Advanced Configuration Options", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_advanced_config_form()
+                # Embedding Configuration Tab
+                with TabPane("Embeddings", id="tab-embedding-config"):
+                    yield Static("Embedding Model Settings", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_embedding_config_form()
             
-            # Encryption Tab
-            with TabPane("Encryption", id="tab-encryption-config"):
-                yield Static("Config File Encryption", classes="tab-description")
-                with VerticalScroll():
-                    yield from self._compose_encryption_config_form()
+                # Advanced Tab
+                with TabPane("Advanced", id="tab-advanced-config"):
+                    yield Static("Advanced Configuration Options", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_advanced_config_form()
+            
+                # Encryption Tab
+                with TabPane("Encryption", id="tab-encryption-config"):
+                    yield Static("Config File Encryption", classes="tab-description")
+                    with VerticalScroll():
+                        yield from self._compose_encryption_config_form()
     
     def _compose_general_config_form(self) -> ComposeResult:
         """Form for general configuration section."""
@@ -2100,7 +2101,7 @@ Thank you for using tldw-chatbook! 🎉
             yield Container(
                 *self._compose_config_file_settings(),
                 id="ts-view-config-file-settings",
-                classes="ts-view-area",
+                classes="ts-view-area config-file-settings-container",
             )
             yield Container(
                 *self._compose_database_tools(),
@@ -3272,32 +3273,14 @@ Thank you for using tldw-chatbook! 🎉
     async def _show_view(self, view_id: str) -> None:
         """Show the specified view and hide all others."""
         # Use ContentSwitcher to switch views
-        try:
-            content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
-            content_switcher.current = view_id
-        except Exception as e:
-            # If ContentSwitcher fails, fall back to the old method
-            # List of all view IDs
-            view_ids = [
-                "ts-view-general-settings",
-                "ts-view-config-file-settings", 
-                "ts-view-db-tools",
-                "ts-view-appearance",
-                "ts-view-tool-settings"
-            ]
-            
-            # Hide all views by removing active class
-            for v_id in view_ids:
-                try:
-                    view = self.query_one(f"#{v_id}")
-                    view.remove_class("active")
-                except Exception:
-                    pass  # View might not exist yet
-            
-            # Show the requested view by adding active class
+        content_switcher = self.query_one("#tools-settings-content-pane", ContentSwitcher)
+        content_switcher.current = view_id
+        
+        # Force a refresh for the config file settings view
+        if view_id == "ts-view-config-file-settings":
             try:
-                view = self.query_one(f"#{view_id}")
-                view.add_class("active")
+                config_view = self.query_one("#ts-view-config-file-settings")
+                config_view.refresh(layout=True)
             except Exception:
                 pass
             

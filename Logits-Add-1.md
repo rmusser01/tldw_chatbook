@@ -369,30 +369,98 @@ The following debug logs have been added to help diagnose the issue:
 4. When logprobs are expected but not found, logs the available keys in both choice and delta objects
 5. When posting events, logs whether StreamingChunk or StreamingChunkWithLogits is being used
 
-### Status Update:
-Based on the latest test:
+### Status Update (Latest Test):
 1. ✅ **Streaming is working** - Events are being received as `StreamingChunkWithLogits` 
 2. ✅ **Tokens are displayed** - Each token appears as a clickable button
 3. ✅ **Logprobs data is being received** - Logs show "with logprobs: True" for each event
-4. ❌ **Logprobs display error** - "Can't mount widget(s) before Container() is mounted" when clicking tokens
+4. ✅ **Mounting error fixed** - No more container mounting errors
+5. ❌ **Logprobs format mismatch** - Shows "Unexpected logprobs format" when clicking tokens
 
-### Fixes Applied:
-1. Fixed the mounting error by checking if container is mounted before using it
-2. Added debug logging to capture the actual logprobs data structure
-3. Improved error handling in the display method
+### Debug Logging Added:
+1. Added logging in `_handle_logits_chunk` to show the first token's logprobs structure
+2. Added logging in `_display_logprobs` to show what data it receives when a token is clicked
 
-### Next Steps for Testing:
-1. **Run another test with OpenAI**:
-   - The mounting error should now be fixed
-   - Check logs for "Logits Checker: Found logprobs in choice. Structure:" or "Found logprobs in delta. Structure:"
-   - This will show the actual JSON structure of the logprobs data
-   
-2. **Click on tokens**:
-   - Should no longer see the mounting error
-   - If logprobs structure doesn't match expected format, you'll see "Unexpected logprobs format" with the actual structure in logs
-   
-3. **Once we see the structure**:
-   - We can update the parser to match OpenAI's actual format
-   - The top alternatives should then display correctly
+### Next Test:
+Run the same test again and look for these new log entries:
+1. **"Token logprobs structure:"** - This will show the actual format of logprobs data from the API
+2. **"_display_logprobs received data:"** - This will show what's stored and passed when clicking a token
 
-The key is to find out what format OpenAI is using for logprobs in the streaming response so we can parse it correctly.
+Once we see these logs, we can update the parser to match the actual format OpenAI is using.
+
+### Likely Issue:
+The code expects logprobs in this format:
+```json
+{
+  "content": [
+    {
+      "token": "Hello",
+      "logprob": -0.123,
+      "top_logprobs": [...]
+    }
+  ]
+}
+```
+
+But OpenAI's streaming format might be different. The logs will reveal the actual structure.
+
+### Logging Added (Step 11):
+Added logging to `_select_token` method to debug token data structure:
+```python
+logger.info(f"Token {token_index} data structure: {token_data}")
+logger.info(f"Token has logprobs: {bool(token_data.get('logprobs'))}")
+```
+
+This will show:
+1. The complete structure of what's stored in `self._collected_tokens[token_index]`
+2. Whether the logprobs key exists in the token data
+
+### Next Test:
+Run the same test again and look for the new log entries when clicking a token:
+- **"Token X data structure:"** - This will show what's actually stored for each token
+- **"Token has logprobs:"** - This will confirm if logprobs data exists
+
+This will help identify if:
+1. The logprobs data is not being stored with the token
+2. The logprobs data is stored but in a different structure than expected
+3. The logprobs data is present but _display_logprobs can't parse it correctly
+
+### Issue Fixed (Step 12):
+The problem was a double content wrapper. The streaming event provides logprobs as:
+```json
+{
+  "content": [{
+    "token": "...",
+    "logprob": ...,
+    "top_logprobs": [...]
+  }]
+}
+```
+
+But we were storing the entire object and then `_display_logprobs` was looking for content again, essentially trying to access `logprobs['content']['content']`.
+
+**Fix Applied**:
+1. In `_handle_logits_chunk`: Extract the first token's data from the content array before storing
+2. In `_display_logprobs`: Updated to handle the individual token data directly without expecting a content wrapper
+
+The logprobs display should now work correctly when clicking on tokens.
+
+### UI Improvement (Step 13-17): Markdown-based Token Display
+Changed from individual button widgets to a single Markdown widget for better text flow:
+
+**Changes Made**:
+1. **Replaced Button widgets with Markdown**: Tokens now display as clickable links in flowing text
+2. **Added link click handler**: `on_markdown_link_clicked` handles token selection via custom links (token:index)
+3. **Updated token selection**: Rebuilds markdown with bold formatting for selected token
+4. **Enhanced logprobs display**: Added percentage display alongside logprob values
+5. **Updated CSS**: Styled markdown links and selected tokens with appropriate colors and backgrounds
+
+**Benefits**:
+- Natural text flow that automatically wraps based on window width
+- Better readability - looks like normal text
+- More efficient - single widget instead of many buttons
+- Easier to select and copy text
+
+**Token Display Format**:
+- Normal tokens: `[token](token:index)`
+- Selected token: `**[token](token:index)**` (bold)
+- Alternatives show: Token name, percentage, and logprob value

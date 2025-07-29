@@ -1269,8 +1269,13 @@ def validate_character_book_entry(entry: Dict[str, Any], idx: int, entry_ids: Se
 
     # Validate 'extensions' keys are namespaced (convention)
     if 'extensions' in entry and isinstance(entry.get('extensions'), dict):
+        # Common platform keys that are allowed without namespacing
+        allowed_unnamespaced_keys = {'chub', 'depth', 'weight', 'exclude_from_recursion'}
         for ext_key in entry['extensions'].keys():
-            if not isinstance(ext_key, str) or ('/' not in ext_key and '_' not in ext_key and ':' not in ext_key):
+            if not isinstance(ext_key, str):
+                validation_messages.append(
+                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' must be a string.")
+            elif ext_key not in allowed_unnamespaced_keys and ('/' not in ext_key and '_' not in ext_key and ':' not in ext_key):
                 validation_messages.append(
                     f"Entry {idx}: Extension key '{ext_key}' in 'extensions' should be namespaced (e.g., 'myorg/mykey') to prevent conflicts.")
 
@@ -1362,8 +1367,13 @@ def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
             if not isinstance(data_node[field], expected_type):
                 validation_messages.append(f"Field 'data.{field}' must be of type '{expected_type.__name__}'.")
             elif field == 'extensions' and isinstance(data_node[field], dict):  # Check only if it's a dict
+                # Common platform keys that are allowed without namespacing
+                allowed_unnamespaced_keys = {'chub', 'depth', 'weight', 'exclude_from_recursion'}
                 for ext_key in data_node[field].keys():
-                    if not isinstance(ext_key, str) or (
+                    if not isinstance(ext_key, str):
+                        validation_messages.append(
+                            f"Extension key '{ext_key}' in 'data.extensions' must be a string.")
+                    elif ext_key not in allowed_unnamespaced_keys and (
                             '/' not in ext_key and '_' not in ext_key and ':' not in ext_key):
                         validation_messages.append(
                             f"Extension key '{ext_key}' in 'data.extensions' should be namespaced (e.g., 'myorg/mykey').")

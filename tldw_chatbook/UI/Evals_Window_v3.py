@@ -11,7 +11,7 @@ from textual.containers import Container, VerticalScroll, Horizontal, Vertical, 
 from pathlib import Path
 from textual.css.query import QueryError
 from textual.reactive import reactive
-from textual.widgets import Static, Button, Label, ProgressBar, TabPane, TabbedContent, Input, Select, Collapsible, ListView, ListItem
+from textual.widgets import Static, Button, Label, ProgressBar, TabPane, TabbedContent, Input, Select, Collapsible, ListView, ListItem, Markdown
 from ..Widgets.loading_states import WorkflowProgress
 from textual.message import Message
 import math
@@ -536,16 +536,21 @@ class EvalsWindow(Container):
             prompt_input.value.strip()
         )
     
-    @on(Button.Pressed, ".token-button")
-    def handle_token_button_press(self, event: Button.Pressed) -> None:
-        """Handle clicking on a token button."""
+    async def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Handle clicks on token links in markdown."""
         event.stop()  # Stop event propagation
-        if event.button.id and event.button.id.startswith("token-btn-"):
+        event.prevent_default()  # Prevent default link behavior
+        
+        # Only handle token links in the logits view
+        if self.evals_active_view == EVALS_VIEW_LOGITS and event.href.startswith("token:"):
             try:
-                token_index = int(event.button.id.replace("token-btn-", ""))
+                token_index = int(event.href.replace("token:", ""))
                 self._select_token(token_index)
+                logger.debug(f"Selected token {token_index} via markdown link")
             except ValueError:
-                logger.error(f"Invalid token button ID: {event.button.id}")
+                logger.error(f"Invalid token link: {event.href}")
+            except Exception as e:
+                logger.error(f"Error selecting token from link: {e}")
     
     # --- Cost Estimation Updates ---
     @on(Input.Changed, "#max-samples-input")
@@ -936,10 +941,16 @@ class EvalsWindow(Container):
             top_logprobs = int(top_logprobs_input.value) if top_logprobs_input.value else 10
             max_tokens = int(max_tokens_input.value) if max_tokens_input.value else 100
             
-            # Store token display container for updates
+            # Create markdown widget for token display
+            from textual.widgets import Markdown
+            self._token_markdown = Markdown("", classes="token-markdown", inline=True)
+            token_container.mount(self._token_markdown)
+            
+            # Store references for updates
             self._logits_token_container = token_container
             self._logits_table_container = logits_container
             self._collected_tokens = []
+            self._token_buffer = []  # Buffer for building markdown text
             self._selected_token_index = None
             
             # Create message for the chat
@@ -1066,19 +1077,42 @@ class EvalsWindow(Container):
     def _handle_logits_chunk(self, text_chunk: str, logprobs: Optional[Dict]) -> None:
         """Handle a streaming chunk with logprobs data."""
         try:
-            # Create token button with unique ID
+            # Store token index
             token_index = len(self._collected_tokens)
-            token_button = Button(text_chunk, id=f"token-btn-{token_index}", classes="token-button")
             
-            # Store token data
+            # Log the logprobs structure for the first token with logprobs
+            if logprobs and not hasattr(self, '_logged_token_logprobs'):
+                import json
+                logger.info(f"Token logprobs structure: {json.dumps(logprobs, indent=2)[:1000]}...")
+                self._logged_token_logprobs = True
+            
+            # Store token data - extract the first token's data from content array
+            token_logprobs_data = None
+            if logprobs and isinstance(logprobs, dict):
+                content = logprobs.get("content", [])
+                if content and isinstance(content, list) and len(content) > 0:
+                    # Store just the first token's data (not wrapped in content)
+                    token_logprobs_data = content[0]
+            
             self._collected_tokens.append({
                 "text": text_chunk,
-                "logprobs": logprobs,
+                "logprobs": token_logprobs_data,  # Store individual token data
                 "index": token_index
             })
             
-            # Add to display
-            self._logits_token_container.mount(token_button)
+            # Escape markdown special characters in the token text
+            escaped_text = text_chunk.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+            
+            # Add token to buffer as a clickable link with space separator
+            if token_index == self._selected_token_index:
+                # Highlight selected token
+                self._token_buffer.append(f"**[{escaped_text}](token:{token_index})**")
+            else:
+                self._token_buffer.append(f"[{escaped_text}](token:{token_index})")
+            
+            # Update markdown display - join with spaces for better readability
+            markdown_text = " ".join(self._token_buffer)
+            self._token_markdown.update(markdown_text)
             
         except Exception as e:
             logger.error(f"Error handling logits chunk: {e}")
@@ -1089,15 +1123,25 @@ class EvalsWindow(Container):
             # Update selected state
             self._selected_token_index = token_index
             
-            # Update button styles
-            for i, button in enumerate(self._logits_token_container.query("Button")):
+            # Rebuild markdown with updated selection
+            self._token_buffer = []
+            for i, token in enumerate(self._collected_tokens):
+                escaped_text = token["text"].replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
                 if i == token_index:
-                    button.add_class("selected")
+                    # Highlight selected token
+                    self._token_buffer.append(f"**[{escaped_text}](token:{i})**")
                 else:
-                    button.remove_class("selected")
+                    self._token_buffer.append(f"[{escaped_text}](token:{i})")
+            
+            # Update markdown display - join with spaces
+            markdown_text = " ".join(self._token_buffer)
+            self._token_markdown.update(markdown_text)
             
             # Display logprobs for selected token
             token_data = self._collected_tokens[token_index]
+            logger.info(f"Token {token_index} data structure: {token_data}")
+            logger.info(f"Token has logprobs: {bool(token_data.get('logprobs'))}")
+            
             if token_data.get("logprobs"):
                 self._display_logprobs(token_data["logprobs"])
             else:
@@ -1119,12 +1163,13 @@ class EvalsWindow(Container):
                 
             self._logits_table_container.remove_children()
             
-            # Parse logprobs structure (OpenAI format)
-            # Expected structure: {"content": [{"token": "...", "logprob": ..., "top_logprobs": [...]}]}
-            content = logprobs_data.get("content", [])
-            if content and isinstance(content, list) and len(content) > 0:
-                token_data = content[0]
-                top_logprobs = token_data.get("top_logprobs", [])
+            # Log the actual structure received
+            logger.info(f"_display_logprobs received data: {logprobs_data}")
+            
+            # Parse logprobs structure - now we receive individual token data directly
+            # Expected structure: {"token": "...", "logprob": ..., "top_logprobs": [...]}
+            if logprobs_data and isinstance(logprobs_data, dict):
+                top_logprobs = logprobs_data.get("top_logprobs", [])
                 
                 if top_logprobs:
                     # Create all widgets first, then mount in batch
@@ -1138,14 +1183,16 @@ class EvalsWindow(Container):
                         token_text = item.get("token", "")
                         token_static = Static(f'"{token_text}"', classes="logit-token")
                         
-                        # Probability
+                        # Probability and logprob value
                         logprob = item.get("logprob", 0)
                         probability = math.exp(logprob) * 100
                         prob_static = Static(f"{probability:.2f}%", classes="logit-probability")
+                        logprob_static = Static(f"(logprob: {logprob:.3f})", classes="logit-value")
                         
                         # Mount children to container before adding to list
                         logit_container.compose_add_child(token_static)
                         logit_container.compose_add_child(prob_static)
+                        logit_container.compose_add_child(logprob_static)
                         
                         widgets_to_mount.append(logit_container)
                     
@@ -1158,9 +1205,9 @@ class EvalsWindow(Container):
                     )
             else:
                 self._logits_table_container.mount(
-                    Static("Unexpected logprobs format", classes="placeholder-text")
+                    Static("No logprobs data available", classes="placeholder-text")
                 )
-                logger.debug(f"Logprobs data structure: {logprobs_data}")
+                logger.debug(f"Logprobs data was None or not a dict: {type(logprobs_data)}")
                 
         except Exception as e:
             logger.error(f"Error displaying logprobs: {e}")

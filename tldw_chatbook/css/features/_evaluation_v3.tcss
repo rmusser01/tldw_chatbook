@@ -752,26 +752,27 @@ ListView > ListItem.--highlight {
     overflow-y: auto;
 }
 
-.token-button {
-    margin: 0 1 1 0;
-    padding: 0 1;
-    height: 3;
-    background: $secondary-darken-1;
-    border: round $secondary;
-    color: $text;
+/* Markdown widget for token display */
+.token-markdown {
+    width: 100%;
+    height: auto;
+    background: transparent;
+    padding: 1;
 }
 
-.token-button:hover {
-    background: $secondary;
-    border: round $primary;
+/* Markdown links are styled through the widget itself */
+Markdown.token-markdown {
+    link-color: $primary;
+    link-background: transparent;
+    link-style: none;
 }
 
-.token-button.selected {
-    background: $accent;
-    color: $text;
-    text-style: bold;
-    border: thick $primary;
+/* Hover effect for links */
+Markdown.token-markdown:hover {
+    link-color: $accent;
 }
+
+/* The markdown widget itself handles inline styling for bold/strong elements */
 
 /* --- Logits Table --- */
 .logits-table-container {
@@ -803,9 +804,16 @@ ListView > ListItem.--highlight {
 }
 
 .logit-probability {
-    width: 20%;
+    width: 15%;
     text-align: right;
     color: $success;
+}
+
+.logit-value {
+    width: 25%;
+    text-align: right;
+    color: $text-muted;
+    padding-left: 1;
 }
 
 .logit-bar {
