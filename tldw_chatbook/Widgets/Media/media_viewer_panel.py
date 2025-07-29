@@ -436,37 +436,37 @@ class MediaViewerPanel(Container):
                                 prompt="Select Model",
                                 id="analysis-model-select"
                             )
-                    
-                            # Temperature, Top-P, Min-P, Max Tokens settings row
-                            with Horizontal(classes="api-params-row"):
-                                with Vertical(classes="param-group"):
-                                    yield Label("Temperature")
-                                    yield Input(
-                                        placeholder="0.7",
-                                        id="analysis-temperature",
-                                        value="0.7"
-                                    )
-                                with Vertical(classes="param-group"):
-                                    yield Label("Top P")
-                                    yield Input(
-                                        placeholder="0.95",
-                                        id="analysis-top-p",
-                                        value="0.95"
-                                    )
-                                with Vertical(classes="param-group"):
-                                    yield Label("Min P")
-                                    yield Input(
-                                        placeholder="0.05",
-                                        id="analysis-min-p",
-                                        value="0.05"
-                                    )
-                                with Vertical(classes="param-group"):
-                                    yield Label("Max Tokens")
-                                    yield Input(
-                                        placeholder="4096",
-                                        id="analysis-max-tokens",
-                                        value="4096"
-                                    )
+                        
+                        # Temperature, Top-P, Min-P, Max Tokens settings row
+                        with Horizontal(classes="api-params-row"):
+                            with Vertical(classes="param-group"):
+                                yield Label("Temperature")
+                                yield Input(
+                                    placeholder="0.7",
+                                    id="analysis-temperature",
+                                    value="0.7"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Top P")
+                                yield Input(
+                                    placeholder="0.95",
+                                    id="analysis-top-p",
+                                    value="0.95"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Min P")
+                                yield Input(
+                                    placeholder="0.05",
+                                    id="analysis-min-p",
+                                    value="0.05"
+                                )
+                            with Vertical(classes="param-group"):
+                                yield Label("Max Tokens")
+                                yield Input(
+                                    placeholder="4096",
+                                    id="analysis-max-tokens",
+                                    value="4096"
+                                )
                     
                     # Prompt search and filtering
                     yield Label("Search Prompts:", classes="prompt-label")

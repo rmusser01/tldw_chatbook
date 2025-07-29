@@ -19,8 +19,8 @@ from loguru import logger
 from tldw_chatbook.Utils.Splash_Strings import splashscreen_message_selection
 
 # Constants for escaping Rich markup
-ESCAPED_OPEN_BRACKET = '\['
-ESCAPED_CLOSE_BRACKET = '\]'
+ESCAPED_OPEN_BRACKET = r'\['
+ESCAPED_CLOSE_BRACKET = r'\]'
 
 
 @dataclass
@@ -5739,6 +5739,715 @@ class HackerTerminalEffect(BaseEffect):
                 style_grid[y_offset][cursor_x] = 'green'
         
         return self._grid_to_string(grid, style_grid)
+
+
+class CyberpunkGlitchEffect(BaseEffect):
+    """Futuristic cyberpunk-themed glitch effect with neon colors."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "tldw chatbook",
+        subtitle: str = "",
+        width: int = 80,
+        height: int = 24,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.width = width
+        self.height = height
+        
+        # Cyberpunk color palette
+        self.neon_colors = [
+            "rgb(255,0,255)",  # Magenta
+            "rgb(0,255,255)",  # Cyan
+            "rgb(255,0,128)",  # Hot pink
+            "rgb(128,0,255)",  # Purple
+            "rgb(0,255,128)",  # Neon green
+        ]
+        
+        # Glitch parameters
+        self.glitch_chars = "▓▒░█▄▀■□▪▫◊◈◆◇○●◐◑◒◓"
+        self.corruption_level = 0.8
+        self.reveal_progress = 0.0
+        self.glitch_zones = []
+        self.scanline_y = 0
+        
+        # Initialize glitch zones
+        for _ in range(5):
+            self.glitch_zones.append({
+                'x': random.randint(0, width - 20),
+                'y': random.randint(0, height - 5),
+                'w': random.randint(10, 20),
+                'h': random.randint(3, 5),
+                'intensity': random.uniform(0.3, 1.0)
+            })
+    
+    def update(self) -> Optional[str]:
+        """Update cyberpunk glitch effect."""
+        elapsed = time.time() - self.start_time
+        self.reveal_progress = min(1.0, elapsed / 2.0)
+        
+        # Create display grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        style_grid = [[None for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Add background digital noise
+        for y in range(self.height):
+            for x in range(self.width):
+                if random.random() < 0.05:
+                    grid[y][x] = random.choice('01')
+                    style_grid[y][x] = 'rgb(50,50,50)'
+        
+        # Update glitch zones
+        for zone in self.glitch_zones:
+            zone['x'] += random.randint(-2, 2)
+            zone['y'] += random.randint(-1, 1)
+            zone['x'] = max(0, min(self.width - zone['w'], zone['x']))
+            zone['y'] = max(0, min(self.height - zone['h'], zone['y']))
+            
+            # Draw glitch zone
+            if random.random() < zone['intensity']:
+                for dy in range(zone['h']):
+                    for dx in range(zone['w']):
+                        y = zone['y'] + dy
+                        x = zone['x'] + dx
+                        if 0 <= y < self.height and 0 <= x < self.width:
+                            grid[y][x] = random.choice(self.glitch_chars)
+                            style_grid[y][x] = random.choice(self.neon_colors)
+        
+        # Moving scanline effect
+        self.scanline_y = (self.scanline_y + 1) % self.height
+        for x in range(self.width):
+            if random.random() < 0.8:
+                grid[self.scanline_y][x] = '─'
+                style_grid[self.scanline_y][x] = 'rgb(0,255,255)'
+        
+        # Title reveal through glitch
+        title_y = self.height // 2 - 2
+        title_x = (self.width - len(self.title)) // 2
+        
+        for i, char in enumerate(self.title):
+            if title_x + i < self.width:
+                if random.random() < self.reveal_progress:
+                    # Character is revealed
+                    grid[title_y][title_x + i] = char
+                    if random.random() < 0.9:  # Occasional glitch
+                        style_grid[title_y][title_x + i] = 'bold rgb(255,0,255)'
+                    else:
+                        style_grid[title_y][title_x + i] = random.choice(self.neon_colors)
+                else:
+                    # Character is still corrupted
+                    grid[title_y][title_x + i] = random.choice(self.glitch_chars)
+                    style_grid[title_y][title_x + i] = random.choice(self.neon_colors)
+        
+        # Subtitle with glitch reveal
+        if self.subtitle and elapsed > 1.0:
+            subtitle_progress = min(1.0, (elapsed - 1.0) / 1.0)
+            subtitle_y = self.height // 2
+            subtitle_x = (self.width - len(self.subtitle)) // 2
+            
+            for i, char in enumerate(self.subtitle):
+                if subtitle_x + i < self.width:
+                    if random.random() < subtitle_progress:
+                        grid[subtitle_y][subtitle_x + i] = char
+                        style_grid[subtitle_y][subtitle_x + i] = 'rgb(0,255,255)'
+        
+        # Add random glitch artifacts
+        for _ in range(20):
+            x = random.randint(0, self.width - 1)
+            y = random.randint(0, self.height - 1)
+            grid[y][x] = random.choice(self.glitch_chars)
+            style_grid[y][x] = random.choice(self.neon_colors)
+        
+        # Convert to string
+        lines = []
+        for y in range(self.height):
+            line = ""
+            for x in range(self.width):
+                char = grid[y][x]
+                style = style_grid[y][x]
+                if style:
+                    line += f"[{style}]{char}[/{style.split()[0]}]"
+                else:
+                    line += char
+            lines.append(line)
+        return '\n'.join(lines)
+
+
+class ASCIIMandalaEffect(BaseEffect):
+    """Rotating mandala pattern that expands from center."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "tldw chatbook",
+        subtitle: str = "",
+        width: int = 80,
+        height: int = 24,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.width = width
+        self.height = height
+        
+        self.center_x = width // 2
+        self.center_y = height // 2
+        self.max_radius = min(width // 2, height // 2) - 2
+        self.rotation = 0
+        self.expansion = 0
+        
+        # Mandala patterns
+        self.patterns = [
+            "◆◇◈◊",
+            "●○◐◑◒◓",
+            "▲▼◀▶",
+            "★☆✦✧",
+            "┼╬╋╪",
+        ]
+    
+    def update(self) -> Optional[str]:
+        """Update mandala effect."""
+        elapsed = time.time() - self.start_time
+        self.rotation = elapsed * 0.5  # Rotation speed
+        self.expansion = min(1.0, elapsed / 2.0)  # Expand over 2 seconds
+        
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        style_grid = [[None for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Draw expanding mandala
+        current_radius = int(self.max_radius * self.expansion)
+        
+        for radius in range(1, current_radius + 1):
+            # Number of points on this circle
+            points = max(8, radius * 2)
+            pattern_idx = radius % len(self.patterns)
+            pattern = self.patterns[pattern_idx]
+            
+            for i in range(points):
+                angle = (2 * math.pi * i / points) + self.rotation
+                x = int(self.center_x + radius * math.cos(angle))
+                y = int(self.center_y + radius * math.sin(angle) * 0.5)  # Adjust for aspect ratio
+                
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    char_idx = i % len(pattern)
+                    grid[y][x] = pattern[char_idx]
+                    
+                    # Color based on radius
+                    hue = (radius * 20 + elapsed * 50) % 360
+                    r = int(128 + 127 * math.sin(math.radians(hue)))
+                    g = int(128 + 127 * math.sin(math.radians(hue + 120)))
+                    b = int(128 + 127 * math.sin(math.radians(hue + 240)))
+                    style_grid[y][x] = f"rgb({r},{g},{b})"
+        
+        # Draw center point
+        grid[self.center_y][self.center_x] = '✦'
+        style_grid[self.center_y][self.center_x] = 'bold white'
+        
+        # Title in center after expansion
+        if self.expansion > 0.8:
+            title_progress = (self.expansion - 0.8) / 0.2
+            title_len = int(len(self.title) * title_progress)
+            title_to_show = self.title[:title_len]
+            
+            title_x = self.center_x - len(self.title) // 2
+            for i, char in enumerate(title_to_show):
+                if 0 <= title_x + i < self.width:
+                    grid[self.center_y][title_x + i] = char
+                    style_grid[self.center_y][title_x + i] = 'bold white'
+        
+        # Subtitle below
+        if self.subtitle and elapsed > 2.5:
+            subtitle_x = self.center_x - len(self.subtitle) // 2
+            subtitle_y = self.center_y + 2
+            for i, char in enumerate(self.subtitle):
+                if 0 <= subtitle_x + i < self.width and subtitle_y < self.height:
+                    grid[subtitle_y][subtitle_x + i] = char
+                    style_grid[subtitle_y][subtitle_x + i] = 'cyan'
+        
+        # Convert to string
+        lines = []
+        for y in range(self.height):
+            line = ""
+            for x in range(self.width):
+                char = grid[y][x]
+                style = style_grid[y][x]
+                if style:
+                    line += f"[{style}]{char}[/{style.split()[0]}]"
+                else:
+                    line += char
+            lines.append(line)
+        return '\n'.join(lines)
+
+
+class HolographicInterfaceEffect(BaseEffect):
+    """Simulates a holographic UI startup sequence."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "tldw chatbook",
+        subtitle: str = "",
+        width: int = 80,
+        height: int = 24,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.width = width
+        self.height = height
+        
+        # HUD elements
+        self.panels = []
+        self.scan_line = 0
+        self.boot_progress = 0
+        self.flicker_intensity = 1.0
+        
+        # Initialize panels
+        self._init_panels()
+    
+    def _init_panels(self):
+        """Initialize holographic panels."""
+        # Main display panel
+        self.panels.append({
+            'x': self.width // 2 - 20,
+            'y': self.height // 2 - 5,
+            'w': 40,
+            'h': 10,
+            'type': 'main',
+            'active': False,
+            'progress': 0
+        })
+        
+        # Side panels
+        self.panels.append({
+            'x': 2,
+            'y': 2,
+            'w': 20,
+            'h': 8,
+            'type': 'stats',
+            'active': False,
+            'progress': 0
+        })
+        
+        self.panels.append({
+            'x': self.width - 22,
+            'y': 2,
+            'w': 20,
+            'h': 8,
+            'type': 'info',
+            'active': False,
+            'progress': 0
+        })
+    
+    def update(self) -> Optional[str]:
+        """Update holographic interface."""
+        elapsed = time.time() - self.start_time
+        self.boot_progress = min(1.0, elapsed / 3.0)
+        
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        style_grid = [[None for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Holographic flicker
+        self.flicker_intensity = 0.7 + 0.3 * math.sin(elapsed * 20)
+        
+        # Scanning effect
+        self.scan_line = int(elapsed * 10) % self.height
+        for x in range(self.width):
+            if random.random() < 0.3:
+                grid[self.scan_line][x] = '─'
+                style_grid[self.scan_line][x] = f'rgb(0,{int(255 * self.flicker_intensity)},255)'
+        
+        # Activate panels progressively
+        for i, panel in enumerate(self.panels):
+            activation_time = i * 0.5
+            if elapsed > activation_time:
+                panel['active'] = True
+                panel['progress'] = min(1.0, (elapsed - activation_time) / 0.5)
+        
+        # Draw panels
+        for panel in self.panels:
+            if panel['active']:
+                self._draw_panel(grid, style_grid, panel)
+        
+        # Draw main title in center panel after boot
+        if elapsed > 2.0:
+            main_panel = self.panels[0]
+            title_x = main_panel['x'] + (main_panel['w'] - len(self.title)) // 2
+            title_y = main_panel['y'] + main_panel['h'] // 2
+            
+            for i, char in enumerate(self.title):
+                if title_x + i < main_panel['x'] + main_panel['w']:
+                    grid[title_y][title_x + i] = char
+                    style_grid[title_y][title_x + i] = 'bold cyan'
+            
+            # Subtitle
+            if self.subtitle:
+                subtitle_x = main_panel['x'] + (main_panel['w'] - len(self.subtitle)) // 2
+                subtitle_y = title_y + 2
+                for i, char in enumerate(self.subtitle):
+                    if subtitle_x + i < main_panel['x'] + main_panel['w']:
+                        grid[subtitle_y][subtitle_x + i] = char
+                        style_grid[subtitle_y][subtitle_x + i] = 'rgb(0,200,200)'
+        
+        # Add holographic artifacts
+        for _ in range(30):
+            x = random.randint(0, self.width - 1)
+            y = random.randint(0, self.height - 1)
+            if grid[y][x] == ' ' and random.random() < 0.1:
+                grid[y][x] = '·'
+                style_grid[y][x] = f'rgb(0,{int(100 * self.flicker_intensity)},100)'
+        
+        # Convert to string
+        lines = []
+        for y in range(self.height):
+            line = ""
+            for x in range(self.width):
+                char = grid[y][x]
+                style = style_grid[y][x]
+                if style:
+                    line += f"[{style}]{char}[/{style.split()[0]}]"
+                else:
+                    line += char
+            lines.append(line)
+        return '\n'.join(lines)
+    
+    def _draw_panel(self, grid, style_grid, panel):
+        """Draw a holographic panel."""
+        x, y, w, h = panel['x'], panel['y'], panel['w'], panel['h']
+        progress = panel['progress']
+        
+        # Draw panel frame with progress
+        frame_chars = {
+            'top_left': '┌', 'top_right': '┐',
+            'bottom_left': '└', 'bottom_right': '┘',
+            'horizontal': '─', 'vertical': '│'
+        }
+        
+        # Top and bottom borders
+        for i in range(int(w * progress)):
+            if x + i < self.width:
+                grid[y][x + i] = frame_chars['horizontal']
+                grid[y + h - 1][x + i] = frame_chars['horizontal']
+                style_grid[y][x + i] = style_grid[y + h - 1][x + i] = 'cyan'
+        
+        # Side borders
+        for i in range(int(h * progress)):
+            if y + i < self.height:
+                grid[y + i][x] = frame_chars['vertical']
+                grid[y + i][x + w - 1] = frame_chars['vertical']
+                style_grid[y + i][x] = style_grid[y + i][x + w - 1] = 'cyan'
+        
+        # Corners
+        if progress > 0.5:
+            grid[y][x] = frame_chars['top_left']
+            grid[y][x + w - 1] = frame_chars['top_right']
+            grid[y + h - 1][x] = frame_chars['bottom_left']
+            grid[y + h - 1][x + w - 1] = frame_chars['bottom_right']
+            
+            for pos in [(y, x), (y, x + w - 1), (y + h - 1, x), (y + h - 1, x + w - 1)]:
+                style_grid[pos[0]][pos[1]] = 'bold cyan'
+        
+        # Panel content based on type
+        if progress > 0.8:
+            if panel['type'] == 'stats':
+                stats = ['CPU: 87%', 'MEM: 4.2GB', 'NET: OK']
+                for i, stat in enumerate(stats):
+                    stat_y = y + 2 + i
+                    if stat_y < y + h - 1:
+                        for j, char in enumerate(stat):
+                            if x + 2 + j < x + w - 1:
+                                grid[stat_y][x + 2 + j] = char
+                                style_grid[stat_y][x + 2 + j] = 'green'
+            
+            elif panel['type'] == 'info':
+                info = ['v2.0.1', 'READY', '████████']
+                for i, text in enumerate(info):
+                    text_y = y + 2 + i
+                    if text_y < y + h - 1:
+                        for j, char in enumerate(text):
+                            if x + 2 + j < x + w - 1:
+                                grid[text_y][x + 2 + j] = char
+                                style_grid[text_y][x + 2 + j] = 'yellow'
+
+
+class QuantumTunnelEffect(BaseEffect):
+    """3D-like tunnel effect with quantum particles."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "tldw chatbook",
+        subtitle: str = "",
+        width: int = 80,
+        height: int = 24,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.width = width
+        self.height = height
+        
+        self.center_x = width // 2
+        self.center_y = height // 2
+        self.tunnel_depth = 20
+        self.rotation = 0
+        
+        # Quantum particles
+        self.particles = []
+        for _ in range(50):
+            self.particles.append({
+                'z': random.uniform(0, self.tunnel_depth),
+                'angle': random.uniform(0, 2 * math.pi),
+                'speed': random.uniform(0.1, 0.3),
+                'char': random.choice('·•○◌◍◉')
+            })
+    
+    def update(self) -> Optional[str]:
+        """Update quantum tunnel effect."""
+        elapsed = time.time() - self.start_time
+        self.rotation = elapsed * 0.3
+        
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        style_grid = [[None for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Draw tunnel rings
+        for depth in range(1, self.tunnel_depth):
+            radius = depth * 2
+            z_factor = 1 - (depth / self.tunnel_depth)
+            
+            # Draw octagonal tunnel shape
+            points = 16
+            for i in range(points):
+                angle = (2 * math.pi * i / points) + self.rotation * z_factor
+                
+                # 3D projection
+                x_3d = radius * math.cos(angle)
+                y_3d = radius * math.sin(angle) * 0.5
+                
+                # Perspective projection
+                perspective = 1 / (1 + depth * 0.1)
+                x = int(self.center_x + x_3d * perspective)
+                y = int(self.center_y + y_3d * perspective)
+                
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    if depth < 5:
+                        char = '█'
+                    elif depth < 10:
+                        char = '▓'
+                    elif depth < 15:
+                        char = '▒'
+                    else:
+                        char = '░'
+                    
+                    grid[y][x] = char
+                    
+                    # Color based on depth
+                    intensity = int(255 * z_factor)
+                    style_grid[y][x] = f'rgb({intensity//2},{intensity},{intensity})'
+        
+        # Update and draw particles
+        for particle in self.particles:
+            # Move particle forward
+            particle['z'] -= particle['speed']
+            if particle['z'] <= 0:
+                particle['z'] = self.tunnel_depth
+                particle['angle'] = random.uniform(0, 2 * math.pi)
+            
+            # Calculate position
+            radius = particle['z'] * 1.5
+            x_3d = radius * math.cos(particle['angle'] + self.rotation)
+            y_3d = radius * math.sin(particle['angle'] + self.rotation) * 0.5
+            
+            perspective = 1 / (1 + particle['z'] * 0.1)
+            x = int(self.center_x + x_3d * perspective)
+            y = int(self.center_y + y_3d * perspective)
+            
+            if 0 <= x < self.width and 0 <= y < self.height:
+                grid[y][x] = particle['char']
+                intensity = int(255 * (1 - particle['z'] / self.tunnel_depth))
+                style_grid[y][x] = f'rgb(0,{intensity},{intensity//2})'
+        
+        # Title emerges from tunnel
+        if elapsed > 2.0:
+            title_progress = min(1.0, (elapsed - 2.0) / 1.0)
+            title_size = 1.0 + (1 - title_progress) * 2  # Shrink from large to normal
+            
+            # Draw title with perspective effect
+            for i, char in enumerate(self.title):
+                x = int(self.center_x - len(self.title) * title_size / 2 + i * title_size)
+                y = self.center_y
+                
+                if 0 <= x < self.width:
+                    grid[y][x] = char
+                    style_grid[y][x] = f'bold rgb(0,{int(255 * title_progress)},255)'
+        
+        # Subtitle
+        if self.subtitle and elapsed > 3.0:
+            subtitle_x = self.center_x - len(self.subtitle) // 2
+            subtitle_y = self.center_y + 2
+            for i, char in enumerate(self.subtitle):
+                if 0 <= subtitle_x + i < self.width:
+                    grid[subtitle_y][subtitle_x + i] = char
+                    style_grid[subtitle_y][subtitle_x + i] = 'cyan'
+        
+        # Convert to string
+        lines = []
+        for y in range(self.height):
+            line = ""
+            for x in range(self.width):
+                char = grid[y][x]
+                style = style_grid[y][x]
+                if style:
+                    line += f"[{style}]{char}[/{style.split()[0]}]"
+                else:
+                    line += char
+            lines.append(line)
+        return '\n'.join(lines)
+
+
+class ChaoticTypewriterEffect(BaseEffect):
+    """Multiple ghost typewriters typing at different speeds."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        title: str = "tldw chatbook",
+        subtitle: str = "",
+        width: int = 80,
+        height: int = 24,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.title = title
+        self.subtitle = subtitle
+        self.width = width
+        self.height = height
+        
+        # Create multiple typewriter instances
+        self.typewriters = []
+        num_typewriters = 5
+        
+        for i in range(num_typewriters):
+            self.typewriters.append({
+                'x': random.randint(5, width - len(title) - 5),
+                'y': random.randint(2, height - 4),
+                'speed': random.uniform(0.02, 0.08),
+                'progress': 0,
+                'last_update': time.time(),
+                'color': random.choice([
+                    'rgb(100,100,100)',
+                    'rgb(150,150,150)',
+                    'rgb(80,80,80)',
+                    'rgb(120,120,120)',
+                    'rgb(90,90,90)'
+                ]),
+                'drift_x': random.uniform(-0.5, 0.5),
+                'drift_y': random.uniform(-0.2, 0.2),
+                'text': title if i < 3 else subtitle  # Some type title, some subtitle
+            })
+        
+        # Final positions
+        self.final_title_x = (width - len(title)) // 2
+        self.final_title_y = height // 2 - 1
+        self.final_subtitle_x = (width - len(subtitle)) // 2
+        self.final_subtitle_y = height // 2 + 1
+        
+        self.convergence_start = 2.0  # Start converging after 2 seconds
+        self.convergence_duration = 1.5
+    
+    def update(self) -> Optional[str]:
+        """Update chaotic typewriter effect."""
+        elapsed = time.time() - self.start_time
+        current_time = time.time()
+        
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        style_grid = [[None for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Update each typewriter
+        for tw in self.typewriters:
+            # Update typing progress
+            if current_time - tw['last_update'] > tw['speed']:
+                tw['progress'] = min(tw['progress'] + 1, len(tw['text']))
+                tw['last_update'] = current_time
+            
+            # Update position with drift
+            if elapsed < self.convergence_start:
+                tw['x'] += tw['drift_x']
+                tw['y'] += tw['drift_y']
+                
+                # Bounce off edges
+                if tw['x'] < 0 or tw['x'] > self.width - len(tw['text']):
+                    tw['drift_x'] *= -1
+                if tw['y'] < 0 or tw['y'] > self.height - 1:
+                    tw['drift_y'] *= -1
+                
+                tw['x'] = max(0, min(self.width - len(tw['text']), tw['x']))
+                tw['y'] = max(0, min(self.height - 1, tw['y']))
+            else:
+                # Converge to final position
+                convergence_progress = min(1.0, (elapsed - self.convergence_start) / self.convergence_duration)
+                
+                if tw['text'] == self.title:
+                    target_x = self.final_title_x
+                    target_y = self.final_title_y
+                else:
+                    target_x = self.final_subtitle_x
+                    target_y = self.final_subtitle_y
+                
+                tw['x'] = tw['x'] + (target_x - tw['x']) * convergence_progress * 0.1
+                tw['y'] = tw['y'] + (target_y - tw['y']) * convergence_progress * 0.1
+            
+            # Draw typewriter text
+            x = int(tw['x'])
+            y = int(tw['y'])
+            text_to_show = tw['text'][:int(tw['progress'])]
+            
+            for i, char in enumerate(text_to_show):
+                if 0 <= x + i < self.width and 0 <= y < self.height:
+                    # During convergence, fade ghost typewriters
+                    if elapsed > self.convergence_start:
+                        convergence_progress = min(1.0, (elapsed - self.convergence_start) / self.convergence_duration)
+                        if (tw['text'] == self.title and abs(y - self.final_title_y) < 1 and abs(x - self.final_title_x) < 1) or \
+                           (tw['text'] == self.subtitle and abs(y - self.final_subtitle_y) < 1 and abs(x - self.final_subtitle_x) < 1):
+                            # This is the final position
+                            grid[y][x + i] = char
+                            style_grid[y][x + i] = 'bold white' if tw['text'] == self.title else 'cyan'
+                        else:
+                            # Ghost typewriter fading out
+                            if random.random() > convergence_progress:
+                                grid[y][x + i] = char
+                                style_grid[y][x + i] = tw['color']
+                    else:
+                        grid[y][x + i] = char
+                        style_grid[y][x + i] = tw['color']
+            
+            # Typewriter cursor
+            if tw['progress'] < len(tw['text']) and int(current_time * 2) % 2 == 0:
+                cursor_x = x + int(tw['progress'])
+                if 0 <= cursor_x < self.width and 0 <= y < self.height:
+                    grid[y][cursor_x] = '▌'
+                    style_grid[y][cursor_x] = tw['color']
+        
+        # Convert to string
+        lines = []
+        for y in range(self.height):
+            line = ""
+            for x in range(self.width):
+                char = grid[y][x]
+                style = style_grid[y][x]
+                if style:
+                    line += f"[{style}]{char}[/{style.split()[0]}]"
+                else:
+                    line += char
+            lines.append(line)
+        return '\n'.join(lines)
 
 
 #

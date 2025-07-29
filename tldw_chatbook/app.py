@@ -2406,7 +2406,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         else:
                             self.loguru_logger.debug(f"Llama.cpp help text in {new_view} already populated or not empty.")
                     except QueryError:
-                        self.loguru_logger.warning(f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch.")
+                        self.loguru_logger.debug(f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch - may not be mounted yet.")
                     except Exception as e_help_populate:
                         self.loguru_logger.error(f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}", exc_info=True)
                 elif new_view == "llm-view-llamafile":
@@ -2416,8 +2416,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)
                         self.loguru_logger.debug(f"Ensured Llamafile help text in {new_view}.")
                     except QueryError:
-                        self.loguru_logger.warning(
-                            f"Help display widget for Llamafile not found in {new_view} during view switch.")
+                        self.loguru_logger.debug(
+                            f"Help display widget for Llamafile not found in {new_view} during view switch - may not be mounted yet.")
                 # Add similar for other views like llamafile, vllm if they have help sections
                 # elif new_view == "llm-view-llamafile":
                 #     try:

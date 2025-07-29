@@ -38,6 +38,12 @@ class StreamingChunk(Message):
         super().__init__()
         self.text_chunk = text_chunk
 
+class StreamingChunkWithLogits(StreamingChunk):
+    """Extended streaming chunk that includes logprobs data."""
+    def __init__(self, text_chunk: str, logprobs: Union[dict, None] = None) -> None:
+        super().__init__(text_chunk)
+        self.logprobs = logprobs
+
 class StreamDone(Message):
     """Custom message to signal the end of a stream."""
     def __init__(self, full_text: str, error: Union[str, None] = None, response_data: Union[dict, None] = None) -> None:
@@ -513,9 +519,11 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
     })
     api_endpoint = kwargs.get('api_endpoint')
     model_name = kwargs.get('model')
+    logprobs_enabled = kwargs.get('llm_logprobs', False)
+    top_logprobs = kwargs.get('llm_top_logprobs', 0)
     # streaming_requested flag from kwargs is implicitly handled by core_chat_function's return type.
     logger.debug(
-        f"chat_wrapper_function executing for endpoint '{api_endpoint}', model '{model_name}'")
+        f"chat_wrapper_function executing for endpoint '{api_endpoint}', model '{model_name}', logprobs={logprobs_enabled}, top_logprobs={top_logprobs}")
 
     try:
         # core_chat_function is your synchronous `Chat.Chat_Functions.chat`
@@ -567,7 +575,16 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                             json_data = json.loads(json_str)
                             actual_text_chunk = ""
                             reasoning_chunk = ""
+                            logprobs_data = None
                             # Standard OpenAI SSE structure, adapt if providers differ or if pre-parsed objects are yielded
+                            # Log the entire json_data structure when logprobs is requested
+                            if logprobs_enabled and api_endpoint in ["openai", "llama_cpp", "vllm"]:
+                                if "choices" in json_data and json_data.get("choices"):
+                                    # Only log if we haven't logged the structure yet
+                                    if not hasattr(chat_wrapper_function, '_logged_structure'):
+                                        logger.info(f"First streaming chunk structure for {api_endpoint} with logprobs enabled: {json.dumps(json_data, indent=2)[:1000]}...")
+                                        chat_wrapper_function._logged_structure = True
+                            
                             choices = json_data.get("choices")
                             if choices and isinstance(choices, list) and len(choices) > 0:
                                 delta = choices[0].get("delta", {})
@@ -580,6 +597,18 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                                     # Accumulate reasoning content separately
                                     accumulated_reasoning_text += reasoning_chunk
                                 
+                                # Check for logprobs in the choice (OpenAI format)
+                                if "logprobs" in choices[0] and choices[0]["logprobs"] is not None:
+                                    logprobs_data = choices[0]["logprobs"]
+                                    logger.info(f"Found logprobs in streaming choice: {logprobs_data}")
+                                # Also check for logprobs in delta (some providers put it here)
+                                elif "logprobs" in delta and delta["logprobs"] is not None:
+                                    logprobs_data = delta["logprobs"]
+                                    logger.info(f"Found logprobs in streaming delta: {logprobs_data}")
+                                # Log if we're expecting logprobs but not finding them
+                                elif logprobs_enabled:
+                                    logger.debug(f"Logprobs enabled but not found in chunk. Choice keys: {list(choices[0].keys())}, Delta keys: {list(delta.keys())}")
+                                
                                 # Check for tool calls in the delta or choice
                                 if "tool_calls" in delta:
                                     logger.debug(f"Found tool_calls in streaming delta: {delta['tool_calls']}")
@@ -589,7 +618,14 @@ def chat_wrapper_function(app_instance: 'TldwCli', strip_thinking_tags: bool = T
                                     accumulated_tool_calls = choices[0]["tool_calls"]  # Replace, don't extend
 
                             if actual_text_chunk:
-                                app_instance.post_message(StreamingChunk(actual_text_chunk))
+                                # Use StreamingChunkWithLogits if logprobs are available
+                                if logprobs_data:
+                                    logger.debug(f"Posting StreamingChunkWithLogits with text: '{actual_text_chunk[:20]}...' and logprobs")
+                                    app_instance.post_message(StreamingChunkWithLogits(actual_text_chunk, logprobs_data))
+                                else:
+                                    if logprobs_enabled:
+                                        logger.debug(f"Posting regular StreamingChunk (no logprobs found) with text: '{actual_text_chunk[:20]}...'")
+                                    app_instance.post_message(StreamingChunk(actual_text_chunk))
                                 accumulated_full_text += actual_text_chunk
                                 chunk_count += 1
                             # else:

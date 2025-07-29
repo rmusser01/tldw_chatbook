@@ -184,7 +184,7 @@ def _chat_with_openai_compatible_local_server(
     else:
         # If it doesn't end with the standard path, append it.
         # This handles cases where the config provides just the server root.
-        full_api_url = base_url + chat_completions_path
+        full_api_url = base_url + "/" + chat_completions_path
 
     logging.debug(
         f"{provider_name}: Posting to {full_api_url}. Payload keys: {list(payload.keys())}")
@@ -452,6 +452,8 @@ def chat_with_llama(
                                        # FIXME: n_probs might need specific handling if it's not #completions
         presence_penalty: Optional[float] = None, # from map
         frequency_penalty: Optional[float] = None, # from map
+        logprobs: Optional[bool] = None, # from map
+        top_logprobs: Optional[int] = None, # from map
         # api_url is tricky. Your notes say "positional argument".
         # If chat_api_call is the sole entry, this needs to be passed via kwargs if mapped,
         # or loaded from config if not passed. Let's assume it's primarily from config for now.
@@ -492,6 +494,8 @@ def chat_with_llama(
     current_logit_bias = logit_bias if logit_bias is not None else llama_config.get('logit_bias')
     current_presence_penalty = presence_penalty if presence_penalty is not None else llama_config.get('presence_penalty')
     current_frequency_penalty = frequency_penalty if frequency_penalty is not None else llama_config.get('frequency_penalty')
+    current_logprobs = logprobs if logprobs is not None else llama_config.get('logprobs')
+    current_top_logprobs = top_logprobs if top_logprobs is not None else llama_config.get('top_logprobs')
 
     # Handle n_probs: If it's meant to be OpenAI's 'n' (number of choices)
     # For llama.cpp, if it's mimicking OpenAI, 'n' is the param.
@@ -505,6 +509,7 @@ def chat_with_llama(
     api_retry_delay = int(llama_config.get('api_retry_delay', 1))
 
     if isinstance(current_streaming, str): current_streaming = current_streaming.lower() == "true"
+    if isinstance(current_logprobs, str): current_logprobs = current_logprobs.lower() == "true"
     if custom_prompt:
         logging.info("Llama.cpp: 'custom_prompt' received. Ensure it's incorporated into 'input_data' or 'system_prompt' by the calling function.")
 
@@ -528,7 +533,9 @@ def chat_with_llama(
         logit_bias=current_logit_bias,
         seed=current_seed,
         response_format=current_response_format,
-        # tools, tool_choice, logprobs, top_logprobs, user_identifier could be added if llama.cpp supports them via OpenAI compat layer
+        logprobs=current_logprobs,
+        top_logprobs=current_top_logprobs,
+        # tools, tool_choice, user_identifier could be added if llama.cpp supports them via OpenAI compat layer
         provider_name="Llama.cpp",
         timeout=timeout,
         api_retries=api_retries,
@@ -948,6 +955,7 @@ def chat_with_vllm(
     presence_penalty: Optional[float] = None, # from map
     frequency_penalty: Optional[float] = None, # from map
     logprobs: Optional[bool] = None,     # from map
+    top_logprobs: Optional[int] = None,  # from map
     user_identifier: Optional[str] = None, # from map
     vllm_api_url: Optional[str] = None, # Specific config, not from generic map typically
                                        # Could be loaded from cfg or passed if chat_api_call handles it
@@ -989,9 +997,7 @@ def chat_with_vllm(
     current_presence_penalty = presence_penalty if presence_penalty is not None else cfg.get('presence_penalty')
     current_frequency_penalty = frequency_penalty if frequency_penalty is not None else cfg.get('frequency_penalty')
     current_logprobs = logprobs if logprobs is not None else cfg.get('logprobs')
-    # top_logprobs: vLLM PROVIDER_PARAM_MAP has 'logprobs' but not 'top_logprobs'.
-    # If vLLM supports top_logprobs, it should be added to the map and this func's signature.
-    # Assuming for now it's not explicitly mapped for vLLM.
+    current_top_logprobs = top_logprobs if top_logprobs is not None else cfg.get('top_logprobs')
     current_user_identifier = user_identifier if user_identifier is not None else cfg.get('user_identifier')
 
     timeout = int(cfg.get('api_timeout', 120))
@@ -1023,7 +1029,7 @@ def chat_with_vllm(
         seed=current_seed,
         response_format=current_response_format,
         logprobs=current_logprobs,
-        # top_logprobs=current_top_logprobs, # Add if vLLM supports and mapped
+        top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
         provider_name="vLLM",
         timeout=timeout,

@@ -970,30 +970,38 @@ async def populate_llm_help_texts(app: 'TldwCli') -> None:
         app.loguru_logger.debug("LLM Management Window not found, skipping help text population.")
         return
     
+    # Wait a bit for widgets to be fully mounted
+    import asyncio
+    await asyncio.sleep(0.1)
+    
     try:
-        # Llama.cpp
-        llamacpp_help_widget = app.query_one("#llamacpp-args-help-display", RichLog)
-        llamacpp_help_widget.clear()  # Clear any old content
-        llamacpp_help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
-        app.loguru_logger.debug("Populated Llama.cpp args help.")
+        # Llama.cpp - only populate if the view is active
+        if app.llm_active_view == "llm-view-llama-cpp":
+            llamacpp_help_widget = llm_window.query_one("#llamacpp-args-help-display", RichLog)
+            llamacpp_help_widget.clear()  # Clear any old content
+            llamacpp_help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
+            app.loguru_logger.debug("Populated Llama.cpp args help.")
     except QueryError:
         app.loguru_logger.debug("Failed to find #llamacpp-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating Llama.cpp help: {e}", exc_info=True)
     try:
-        llamafile_help_widget = app.query_one("#llamafile-args-help-display", RichLog)
-        llamafile_help_widget.clear()  # Clear existing content
-        llamafile_help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)  # Write new content
-        app.loguru_logger.debug("Populated Llamafile args help.")
+        # Llamafile - only populate if the view is active
+        if app.llm_active_view == "llm-view-llamafile":
+            llamafile_help_widget = llm_window.query_one("#llamafile-args-help-display", RichLog)
+            llamafile_help_widget.clear()  # Clear existing content
+            llamafile_help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)  # Write new content
+            app.loguru_logger.debug("Populated Llamafile args help.")
     except QueryError:
         app.loguru_logger.debug("Failed to find #llamafile-args-help-display widget.")
     except Exception as e:
         app.loguru_logger.error(f"Error populating Llamafile help: {e}", exc_info=True)
     try:
-        # MLX-LM
-        mlx_help_widget = app.query_one("#mlx-args-help-display", RichLog)
-        mlx_help_widget.clear()  # Clear existing content
-        mlx_help_widget.write(MLX_LM_SERVER_ARGS_HELP_TEXT)  # Write new content
+        # MLX-LM - only populate if the view is active
+        if app.llm_active_view == "llm-view-mlx-lm":
+            mlx_help_widget = llm_window.query_one("#mlx-args-help-display", RichLog)
+            mlx_help_widget.clear()  # Clear existing content
+            mlx_help_widget.write(MLX_LM_SERVER_ARGS_HELP_TEXT)  # Write new content
         app.loguru_logger.debug("Populated MLX-LM args help.")
     except QueryError:
         app.loguru_logger.debug("Failed to find #mlx-args-help-display widget.")

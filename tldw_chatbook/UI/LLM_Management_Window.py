@@ -217,16 +217,20 @@ class LLMManagementWindow(Container):
 
                     yield Label("Operations Log:", classes="label section_label")  # Use consistent class
                     yield RichLog(id="transformers-log-output", classes="log_output", wrap=True, highlight=True)
-            yield Container(
-                Static("Local Model Management Area - Content Coming Soon!"),
-                id="llm-view-local-models",
-                classes="llm-view-area",
-            )
-            yield Container(
-                Static("Model Download Area - Content Coming Soon!"),
-                id="llm-view-download-models",
-                classes="llm-view-area",
-            )
+            with Container(id="llm-view-local-models", classes="llm-view-area"):
+                # Import and use the LocalModelsWidget
+                from ..Widgets.HuggingFace import LocalModelsWidget
+                yield LocalModelsWidget(
+                    self.app_instance,
+                    id="local-models-widget"
+                )
+            with Container(id="llm-view-download-models", classes="llm-view-area"):
+                # Import the HuggingFace model browser
+                from ..Widgets.HuggingFace import HuggingFaceModelBrowser
+                yield HuggingFaceModelBrowser(
+                    self.app_instance,
+                    id="huggingface-model-browser"
+                )
             with Container(id="llm-view-mlx-lm", classes="llm-view-area"):
                 with VerticalScroll():
                     yield Label("MLX Model Path (HuggingFace ID or local path):", classes="label")

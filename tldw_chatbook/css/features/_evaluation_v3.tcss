@@ -696,3 +696,155 @@ ListView > ListItem.--highlight {
 }
 
 /* Note: Textual CSS doesn't support @media queries - removed for compatibility */
+
+/* ========================================
+ * Logits Checker Styles
+ * ======================================== */
+
+/* --- Main Layout --- */
+.logits-checker-layout {
+    layout: horizontal;
+    height: 100%;
+    width: 100%;
+    padding: 1;
+}
+
+/* --- Left Panel (Input & Configuration) --- */
+.logits-input-panel {
+    width: 40%;
+    min-width: 35;
+    height: 100%;
+    background: $surface;
+    padding: 2;
+    border: round $primary-background;
+    margin-right: 1;
+    overflow-y: auto;
+}
+
+/* --- Right Panel (Logits Display) --- */
+.logits-display-panel {
+    width: 60%;
+    height: 100%;
+    background: $surface;
+    padding: 2;
+    border: round $primary-background;
+    overflow-y: auto;
+}
+
+/* --- Input Elements --- */
+.logits-prompt-input {
+    width: 100%;
+    min-height: 5;
+    max-height: 15;
+    margin-bottom: 2;
+    background: $background;
+    border: round $primary;
+}
+
+/* --- Token Display --- */
+.token-display-container {
+    min-height: 10;
+    max-height: 20;
+    background: $background;
+    padding: 2;
+    margin: 1 0;
+    border: round $primary-background;
+    overflow-y: auto;
+}
+
+.token-button {
+    margin: 0 1 1 0;
+    padding: 0 1;
+    height: 3;
+    background: $secondary-darken-1;
+    border: round $secondary;
+    color: $text;
+}
+
+.token-button:hover {
+    background: $secondary;
+    border: round $primary;
+}
+
+.token-button.selected {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+    border: thick $primary;
+}
+
+/* --- Logits Table --- */
+.logits-table-container {
+    height: 1fr;
+    min-height: 15;
+    background: $background;
+    padding: 1;
+    border: round $primary-background;
+}
+
+.logit-item {
+    layout: horizontal;
+    width: 100%;
+    padding: 1;
+    margin-bottom: 1;
+    background: $surface-darken-1;
+    border: round $secondary;
+}
+
+.logit-item:hover {
+    background: $surface;
+    border: round $primary;
+}
+
+.logit-token {
+    width: 60%;
+    text-style: bold;
+    padding-right: 1;
+}
+
+.logit-probability {
+    width: 20%;
+    text-align: right;
+    color: $success;
+}
+
+.logit-bar {
+    width: 20%;
+    height: 1;
+    background: $primary-darken-2;
+}
+
+.logit-bar-fill {
+    height: 100%;
+    background: $primary;
+}
+
+/* --- Placeholder Text --- */
+.placeholder-text {
+    width: 100%;
+    text-align: center;
+    color: $text-muted;
+    text-style: italic;
+    padding: 2;
+}
+
+/* --- Status for Logits --- */
+#logits-status {
+    margin-top: 1;
+    margin-bottom: 0;
+}
+
+/* Advanced Settings Collapsible */
+#logits-advanced-settings {
+    margin: 2 0;
+}
+
+#logits-advanced-settings Input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#logits-advanced-settings Label {
+    color: $text-muted;
+    margin-bottom: 0;
+}

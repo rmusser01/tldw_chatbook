@@ -367,6 +367,12 @@ class EmbeddingsWindow(Container):
     async def on_mount(self) -> None:
         """Handle mount event - initialize embeddings components."""
         logger.debug("EmbeddingsWindow on_mount called")
+        
+        # Check if embeddings dependencies are available
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            logger.warning("Embeddings dependencies not available, skipping initialization")
+            return
+            
         await self._initialize_embeddings()
         
         # Small delay to ensure DOM is fully ready
@@ -621,6 +627,10 @@ class EmbeddingsWindow(Container):
     
     def watch_embeddings_active_view(self, old: str, new: str) -> None:
         """React to view changes by showing/hiding containers."""
+        # Skip if embeddings dependencies are not available
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            return
+            
         logger.debug(f"Switching from view {old} to {new}")
         
         # Hide all views first

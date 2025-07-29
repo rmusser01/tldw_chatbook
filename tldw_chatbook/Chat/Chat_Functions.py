@@ -43,7 +43,7 @@ from .Chat_Deps import ChatBadRequestError, ChatConfigurationError, ChatAPIError
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError, CharactersRAGDBError
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import chat_with_openai, chat_with_anthropic, chat_with_cohere, \
     chat_with_groq, chat_with_openrouter, chat_with_deepseek, chat_with_mistral, chat_with_huggingface, chat_with_google, \
-    chat_with_moonshot
+    chat_with_moonshot, chat_with_zai
 from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_aphrodite, chat_with_local_llm, chat_with_ollama, \
     chat_with_kobold, chat_with_llama, chat_with_oobabooga, chat_with_tabbyapi, chat_with_vllm, chat_with_custom_openai, \
     chat_with_custom_openai_2, chat_with_mlx_lm
@@ -90,6 +90,7 @@ API_CALL_HANDLERS = {
     'google': chat_with_google,
     'huggingface': chat_with_huggingface,
     'moonshot': chat_with_moonshot,
+    'zai': chat_with_zai,
     'llama_cpp': chat_with_llama,
     'koboldcpp': chat_with_kobold,
     'oobabooga': chat_with_oobabooga,
@@ -311,6 +312,8 @@ PROVIDER_PARAM_MAP = {
         'n': 'n_probs', # FIXME: n_probs mapping might not be direct.
         'presence_penalty': 'presence_penalty',
         'frequency_penalty': 'frequency_penalty',
+        'logprobs': 'logprobs',
+        'top_logprobs': 'top_logprobs',
     },
     'koboldcpp': {
         'api_key': 'api_key',
@@ -377,6 +380,7 @@ PROVIDER_PARAM_MAP = {
         'presence_penalty': 'presence_penalty',
         'frequency_penalty': 'frequency_penalty',
         'logprobs': 'logprobs',
+        'top_logprobs': 'top_logprobs',
         'user_identifier': 'user',
     },
     'local-llm': {
@@ -632,6 +636,18 @@ PROVIDER_PARAM_MAP = {
         'response_format': 'response_format',
         'n': 'n',
         'user_identifier': 'user',
+    },
+    'zai': {
+        'api_key': 'api_key',
+        'messages_payload': 'input_data',
+        'prompt': 'custom_prompt_arg',
+        'temp': 'temp',
+        'system_message': 'system_message',
+        'streaming': 'streaming',
+        'maxp': 'maxp',  # maps to top_p
+        'model': 'model',
+        'max_tokens': 'max_tokens',
+        'tools': 'tools',
     },
     # Add other providers here
 }

@@ -64,7 +64,12 @@ from ..Utils.splash_animations import (
     DataStreamEffect,
     FractalZoomEffect,
     ASCIISpinnerEffect,
-    HackerTerminalEffect
+    HackerTerminalEffect,
+    CyberpunkGlitchEffect,
+    ASCIIMandalaEffect,
+    HolographicInterfaceEffect,
+    QuantumTunnelEffect,
+    ChaoticTypewriterEffect
 )
 
 class SplashScreen(Container):
@@ -629,6 +634,46 @@ class SplashScreen(Container):
                 "effect": "hacker_terminal",
                 "title": "TLDW Chatbook",
                 "animation_speed": 0.05
+            },
+            "cyberpunk_glitch": {
+                "type": "animated",
+                "effect": "cyberpunk_glitch",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "ascii_mandala": {
+                "type": "animated",
+                "effect": "ascii_mandala",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "holographic_interface": {
+                "type": "animated",
+                "effect": "holographic_interface",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "quantum_tunnel": {
+                "type": "animated",
+                "effect": "quantum_tunnel",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.05
+            },
+            "chaotic_typewriter": {
+                "type": "animated",
+                "effect": "chaotic_typewriter",
+                "title": "tldw chatbook",
+                "subtitle": splashscreen_message_selection,
+                "style": "black on black",
+                "animation_speed": 0.03
             }
         }
 
@@ -1273,6 +1318,76 @@ class SplashScreen(Container):
             )
             self.animation_timer = self.set_interval(
                 self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "cyberpunk_glitch":
+            width, height = self._get_terminal_size()
+            self.effect_handler = CyberpunkGlitchEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "ascii_mandala":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ASCIIMandalaEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "holographic_interface":
+            width, height = self._get_terminal_size()
+            self.effect_handler = HolographicInterfaceEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "quantum_tunnel":
+            width, height = self._get_terminal_size()
+            self.effect_handler = QuantumTunnelEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.05)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.05),
+                self._update_animation
+            )
+        elif effect_type == "chaotic_typewriter":
+            width, height = self._get_terminal_size()
+            self.effect_handler = ChaoticTypewriterEffect(
+                self,
+                title=self.card_data.get("title", "tldw chatbook"),
+                subtitle=self.card_data.get("subtitle", ""),
+                width=width,
+                height=height,
+                speed=self.card_data.get("animation_speed", 0.03)
+            )
+            self.animation_timer = self.set_interval(
+                self.card_data.get("animation_speed", 0.03),
                 self._update_animation
             )
 

@@ -1885,6 +1885,16 @@ auto_save = false
 # Show analysis button in media viewer by default
 show_analysis_button = true
 
+[llm_management]
+# LLM Management settings
+model_download_dir = "~/Downloads/tldw_models"  # Directory for downloaded models
+max_concurrent_downloads = 2  # Maximum concurrent model downloads
+auto_verify_downloads = true  # Verify downloaded files
+cleanup_partial_downloads = true  # Remove incomplete downloads on failure
+# HuggingFace settings
+huggingface_cache_ttl = 3600  # Cache model listings for 1 hour
+default_quantization_filter = ""  # e.g., "Q4_K_M,Q5_K_M,Q8_0"
+
 [notes]
 # Default settings for the Notes tab
 sync_directory = "~/Documents/Notes"  # Default directory for notes synchronization
@@ -2250,7 +2260,7 @@ temp_dir = ""  # Empty means use system temp
 
 [transcription]
 # Default transcription provider
-# Options: "faster-whisper", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx"
+# Options: "faster-whisper", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
 # Note: On macOS, defaults to parakeet-mlx or lightning-whisper-mlx if available
 default_provider = "faster-whisper"
 
@@ -2265,6 +2275,7 @@ default_provider = "faster-whisper"
 #               nvidia/parakeet-tdt-0.6b-v2
 # For canary: nvidia/canary-1b-flash, nvidia/canary-1b
 #   Note: Canary supports multilingual ASR and translation between en, de, es, fr
+# For remote-whisper: Depends on your server (e.g., "whisper-1" for OpenAI)
 default_model = "distil-large-v3"
 
 # Default language for transcription (use "auto" for automatic detection)
@@ -2327,6 +2338,41 @@ max_speakers = 10  # Maximum expected speakers
 # Post-processing
 merge_threshold = 0.5  # Time gap in seconds to merge same-speaker segments
 min_speaker_duration = 3.0  # Minimum total duration per speaker in seconds
+
+[transcription.remote_whisper]
+# Remote Whisper OpenAI API compatible transcription backend
+# Enable this to use a custom transcription server instead of local models
+enabled = false
+
+# API endpoint URL
+# Examples:
+#   - OpenAI: "https://api.openai.com/v1/audio/transcriptions"
+#   - Local server: "http://localhost:8000/v1/audio/transcriptions"
+#   - Custom endpoint: "https://your-whisper-server.com/transcribe"
+api_endpoint = "http://localhost:8000/v1/audio/transcriptions"
+
+# API authentication (leave empty if not required)
+api_key_env_var = "REMOTE_WHISPER_API_KEY"  # Environment variable name
+# api_key = ""  # Direct API key (less secure - use env var instead)
+
+# Model to use (e.g., "whisper-1" for OpenAI, or your custom model name)
+model = "whisper-1"
+
+# Request timeout in seconds
+timeout = 300
+
+# Response format: "json", "text", "srt", "verbose_json", "vtt"
+response_format = "json"
+
+# Optional parameters
+temperature = 0.0  # Sampling temperature (0-1)
+# prompt = ""  # Optional prompt to guide transcription style
+
+# Additional custom parameters (will be passed as-is to the API)
+# Format: key = "value"
+# Example:
+# [transcription.remote_whisper.additional_params]
+# custom_param = "custom_value"
 
 [local_ingestion]
 # YouTube/URL download settings
