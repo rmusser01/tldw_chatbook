@@ -442,7 +442,7 @@ class ChatWindowEnhanced(Container):
             get_char(EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE), 
             id="toggle-chat-left-sidebar",
             classes="chat-sidebar-toggle-button",
-            tooltip="Toggle left sidebar (Ctrl+[)"
+            tooltip="Toggle left sidebar (Ctrl+\[)"
         )
 
         # Check if tabs are enabled
@@ -503,7 +503,7 @@ class ChatWindowEnhanced(Container):
             get_char(EMOJI_CHARACTER_ICON, FALLBACK_CHARACTER_ICON), 
             id="toggle-chat-right-sidebar",
             classes="chat-sidebar-toggle-button",
-            tooltip="Toggle right sidebar (Ctrl+])"
+            tooltip="Toggle right sidebar (Ctrl+\])"
         )
 
         # Character Details Sidebar (Right)
