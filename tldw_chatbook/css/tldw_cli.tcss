@@ -151,8 +151,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* --- End of Sidebar Styling --- */
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Chat Window specific layouts --- */
 #chat-main-content {
@@ -257,8 +255,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* --- End of Chat Window specific layouts --- */
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
 /* --- Conversations, Characters & Prompts Window specific layouts (previously Character Chat) --- */
 /* Main container for the three-pane layout */
 #conversations_characters_prompts-window {
@@ -286,7 +282,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     padding: 1;
     overflow-y: auto; /* For conversation history */
 }
-
 
 /* Right Pane Styling */
 .cc-right-pane {
@@ -502,8 +497,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 /* --- End of Conversations, Characters & Prompts Window specific layouts --- */
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Logs Window --- */
 /* Logs Window adjustments */
@@ -534,8 +527,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
 */
 /* --- End of Logs Window --- */
 /* ----------------------------- ************************* ----------------------------- */
-
-
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- ChatMessage Styling --- */
@@ -655,8 +646,6 @@ Collapsible > .collapsible--header {
 }
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Notes Tab Window --- */
 /* (Assuming #notes-window has layout: horizontal; by default from .window or is set in Python) */
@@ -682,8 +671,6 @@ Collapsible > .collapsible--header {
 }
 /* --- End of Notes Tab Window --- */
 /* ----------------------------- ************************* ----------------------------- */
-
-
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Metrics Screen Styling --- */
@@ -739,8 +726,6 @@ MetricsScreen Label.-info-message {
 }
 /* --- End of Metrics Screen Styling --- */
 /* ----------------------------- ************************* ----------------------------- */
-
-
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Tools & Settings Tab --- */
@@ -1170,7 +1155,6 @@ MetricsScreen Label.-info-message {
     display: none; /* Initially hidden until activated */
 }
 
-
 /* Chat Sidebar Prompts Section Specific Styles */
 #chat-sidebar-prompts-collapsible { /* The collapsible container itself */
     /* Add any specific styling for the collapsible if needed */
@@ -1338,7 +1322,6 @@ MetricsScreen Label.-info-message {
     height: 100%;
 }
 
-
 #llm-view-ollama .action_container { /* For standalone buttons */
     width: 100%;
     height: auto;
@@ -1352,7 +1335,6 @@ MetricsScreen Label.-info-message {
     width: 100%;
     margin-top: 1;
 }
-
 
 #llm-view-ollama .delete_button Button { /* Specific styling for delete button if needed */
     background: $error-darken-1;
@@ -1454,11 +1436,8 @@ MetricsScreen Label.-info-message {
     margin-top: 0; /* Tighten up space for buttons below inputs */
 }
 
-
 /* --- End of LLM Management Tab --- */
 /* ----------------------------- ************************* ----------------------------- */
-
-
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Media Tab --- */
@@ -1560,7 +1539,6 @@ MetricsScreen Label.-info-message {
     padding: 0 1 1 1;      /* Optional: Add some padding (Top, Right, Bottom, Left) */
 }
 
-
 /* Children of .media-content-left-pane */
 .media-content-left-pane > Label.pane-title {
     height: auto; /* Or a fixed height like 2 or 3 if you prefer */
@@ -1638,12 +1616,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 /* --- End of Media Tab --- */
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
-
-
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Evals Tab --- */
 #evals-window { /* Matches TAB_EVALS, .window class provides layout: horizontal */
@@ -1698,8 +1670,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 /* --- End Evals Tab (Old Implementation) --- */
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Coding Tab --- */
 #coding-window { /* Matches TAB_CODING */
@@ -1753,8 +1723,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 /* --- End of Coding Tab --- */
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Evals Tab --- */
 #evals-window { /* Matches TAB_EVALS */
@@ -1807,8 +1775,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 }
 /* --- End of Evals Tab --- */
 /* ----------------------------- ************************* ----------------------------- */
-
-
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Media Tab Specific Options --- */
@@ -1869,8 +1835,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 /* --- End of Media Tab Specific Options --- */
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Conversations, Characters & Prompts Window specific layouts --- */
 #send-chat {
@@ -1899,8 +1863,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 /* --- End of Conversations, Characters & Prompts Window specific layouts --- */
 /* ----------------------------- ************************* ----------------------------- */
 
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- LLM Management Tab --- */
 
@@ -1911,8 +1873,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 }
 /* --- End of LLM Management Tab --- */
 /* ----------------------------- ************************* ----------------------------- */
-
-
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Window Footer Widget --- */
@@ -2031,7 +1991,6 @@ AppFooterStatus {
 .detail-field-container .copy-button { width: auto; height: 1; border: none; }
 .detail-textarea { height: auto; min-height: 4; max-height: 25; margin-bottom: 1; }
 .detail-textarea.content-display { height: auto; min-height: 10; max-height: 40; margin-bottom: 1; }
-
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Search Tab (RAG/Embeddings) --- */
@@ -3259,15 +3218,6 @@ AppFooterStatus {
     background: $boost;
     color: $primary;
 }
-
-
-
-
-
-
-
-
-
 
 /* --- End Enhanced RAG Search UI Styles ---*/
 

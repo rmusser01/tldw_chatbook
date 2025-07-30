@@ -32,7 +32,6 @@
     overflow-y: auto; /* For conversation history */
 }
 
-
 /* Right Pane Styling */
 .cc-right-pane {
     width: 25%; /* Keep 25% or 30% - adjust as needed */

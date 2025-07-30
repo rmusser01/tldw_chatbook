@@ -52,7 +52,6 @@
     display: none; /* Initially hidden until activated */
 }
 
-
 /* Chat Sidebar Prompts Section Specific Styles */
 #chat-sidebar-prompts-collapsible { /* The collapsible container itself */
     /* Add any specific styling for the collapsible if needed */
@@ -220,7 +219,6 @@
     height: 100%;
 }
 
-
 #llm-view-ollama .action_container { /* For standalone buttons */
     width: 100%;
     height: auto;
@@ -234,7 +232,6 @@
     width: 100%;
     margin-top: 1;
 }
-
 
 #llm-view-ollama .delete_button Button { /* Specific styling for delete button if needed */
     background: $error-darken-1;
@@ -335,6 +332,5 @@
 .ollama-actions-column .full_width_button {
     margin-top: 0; /* Tighten up space for buttons below inputs */
 }
-
 
 /* --- End of LLM Management Tab --- */

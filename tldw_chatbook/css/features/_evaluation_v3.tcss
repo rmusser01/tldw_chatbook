@@ -424,12 +424,6 @@ EvalsWindow {
 }
 
 .cost-display {
-    color: $success;
-    text-style: bold;
-}
-
-.cost-display.large {
-}
 
 .cost-display.muted {
     color: $text-muted;

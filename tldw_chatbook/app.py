@@ -132,7 +132,8 @@ from .UI.Conv_Char_Window import CCPWindow
 from .UI.Notes_Window import NotesWindow
 from .UI.Logs_Window import LogsWindow
 from .UI.Stats_Window import StatsWindow
-from .UI.Ingest_Window import IngestWindow, INGEST_NAV_BUTTON_IDS, MEDIA_TYPES
+from .UI.Ingest_Window_Tabbed import IngestWindowTabbed
+from .UI.Ingest_Window import INGEST_NAV_BUTTON_IDS, MEDIA_TYPES
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 # Using v3 of EvalsWindow with two-column layout for Evaluation Setup
@@ -1511,7 +1512,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("notes", NotesWindow, "notes-window"),
             ("media", MediaWindow, "media-window"),
             ("search", SearchWindow, "search-window"),
-            ("ingest", IngestWindow, "ingest-window"),
+            ("ingest", IngestWindowTabbed, "ingest-window"),
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
@@ -1588,7 +1589,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("notes", NotesWindow, "notes-window"),
             ("media", MediaWindow, "media-window"),
             ("search", SearchWindow, "search-window"),
-            ("ingest", IngestWindow, "ingest-window"),
+            ("ingest", IngestWindowTabbed, "ingest-window"),
             ("tools_settings", ToolsSettingsWindow, "tools_settings-window"),
             ("llm_management", LLMManagementWindow, "llm_management-window"),
             ("logs", LogsWindow, "logs-window"),
@@ -3567,8 +3568,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
         try:
-            from .UI.Ingest_Window import IngestWindow
-            ingest_window = self.query_one("#ingest-window", IngestWindow)
+            ingest_window = self.query_one("#ingest-window", IngestWindowTabbed)
             if ingest_window._local_video_window:
                 self.log.debug("Initializing video window models")
                 ingest_window._local_video_window._try_initialize_models()
@@ -3578,8 +3578,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_audio_models(self) -> None:
         """Initialize models for the audio ingestion window."""
         try:
-            from .UI.Ingest_Window import IngestWindow
-            ingest_window = self.query_one("#ingest-window", IngestWindow)
+            ingest_window = self.query_one("#ingest-window", IngestWindowTabbed)
             if ingest_window._local_audio_window:
                 self.log.debug("Initializing audio window models")
                 ingest_window._local_audio_window._try_initialize_models()

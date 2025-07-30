@@ -225,7 +225,6 @@ MediaDetailsWidget {
     height: auto;
 }
 
-
 .metadata-edit {
     layout: vertical;
     padding: 1;
