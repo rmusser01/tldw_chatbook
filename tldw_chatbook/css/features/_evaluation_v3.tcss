@@ -752,35 +752,60 @@ ListView > ListItem.--highlight {
     overflow-y: auto;
 }
 
-/* Markdown widget for token display */
-.token-markdown {
-    width: 100%;
+/* Token button container - horizontal flow */
+.token-button-container {
+    layout: horizontal;
     height: auto;
-    background: transparent;
-    padding: 1;
+    width: 100%;
+    content-align: left top;
+    overflow: auto;
 }
 
-/* Markdown links are styled through the widget itself */
-Markdown.token-markdown {
-    link-color: $primary;
-    link-background: transparent;
-    link-style: none;
+/* Individual token buttons */
+.token-button {
+    min-width: 2;
+    height: 3;
+    margin: 0 1 1 0;
+    padding: 0 1;
+    background: $surface;
+    color: $text;
+    border: solid $primary-background;
+    text-align: center;
+    content-align: center middle;
 }
 
-/* Hover effect for links */
-Markdown.token-markdown:hover {
-    link-color: $accent;
+/* Token button hover state */
+.token-button:hover {
+    background: $surface-lighten-1;
+    border: solid $primary;
+    color: $primary;
 }
 
-/* The markdown widget itself handles inline styling for bold/strong elements */
+/* Selected token button */
+.token-button.selected {
+    background: $primary;
+    color: $text;
+    border: thick $primary;
+    text-style: bold;
+}
+
+/* Selected token button on hover - maintain selected state */
+.token-button.selected:hover {
+    background: $primary-lighten-1;
+    color: $text;
+    border: thick $primary-lighten-1;
+}
 
 /* --- Logits Table --- */
 .logits-table-container {
     height: 1fr;
     min-height: 15;
+    max-height: 30;
     background: $background;
     padding: 1;
     border: round $primary-background;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .logit-item {
@@ -790,9 +815,36 @@ Markdown.token-markdown:hover {
     margin-bottom: 1;
     background: $surface-darken-1;
     border: round $secondary;
+    height: auto;
+    min-height: 3;
+    display: block;
 }
 
 .logit-item:hover {
+    background: $surface;
+    border: round $primary;
+}
+
+/* Ensure text visibility in logit items */
+.logit-item Static {
+    color: $text;
+    height: auto;
+    min-height: 1;
+}
+
+/* Single line logit item text */
+.logit-item-text {
+    width: 100%;
+    padding: 1;
+    margin-bottom: 1;
+    background: $surface-darken-1;
+    border: round $secondary;
+    color: $text;
+    height: auto;
+    min-height: 3;
+}
+
+.logit-item-text:hover {
     background: $surface;
     border: round $primary;
 }
@@ -801,6 +853,7 @@ Markdown.token-markdown:hover {
     width: 60%;
     text-style: bold;
     padding-right: 1;
+    color: $text;
 }
 
 .logit-probability {

@@ -63,11 +63,15 @@ SEARCH_VIEW_RAG_QA = "search-view-rag-qa"
 SEARCH_VIEW_RAG_CHAT = "search-view-rag-chat"
 SEARCH_VIEW_RAG_MANAGEMENT = "search-view-rag-management"
 SEARCH_VIEW_WEB_SEARCH = "search-view-web-search"
+SEARCH_VIEW_EMBEDDINGS_CREATE = "search-view-embeddings-create"
+SEARCH_VIEW_EMBEDDINGS_MANAGE = "search-view-embeddings-manage"
 
 SEARCH_NAV_RAG_QA = "search-nav-rag-qa"
 SEARCH_NAV_RAG_CHAT = "search-nav-rag-chat"
 SEARCH_NAV_RAG_MANAGEMENT = "search-nav-rag-management"
 SEARCH_NAV_WEB_SEARCH = "search-nav-web-search"
+SEARCH_NAV_EMBEDDINGS_CREATE = "search-nav-embeddings-create"
+SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
 
 # UI Constant for "Local Server" provider display name
 LOCAL_SERVER_PROVIDER_DISPLAY_NAME = "Local OpenAI-Compliant Server"
@@ -188,6 +192,9 @@ class SearchWindow(Container):
                 yield Button("Web Search", id=SEARCH_NAV_WEB_SEARCH, classes="search-nav-button")
             else:
                 yield Button("Web Search", id="search-nav-web-search-disabled", classes="search-nav-button disabled")
+            # Add Embeddings navigation buttons
+            yield Button("Create Embeddings", id=SEARCH_NAV_EMBEDDINGS_CREATE, classes="search-nav-button")
+            yield Button("Manage Embeddings", id=SEARCH_NAV_EMBEDDINGS_MANAGE, classes="search-nav-button")
 
         with Container(id="search-content-pane", classes="search-content-pane"):
             # Import and use the new SearchRAGWindow for RAG Q&A
@@ -231,6 +238,33 @@ class SearchWindow(Container):
                 with Container(id=SEARCH_VIEW_WEB_SEARCH, classes="search-view-area"):
                     with VerticalScroll():
                         yield Markdown("### Web Search/Scraping Is Not Currently Installed\n\n...")
+                        
+            # Embeddings views
+            # Create Embeddings View
+            with Container(id=SEARCH_VIEW_EMBEDDINGS_CREATE, classes="search-view-area"):
+                try:
+                    from ..UI.Embeddings_Creation_Content import EmbeddingsCreationContent
+                    yield EmbeddingsCreationContent(app_instance=self.app_instance)
+                except ImportError:
+                    # If the refactored component doesn't exist yet, show a placeholder
+                    yield Static(
+                        "⚠️ Embeddings creation view is being migrated.\n\n"
+                        "This functionality will be available soon.",
+                        classes="embeddings-unavailable-message"
+                    )
+                    
+            # Manage Embeddings View
+            with Container(id=SEARCH_VIEW_EMBEDDINGS_MANAGE, classes="search-view-area"):
+                try:
+                    from ..UI.Embeddings_Management_Window import EmbeddingsManagementWindow
+                    yield EmbeddingsManagementWindow(app_instance=self.app_instance)
+                except ImportError as e:
+                    logger.warning(f"Could not import EmbeddingsManagementWindow: {e}")
+                    yield Static(
+                        "⚠️ Embeddings Management functionality is not available.\n\n"
+                        f"Error: {str(e)}",
+                        classes="embeddings-unavailable-message"
+                    )
 
     # --- HELPER METHODS ---
 

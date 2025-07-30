@@ -536,21 +536,21 @@ class EvalsWindow(Container):
             prompt_input.value.strip()
         )
     
-    async def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
-        """Handle clicks on token links in markdown."""
+    @on(Button.Pressed, ".token-button")
+    def handle_token_button_press(self, event: Button.Pressed) -> None:
+        """Handle clicks on token buttons."""
         event.stop()  # Stop event propagation
-        event.prevent_default()  # Prevent default link behavior
         
-        # Only handle token links in the logits view
-        if self.evals_active_view == EVALS_VIEW_LOGITS and event.href.startswith("token:"):
+        # Only handle token buttons in the logits view
+        if self.evals_active_view == EVALS_VIEW_LOGITS and event.button.id and event.button.id.startswith("token-btn-"):
             try:
-                token_index = int(event.href.replace("token:", ""))
+                token_index = int(event.button.id.replace("token-btn-", ""))
                 self._select_token(token_index)
-                logger.debug(f"Selected token {token_index} via markdown link")
+                logger.debug(f"Selected token {token_index} via button press")
             except ValueError:
-                logger.error(f"Invalid token link: {event.href}")
+                logger.error(f"Invalid token button ID: {event.button.id}")
             except Exception as e:
-                logger.error(f"Error selecting token from link: {e}")
+                logger.error(f"Error selecting token from button: {e}")
     
     # --- Cost Estimation Updates ---
     @on(Input.Changed, "#max-samples-input")
@@ -932,6 +932,10 @@ class EvalsWindow(Container):
             logits_container = self.query_one("#logits-table-container")
             logits_container.remove_children()
             
+            # Clear any existing token buttons list
+            if hasattr(self, '_token_buttons'):
+                self._token_buttons.clear()
+            
             # Get advanced settings
             temp_input = self.query_one("#logits-temperature-input", Input)
             top_logprobs_input = self.query_one("#logits-top-logprobs-input", Input)
@@ -941,16 +945,16 @@ class EvalsWindow(Container):
             top_logprobs = int(top_logprobs_input.value) if top_logprobs_input.value else 10
             max_tokens = int(max_tokens_input.value) if max_tokens_input.value else 100
             
-            # Create markdown widget for token display
-            from textual.widgets import Markdown
-            self._token_markdown = Markdown("", classes="token-markdown", inline=True)
-            token_container.mount(self._token_markdown)
+            # Create container for token buttons
+            from textual.containers import Horizontal
+            self._token_button_container = Horizontal(classes="token-button-container")
+            token_container.mount(self._token_button_container)
             
             # Store references for updates
             self._logits_token_container = token_container
             self._logits_table_container = logits_container
             self._collected_tokens = []
-            self._token_buffer = []  # Buffer for building markdown text
+            self._token_buttons = []  # List of button widgets
             self._selected_token_index = None
             
             # Create message for the chat
@@ -1100,19 +1104,20 @@ class EvalsWindow(Container):
                 "index": token_index
             })
             
-            # Escape markdown special characters in the token text
-            escaped_text = text_chunk.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+            # Create a button for this token
+            token_button = Button(
+                text_chunk,
+                id=f"token-btn-{token_index}",
+                classes="token-button"
+            )
             
-            # Add token to buffer as a clickable link with space separator
+            # Add selected class if this is the selected token
             if token_index == self._selected_token_index:
-                # Highlight selected token
-                self._token_buffer.append(f"**[{escaped_text}](token:{token_index})**")
-            else:
-                self._token_buffer.append(f"[{escaped_text}](token:{token_index})")
+                token_button.add_class("selected")
             
-            # Update markdown display - join with spaces for better readability
-            markdown_text = " ".join(self._token_buffer)
-            self._token_markdown.update(markdown_text)
+            # Store button reference and mount it
+            self._token_buttons.append(token_button)
+            self._token_button_container.mount(token_button)
             
         except Exception as e:
             logger.error(f"Error handling logits chunk: {e}")
@@ -1123,19 +1128,12 @@ class EvalsWindow(Container):
             # Update selected state
             self._selected_token_index = token_index
             
-            # Rebuild markdown with updated selection
-            self._token_buffer = []
-            for i, token in enumerate(self._collected_tokens):
-                escaped_text = token["text"].replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+            # Update button states
+            for i, button in enumerate(self._token_buttons):
                 if i == token_index:
-                    # Highlight selected token
-                    self._token_buffer.append(f"**[{escaped_text}](token:{i})**")
+                    button.add_class("selected")
                 else:
-                    self._token_buffer.append(f"[{escaped_text}](token:{i})")
-            
-            # Update markdown display - join with spaces
-            markdown_text = " ".join(self._token_buffer)
-            self._token_markdown.update(markdown_text)
+                    button.remove_class("selected")
             
             # Display logprobs for selected token
             token_data = self._collected_tokens[token_index]
@@ -1176,29 +1174,18 @@ class EvalsWindow(Container):
                     widgets_to_mount = []
                     
                     for item in top_logprobs[:10]:  # Show top 10
-                        # Create logit item container
-                        logit_container = Container(classes="logit-item")
-                        
                         # Token text
                         token_text = item.get("token", "")
-                        token_static = Static(f'"{token_text}"', classes="logit-token")
-                        
                         # Probability and logprob value
                         logprob = item.get("logprob", 0)
                         probability = math.exp(logprob) * 100
-                        prob_static = Static(f"{probability:.2f}%", classes="logit-probability")
-                        logprob_static = Static(f"(logprob: {logprob:.3f})", classes="logit-value")
                         
-                        # Mount children to container before adding to list
-                        logit_container.compose_add_child(token_static)
-                        logit_container.compose_add_child(prob_static)
-                        logit_container.compose_add_child(logprob_static)
+                        # Use a single Static widget with formatted text
+                        logit_text = f'"{token_text}"    {probability:.2f}%    (logprob: {logprob:.3f})'
+                        logit_widget = Static(logit_text, classes="logit-item-text")
                         
-                        widgets_to_mount.append(logit_container)
-                    
-                    # Mount all widgets at once
-                    if widgets_to_mount:
-                        self._logits_table_container.mount(*widgets_to_mount)
+                        # Mount the widget directly
+                        self._logits_table_container.mount(logit_widget)
                 else:
                     self._logits_table_container.mount(
                         Static("No alternative tokens available", classes="placeholder-text")
@@ -1629,7 +1616,7 @@ class EvalsWindow(Container):
                         
                         # Logits table
                         yield Static("Top Alternatives", classes="section-title")
-                        with VerticalScroll(id="logits-table-container", classes="logits-table-container"):
+                        with Container(id="logits-table-container", classes="logits-table-container"):
                             yield Static("Select a token to see alternatives...", id="logits-table-placeholder", classes="placeholder-text")
 
             # Add footer with helpful information

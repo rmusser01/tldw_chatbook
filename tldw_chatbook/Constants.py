@@ -19,7 +19,6 @@ TAB_NOTES = "notes"
 TAB_MEDIA = "media"
 TAB_SEARCH = "search"
 TAB_INGEST = "ingest"
-TAB_EMBEDDINGS = "embeddings"
 TAB_EVALS = "evals"
 TAB_LLM = "llm_management"
 TAB_TOOLS_SETTINGS = "tools_settings"
@@ -29,7 +28,7 @@ TAB_CODING = "coding"
 TAB_STTS = "stts"
 TAB_SUBSCRIPTIONS = "subscriptions"
 ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
-            TAB_EMBEDDINGS, TAB_EVALS, TAB_LLM, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_STATS, TAB_STTS, TAB_SUBSCRIPTIONS]
+            TAB_EVALS, TAB_LLM, TAB_STTS, TAB_SUBSCRIPTIONS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_STATS]
 
 # --- TLDW API Form Specific Option Containers (IDs) ---
 TLDW_API_VIDEO_OPTIONS_ID = "tldw-api-video-options"

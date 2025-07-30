@@ -73,7 +73,7 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_EMBEDDINGS, TAB_STTS, TAB_SUBSCRIPTIONS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_SUBSCRIPTIONS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -142,14 +142,15 @@ from .UI.STTS_Window import STTSWindow
 from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
-from .UI.Embeddings_Window import EmbeddingsWindow
 from .UI.Subscription_Window import SubscriptionWindow
 from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
     SEARCH_VIEW_RAG_QA,
     SEARCH_NAV_RAG_QA,
     SEARCH_NAV_RAG_CHAT,
     SEARCH_NAV_RAG_MANAGEMENT,
-    SEARCH_NAV_WEB_SEARCH
+    SEARCH_NAV_WEB_SEARCH,
+    SEARCH_NAV_EMBEDDINGS_CREATE,
+    SEARCH_NAV_EMBEDDINGS_MANAGE
 )
 API_IMPORTS_SUCCESSFUL = True
 #
@@ -997,9 +998,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     llm_active_view: reactive[Optional[str]] = reactive(None)
     _initial_llm_view: Optional[str] = "llm-view-llama-cpp"
     
-    # Embeddings Tab
-    embeddings_active_view: reactive[Optional[str]] = reactive("embeddings-view-create")
-    _initial_embeddings_view: Optional[str] = "embeddings-view-create"
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
     vllm_server_process: Optional[subprocess.Popen] = None
@@ -1331,6 +1329,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                                                          reactive_attr="search_active_sub_tab"),
             SEARCH_NAV_WEB_SEARCH: functools.partial(_handle_nav, prefix="search",
                                                      reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_EMBEDDINGS_CREATE: functools.partial(_handle_nav, prefix="search", 
+                                                           reactive_attr="search_active_sub_tab"),
+            SEARCH_NAV_EMBEDDINGS_MANAGE: functools.partial(_handle_nav, prefix="search",
+                                                           reactive_attr="search_active_sub_tab"),
             **search_events.SEARCH_BUTTON_HANDLERS,
         }
 
@@ -1391,12 +1393,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_SEARCH: search_handlers,
             TAB_EVALS: evals_handlers,
             TAB_CODING: {},  # Empty for now - coding handles its own events
-            TAB_EMBEDDINGS: {
-                "embeddings-nav-create": functools.partial(_handle_nav, prefix="embeddings",
-                                                           reactive_attr="embeddings_active_view"),
-                "embeddings-nav-manage": functools.partial(_handle_nav, prefix="embeddings",
-                                                           reactive_attr="embeddings_active_view"),
-            },
             TAB_STTS: {}, # STTS handles its own events
             TAB_SUBSCRIPTIONS: {
                 "subscription-add-button": subscription_events.handle_add_subscription,
@@ -1521,7 +1517,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("logs", LogsWindow, "logs-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
-            ("embeddings", EmbeddingsWindow, "embeddings-window"),
             ("stts", STTSWindow, "stts-window"),
             ("subscriptions", SubscriptionWindow, "subscriptions-window"),
         ]
@@ -1599,7 +1594,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("logs", LogsWindow, "logs-window"),
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
-            ("embeddings", EmbeddingsWindow, "embeddings-window"),
             ("stts", STTSWindow, "stts-window"),
         ]
         
@@ -2429,51 +2423,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.loguru_logger.error(f"UI component '{new_view}' not found in #llm-content-pane: {e}",
                                          exc_info=True)
     
-    def watch_embeddings_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
-        """Shows the correct view in the Embeddings tab and hides others."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        
-        self.loguru_logger.debug(f"Embeddings active view changing from '{old_view}' to: '{new_view}'")
-        
-        try:
-            content_pane = self.query_one("#embeddings-content-pane")
-        except QueryError:
-            self.loguru_logger.error("#embeddings-content-pane not found. Cannot switch Embeddings views.")
-            return
-        
-        # Hide all views first
-        for child in content_pane.query(".embeddings-view-area"):
-            child.styles.display = "none"
-        
-        if new_view:
-            try:
-                target_view_id_selector = f"#{new_view}"
-                view_to_show = content_pane.query_one(target_view_id_selector, Container)
-                view_to_show.styles.display = "block"
-                self.loguru_logger.info(f"Switched Embeddings view to: {new_view}")
-                
-                # Update navigation button styles
-                try:
-                    nav_pane = self.query_one("#embeddings-nav-pane")
-                    for button in nav_pane.query(".embeddings-nav-button"):
-                        button.remove_class("-active")
-                    
-                    # Add active class to the clicked button
-                    button_id = new_view.replace("-view-", "-nav-")
-                    active_button = nav_pane.query_one(f"#{button_id}", Button)
-                    active_button.add_class("-active")
-                except QueryError as e:
-                    self.loguru_logger.warning(f"Could not update navigation button styles: {e}")
-                    
-            except QueryError as e:
-                self.loguru_logger.error(f"UI component '{new_view}' not found in #embeddings-content-pane: {e}",
-                                         exc_info=True)
-        else:
-            self.loguru_logger.debug("Embeddings active view is None, all views hidden.")
-
     def watch_current_chat_is_ephemeral(self, is_ephemeral: bool) -> None:
         self.loguru_logger.debug(f"Chat ephemeral state changed to: {is_ephemeral}")
         if not hasattr(self, "app") or not self.app:  # Check if app is ready
@@ -3388,12 +3337,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         elif new_tab == TAB_EVALS: # Added for Evals tab
             # Placeholder for any specific actions when Evals tab is selected
             pass
-        elif new_tab == TAB_EMBEDDINGS:
-            if not self.embeddings_active_view:
-                self.loguru_logger.debug(
-                    f"Switched to Embeddings tab, activating initial view: {self._initial_embeddings_view}")
-                self.call_later(setattr, self, 'embeddings_active_view', self._initial_embeddings_view)
-            # For example, if EvalsWindow has sub-views or needs initial data loading:
             # if not self.evals_active_view: # Assuming an 'evals_active_view' reactive
             #     self.loguru_logger.debug(f"Switched to Evals tab, activating initial view...")
             #     self.call_later(setattr, self, 'evals_active_view', self._initial_evals_view) # Example
