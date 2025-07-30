@@ -123,7 +123,6 @@ class ChatWindowEnhanced(Container):
         # Map of button IDs to their handler functions
         button_handlers = {
             "send-stop-chat": self.handle_send_stop_button,  # New unified handler
-            "respond-for-me-button": chat_events.handle_respond_for_me_button_pressed,
             "toggle-chat-left-sidebar": chat_events.handle_chat_tab_sidebar_toggle,
             "toggle-chat-right-sidebar": chat_events.handle_chat_tab_sidebar_toggle,
             "chat-new-conversation-button": chat_events.handle_chat_new_conversation_button_pressed,
@@ -498,13 +497,6 @@ class ChatWindowEnhanced(Container):
                             classes="action-button attach-button",
                             tooltip="Attach file"
                         )
-                    yield Button(
-                        "💡", 
-                        id="respond-for-me-button", 
-                        classes="action-button suggest-button",
-                        tooltip="Suggest a response"
-                    )
-                    logger.debug("'respond-for-me-button' composed.")
 
         # Right sidebar toggle button
         yield Button(
@@ -578,12 +570,9 @@ class ChatWindowEnhanced(Container):
             # Get all the buttons in the desired order (sidebar toggles are no longer here)
             send_stop_button = self.query_one("#send-stop-chat", Button)
             attach_button = self.query_one("#attach-image", Button)
-            respond_button = self.query_one("#respond-for-me-button", Button)
             
             # Move them to the end in the correct order
-            await send_stop_button.move(parent=input_area, after=-1)
-            await attach_button.move(parent=input_area, after=-1)
-            await respond_button.move(parent=input_area, after=-1)
+            send_stop_button.move_after(attach_button)
             
         except Exception as e:
             logger.debug(f"Could not rearrange buttons: {e}")

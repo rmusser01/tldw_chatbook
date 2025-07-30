@@ -97,21 +97,20 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         # Enhanced Header with Mode Toggle and Search
         # -------------------------------------------------------------------
         yield Static("Chat Settings", classes="sidebar-title")
-        
-        # Mode toggle container
-        with Horizontal(id=f"{id_prefix}-mode-toggle-container", classes="mode-toggle-container"):
-            yield Label("Basic", classes="mode-label")
-            yield Switch(
-                value=False,  # False = Basic, True = Advanced
-                id=f"{id_prefix}-settings-mode-toggle",
-                classes="settings-mode-toggle"
-            )
-            yield Label("Advanced", classes="mode-label")
 
         # -------------------------------------------------------------------
         # Quick Settings (Always visible)
         # -------------------------------------------------------------------
         with Collapsible(title="Quick Settings", collapsed=False, id=f"{id_prefix}-quick-settings", classes="settings-collapsible basic-mode advanced-mode"):
+            # Mode toggle container - moved inside Quick Settings
+            with Horizontal(id=f"{id_prefix}-mode-toggle-container", classes="mode-toggle-container"):
+                yield Label("Basic", classes="mode-label")
+                yield Switch(
+                    value=False,  # False = Basic, True = Advanced
+                    id=f"{id_prefix}-settings-mode-toggle",
+                    classes="settings-mode-toggle"
+                )
+                yield Label("Advanced", classes="mode-label")
             yield Static("Provider & Model", classes="sidebar-label")
             provider_options = [(provider, provider) for provider in available_providers]
             yield Select(

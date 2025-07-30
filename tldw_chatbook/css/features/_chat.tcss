@@ -300,10 +300,11 @@
 /* Mode toggle container */
 .mode-toggle-container {
     layout: horizontal;
-    height: 3;
+    height: 4;  /* Increased height to prevent cutoff */
     width: 100%;
     align: center middle;
     margin-bottom: 1;
+    padding: 0 0 1 0;  /* Add bottom padding */
 }
 
 /* Mode labels */
@@ -315,6 +316,23 @@
 /* Settings mode toggle switch */
 .settings-mode-toggle {
     margin: 0 1;
+    /* Custom styling for better visibility */
+    background: $panel;
+    border: solid $primary;
+}
+
+/* Switch widget styling for better visibility */
+.settings-mode-toggle > .switch--slider {
+    background: $primary;  /* Neutral blue when off (Basic mode) */
+}
+
+.settings-mode-toggle.-on > .switch--slider {
+    background: $accent;  /* Accent color when on (Advanced mode) */
+}
+
+/* Switch thumb/handle styling */
+.settings-mode-toggle .switch--slider {
+    border: solid $primary;
 }
 
 /* Settings search input */

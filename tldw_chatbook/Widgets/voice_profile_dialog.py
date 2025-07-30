@@ -159,7 +159,7 @@ class VoiceProfileDialog(ModalScreen):
                         ("ja", "Japanese"),
                         ("ko", "Korean"),
                     ],
-                    value=self.profile_data.get("language", "en"),
+                    value=self.profile_data.get("language") or "en",
                     id="language-select"
                 )
             

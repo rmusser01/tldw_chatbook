@@ -1688,6 +1688,15 @@ Message ID: {conversation_context["message_id"] or 'N/A'}
         button_event = Button.Pressed(button)
         # Call the continue response handler
         await handle_continue_response_button_pressed(app, button_event, action_widget)
+    
+    elif "suggest-response-button" in button_classes and message_role == "AI":
+        loguru_logger.info(
+            f"Action: Suggest Response clicked for AI message ID: {getattr(action_widget, 'message_id_internal', 'N/A')}"
+        )
+        # Create a Button.Pressed event for the suggest handler
+        button_event = Button.Pressed(button)
+        # Call the respond for me handler
+        await handle_respond_for_me_button_pressed(app, button_event)
 async def handle_chat_new_temp_chat_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle New Temp Chat button - creates an ephemeral chat."""
     loguru_logger.info("New Temp Chat button pressed.")

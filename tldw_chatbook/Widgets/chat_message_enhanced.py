@@ -284,6 +284,7 @@ class ChatMessageEnhanced(Widget):
                     yield Button(thumb_down_label, classes="action-button thumb-down-button", id="thumb-down", tooltip="Mark as unhelpful")
                     yield Button("🔄", classes="action-button regenerate-button", id="regenerate", tooltip="Regenerate response")
                     yield Button("↪️", id="continue-response-button", classes="action-button continue-button", tooltip="Continue response")
+                    yield Button("💡", classes="action-button suggest-response-button", id="suggest-response", tooltip="Suggest a response")
                 
                 # Delete button
                 yield Button("🗑️", classes="action-button delete-button", tooltip="Delete message")
