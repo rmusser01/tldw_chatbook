@@ -87,6 +87,10 @@ class StatusDashboard(Widget):
     
     def watch_status_message(self, new_message: str) -> None:
         """Update status message display."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             message_label = self.query_one("#status-message", Label)
             message_label.update(new_message)
@@ -95,6 +99,10 @@ class StatusDashboard(Widget):
     
     def watch_is_processing(self, is_processing: bool) -> None:
         """React to processing state changes."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             progress_bar = self.query_one("#progress-bar", ProgressBar)
             action_buttons = self.query_one("#action-buttons", Container)
@@ -134,6 +142,10 @@ class StatusDashboard(Widget):
     
     def watch_progress_value(self, progress: float) -> None:
         """Update progress bar."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             progress_bar = self.query_one("#progress-bar", ProgressBar)
             progress_bar.progress = progress
@@ -142,16 +154,28 @@ class StatusDashboard(Widget):
     
     def watch_current_file(self, current: int) -> None:
         """Update file counter."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         if self.show_file_counter:
             self._update_file_counter()
     
     def watch_total_files(self, total: int) -> None:
         """Update file counter."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         if self.show_file_counter:
             self._update_file_counter()
     
     def watch_has_errors(self, has_errors: bool) -> None:
         """Update error display."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             alert_container = self.query_one("#alert-container", Container)
             if has_errors and (self.errors or self.warnings):

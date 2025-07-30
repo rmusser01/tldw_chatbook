@@ -176,14 +176,14 @@ class TranscriptionHistoryViewer(Widget):
                 with Horizontal(classes="filter-controls"):
                     yield Select(
                         options=[
-                            ("All Languages", ""),
+                            ("All Languages", "all"),  # Changed empty string to "all"
                             ("English", "en"),
                             ("Spanish", "es"),
                             ("French", "fr"),
                             ("German", "de"),
                         ],
                         id="language-filter",
-                        value=""
+                        value="all"
                     )
                     
                     yield Select(
@@ -321,7 +321,7 @@ class TranscriptionHistoryViewer(Widget):
         self.current_entries = await self.run_worker(
             self.history.get_entries,
             search=search if search else None,
-            language=language if language else None,
+            language=language if language != "all" else None,  # Handle "all" filter
             start_date=start_date
         ).wait()
         

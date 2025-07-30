@@ -221,6 +221,10 @@ class IngestLocalPlaintextWindowSimplified(Vertical):
     
     def watch_simple_mode(self, simple_mode: bool) -> None:
         """React to mode toggle changes."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             basic_options = self.query_one("#plaintext-basic-options")
             advanced_options = self.query_one("#plaintext-advanced-options")

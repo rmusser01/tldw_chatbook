@@ -424,6 +424,8 @@ EvalsWindow {
 }
 
 .cost-display {
+    /* Base styles for cost display */
+}
 
 .cost-display.muted {
     color: $text-muted;

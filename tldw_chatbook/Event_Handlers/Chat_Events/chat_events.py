@@ -784,34 +784,50 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         # For images, check if model supports vision
         vision_capable = is_vision_capable(selected_provider, selected_model)
         loguru_logger.info(f"DEBUG: Vision capability check - provider: {selected_provider}, model: {selected_model}, is_vision_capable: {vision_capable}")
-        if file_type == 'image' and vision_capable:
-            try:
-                import base64
-                media_content_for_api = {
-                    "base64_data": base64.b64encode(pending_attachment['data']).decode(),
-                    "mime_type": pending_attachment['mime_type']
-                }
-                loguru_logger.info(f"Including image attachment in API call (type: {pending_attachment['mime_type']}, size: {len(pending_attachment['data'])} bytes)")
-            except Exception as e:
-                loguru_logger.error(f"Failed to prepare image attachment for API: {e}")
-                # Continue without image
+        if file_type == 'image':
+            if vision_capable:
+                try:
+                    import base64
+                    media_content_for_api = {
+                        "base64_data": base64.b64encode(pending_attachment['data']).decode(),
+                        "mime_type": pending_attachment['mime_type']
+                    }
+                    loguru_logger.info(f"Including image attachment in API call (type: {pending_attachment['mime_type']}, size: {len(pending_attachment['data'])} bytes)")
+                    # Notify user that image is being sent
+                    app.notify(f"Sending image with message ({pending_attachment.get('display_name', 'image')})", severity="information", timeout=2)
+                except Exception as e:
+                    loguru_logger.error(f"Failed to prepare image attachment for API: {e}")
+                    app.notify("Failed to prepare image attachment", severity="error")
+                    # Continue without image
+            else:
+                # Model doesn't support vision
+                loguru_logger.warning(f"Model {selected_model} does not support vision. Image attachment will be ignored.")
+                app.notify(f"⚠️ {selected_model} doesn't support images. Image not sent.", severity="warning", timeout=5)
         else:
             # For non-image attachments, we could potentially handle them differently in the future
             # For now, log that we have an attachment but it's not being sent
             loguru_logger.debug(f"Attachment of type '{file_type}' present but not included in API call")
     
     # Fall back to legacy pending_image if no attachment
-    elif pending_image and is_vision_capable(selected_provider, selected_model):
-        try:
-            import base64
-            media_content_for_api = {
-                "base64_data": base64.b64encode(pending_image['data']).decode(),
-                "mime_type": pending_image['mime_type']
-            }
-            loguru_logger.info(f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
-        except Exception as e:
-            loguru_logger.error(f"Failed to prepare image for API (legacy): {e}")
-            # Continue without image
+    elif pending_image:
+        vision_capable = is_vision_capable(selected_provider, selected_model)
+        loguru_logger.info(f"DEBUG: Legacy image path - vision_capable: {vision_capable}")
+        if vision_capable:
+            try:
+                import base64
+                media_content_for_api = {
+                    "base64_data": base64.b64encode(pending_image['data']).decode(),
+                    "mime_type": pending_image['mime_type']
+                }
+                loguru_logger.info(f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)")
+                app.notify(f"Sending image with message", severity="information", timeout=2)
+            except Exception as e:
+                loguru_logger.error(f"Failed to prepare image for API (legacy): {e}")
+                app.notify("Failed to prepare image", severity="error")
+                # Continue without image
+        else:
+            loguru_logger.warning(f"Model {selected_model} does not support vision. Image will be ignored.")
+            app.notify(f"⚠️ {selected_model} doesn't support images. Image not sent.", severity="warning", timeout=5)
 
     # Log API parameters for debugging
     api_params = {
@@ -841,7 +857,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     worker_target = lambda: app.chat_wrapper(
         message=message_text_with_world_info, # Current user utterance with RAG context and world info
         history=chat_history_for_api,    # History *before* current utterance
-        media_content=media_content_for_api, # Pass media content as expected by chat function
+        media_content={}, # Empty dict - media_content is for RAG text, not images
         api_endpoint=selected_provider,
         api_key=api_key_for_call,
         custom_prompt=custom_prompt,

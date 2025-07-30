@@ -128,15 +128,13 @@ class IngestLocalPdfWindowSimplified(Vertical):
                     yield Label("Custom Analysis Prompt:")
                     yield TextArea(
                         id="local-custom-prompt-pdf",
-                        classes="ingest-textarea-medium",
-                        placeholder="Provide specific instructions for analysis..."
+                        classes="ingest-textarea-medium"
                     )
                     
-                    yield Label("System Prompt:")
+                    yield Label("System Prompt (Optional):")
                     yield TextArea(
                         id="local-system-prompt-pdf",
-                        classes="ingest-textarea-medium",
-                        placeholder="Optional system prompt for analysis..."
+                        classes="ingest-textarea-medium"
                     )
                     
                     yield Label("Analysis Provider:")
@@ -208,6 +206,10 @@ class IngestLocalPdfWindowSimplified(Vertical):
     
     def watch_simple_mode(self, simple_mode: bool) -> None:
         """React to mode toggle changes."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             basic_options = self.query_one("#pdf-basic-options")
             advanced_options = self.query_one("#pdf-advanced-options")

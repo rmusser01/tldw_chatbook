@@ -53,18 +53,13 @@ class VoiceInputButton(Widget):
         width: 3;
         height: 3;
         background: $error;
-        border-radius: 50%;
+        border: round $error;
         margin: 0 1;
     }
     
     .recording-indicator.pulse {
-        animation: pulse 1s infinite;
-    }
-    
-    @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.5; }
-        100% { opacity: 1; }
+        /* Textual doesn't support CSS animations yet */
+        opacity: 0.8;
     }
     
     .status-text {

@@ -425,8 +425,161 @@ class LazyLiveDictationService:
         save_setting_to_cli_config('dictation', 'buffer_duration_ms', self.buffer_duration_ms)
         logger.info(f"Buffer duration set to {self.buffer_duration_ms}ms")
     
+    def _process_audio_buffer(self, audio_data: bytes):
+        """Process audio buffer for transcription."""
+        try:
+            if not self.transcription_service:
+                return
+                
+            # Convert audio data to format expected by transcription service
+            # This is a simplified version - actual implementation may need format conversion
+            result = self.transcription_service.transcribe(audio_data)
+            
+            if result and result.get('text'):
+                text = result['text'].strip()
+                if text:
+                    self.current_transcript = text
+                    
+                    # Notify partial transcript
+                    if self.on_partial_transcript:
+                        try:
+                            self.on_partial_transcript(text)
+                        except Exception as e:
+                            logger.error(f"Partial transcript callback error: {e}")
+                    
+                    # Check for commands if enabled
+                    if self.enable_commands and self.on_command:
+                        command = self._detect_command(text)
+                        if command:
+                            try:
+                                self.on_command(command)
+                            except Exception as e:
+                                logger.error(f"Command callback error: {e}")
+                                
+        except Exception as e:
+            logger.error(f"Audio processing error: {e}")
+            self._notify_error(e)
+    
+    def _finalize_current_segment(self):
+        """Finalize the current transcript segment."""
+        if self.current_transcript:
+            # Add to segments
+            self.transcript_segments.append({
+                'text': self.current_transcript,
+                'timestamp': time.time()
+            })
+            
+            # Notify final transcript
+            if self.on_final_transcript:
+                try:
+                    self.on_final_transcript(self.current_transcript)
+                except Exception as e:
+                    logger.error(f"Final transcript callback error: {e}")
+            
+            # Clear current
+            self.current_transcript = ""
+    
+    def _detect_command(self, text: str) -> Optional[str]:
+        """Detect voice commands in transcript."""
+        text_lower = text.lower()
+        
+        # Common voice commands
+        commands = {
+            "stop dictation": "stop",
+            "new paragraph": "new_paragraph",
+            "new line": "new_line",
+            "clear all": "clear",
+            "undo": "undo"
+        }
+        
+        for phrase, command in commands.items():
+            if phrase in text_lower:
+                return command
+        
+        return None
+    
+    def stop_dictation(self) -> DictationResult:
+        """Stop dictation and return results."""
+        logger.info("Stopping dictation...")
+        
+        # Change state
+        with self.state_lock:
+            if self.state != DictationState.LISTENING:
+                logger.warning("Dictation not active")
+                return DictationResult(
+                    transcript="",
+                    segments=[],
+                    duration=0.0
+                )
+            self.state = DictationState.IDLE
+        
+        # Stop processing
+        if self.stop_processing:
+            self.stop_processing.set()
+        
+        # Wait for processing thread to finish
+        if self.processing_thread and self.processing_thread.is_alive():
+            self.processing_thread.join(timeout=2.0)
+        
+        # Finalize any remaining transcript
+        self._finalize_current_segment()
+        
+        # Calculate duration
+        duration = time.time() - self.start_time if self.start_time else 0.0
+        
+        # Build final transcript
+        final_transcript = " ".join(
+            seg['text'] for seg in self.transcript_segments
+        )
+        
+        # Create result
+        result = DictationResult(
+            transcript=final_transcript,
+            segments=self.transcript_segments.copy(),
+            duration=duration
+        )
+        
+        # Cleanup
+        self._cleanup()
+        
+        word_count = len(result.transcript.split()) if result.transcript else 0
+        logger.info(f"Dictation stopped. Words: {word_count}, Duration: {result.duration:.1f}s")
+        return result
+    
+    def pause_dictation(self):
+        """Pause dictation (temporarily stop processing)."""
+        with self.state_lock:
+            if self.state == DictationState.LISTENING:
+                self.state = DictationState.PAUSED
+                self._notify_state_change()
+                logger.info("Dictation paused")
+    
+    def resume_dictation(self):
+        """Resume paused dictation."""
+        with self.state_lock:
+            if self.state == DictationState.PAUSED:
+                self.state = DictationState.LISTENING
+                self._notify_state_change()
+                logger.info("Dictation resumed")
+    
+    def update_privacy_settings(self, settings: dict):
+        """Update privacy settings dynamically."""
+        self.privacy_settings.update(settings)
+        save_setting_to_cli_config('dictation.privacy', 'local_only', settings.get('local_only', True))
+        save_setting_to_cli_config('dictation.privacy', 'save_history', settings.get('save_history', False))
+        save_setting_to_cli_config('dictation.privacy', 'auto_clear_buffer', settings.get('auto_clear_buffer', True))
+        logger.info(f"Privacy settings updated: {settings}")
+    
     # Include other methods from original implementation with appropriate modifications...
     # (I'm including the key ones here, others remain similar)
+    
+    def _notify_state_change(self):
+        """Notify state change callback."""
+        if self.on_state_change:
+            try:
+                self.on_state_change(self.state)
+            except Exception as e:
+                logger.error(f"State change callback error: {e}")
     
     def _notify_error(self, error: Exception):
         """Notify error callback with sanitized error messages."""

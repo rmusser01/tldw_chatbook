@@ -519,7 +519,8 @@ $eval-accent: $accent;
 @keyframes pulse {
     0% { background: $eval-card-bg; }
     50% { background: $eval-hover-bg; }
-    100% {
+    100% { background: $eval-card-bg; }
+}
 
 /* --- Responsive Adjustments --- */
 @media (max-width: 100) {

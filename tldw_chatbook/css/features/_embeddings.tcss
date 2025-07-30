@@ -1185,6 +1185,8 @@ Select:hover {
 
 /* Toast animations */
 .toast-slide-in {
+    /* Animation properties would go here if needed */
+}
 
 /* ========================================
  * Detailed Progress Bar Styles
@@ -1278,7 +1280,6 @@ Select:hover {
     text-style: bold;
     text-align: center;
     margin-bottom: 2;
-
 }
 
 #embedding-template-selector-content {

@@ -9,7 +9,7 @@ from pathlib import Path
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
-from textual.widgets import Button, TextArea, Input, Static
+from textual.widgets import Button, TextArea, Input, Static, Select
 from textual.reactive import reactive
 #
 # Local Imports
@@ -140,6 +140,8 @@ class ChatWindowEnhanced(Container):
             "clear-image": self.handle_clear_image_button,
             # Notes expand/collapse handler
             "chat-notes-expand-button": self.handle_notes_expand_button,
+            # Voice input handler
+            "mic-button": self.handle_mic_button,
         }
 
         # Add sidebar button handlers
@@ -338,6 +340,27 @@ class ChatWindowEnhanced(Container):
                         'mime_type': processed_file.attachment_mime_type,
                         'path': file_path
                     }
+                    
+                    # Check if current model supports vision
+                    try:
+                        from ...model_capabilities import is_vision_capable
+                        provider_widget = self.app_instance.query_one("#chat-api-provider", Select)
+                        model_widget = self.app_instance.query_one("#chat-api-model", Select)
+                        
+                        selected_provider = str(provider_widget.value) if provider_widget.value != Select.BLANK else None
+                        selected_model = str(model_widget.value) if model_widget.value != Select.BLANK else None
+                        
+                        if selected_provider and selected_model:
+                            vision_capable = is_vision_capable(selected_provider, selected_model)
+                            if not vision_capable:
+                                self.app_instance.notify(
+                                    f"⚠️ {selected_model} doesn't support images. Select a vision model to send images.",
+                                    severity="warning",
+                                    timeout=6
+                                )
+                                logger.warning(f"User attached image but model {selected_provider}/{selected_model} doesn't support vision")
+                    except Exception as e:
+                        logger.debug(f"Could not check vision capability: {e}")
                 
                 # Update UI to show file is attached
                 try:
@@ -756,7 +779,7 @@ class ChatWindowEnhanced(Container):
             indicator = self.query_one("#image-attachment-indicator")
             indicator.add_class("hidden")
     
-    def handle_mic_button(self, event: Button.Pressed) -> None:
+    async def handle_mic_button(self, app_instance, event: Button.Pressed) -> None:
         """Handle microphone button press for voice input."""
         # Call the toggle action
         self.action_toggle_voice_input()

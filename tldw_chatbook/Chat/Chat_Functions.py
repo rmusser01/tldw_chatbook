@@ -1127,6 +1127,10 @@ def chat(
             logging.info(f"DEBUG: Adding image to current_user_content_parts: mime_type={current_image_input['mime_type']}, base64_data_length={len(current_image_input['base64_data'])}")
             image_url = f"data:{current_image_input['mime_type']};base64,{current_image_input['base64_data']}"
             current_user_content_parts.append({"type": "image_url", "image_url": {"url": image_url}})
+            logging.info(f"✅ Successfully added image to message payload for {api_endpoint}/{model}")
+        else:
+            if current_image_input:
+                logging.warning(f"Image input provided but missing required data: has_base64={bool(current_image_input.get('base64_data'))}, has_mime_type={bool(current_image_input.get('mime_type'))}")
 
         if not current_user_content_parts: # Should only happen if message, custom_prompt, RAG, and image are all empty/None
              logging.warning("Current user message has no text or image content parts. Sending a placeholder.")

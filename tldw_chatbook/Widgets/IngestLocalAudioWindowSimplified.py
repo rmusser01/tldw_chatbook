@@ -72,10 +72,10 @@ class IngestLocalAudioWindowSimplified(Vertical):
                     yield Button("Clear All", id="local-clear-files-audio", variant="default")
                 
                 # URL input
+                yield Label("Audio URLs (one per line):")
                 yield TextArea(
                     id="local-urls-audio", 
-                    classes="ingest-textarea-small",
-                    placeholder="Enter audio URLs (one per line)"
+                    classes="ingest-textarea-small"
                 )
                 
                 # Selected files display with metadata
@@ -178,8 +178,7 @@ class IngestLocalAudioWindowSimplified(Vertical):
                     yield Label("Custom Analysis Prompt:")
                     yield TextArea(
                         id="local-custom-prompt-audio",
-                        classes="ingest-textarea-medium",
-                        placeholder="Provide specific instructions for analysis..."
+                        classes="ingest-textarea-medium"
                     )
                     
                     yield Label("Analysis Provider:")
@@ -215,6 +214,10 @@ class IngestLocalAudioWindowSimplified(Vertical):
     
     def watch_simple_mode(self, simple_mode: bool) -> None:
         """React to mode toggle changes."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             basic_options = self.query_one("#audio-basic-options")
             advanced_options = self.query_one("#audio-advanced-options")
@@ -239,13 +242,18 @@ class IngestLocalAudioWindowSimplified(Vertical):
         from ..Utils.ingestion_preferences import save_ingestion_mode_preference
         save_ingestion_mode_preference("audio", self.simple_mode)
     
-    @work(thread=True)
-    async def _initialize_models(self) -> None:
+    def _initialize_models(self) -> None:
         """Initialize transcription models in background."""
         try:
+            # Check if the element exists before querying
+            provider_selects = self.query("#local-transcription-provider-audio")
+            if not provider_selects:
+                logger.debug("Transcription provider select not found - likely in simple mode")
+                return
+                
             # Get selected provider
-            provider_select = self.query_one("#local-transcription-provider-audio", Select)
-            if provider_select.value:
+            provider_select = provider_selects.first(Select)
+            if provider_select and provider_select.value:
                 models = self.transcription_service.get_models_for_provider(provider_select.value)
                 self._current_model_list = models
                 
@@ -285,7 +293,7 @@ class IngestLocalAudioWindowSimplified(Vertical):
     def on_mount(self) -> None:
         """Initialize when mounted."""
         # Initialize models in background
-        self.run_worker(self._initialize_models(), exclusive=True)
+        self.run_worker(self._initialize_models, exclusive=True, thread=True)
     
     @on(Button.Pressed, "#local-browse-local-files-button-audio")
     async def handle_browse_files(self, event: Button.Pressed) -> None:

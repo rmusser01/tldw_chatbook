@@ -80,10 +80,10 @@ class IngestLocalEbookWindowSimplified(Vertical):
                     yield Button("Clear All", id="local-clear-files-ebook", variant="default")
                 
                 # URL input
+                yield Label("Ebook URLs (one per line):")
                 yield TextArea(
                     id="local-urls-ebook", 
-                    classes="ingest-textarea-small",
-                    placeholder="Enter ebook URLs (one per line)"
+                    classes="ingest-textarea-small"
                 )
                 
                 # Selected files display with metadata
@@ -277,6 +277,10 @@ class IngestLocalEbookWindowSimplified(Vertical):
     
     def watch_simple_mode(self, simple_mode: bool) -> None:
         """React to mode toggle changes."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             basic_options = self.query_one("#ebook-basic-options")
             advanced_options = self.query_one("#ebook-advanced-options")

@@ -24,7 +24,7 @@ from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
-from tldw_chatbook.UI.Dictation_Window import DictationWindow
+from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow as DictationWindow
 # Note: Not using form_components due to generator/widget incompatibility
 
 import json

@@ -197,8 +197,10 @@ class VoiceInputWidget(Widget):
                     classes="transcript-preview"
                 )
             
-            # Status/error display
+            # Status message
             yield Static("", id="voice-status", classes="voice-status")
+            
+            # Error message
             yield Static("", id="voice-error", classes="voice-error")
     
     async def on_mount(self):
@@ -465,8 +467,12 @@ class VoiceInputWidget(Widget):
     
     def watch_error_message(self, error: str):
         """React to error message changes."""
-        error_display = self.query_one("#voice-error", Static)
-        error_display.update(error)
+        try:
+            error_display = self.query_one("#voice-error", Static)
+            error_display.update(error)
+        except Exception:
+            # Widget not ready yet
+            pass
     
     def get_transcript(self) -> str:
         """Get the current full transcript."""

@@ -327,13 +327,15 @@ class IngestWindowTabbed(Container):
         # Initialize models for local audio/video windows if they exist
         if self._local_video_window:
             self._local_video_window.run_worker(
-                self._local_video_window._initialize_models(),
-                exclusive=True
+                self._local_video_window._initialize_models,
+                exclusive=True,
+                thread=True
             )
         if self._local_audio_window:
             self._local_audio_window.run_worker(
-                self._local_audio_window._initialize_models(),
-                exclusive=True
+                self._local_audio_window._initialize_models,
+                exclusive=True,
+                thread=True
             )
     
     def action_switch_tab(self, tab_index: int) -> None:
@@ -346,17 +348,127 @@ class IngestWindowTabbed(Container):
         except Exception as e:
             logger.error(f"Error switching tab: {e}")
     
-    # Copy over necessary event handlers from original IngestWindow
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        button_id = event.button.id
-        if not button_id:
+    # Event handlers for file selection
+    @on(Button.Pressed, "#ingest-prompts-select-file-button")
+    async def handle_prompts_file_select(self, event: Button.Pressed) -> None:
+        """Handle prompts file selection."""
+        filters = Filters(
+            ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+            ("All Files", lambda _: True)
+        )
+        
+        await self.app.push_screen(
+            FileOpen(
+                title="Select Prompt Files",
+                filters=filters
+            ),
+            callback=lambda path: self._handle_file_selection(path, "prompts")
+        )
+    
+    @on(Button.Pressed, "#ingest-characters-select-file-button")
+    async def handle_characters_file_select(self, event: Button.Pressed) -> None:
+        """Handle characters file selection."""
+        filters = Filters(
+            ("Character Files", lambda p: p.suffix.lower() in (".json", ".yaml", ".yml", ".png", ".jpg", ".jpeg")),
+            ("All Files", lambda _: True)
+        )
+        
+        await self.app.push_screen(
+            FileOpen(
+                title="Select Character Files",
+                filters=filters
+            ),
+            callback=lambda path: self._handle_file_selection(path, "characters")
+        )
+    
+    @on(Button.Pressed, "#ingest-notes-select-file-button")
+    async def handle_notes_file_select(self, event: Button.Pressed) -> None:
+        """Handle notes file selection."""
+        filters = Filters(
+            ("Text Files", lambda p: p.suffix.lower() in (".txt", ".md", ".markdown")),
+            ("All Files", lambda _: True)
+        )
+        
+        await self.app.push_screen(
+            FileOpen(
+                title="Select Note Files",
+                filters=filters
+            ),
+            callback=lambda path: self._handle_file_selection(path, "notes")
+        )
+    
+    async def _handle_file_selection(self, path: Path | None, file_type: str) -> None:
+        """Handle file selection callback."""
+        if not path:
             return
         
-        # File selection button handling (similar to original)
-        # ... (copy relevant handlers from original IngestWindow)
+        # Update the appropriate file list
+        list_id = f"ingest-{file_type}-selected-files-list"
+        try:
+            file_list = self.query_one(f"#{list_id}", ListView)
+            
+            # Add file to list if not already present
+            file_items = [item.data for item in file_list.children if hasattr(item, 'data')]
+            if str(path) not in file_items:
+                file_list.append(ListItem(Label(path.name), data=str(path)))
+                
+                # Store in selected files
+                if file_type not in self.selected_local_files:
+                    self.selected_local_files[file_type] = []
+                self.selected_local_files[file_type].append(path)
+                
+                logger.debug(f"Added {path} to {file_type} selection")
+        except QueryError:
+            logger.error(f"Could not find file list {list_id}")
     
-    # ... (copy other necessary methods from original IngestWindow)
+    @on(Button.Pressed)
+    async def handle_clear_files(self, event: Button.Pressed) -> None:
+        """Handle clear files buttons."""
+        button_id = event.button.id
+        if not button_id or not button_id.endswith("-clear-files-button"):
+            return
+        
+        # Extract the file type from button ID
+        if "prompts" in button_id:
+            file_type = "prompts"
+        elif "characters" in button_id:
+            file_type = "characters"
+        elif "notes" in button_id:
+            file_type = "notes"
+        else:
+            return
+        
+        # Clear the file list
+        list_id = f"ingest-{file_type}-selected-files-list"
+        try:
+            file_list = self.query_one(f"#{list_id}", ListView)
+            file_list.clear()
+            
+            # Clear stored files
+            if file_type in self.selected_local_files:
+                self.selected_local_files[file_type].clear()
+                
+            logger.debug(f"Cleared {file_type} file selection")
+        except QueryError:
+            logger.error(f"Could not find file list {list_id}")
+    
+    @on(Button.Pressed, "#ingest-prompts-import-now-button")
+    async def handle_prompts_import(self, event: Button.Pressed) -> None:
+        """Handle prompts import."""
+        from ..Event_Handlers.ingest_events import handle_import_prompts
+        await handle_import_prompts(self.app_instance)
+    
+    @on(Button.Pressed, "#ingest-characters-import-now-button")
+    async def handle_characters_import(self, event: Button.Pressed) -> None:
+        """Handle characters import."""
+        from ..Event_Handlers.ingest_events import handle_import_characters
+        await handle_import_characters(self.app_instance)
+    
+    @on(Button.Pressed, "#ingest-notes-import-now-button")
+    async def handle_notes_import(self, event: Button.Pressed) -> None:
+        """Handle notes import."""
+        from ..Event_Handlers.ingest_events import handle_import_notes
+        await handle_import_notes(self.app_instance)
 
 #
 # End of Ingest_Window_Tabbed.py

@@ -123,15 +123,13 @@ class IngestLocalDocumentWindowSimplified(Vertical):
                     yield Label("Custom Analysis Prompt:")
                     yield TextArea(
                         id="ingest-local-document-custom-prompt",
-                        classes="ingest-textarea-medium",
-                        placeholder="Provide specific instructions for analysis..."
+                        classes="ingest-textarea-medium"
                     )
                     
-                    yield Label("System Prompt:")
+                    yield Label("System Prompt (Optional):")
                     yield TextArea(
                         id="ingest-local-document-system-prompt",
-                        classes="ingest-textarea-medium",
-                        placeholder="Optional system prompt for analysis..."
+                        classes="ingest-textarea-medium"
                     )
                     
                     yield Label("Analysis Provider:")
@@ -198,11 +196,15 @@ class IngestLocalDocumentWindowSimplified(Vertical):
                         id="ingest-local-document-use-multi-level-chunking"
                     )
             
-            # Status area
-            yield create_status_area("ingest-local-document")
+            # Status area for processing feedback
+            yield LoadingIndicator(id="ingest-local-document-loading", classes="hidden")
     
     def watch_simple_mode(self, simple_mode: bool) -> None:
         """React to mode toggle changes."""
+        # Only try to update UI if the widget is mounted
+        if not self.is_mounted:
+            return
+            
         try:
             basic_options = self.query_one("#document-basic-options")
             advanced_options = self.query_one("#document-advanced-options")
@@ -283,15 +285,5 @@ class IngestLocalDocumentWindowSimplified(Vertical):
         
         # Call the real processing function
         await handle_local_document_process(self.app_instance)
-
-def create_status_area(id_prefix: str) -> ComposeResult:
-    """Create a standard status area for ingestion forms."""
-    from ..Widgets.status_widget import EnhancedStatusWidget
-    
-    yield EnhancedStatusWidget(
-        title="Processing Status",
-        id=f"{id_prefix}-status-widget",
-        max_messages=50
-    )
 
 # End of IngestLocalDocumentWindowSimplified.py

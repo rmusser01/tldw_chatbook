@@ -15,6 +15,8 @@ from ..Widgets.notes_sidebar_right import NotesSidebarRight
 from ..Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
 # Import EmojiSelected and EmojiPickerScreen
 from ..Widgets.emoji_picker import EmojiSelected, EmojiPickerScreen
+from ..Widgets.voice_input_button import VoiceInputButton
+from ..Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
 # from ..Constants import TAB_NOTES # Not strictly needed if IDs are hardcoded here
 #
 if TYPE_CHECKING:
@@ -93,6 +95,39 @@ class NotesWindow(Container):
         """Callback for when the EmojiPickerScreen is dismissed."""
         if emoji_char: # If an emoji was selected (not cancelled)
             self.post_message(EmojiSelected(emoji_char))
+    
+    def on_insert_dictation_text_event(self, event: InsertDictationTextEvent) -> None:
+        """Handle dictation text insertion."""
+        if event.text:
+            try:
+                editor = self.query_one("#notes-editor-area", TextArea)
+                # Get current text and cursor position
+                current_text = editor.text
+                cursor_location = editor.cursor_location
+                row, col = cursor_location
+                
+                # Split text into lines
+                lines = current_text.split('\n') if current_text else ['']
+                
+                # Ensure we have enough lines
+                while len(lines) <= row:
+                    lines.append('')
+                
+                # Insert text at cursor position
+                line = lines[row]
+                lines[row] = line[:col] + event.text + line[col:]
+                
+                # Rejoin and update
+                new_text = '\n'.join(lines)
+                editor.load_text(new_text)
+                
+                # Move cursor after inserted text
+                new_col = col + len(event.text)
+                editor.cursor_location = (row, new_col)
+                
+            except Exception as e:
+                self.app.notify(f"Failed to insert voice input: {e}", severity="error")
+    
 
     # Added on_button_pressed to handle the new button
     def on_button_pressed(self, event: Button.Pressed) -> None:
