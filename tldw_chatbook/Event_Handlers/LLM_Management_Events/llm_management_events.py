@@ -453,44 +453,61 @@ def run_llamacpp_server_worker(app_instance: "TldwCli", command: List[str]) -> s
                 process.kill()
 
 
-# FIXME
-def run_model_download_worker(app_instance: "TldwCli", command: List[str]):
-    """Background worker that executes *command* to download a model.
-
-    The implementation simply shells‑out to **huggingface‑cli** so that we
-    do **not** add an unconditional *huggingface‑hub* dependency to
-    *tldw‑cli*.  Users that prefer the Python API can adapt this easily.
+class ModelDownloadWorker(Worker):
+    """Textual worker for downloading models using huggingface-cli.
+    
+    This worker executes the huggingface-cli command to download models
+    without adding a direct dependency on huggingface-hub.
     """
-
-    logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
-    logger.info("Model‑download worker begins: %s", " ".join(command))
-
-    try:
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            cwd=str(Path.home()),  # run in a writable location
-        )
-
-        app_instance.call_from_thread(
-            app_instance._update_model_download_log,
-            f"Download started (PID: {process.pid})…\n")
-        _stream_process(app_instance, "_update_model_download_log", process)
-        process.wait()
-        yield f"Download command exited with code: {process.returncode}\n"
-    except FileNotFoundError:
-        msg = "ERROR: huggingface‑cli (or specified executable) not found.\n"
-        logger.error(msg.rstrip())
-        app_instance.call_from_thread(app_instance._update_model_download_log, msg)
-        yield msg
-    except Exception as err:  # pragma: no cover
-        msg = f"ERROR in model‑download worker: {err}\n"
-        logger.error(msg.rstrip(), exc_info=True)
-        app_instance.call_from_thread(app_instance._update_model_download_log, msg)
-        yield msg
+    
+    def __init__(self, app_instance: "TldwCli", command: List[str]):
+        """
+        Initialize the worker.
+        
+        Args:
+            app_instance: The application instance
+            command: The command to execute
+        """
+        super().__init__()
+        self.app_instance = app_instance
+        self.command = command
+        self.logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+    
+    async def run(self):
+        """Run the model download process."""
+        self.logger.info("Model download worker begins: %s", " ".join(self.command))
+        
+        try:
+            process = subprocess.Popen(
+                self.command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=str(Path.home()),  # run in a writable location
+            )
+            
+            self.app_instance.call_from_thread(
+                self.app_instance._update_model_download_log,
+                f"Download started (PID: {process.pid})…\n")
+            
+            _stream_process(self.app_instance, "_update_model_download_log", process)
+            process.wait()
+            
+            final_message = f"Download command exited with code: {process.returncode}\n"
+            yield final_message
+            
+        except FileNotFoundError:
+            msg = "ERROR: huggingface‑cli (or specified executable) not found.\n"
+            self.logger.error(msg.rstrip())
+            self.app_instance.call_from_thread(self.app_instance._update_model_download_log, msg)
+            yield msg
+            
+        except Exception as err:  # pragma: no cover
+            msg = f"ERROR in model‑download worker: {err}\n"
+            self.logger.error(msg.rstrip(), exc_info=True)
+            self.app_instance.call_from_thread(self.app_instance._update_model_download_log, msg)
+            yield msg
 
 
 ###############################################################################
