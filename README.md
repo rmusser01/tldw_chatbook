@@ -132,7 +132,7 @@ python scripts/verify_higgs_installation.py
 - For CUDA support, install PyTorch with CUDA before step 1
 - On macOS, you may need to install additional audio libraries: `brew install libsndfile`
 
-For detailed Higgs configuration and usage, see [Docs/Higgs-Audio-TTS-Guide.md](Docs/Higgs-Audio-TTS-Guide.md).
+For detailed Higgs configuration and usage, see [Docs/Higgs-Audio-TTS-Guide.md](Docs/Development/Higgs-Audio-TTS-Guide.md).
 
 ## Core Features (Always Available)
 

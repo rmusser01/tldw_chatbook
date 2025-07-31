@@ -48,6 +48,51 @@ class BaseEffect:
         """Reset the animation to its initial state."""
         self.frame_count = 0
         self.start_time = time.time()
+    
+    def _grid_to_string(self, grid: List[List[str]], style_grid: List[List[Optional[str]]]) -> str:
+        """Convert a grid and style grid to a styled string."""
+        lines = []
+        for y in range(len(grid)):
+            line_parts = []
+            current_style = None
+            current_text = ""
+            
+            for x in range(len(grid[y])):
+                char = grid[y][x]
+                style = style_grid[y][x]
+                
+                if style != current_style:
+                    if current_text:
+                        if current_style:
+                            line_parts.append(f"[{current_style}]{current_text}[/{current_style}]")
+                        else:
+                            line_parts.append(current_text)
+                    current_text = char
+                    current_style = style
+                else:
+                    current_text += char
+            
+            # Add the last part
+            if current_text:
+                if current_style:
+                    line_parts.append(f"[{current_style}]{current_text}[/{current_style}]")
+                else:
+                    line_parts.append(current_text)
+            
+            lines.append("".join(line_parts))
+        
+        return "\n".join(lines)
+    
+    def _add_centered_text(self, grid: List[List[str]], style_grid: List[List[Optional[str]]], 
+                          text: str, y: int, style: str) -> None:
+        """Add centered text to a grid at the specified y position."""
+        if 0 <= y < len(grid):
+            x_start = (len(grid[0]) - len(text)) // 2
+            for i, char in enumerate(text):
+                x = x_start + i
+                if 0 <= x < len(grid[0]):
+                    grid[y][x] = char
+                    style_grid[y][x] = style
 
 
 class MatrixRainEffect(BaseEffect):
@@ -4203,6 +4248,9 @@ class NeuralNetworkEffect(BaseEffect):
                 node['activation'] = min(1.0, node['activation'] + elapsed_time * 3)
             else:
                 node['activation'] = max(0.0, node['activation'] - elapsed_time * 2)
+        
+        # Return the rendered content
+        return self.render()
     
     def render(self):
         """Render the neural network."""
@@ -4330,6 +4378,9 @@ class QuantumParticlesEffect(BaseEffect):
                 p1, p2 = self.particles[p1_idx], self.particles[p2_idx]
                 p1['x'], p2['x'] = p2['x'], p1['x']
                 p1['y'], p2['y'] = p2['y'], p1['y']
+        
+        # Return the rendered content
+        return self.render()
     
     def render(self):
         """Render quantum particles."""
@@ -4403,6 +4454,8 @@ class ASCIIWaveEffect(BaseEffect):
     def update(self, elapsed_time):
         """Update wave animation."""
         self.wave_offset += elapsed_time * 5
+        # Return the rendered content
+        return self.render()
     
     def render(self):
         """Render ocean waves."""
@@ -4483,6 +4536,9 @@ class BinaryMatrixEffect(BaseEffect):
         # Update highlight positions
         if random.random() < 0.05:
             self._create_highlight()
+        
+        # Return the rendered content
+        return self.render()
     
     def _create_highlight(self):
         """Create a highlighted pattern in the binary rain."""
@@ -4644,6 +4700,9 @@ class ConstellationMapEffect(BaseEffect):
             if star['y'] >= self.height:
                 self.shooting_stars.remove(star)
     
+        # Return the rendered content
+        return self.render()
+        
     def render(self):
         """Render constellation map."""
         grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
@@ -4843,6 +4902,9 @@ class DNASequenceEffect(BaseEffect):
         if random.random() < self.mutation_chance:
             self.mutation_flash = 1.0
     
+        # Return the rendered content
+        return self.render()
+        
     def render(self):
         """Render DNA double helix."""
         grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
@@ -4989,6 +5051,9 @@ class CircuitTraceEffect(BaseEffect):
             if not comp['placed'] and self.trace_progress > random.uniform(0.2, 0.8):
                 comp['placed'] = True
     
+        # Return the rendered content
+        return self.render()
+        
     def render(self):
         """Render circuit board."""
         grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
@@ -5068,6 +5133,9 @@ class PlasmaFieldEffect(BaseEffect):
     def update(self, elapsed_time):
         """Update plasma field."""
         self.time_offset += elapsed_time * 2
+        
+        # Return the rendered content
+        return self.render()
     
     def render(self):
         """Render plasma field."""
@@ -5173,6 +5241,9 @@ class ASCIIFireEffect(BaseEffect):
             if ember['life'] <= 0 or ember['y'] >= self.height:
                 self.embers.remove(ember)
     
+        # Return the rendered content
+        return self.render()
+        
     def render(self):
         """Render fire effect."""
         grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
@@ -5272,6 +5343,9 @@ class RubiksCubeEffect(BaseEffect):
                 self._rotate_face(self.current_move)
                 self.current_move = None
     
+        # Return the rendered content
+        return self.render()
+        
     def render(self):
         """Render 3D Rubik's cube."""
         grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
@@ -5393,6 +5467,9 @@ class DataStreamEffect(BaseEffect):
                     'y': random.randint(0, self.height - 1)
                 })
     
+        # Return the rendered content
+        return self.render()
+        
     def render(self):
         """Render data stream."""
         grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
@@ -5451,6 +5528,9 @@ class FractalZoomEffect(BaseEffect):
         
         # Slowly drift center
         self.center_x += elapsed_time * 0.01
+        
+        # Return the rendered content
+        return self.render()
     
     def _mandelbrot(self, c_real, c_imag):
         """Calculate Mandelbrot iteration count."""
@@ -5548,6 +5628,9 @@ class ASCIISpinnerEffect(BaseEffect):
         """Update spinner animations."""
         self.phase += elapsed_time * 2
     
+        # Return the rendered content
+        return self.render()
+        
     def render(self):
         """Render multiple spinners."""
         grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
@@ -5680,6 +5763,9 @@ class HackerTerminalEffect(BaseEffect):
         while len(self.terminal_lines) > self.height - 4:
             self.terminal_lines.pop(0)
     
+        # Return the rendered content
+        return self.render()
+        
     def render(self):
         """Render hacker terminal."""
         grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
@@ -6447,6 +6533,2441 @@ class ChaoticTypewriterEffect(BaseEffect):
                 else:
                     line += char
             lines.append(line)
+        return '\n'.join(lines)
+
+
+class SpyVsSpyEffect(BaseEffect):
+    """Animated Spy vs Spy confrontation effect."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Spy ASCII art (simplified for animation)
+        self.spy_white = [
+            "   ▄▄▄   ",
+            "  █░░░█  ",
+            "  █▀▀▀█  ",
+            " ▄█───█▄ ",
+            " █ ▐▌ █ ",
+            " █  ▌  █ ",
+            " ▀█▄▄▄█▀ ",
+            "   █ █   ",
+            "  █   █  "
+        ]
+        
+        self.spy_black = [
+            "   ▄▄▄   ",
+            "  █▓▓▓█  ",
+            "  █▀▀▀█  ",
+            " ▄█───█▄ ",
+            " █ ▐▌ █ ",
+            " █  ▌  █ ",
+            " ▀█▄▄▄█▀ ",
+            "   █ █   ",
+            "  █   █  "
+        ]
+        
+        # Animation states
+        self.white_pos = 10
+        self.black_pos = width - 20
+        self.action_phase = 0
+        self.explosion_frame = -1
+        self.trap_x = width // 2
+        
+    def update(self) -> Optional[str]:
+        """Update the spy animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Calculate spy positions and actions
+        phase = int(elapsed * 2) % 8
+        
+        # Move spies closer
+        if phase < 3:
+            self.white_pos = min(self.width // 2 - 15, self.white_pos + 1)
+            self.black_pos = max(self.width // 2 + 5, self.black_pos - 1)
+        
+        # Draw title
+        title = "SPY vs SPY"
+        title_x = (self.width - len(title)) // 2
+        title_y = 2
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[title_y][title_x + i] = char
+        
+        # Draw floor
+        floor_y = self.height - 8
+        for x in range(self.width):
+            grid[floor_y][x] = '─'
+        
+        # Draw trap or explosion
+        if phase == 4:
+            # Set trap
+            trap_art = ["╱╲", "╲╱"]
+            for i, line in enumerate(trap_art):
+                for j, char in enumerate(line):
+                    if 0 <= self.trap_x + j < self.width and floor_y - 2 + i < self.height:
+                        grid[floor_y - 2 + i][self.trap_x + j] = char
+        elif phase >= 5 and phase <= 6:
+            # Explosion
+            explosion = ["  ╱▓╲  ", " ╱▓▓▓╲ ", "╱▓▓▓▓▓╲", "▓▓▓▓▓▓▓", " ▀▀▀▀▀ "]
+            exp_x = self.trap_x - 3
+            exp_y = floor_y - len(explosion)
+            for i, line in enumerate(explosion):
+                for j, char in enumerate(line):
+                    if 0 <= exp_x + j < self.width and 0 <= exp_y + i < self.height:
+                        grid[exp_y + i][exp_x + j] = char
+        
+        # Draw white spy
+        spy_y = floor_y - len(self.spy_white)
+        for i, line in enumerate(self.spy_white):
+            for j, char in enumerate(line):
+                if char != ' ' and 0 <= self.white_pos + j < self.width and 0 <= spy_y + i < self.height:
+                    grid[spy_y + i][self.white_pos + j] = char
+        
+        # Draw black spy
+        for i, line in enumerate(self.spy_black):
+            for j, char in enumerate(line):
+                if char != ' ' and 0 <= self.black_pos + j < self.width and 0 <= spy_y + i < self.height:
+                    grid[spy_y + i][self.black_pos + j] = char
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if char == '▓':
+                    line += f"[bold red]{char}[/bold red]"
+                elif char in '░':
+                    line += f"[white]{char}[/white]"
+                elif y == title_y and char != ' ':
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                elif char == '─':
+                    line += f"[dim white]{char}[/dim white]"
+                elif char in '╱╲╲╱':
+                    line += f"[yellow]{char}[/yellow]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class PhoneboothsDialingEffect(BaseEffect):
+    """Animated phonebooths dialing each other."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Phone booth ASCII art
+        self.phonebooth = [
+            "┌─────┐",
+            "│PHONE│",
+            "├─────┤",
+            "│ ╔═╗ │",
+            "│ ║☎║ │",
+            "│ ╚═╝ │",
+            "│ [#] │",
+            "└─────┘"
+        ]
+        
+        self.pulse_position = 0
+        self.dialing_phase = 0
+        self.connection_established = False
+        
+    def update(self) -> Optional[str]:
+        """Update the phonebooth animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Title
+        title = "TLDW CHATBOOK"
+        subtitle = "Establishing Connection..."
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[1][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[3][subtitle_x + i] = char
+        
+        # Draw phonebooths
+        booth1_x = 10
+        booth2_x = self.width - 20
+        booth_y = 8
+        
+        # Draw first phonebooth
+        for i, line in enumerate(self.phonebooth):
+            for j, char in enumerate(line):
+                if 0 <= booth1_x + j < self.width and 0 <= booth_y + i < self.height:
+                    grid[booth_y + i][booth1_x + j] = char
+        
+        # Draw second phonebooth
+        for i, line in enumerate(self.phonebooth):
+            for j, char in enumerate(line):
+                if 0 <= booth2_x + j < self.width and 0 <= booth_y + i < self.height:
+                    grid[booth_y + i][booth2_x + j] = char
+        
+        # Draw wire connection
+        wire_y = booth_y + len(self.phonebooth) - 1
+        wire_start = booth1_x + len(self.phonebooth[0])
+        wire_end = booth2_x
+        
+        for x in range(wire_start, wire_end):
+            if 0 <= x < self.width:
+                grid[wire_y][x] = '─'
+        
+        # Animate dialing pulses
+        phase = int(elapsed * 4) % 10
+        if phase < 5:  # Dialing phase
+            # Send pulses from left to right
+            pulse_x = wire_start + int((wire_end - wire_start) * (phase / 5))
+            if 0 <= pulse_x < self.width:
+                grid[wire_y][pulse_x] = '●'
+                if pulse_x > 0:
+                    grid[wire_y][pulse_x - 1] = '○'
+                if pulse_x < self.width - 1:
+                    grid[wire_y][pulse_x + 1] = '○'
+        else:  # Ringing phase
+            # Flash the receiving phone
+            if int(elapsed * 8) % 2 == 0:
+                # Highlight second booth
+                for i in range(3, 6):
+                    for j in range(1, 6):
+                        if 0 <= booth2_x + j < self.width and 0 <= booth_y + i < self.height:
+                            if grid[booth_y + i][booth2_x + j] in '☎':
+                                grid[booth_y + i][booth2_x + j] = '☏'
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if char in '●○':
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                elif char == '☏':
+                    line += f"[bold red blink]{char}[/bold red blink]"
+                elif char == '☎':
+                    line += f"[cyan]{char}[/cyan]"
+                elif y == 1 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 3 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif char in '┌─┐│├┤└┘╔═╗║╚╝':
+                    line += f"[blue]{char}[/blue]"
+                elif char == '#':
+                    line += f"[dim white]{char}[/dim white]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class EmojiFaceEffect(BaseEffect):
+    """Animated emoji face transformation from blank to smirking."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.05,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # ASCII emoji faces
+        self.blank_face = [
+            "     ▄▄▄▄▄▄▄     ",
+            "   ▄█████████▄   ",
+            "  ███████████▌  ",
+            " ▐████●███●████▌ ",
+            " ████████████████ ",
+            " ████████████████ ",
+            " ▐██████████████▌ ",
+            "  ███████████▌  ",
+            "   ▀█████████▀   ",
+            "     ▀▀▀▀▀▀▀     "
+        ]
+        
+        self.smirk_face = [
+            "     ▄▄▄▄▄▄▄     ",
+            "   ▄█████████▄   ",
+            "  ███████████▌  ",
+            " ▐████●███●████▌ ",
+            " ████████████████ ",
+            " ████████████████ ",
+            " ▐████╱╲████████▌ ",
+            "  ███╱  ╲█████▌  ",
+            "   ▀█████████▀   ",
+            "     ▀▀▀▀▀▀▀     "
+        ]
+        
+        self.transformation_progress = 0.0
+        
+    def update(self) -> Optional[str]:
+        """Update the emoji transformation."""
+        elapsed = time.time() - self.start_time
+        
+        # Calculate transformation progress
+        self.transformation_progress = min(1.0, elapsed / 3.0)  # 3 seconds for full transformation
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Title
+        title = "TLDW CHATBOOK"
+        subtitle = "Loading personality module..." if self.transformation_progress < 1.0 else "Ready to chat! 😏"
+        
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[2][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[4][subtitle_x + i] = char
+        
+        # Draw face
+        face_x = (self.width - len(self.blank_face[0])) // 2
+        face_y = (self.height - len(self.blank_face)) // 2 + 2
+        
+        # Interpolate between blank and smirking face
+        for i, (blank_line, smirk_line) in enumerate(zip(self.blank_face, self.smirk_face)):
+            for j, (blank_char, smirk_char) in enumerate(zip(blank_line, smirk_line)):
+                if 0 <= face_x + j < self.width and 0 <= face_y + i < self.height:
+                    # Choose character based on progress
+                    if blank_char == smirk_char:
+                        grid[face_y + i][face_x + j] = blank_char
+                    else:
+                        # Transition effect
+                        if self.transformation_progress < 0.5:
+                            grid[face_y + i][face_x + j] = blank_char
+                        elif self.transformation_progress < 0.7:
+                            # Glitch effect during transition
+                            if random.random() < 0.3:
+                                grid[face_y + i][face_x + j] = random.choice(['/', '\\', '─', '│'])
+                            else:
+                                grid[face_y + i][face_x + j] = blank_char
+                        else:
+                            grid[face_y + i][face_x + j] = smirk_char
+        
+        # Add sparkles when transformation is complete
+        if self.transformation_progress >= 1.0:
+            sparkle_positions = [
+                (face_x - 3, face_y + 2),
+                (face_x + len(self.blank_face[0]) + 2, face_y + 3),
+                (face_x - 2, face_y + 7),
+                (face_x + len(self.blank_face[0]) + 1, face_y + 6)
+            ]
+            sparkle_chars = ['✦', '✧', '★', '✦']
+            
+            for (sx, sy), sc in zip(sparkle_positions, sparkle_chars):
+                if 0 <= sx < self.width and 0 <= sy < self.height:
+                    if int(elapsed * 4) % 2 == 0:
+                        grid[sy][sx] = sc
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if char in '●':
+                    line += f"[bold white]{char}[/bold white]"
+                elif char in '▄▀█▌▐':
+                    if self.transformation_progress < 1.0:
+                        line += f"[yellow]{char}[/yellow]"
+                    else:
+                        line += f"[bold yellow]{char}[/bold yellow]"
+                elif char in '╱╲':
+                    line += f"[bold red]{char}[/bold red]"
+                elif char in '✦✧★':
+                    line += f"[bold cyan blink]{char}[/bold cyan blink]"
+                elif y == 2 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 4 and char != ' ':  # Subtitle
+                    if self.transformation_progress < 1.0:
+                        line += f"[dim cyan]{char}[/dim cyan]"
+                    else:
+                        line += f"[bold green]{char}[/bold green]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class CustomImageEffect(BaseEffect):
+    """Display a custom image as ASCII art."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        image_path: str,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        self.image_path = image_path
+        self.ascii_art = None
+        self.error_message = None
+        self.fade_progress = 0.0
+        
+        # ASCII characters for different brightness levels
+        self.ascii_chars = " .:-=+*#%@"
+        
+        # Try to load and convert the image
+        self._load_and_convert_image()
+    
+    def _load_and_convert_image(self):
+        """Load image and convert to ASCII art."""
+        try:
+            # Check if PIL is available
+            try:
+                from PIL import Image
+            except ImportError:
+                self.error_message = "PIL/Pillow not installed. Install with: pip install pillow"
+                return
+            
+            # Load the image
+            try:
+                img = Image.open(self.image_path)
+            except Exception as e:
+                self.error_message = f"Could not load image: {str(e)}"
+                return
+            
+            # Convert to grayscale
+            img = img.convert('L')
+            
+            # Calculate aspect ratio correction (terminal chars are ~2x taller than wide)
+            aspect_ratio = img.width / img.height
+            
+            # Reserve space for title
+            available_height = self.height - 6
+            available_width = self.width - 4
+            
+            # Calculate new dimensions
+            if aspect_ratio > available_width / (available_height * 2):
+                # Image is wider
+                new_width = available_width
+                new_height = int(new_width / aspect_ratio / 2)
+            else:
+                # Image is taller
+                new_height = available_height
+                new_width = int(new_height * aspect_ratio * 2)
+            
+            # Resize image
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Convert to ASCII
+            ascii_lines = []
+            for y in range(new_height):
+                line = ""
+                for x in range(new_width):
+                    brightness = img.getpixel((x, y))
+                    char_index = int(brightness / 256 * len(self.ascii_chars))
+                    char_index = min(char_index, len(self.ascii_chars) - 1)
+                    line += self.ascii_chars[char_index]
+                ascii_lines.append(line)
+            
+            self.ascii_art = ascii_lines
+            
+        except Exception as e:
+            self.error_message = f"Error converting image: {str(e)}"
+    
+    def update(self) -> Optional[str]:
+        """Update the custom image display."""
+        elapsed = time.time() - self.start_time
+        
+        # Fade in effect
+        self.fade_progress = min(1.0, elapsed / 1.5)
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Title
+        title = "TLDW CHATBOOK"
+        subtitle = "Custom Splash Screen"
+        
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[1][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[3][subtitle_x + i] = char
+        
+        # Display content
+        if self.error_message:
+            # Show error message
+            error_lines = self.error_message.split('\n')
+            start_y = (self.height - len(error_lines)) // 2
+            for i, line in enumerate(error_lines):
+                start_x = (self.width - len(line)) // 2
+                for j, char in enumerate(line):
+                    if 0 <= start_x + j < self.width and 0 <= start_y + i < self.height:
+                        grid[start_y + i][start_x + j] = char
+        elif self.ascii_art:
+            # Display ASCII art with fade-in
+            start_y = 5
+            start_x = (self.width - len(self.ascii_art[0])) // 2
+            
+            for i, line in enumerate(self.ascii_art):
+                if start_y + i >= self.height - 2:
+                    break
+                for j, char in enumerate(line):
+                    if 0 <= start_x + j < self.width:
+                        # Apply fade-in effect
+                        if random.random() < self.fade_progress:
+                            grid[start_y + i][start_x + j] = char
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 1 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 3 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif self.error_message and y >= (self.height - 5) // 2 and y <= (self.height + 5) // 2:
+                    line += f"[bold red]{char}[/bold red]"
+                else:
+                    # Apply brightness-based coloring for ASCII art
+                    if char in self.ascii_chars and char != ' ':
+                        brightness = self.ascii_chars.index(char) / len(self.ascii_chars)
+                        if brightness < 0.3:
+                            line += f"[dim white]{char}[/dim white]"
+                        elif brightness < 0.6:
+                            line += f"[white]{char}[/white]"
+                        else:
+                            line += f"[bold white]{char}[/bold white]"
+                    else:
+                        line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class ASCIIAquariumEffect(BaseEffect):
+    """Animated ASCII aquarium with swimming fish and bubbles."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Different fish types
+        self.fish_types = [
+            "><>",
+            "<><",
+            "><(((*>",
+            "<*)))><",
+            "≈°))<><",
+            "><>°≈",
+            "◉◉><>",
+            "<><◉◉"
+        ]
+        
+        # Initialize fish with random positions and speeds
+        self.fish = []
+        for i in range(12):
+            self.fish.append({
+                'type': random.choice(self.fish_types),
+                'x': random.uniform(-10, self.width + 10),
+                'y': random.randint(6, self.height - 4),
+                'speed': random.uniform(0.5, 2.0),
+                'direction': random.choice([-1, 1]),
+                'color': random.choice(['cyan', 'blue', 'yellow', 'green'])
+            })
+        
+        # Initialize bubbles
+        self.bubbles = []
+        for i in range(15):
+            self.bubbles.append({
+                'x': random.randint(10, self.width - 10),
+                'y': random.uniform(self.height - 2, self.height + 5),
+                'speed': random.uniform(0.3, 0.8),
+                'size': random.choice(['°', 'o', 'O', '○'])
+            })
+        
+        # Seaweed positions
+        self.seaweed_positions = [15, 25, 35, 50, 65]
+        
+    def update(self) -> Optional[str]:
+        """Update the aquarium animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Draw title
+        title = "TLDW CHATBOOK"
+        subtitle = "Diving into conversations..."
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[1][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[3][subtitle_x + i] = char
+        
+        # Draw water surface
+        water_y = 5
+        for x in range(self.width):
+            wave = '~' if int(elapsed * 4 + x) % 3 == 0 else '≈'
+            grid[water_y][x] = wave
+        
+        # Draw seaweed
+        for pos in self.seaweed_positions:
+            if 0 <= pos < self.width:
+                height = random.randint(3, 6)
+                for y in range(self.height - height, self.height - 1):
+                    if y < self.height:
+                        sway = int(math.sin(elapsed * 2 + pos) * 2)
+                        x = pos + sway
+                        if 0 <= x < self.width:
+                            grid[y][x] = '|' if random.random() > 0.3 else ')'
+        
+        # Update and draw fish
+        for fish in self.fish:
+            # Update position
+            fish['x'] += fish['speed'] * fish['direction'] * self.speed
+            
+            # Wrap around screen
+            if fish['direction'] > 0 and fish['x'] > self.width + 10:
+                fish['x'] = -10
+                fish['y'] = random.randint(6, self.height - 4)
+            elif fish['direction'] < 0 and fish['x'] < -10:
+                fish['x'] = self.width + 10
+                fish['y'] = random.randint(6, self.height - 4)
+            
+            # Draw fish
+            fish_chars = fish['type'] if fish['direction'] > 0 else fish['type'][::-1]
+            for i, char in enumerate(fish_chars):
+                x = int(fish['x']) + i
+                y = fish['y']
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    grid[y][x] = char
+        
+        # Update and draw bubbles
+        for bubble in self.bubbles:
+            # Update position
+            bubble['y'] -= bubble['speed'] * self.speed
+            
+            # Reset bubble at bottom
+            if bubble['y'] < water_y + 1:
+                bubble['y'] = self.height - 2
+                bubble['x'] = random.randint(10, self.width - 10)
+            
+            # Draw bubble
+            x = int(bubble['x'] + math.sin(elapsed * 3 + bubble['y']) * 2)
+            y = int(bubble['y'])
+            if 0 <= x < self.width and water_y < y < self.height:
+                grid[y][x] = bubble['size']
+        
+        # Draw bottom
+        for x in range(self.width):
+            grid[self.height - 2][x] = '▓'
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 1 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 3 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif y == water_y and char in '~≈':  # Water surface
+                    line += f"[blue]{char}[/blue]"
+                elif char in '><*()°':  # Fish
+                    # Find which fish this belongs to
+                    for fish in self.fish:
+                        if y == fish['y'] and abs(x - fish['x']) < len(fish['type']):
+                            line += f"[{fish['color']}]{char}[/{fish['color']}]"
+                            break
+                    else:
+                        line += char
+                elif char in 'oO○°' and y > water_y:  # Bubbles
+                    line += f"[bright_cyan]{char}[/bright_cyan]"
+                elif char in '|)' and y > self.height - 8:  # Seaweed
+                    line += f"[green]{char}[/green]"
+                elif char == '▓':  # Bottom
+                    line += f"[dim yellow]{char}[/dim yellow]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class BookshelfBrowserEffect(BaseEffect):
+    """Animated bookshelf with sliding books and page flipping."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Book titles for spines
+        self.book_titles = [
+            "PYTHON", "CHAT", "AI", "DATA", "CODE", "LEARN",
+            "DOCS", "API", "TEXT", "BOOK", "READ", "WIKI"
+        ]
+        
+        # Book animation state
+        self.selected_book = -1
+        self.book_open_progress = 0.0
+        self.page_flip_progress = 0.0
+        self.title_reveal_progress = 0.0
+        
+    def update(self) -> Optional[str]:
+        """Update the bookshelf animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Animation phases
+        if elapsed < 1.0:
+            # Phase 1: Show bookshelf
+            phase = "shelf"
+        elif elapsed < 2.0:
+            # Phase 2: Select and pull out book
+            phase = "select"
+            self.selected_book = 5  # Middle book
+            self.book_open_progress = (elapsed - 1.0)
+        elif elapsed < 3.5:
+            # Phase 3: Open book and flip pages
+            phase = "flip"
+            self.page_flip_progress = (elapsed - 2.0) / 1.5
+        else:
+            # Phase 4: Reveal title
+            phase = "reveal"
+            self.title_reveal_progress = (elapsed - 3.5) / 0.5
+        
+        # Draw bookshelf frame
+        shelf_y = 8
+        shelf_width = 60
+        shelf_x = (self.width - shelf_width) // 2
+        
+        # Top shelf
+        for x in range(shelf_x, shelf_x + shelf_width):
+            if x < self.width:
+                grid[shelf_y - 1][x] = '═'
+        
+        # Draw books
+        book_width = 5
+        for i, title in enumerate(self.book_titles[:10]):
+            book_x = shelf_x + 2 + i * 6
+            
+            # Skip selected book if it's being pulled out
+            if phase in ["select", "flip", "reveal"] and i == self.selected_book:
+                continue
+            
+            # Draw book spine
+            for y in range(shelf_y, shelf_y + 8):
+                if y < self.height and book_x < self.width - book_width:
+                    grid[y][book_x] = '│'
+                    grid[y][book_x + book_width] = '│'
+                    
+                    # Title on spine (vertical)
+                    if y - shelf_y < len(title):
+                        char_idx = y - shelf_y
+                        if char_idx < len(title):
+                            for x_off in range(1, book_width):
+                                if book_x + x_off < self.width:
+                                    grid[y][book_x + x_off] = title[char_idx]
+        
+        # Bottom shelf
+        for x in range(shelf_x, shelf_x + shelf_width):
+            if x < self.width and shelf_y + 8 < self.height:
+                grid[shelf_y + 8][x] = '═'
+        
+        # Draw selected book animation
+        if phase in ["select", "flip", "reveal"]:
+            # Calculate book position
+            book_start_x = shelf_x + 2 + self.selected_book * 6
+            book_pull_distance = int(self.book_open_progress * 15)
+            book_center_x = book_start_x - book_pull_distance
+            book_center_y = shelf_y + 2
+            
+            if phase == "flip" or phase == "reveal":
+                # Draw open book
+                book_art = [
+                    "     ╭─────────────╮     ",
+                    "    ╱               ╲    ",
+                    "   │                 │   ",
+                    "   │                 │   ",
+                    "   │                 │   ",
+                    "   │                 │   ",
+                    "   │                 │   ",
+                    "   ╰─────────────────╯   "
+                ]
+                
+                # Draw book
+                for i, line in enumerate(book_art):
+                    for j, char in enumerate(line):
+                        x = book_center_x + j
+                        y = book_center_y + i
+                        if 0 <= x < self.width and 0 <= y < self.height and char != ' ':
+                            grid[y][x] = char
+                
+                # Draw page content or title
+                if phase == "reveal" and self.title_reveal_progress > 0.3:
+                    # Show title
+                    title_lines = ["TLDW", "CHATBOOK"]
+                    for i, line in enumerate(title_lines):
+                        line_x = book_center_x + (25 - len(line)) // 2
+                        line_y = book_center_y + 2 + i * 2
+                        for j, char in enumerate(line):
+                            if 0 <= line_x + j < self.width and 0 <= line_y < self.height:
+                                if random.random() < self.title_reveal_progress:
+                                    grid[line_y][line_x + j] = char
+                else:
+                    # Show flipping pages
+                    flip_chars = ['/', '|', '\\', '─']
+                    flip_idx = int(self.page_flip_progress * 4) % 4
+                    flip_x = book_center_x + 12
+                    flip_y = book_center_y + 4
+                    if 0 <= flip_x < self.width and 0 <= flip_y < self.height:
+                        grid[flip_y][flip_x] = flip_chars[flip_idx]
+        
+        # Draw header
+        if phase == "shelf":
+            header = "Welcome to the Library"
+        elif phase == "select":
+            header = "Selecting a book..."
+        elif phase == "flip":
+            header = "Opening pages..."
+        else:
+            header = "Your adventure begins!"
+        
+        header_x = (self.width - len(header)) // 2
+        for i, char in enumerate(header):
+            if 0 <= header_x + i < self.width:
+                grid[2][header_x + i] = char
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 2 and char != ' ':  # Header
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                elif char in '═│':  # Shelf
+                    line += f"[dim white]{char}[/dim white]"
+                elif char in '╱╲╮╯╰─':  # Book outline
+                    line += f"[white]{char}[/white]"
+                elif char in 'TLDWCHATBOOK' and phase == "reveal":  # Title
+                    line += f"[bold cyan]{char}[/bold cyan]"
+                elif char.isalpha():  # Book spines
+                    line += f"[dim yellow]{char}[/dim yellow]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class TrainJourneyEffect(BaseEffect):
+    """Animated train journey with parallax scrolling landscape."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Train ASCII art
+        self.train = [
+            "    ___    ",
+            "   |   |   ",
+            "  /|___|\  ",
+            " /_|_O_|_\ ",
+            "  o o o o  "
+        ]
+        
+        # Landscape elements
+        self.mountains = "▲▲▲  ▲▲  ▲▲▲▲  ▲  ▲▲▲"
+        self.trees = "↟ ↟↟ ↟ ↟↟↟ ↟ ↟↟ ↟"
+        self.clouds = ["☁", "☁☁", "☁☁☁"]
+        
+        # Animation offsets
+        self.track_offset = 0
+        self.landscape_offset = 0
+        self.cloud_positions = [(10, 3), (30, 4), (50, 3), (70, 5)]
+        
+    def update(self) -> Optional[str]:
+        """Update the train journey animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Update offsets
+        self.track_offset = int(elapsed * 20) % 4
+        self.landscape_offset = int(elapsed * 5) % self.width
+        
+        # Draw sky and clouds
+        for cloud_x, cloud_y in self.cloud_positions:
+            cloud = random.choice(self.clouds)
+            x = int((cloud_x - elapsed * 3) % self.width)
+            for i, char in enumerate(cloud):
+                if 0 <= x + i < self.width and 0 <= cloud_y < self.height:
+                    grid[cloud_y][x + i] = char
+        
+        # Draw mountains (far background)
+        mountain_y = 8
+        for i in range(self.width):
+            mountain_idx = (i + self.landscape_offset // 3) % len(self.mountains)
+            if self.mountains[mountain_idx] != ' ':
+                grid[mountain_y][i] = self.mountains[mountain_idx]
+        
+        # Draw trees (near background)
+        tree_y = 12
+        for i in range(self.width):
+            tree_idx = (i + self.landscape_offset // 2) % len(self.trees)
+            if self.trees[tree_idx] != ' ':
+                grid[tree_y][i] = self.trees[tree_idx]
+        
+        # Draw train
+        train_x = 20
+        train_y = 14
+        for i, line in enumerate(self.train):
+            for j, char in enumerate(line):
+                if 0 <= train_x + j < self.width and 0 <= train_y + i < self.height:
+                    if char != ' ':
+                        grid[train_y + i][train_x + j] = char
+        
+        # Draw smoke puffs
+        smoke_x = train_x + 5
+        smoke_y = train_y - 1
+        smoke_phase = int(elapsed * 3) % 3
+        if smoke_phase == 0:
+            if 0 <= smoke_x < self.width and 0 <= smoke_y < self.height:
+                grid[smoke_y][smoke_x] = 'o'
+        elif smoke_phase == 1:
+            if 0 <= smoke_x - 1 < self.width and 0 <= smoke_y - 1 < self.height:
+                grid[smoke_y - 1][smoke_x - 1] = 'O'
+        else:
+            if 0 <= smoke_x - 2 < self.width and 0 <= smoke_y - 2 < self.height:
+                grid[smoke_y - 2][smoke_x - 2] = '○'
+        
+        # Draw tracks
+        track_y = train_y + len(self.train)
+        track_pattern = "═╪═"
+        for x in range(self.width):
+            pattern_idx = (x + self.track_offset) % len(track_pattern)
+            grid[track_y][x] = track_pattern[pattern_idx]
+        
+        # Draw station sign (appears later)
+        if elapsed > 2.0:
+            sign_x = int(self.width - (elapsed - 2.0) * 15)
+            if 10 < sign_x < self.width - 20:
+                sign = ["┌─────────────┐", "│ TLDW CHATBOOK │", "└─────────────┘"]
+                sign_y = 9
+                for i, line in enumerate(sign):
+                    for j, char in enumerate(line):
+                        if 0 <= sign_x + j < self.width and 0 <= sign_y + i < self.height:
+                            grid[sign_y + i][sign_x + j] = char
+        
+        # Draw title
+        title = "All Aboard!"
+        title_x = (self.width - len(title)) // 2
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[2][title_x + i] = char
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 2 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif char == '☁':  # Clouds
+                    line += f"[white]{char}[/white]"
+                elif char == '▲':  # Mountains
+                    line += f"[dim blue]{char}[/dim blue]"
+                elif char == '↟':  # Trees
+                    line += f"[green]{char}[/green]"
+                elif char in 'oO○':  # Smoke
+                    line += f"[dim white]{char}[/dim white]"
+                elif char in '═╪':  # Tracks
+                    line += f"[yellow]{char}[/yellow]"
+                elif char in '┌─┐│└┘' or "TLDW CHATBOOK" in ''.join(row):  # Sign
+                    if "TLDW CHATBOOK" in ''.join(row) and char.isalpha():
+                        line += f"[bold cyan]{char}[/bold cyan]"
+                    else:
+                        line += f"[white]{char}[/white]"
+                elif char in '|/_O\\o':  # Train
+                    line += f"[bold red]{char}[/bold red]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class ClockMechanismEffect(BaseEffect):
+    """Animated clock mechanism with gears and pendulum."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Gear designs
+        self.large_gear = [
+            "   ╱═╲   ",
+            "  ╱   ╲  ",
+            " │  ●  │ ",
+            "  ╲   ╱  ",
+            "   ╲═╱   "
+        ]
+        
+        self.small_gear = [
+            " ╱╲ ",
+            "│●│",
+            " ╲╱ "
+        ]
+        
+        # Gear positions and speeds
+        self.gears = [
+            {'x': 20, 'y': 8, 'size': 'large', 'speed': 1.0, 'rotation': 0},
+            {'x': 35, 'y': 7, 'size': 'small', 'speed': -2.0, 'rotation': 0},
+            {'x': 45, 'y': 10, 'size': 'small', 'speed': 2.5, 'rotation': 0},
+            {'x': 55, 'y': 8, 'size': 'large', 'speed': -0.8, 'rotation': 0}
+        ]
+        
+        # Pendulum state
+        self.pendulum_angle = 0
+        self.pendulum_center_x = self.width // 2
+        self.pendulum_top_y = 15
+        
+    def rotate_gear(self, gear_pattern, angle):
+        """Rotate gear pattern based on angle."""
+        # Simple rotation by cycling characters
+        rotation_chars = ['╱', '─', '╲', '│']
+        rotated = []
+        
+        for line in gear_pattern:
+            new_line = ""
+            for char in line:
+                if char in rotation_chars:
+                    idx = rotation_chars.index(char)
+                    new_idx = (idx + int(angle / 90)) % len(rotation_chars)
+                    new_line += rotation_chars[new_idx]
+                else:
+                    new_line += char
+            rotated.append(new_line)
+        
+        return rotated
+    
+    def update(self) -> Optional[str]:
+        """Update the clock mechanism animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Draw title
+        title = "TLDW CHATBOOK"
+        subtitle = "Time to Connect"
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[2][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[4][subtitle_x + i] = char
+        
+        # Update and draw gears
+        for gear in self.gears:
+            # Update rotation
+            gear['rotation'] = (gear['rotation'] + gear['speed'] * 10) % 360
+            
+            # Get gear pattern
+            if gear['size'] == 'large':
+                pattern = self.rotate_gear(self.large_gear, gear['rotation'])
+            else:
+                pattern = self.rotate_gear(self.small_gear, gear['rotation'])
+            
+            # Draw gear
+            for i, line in enumerate(pattern):
+                for j, char in enumerate(line):
+                    x = gear['x'] + j
+                    y = gear['y'] + i
+                    if 0 <= x < self.width and 0 <= y < self.height and char != ' ':
+                        grid[y][x] = char
+        
+        # Update and draw pendulum
+        self.pendulum_angle = math.sin(elapsed * 2) * 0.5  # Swing angle in radians
+        pendulum_length = 6
+        
+        # Draw pendulum rod
+        for i in range(pendulum_length):
+            x = self.pendulum_center_x + int(math.sin(self.pendulum_angle) * i)
+            y = self.pendulum_top_y + i
+            if 0 <= x < self.width and 0 <= y < self.height:
+                grid[y][x] = '│'
+        
+        # Draw pendulum bob
+        bob_x = self.pendulum_center_x + int(math.sin(self.pendulum_angle) * pendulum_length)
+        bob_y = self.pendulum_top_y + pendulum_length
+        if 0 <= bob_x - 1 < self.width - 2 and 0 <= bob_y < self.height:
+            grid[bob_y][bob_x - 1] = '('
+            grid[bob_y][bob_x] = '●'
+            grid[bob_y][bob_x + 1] = ')'
+        
+        # Draw clock frame elements
+        frame_chars = "⚙"
+        for i in range(5):
+            x = 10 + i * 15
+            y = 6
+            if 0 <= x < self.width and 0 <= y < self.height:
+                grid[y][x] = frame_chars
+        
+        # Draw time display (showing animation progress)
+        time_str = f"{int(elapsed % 60):02d}:{int((elapsed * 10) % 60):02d}"
+        time_x = (self.width - len(time_str)) // 2
+        time_y = self.height - 3
+        for i, char in enumerate(time_str):
+            if 0 <= time_x + i < self.width:
+                grid[time_y][time_x + i] = char
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 2 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 4 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif char == '●':  # Gear centers and pendulum bob
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                elif char in '╱╲│─═':  # Gear teeth
+                    line += f"[cyan]{char}[/cyan]"
+                elif char in '()':  # Pendulum bob outline
+                    line += f"[yellow]{char}[/yellow]"
+                elif char == '⚙':  # Frame decorations
+                    line += f"[dim white]{char}[/dim white]"
+                elif char.isdigit() or char == ':':  # Time
+                    line += f"[bold green]{char}[/bold green]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class WeatherSystemEffect(BaseEffect):
+    """Animated weather system with transitions."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Weather states
+        self.weather_cycle = ['sunny', 'cloudy', 'rainy', 'stormy', 'snowy', 'clearing']
+        self.weather_duration = 1.5  # seconds per weather state
+        
+        # Weather elements
+        self.sun = ["   \\│/   ", "  ─ ☀ ─  ", "   /│\\   "]
+        self.cloud = ["   ☁☁☁   ", "  ☁☁☁☁☁  ", " ☁☁☁☁☁☁☁ "]
+        self.rain_chars = ['·', ':', '│', '¦']
+        self.snow_chars = ['·', '*', '❄', '✻']
+        
+        # Particle systems
+        self.rain_particles = []
+        self.snow_particles = []
+        self.lightning_flash = 0
+        
+        # Initialize particles
+        for _ in range(50):
+            self.rain_particles.append({
+                'x': random.randint(0, self.width),
+                'y': random.randint(-10, 0),
+                'speed': random.uniform(2, 4)
+            })
+        
+        for _ in range(30):
+            self.snow_particles.append({
+                'x': random.randint(0, self.width),
+                'y': random.randint(-10, 0),
+                'speed': random.uniform(0.5, 1.5),
+                'drift': random.uniform(-0.5, 0.5)
+            })
+    
+    def update(self) -> Optional[str]:
+        """Update the weather system animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Determine current weather
+        weather_index = int(elapsed / self.weather_duration) % len(self.weather_cycle)
+        current_weather = self.weather_cycle[weather_index]
+        weather_progress = (elapsed % self.weather_duration) / self.weather_duration
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Draw title
+        title = "TLDW CHATBOOK"
+        subtitle = f"Weather: {current_weather.title()}"
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[2][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[4][subtitle_x + i] = char
+        
+        # Draw weather elements based on current state
+        if current_weather == 'sunny':
+            # Draw sun
+            sun_x = (self.width - len(self.sun[0])) // 2
+            sun_y = 8
+            for i, line in enumerate(self.sun):
+                for j, char in enumerate(line):
+                    if 0 <= sun_x + j < self.width and 0 <= sun_y + i < self.height:
+                        if char != ' ':
+                            grid[sun_y + i][sun_x + j] = char
+        
+        elif current_weather in ['cloudy', 'rainy', 'stormy', 'snowy']:
+            # Draw clouds
+            cloud_x = (self.width - len(self.cloud[0])) // 2
+            cloud_y = 7
+            for i, line in enumerate(self.cloud):
+                for j, char in enumerate(line):
+                    if 0 <= cloud_x + j < self.width and 0 <= cloud_y + i < self.height:
+                        if char != ' ':
+                            grid[cloud_y + i][cloud_x + j] = char
+            
+            if current_weather == 'rainy':
+                # Update and draw rain
+                for particle in self.rain_particles:
+                    particle['y'] += particle['speed'] * self.speed
+                    if particle['y'] > self.height:
+                        particle['y'] = random.randint(-10, 0)
+                        particle['x'] = random.randint(10, self.width - 10)
+                    
+                    y = int(particle['y'])
+                    x = particle['x']
+                    if 0 <= x < self.width and 0 <= y < self.height:
+                        rain_char = self.rain_chars[int(y) % len(self.rain_chars)]
+                        grid[y][x] = rain_char
+            
+            elif current_weather == 'stormy':
+                # Lightning effect
+                if random.random() < 0.05:  # 5% chance of lightning
+                    self.lightning_flash = 3
+                
+                if self.lightning_flash > 0:
+                    self.lightning_flash -= 1
+                    # Draw lightning bolt
+                    bolt_x = random.randint(20, self.width - 20)
+                    bolt = ['╱', '╲', '╱']
+                    for i, char in enumerate(bolt):
+                        y = 10 + i * 2
+                        x = bolt_x + i
+                        if 0 <= x < self.width and 0 <= y < self.height:
+                            grid[y][x] = char
+                
+                # Also show rain
+                for particle in self.rain_particles[:30]:  # Fewer rain particles
+                    particle['y'] += particle['speed'] * self.speed * 1.5
+                    if particle['y'] > self.height:
+                        particle['y'] = random.randint(-10, 0)
+                        particle['x'] = random.randint(10, self.width - 10)
+                    
+                    y = int(particle['y'])
+                    x = particle['x']
+                    if 0 <= x < self.width and 0 <= y < self.height:
+                        grid[y][x] = '│'
+            
+            elif current_weather == 'snowy':
+                # Update and draw snow
+                for particle in self.snow_particles:
+                    particle['y'] += particle['speed'] * self.speed
+                    particle['x'] += particle['drift'] * self.speed
+                    
+                    if particle['y'] > self.height:
+                        particle['y'] = random.randint(-10, 0)
+                        particle['x'] = random.randint(0, self.width)
+                    
+                    y = int(particle['y'])
+                    x = int(particle['x'])
+                    if 0 <= x < self.width and 0 <= y < self.height:
+                        snow_char = self.snow_chars[random.randint(0, len(self.snow_chars) - 1)]
+                        grid[y][x] = snow_char
+        
+        elif current_weather == 'clearing':
+            # Transition effect - partial sun and clouds
+            if weather_progress < 0.5:
+                # Still some clouds
+                cloud_x = int((self.width - len(self.cloud[0])) // 2 + weather_progress * 20)
+                cloud_y = 7
+                for i, line in enumerate(self.cloud):
+                    for j, char in enumerate(line):
+                        if 0 <= cloud_x + j < self.width and 0 <= cloud_y + i < self.height:
+                            if char != ' ' and random.random() > weather_progress:
+                                grid[cloud_y + i][cloud_x + j] = char
+            
+            # Sun appearing
+            sun_x = int((self.width - len(self.sun[0])) // 2 - (1 - weather_progress) * 20)
+            sun_y = 8
+            for i, line in enumerate(self.sun):
+                for j, char in enumerate(line):
+                    if 0 <= sun_x + j < self.width and 0 <= sun_y + i < self.height:
+                        if char != ' ' and random.random() < weather_progress:
+                            grid[sun_y + i][sun_x + j] = char
+        
+        # Draw ground/horizon
+        horizon_y = self.height - 5
+        for x in range(self.width):
+            grid[horizon_y][x] = '─'
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 2 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 4 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif char == '☀':  # Sun
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                elif char in '\\│/─':  # Sun rays or rain
+                    if current_weather == 'sunny':
+                        line += f"[yellow]{char}[/yellow]"
+                    else:
+                        line += f"[blue]{char}[/blue]"
+                elif char == '☁':  # Clouds
+                    if current_weather == 'stormy':
+                        line += f"[dim white]{char}[/dim white]"
+                    else:
+                        line += f"[white]{char}[/white]"
+                elif char in '·:¦':  # Rain
+                    line += f"[blue]{char}[/blue]"
+                elif char in '*❄✻':  # Snow
+                    line += f"[bright_white]{char}[/bright_white]"
+                elif char in '╱╲' and self.lightning_flash > 0:  # Lightning
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class MusicVisualizerEffect(BaseEffect):
+    """Animated music visualizer with notes and instruments."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Musical elements
+        self.notes = ['♪', '♫', '♩', '♬']
+        self.piano_keys = "█▄█▄█ █▄█▄█▄█ █▄█▄█ █▄█▄█▄█"
+        
+        # Waveform data
+        self.waveform = []
+        for i in range(self.width):
+            self.waveform.append(random.uniform(-1, 1))
+        
+        # Floating notes
+        self.floating_notes = []
+        for _ in range(15):
+            self.floating_notes.append({
+                'x': random.randint(0, self.width),
+                'y': random.randint(self.height // 2, self.height),
+                'note': random.choice(self.notes),
+                'speed': random.uniform(0.5, 1.5),
+                'drift': random.uniform(-0.3, 0.3)
+            })
+        
+        # Beat counter
+        self.beat = 0
+        
+    def update(self) -> Optional[str]:
+        """Update the music visualizer animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Update beat
+        self.beat = int(elapsed * 4) % 4
+        
+        # Draw title with pulsing effect
+        title = "TLDW CHATBOOK"
+        subtitle = "♪ Let the Music Play ♪"
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        # Pulse title on beat
+        if self.beat == 0:
+            title = f"[{title}]"
+            title_x -= 1
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[2][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[4][subtitle_x + i] = char
+        
+        # Draw piano keys
+        piano_y = self.height - 8
+        piano_x = (self.width - len(self.piano_keys)) // 2
+        for i, char in enumerate(self.piano_keys):
+            if 0 <= piano_x + i < self.width:
+                grid[piano_y][piano_x + i] = char
+                if char == '▄':
+                    grid[piano_y - 1][piano_x + i] = '█'
+        
+        # Highlight playing keys
+        if self.beat == 0:
+            highlight_keys = [5, 12, 19]
+        elif self.beat == 1:
+            highlight_keys = [7, 14, 21]
+        elif self.beat == 2:
+            highlight_keys = [9, 16, 23]
+        else:
+            highlight_keys = [3, 10, 17]
+        
+        for key in highlight_keys:
+            if 0 <= piano_x + key < self.width:
+                grid[piano_y + 1][piano_x + key] = '▀'
+        
+        # Draw waveform
+        waveform_y = 12
+        amplitude = 3
+        for x in range(self.width):
+            # Update waveform
+            self.waveform[x] = math.sin(elapsed * 5 + x * 0.1) * math.sin(elapsed * 2)
+            
+            # Draw waveform
+            y_offset = int(self.waveform[x] * amplitude)
+            y = waveform_y + y_offset
+            if 0 <= y < self.height:
+                if abs(y_offset) > 1:
+                    grid[y][x] = '═'
+                else:
+                    grid[y][x] = '─'
+        
+        # Update and draw floating notes
+        for note in self.floating_notes:
+            # Update position
+            note['y'] -= note['speed'] * self.speed
+            note['x'] += note['drift']
+            
+            # Reset if off screen
+            if note['y'] < 6:
+                note['y'] = random.randint(self.height - 10, self.height - 2)
+                note['x'] = random.randint(10, self.width - 10)
+                note['note'] = random.choice(self.notes)
+            
+            # Draw note
+            x = int(note['x'])
+            y = int(note['y'])
+            if 0 <= x < self.width and 0 <= y < self.height:
+                grid[y][x] = note['note']
+        
+        # Draw staff lines
+        staff_y = 8
+        for y in range(staff_y, staff_y + 5):
+            if y < self.height:
+                for x in range(10, self.width - 10):
+                    if grid[y][x] == ' ':
+                        grid[y][x] = '─'
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 2 and char != ' ':  # Title
+                    if char in '[]':
+                        line += f"[bold yellow]{char}[/bold yellow]"
+                    else:
+                        line += f"[bold white]{char}[/bold white]"
+                elif y == 4 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif char in '♪♫♩♬':  # Notes
+                    colors = ['cyan', 'magenta', 'yellow', 'green']
+                    color = colors[self.notes.index(char)]
+                    line += f"[bold {color}]{char}[/bold {color}]"
+                elif char in '█▄':  # Piano keys
+                    if grid[y + 1][x] == '▀':  # Highlighted key
+                        line += f"[bold yellow]{char}[/bold yellow]"
+                    else:
+                        line += f"[white]{char}[/white]"
+                elif char == '▀':  # Key highlight
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                elif char in '─═':  # Waveform and staff
+                    if 10 <= y <= 14:  # Waveform area
+                        line += f"[green]{char}[/green]"
+                    else:
+                        line += f"[dim white]{char}[/dim white]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class OrigamiFoldingEffect(BaseEffect):
+    """Animated origami paper folding effect."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Folding stages
+        self.fold_stages = [
+            # Stage 1: Flat square
+            [
+                "┌─────────────┐",
+                "│             │",
+                "│             │",
+                "│             │",
+                "│             │",
+                "│             │",
+                "│             │",
+                "└─────────────┘"
+            ],
+            # Stage 2: First diagonal fold
+            [
+                "┌─────────────┐",
+                "│╲            │",
+                "│ ╲           │",
+                "│  ╲          │",
+                "│   ╲         │",
+                "│    ╲        │",
+                "│     ╲       │",
+                "└──────╲──────┘"
+            ],
+            # Stage 3: Triangle
+            [
+                "      ╱╲      ",
+                "     ╱  ╲     ",
+                "    ╱    ╲    ",
+                "   ╱      ╲   ",
+                "  ╱        ╲  ",
+                " ╱          ╲ ",
+                "╱            ╲",
+                "──────────────"
+            ],
+            # Stage 4: Bird base
+            [
+                "     ╱│╲     ",
+                "    ╱ │ ╲    ",
+                "   ╱  │  ╲   ",
+                "  ╱   │   ╲  ",
+                " │    │    │ ",
+                " │    │    │ ",
+                "  ╲   │   ╱  ",
+                "   ╲──┴──╱   "
+            ],
+            # Stage 5: Crane
+            [
+                "      ∧      ",
+                "     ╱│╲     ",
+                "    ╱ │ ╲    ",
+                "   <  ●  >   ",
+                "    ╲ │ ╱    ",
+                "     ╲│╱     ",
+                "      │      ",
+                "     ╱ ╲     "
+            ]
+        ]
+        
+        self.current_stage = 0
+        self.stage_progress = 0.0
+        self.fold_complete = False
+        
+    def update(self) -> Optional[str]:
+        """Update the origami folding animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Calculate folding progress
+        stage_duration = 0.8
+        self.current_stage = min(int(elapsed / stage_duration), len(self.fold_stages) - 1)
+        self.stage_progress = (elapsed % stage_duration) / stage_duration
+        
+        if self.current_stage == len(self.fold_stages) - 1:
+            self.fold_complete = True
+        
+        # Draw title
+        title = "TLDW CHATBOOK"
+        if self.fold_complete:
+            subtitle = "Your Story Takes Flight"
+        else:
+            subtitle = f"Folding... Step {self.current_stage + 1}/{len(self.fold_stages)}"
+        
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[2][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[4][subtitle_x + i] = char
+        
+        # Draw current folding stage
+        paper_x = (self.width - 15) // 2
+        paper_y = 8
+        
+        current_pattern = self.fold_stages[self.current_stage]
+        
+        # Draw with transition effect
+        for i, line in enumerate(current_pattern):
+            for j, char in enumerate(line):
+                x = paper_x + j
+                y = paper_y + i
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    # Show fold lines progressively
+                    if char in '╱╲│─' and self.current_stage > 0:
+                        if random.random() < self.stage_progress:
+                            grid[y][x] = char
+                        elif self.current_stage > 0:
+                            # Show previous stage character
+                            prev_pattern = self.fold_stages[self.current_stage - 1]
+                            if i < len(prev_pattern) and j < len(prev_pattern[i]):
+                                prev_char = prev_pattern[i][j]
+                                if prev_char != ' ':
+                                    grid[y][x] = prev_char
+                    else:
+                        grid[y][x] = char
+        
+        # Add fold line indicators
+        if not self.fold_complete and self.stage_progress < 0.5:
+            fold_indicator = "• • • • •"
+            fold_x = (self.width - len(fold_indicator)) // 2
+            fold_y = paper_y + len(current_pattern) + 2
+            for i, char in enumerate(fold_indicator):
+                if 0 <= fold_x + i < self.width and fold_y < self.height:
+                    grid[fold_y][fold_x + i] = char
+        
+        # Add floating effect for completed crane
+        if self.fold_complete:
+            float_offset = int(math.sin(elapsed * 2) * 2)
+            # Clear original position
+            for i in range(len(current_pattern)):
+                for j in range(len(current_pattern[0])):
+                    if paper_y + i < self.height and paper_x + j < self.width:
+                        grid[paper_y + i][paper_x + j] = ' '
+            
+            # Redraw at floating position
+            for i, line in enumerate(current_pattern):
+                for j, char in enumerate(line):
+                    x = paper_x + j
+                    y = paper_y + i - float_offset
+                    if 0 <= x < self.width and 0 <= y < self.height and char != ' ':
+                        grid[y][x] = char
+            
+            # Add motion lines
+            if float_offset > 0:
+                for j in range(len(current_pattern[0])):
+                    y = paper_y + len(current_pattern) - float_offset
+                    x = paper_x + j
+                    if 0 <= x < self.width and 0 <= y < self.height:
+                        if random.random() < 0.3:
+                            grid[y][x] = '·'
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 2 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 4 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif char in '┌─┐│└┘':  # Paper outline
+                    line += f"[white]{char}[/white]"
+                elif char in '╱╲':  # Fold lines
+                    line += f"[yellow]{char}[/yellow]"
+                elif char == '●':  # Crane eye
+                    line += f"[bold red]{char}[/bold red]"
+                elif char in '∧<>':  # Crane details
+                    line += f"[bold cyan]{char}[/bold cyan]"
+                elif char == '·':  # Fold indicators or motion
+                    line += f"[dim white]{char}[/dim white]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class AntColonyEffect(BaseEffect):
+    """Animated ant colony building tunnels."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Ant representation
+        self.ant_chars = ['∴', ':', '⁚']
+        
+        # Initialize ants
+        self.ants = []
+        for _ in range(30):
+            self.ants.append({
+                'x': random.randint(10, self.width - 10),
+                'y': random.randint(10, self.height - 5),
+                'vx': random.choice([-1, 0, 1]),
+                'vy': random.choice([-1, 0, 1]),
+                'carrying': random.random() < 0.3,
+                'target': None
+            })
+        
+        # Tunnel system
+        self.tunnels = set()
+        self.queen_chamber = (self.width // 2, self.height // 2)
+        self.food_sources = [
+            (15, 8), (65, 8), (40, 18)
+        ]
+        
+        # Pheromone trails
+        self.pheromones = {}
+        
+        # Message to build
+        self.message = "TLDW"
+        self.message_progress = 0.0
+        
+    def update(self) -> Optional[str]:
+        """Update the ant colony animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Update message building progress
+        self.message_progress = min(1.0, elapsed / 4.0)
+        
+        # Draw title
+        title = "TLDW CHATBOOK"
+        subtitle = "Building Connections..."
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[2][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[4][subtitle_x + i] = char
+        
+        # Draw queen chamber
+        qx, qy = self.queen_chamber
+        chamber_size = 3
+        for dy in range(-chamber_size, chamber_size + 1):
+            for dx in range(-chamber_size, chamber_size + 1):
+                x, y = qx + dx, qy + dy
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    if abs(dx) == chamber_size or abs(dy) == chamber_size:
+                        grid[y][x] = '○'
+                    elif dx == 0 and dy == 0:
+                        grid[y][x] = '♛'  # Queen
+        
+        # Draw food sources
+        for fx, fy in self.food_sources:
+            if 0 <= fx < self.width and 0 <= fy < self.height:
+                grid[fy][fx] = '●'
+        
+        # Update and draw ants
+        for ant in self.ants:
+            # Simple ant AI
+            if not ant['target']:
+                if ant['carrying']:
+                    # Go to queen
+                    ant['target'] = self.queen_chamber
+                else:
+                    # Go to random food source
+                    ant['target'] = random.choice(self.food_sources)
+            
+            # Move towards target
+            tx, ty = ant['target']
+            if ant['x'] < tx:
+                ant['vx'] = 1
+            elif ant['x'] > tx:
+                ant['vx'] = -1
+            else:
+                ant['vx'] = 0
+            
+            if ant['y'] < ty:
+                ant['vy'] = 1
+            elif ant['y'] > ty:
+                ant['vy'] = -1
+            else:
+                ant['vy'] = 0
+            
+            # Update position
+            ant['x'] += ant['vx']
+            ant['y'] += ant['vy']
+            
+            # Add to tunnels
+            self.tunnels.add((ant['x'], ant['y']))
+            
+            # Leave pheromone trail
+            if ant['carrying']:
+                self.pheromones[(ant['x'], ant['y'])] = 5
+            
+            # Check if reached target
+            if (ant['x'], ant['y']) == ant['target']:
+                ant['carrying'] = not ant['carrying']
+                ant['target'] = None
+            
+            # Draw ant
+            if 0 <= ant['x'] < self.width and 0 <= ant['y'] < self.height:
+                ant_char = self.ant_chars[hash((ant['x'], ant['y'])) % len(self.ant_chars)]
+                grid[ant['y']][ant['x']] = ant_char
+        
+        # Draw tunnels
+        for (x, y) in self.tunnels:
+            if 0 <= x < self.width and 0 <= y < self.height:
+                if grid[y][x] == ' ':
+                    grid[y][x] = '·'
+        
+        # Draw pheromone trails
+        pheromones_to_remove = []
+        for (x, y), strength in self.pheromones.items():
+            if strength > 0:
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    if grid[y][x] == ' ' or grid[y][x] == '·':
+                        if strength > 3:
+                            grid[y][x] = '▪'
+                        else:
+                            grid[y][x] = '·'
+                self.pheromones[(x, y)] = strength - 0.1
+            else:
+                pheromones_to_remove.append((x, y))
+        
+        for pos in pheromones_to_remove:
+            del self.pheromones[pos]
+        
+        # Build message with tunnels
+        if self.message_progress > 0:
+            message_y = 15
+            message_x = (self.width - len(self.message) * 6) // 2
+            
+            # Simple block letters for TLDW
+            letter_patterns = {
+                'T': ["█████", "  █  ", "  █  "],
+                'L': ["█    ", "█    ", "█████"],
+                'D': ["████ ", "█   █", "████ "],
+                'W': ["█   █", "█ █ █", "█████"]
+            }
+            
+            for i, letter in enumerate(self.message):
+                if letter in letter_patterns and random.random() < self.message_progress:
+                    pattern = letter_patterns[letter]
+                    for row_idx, row in enumerate(pattern):
+                        for col_idx, char in enumerate(row):
+                            x = message_x + i * 6 + col_idx
+                            y = message_y + row_idx
+                            if 0 <= x < self.width and 0 <= y < self.height:
+                                if char == '█':
+                                    grid[y][x] = '▓'
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 2 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 4 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif char == '♛':  # Queen
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                elif char == '○':  # Chamber walls
+                    line += f"[yellow]{char}[/yellow]"
+                elif char == '●':  # Food
+                    line += f"[green]{char}[/green]"
+                elif char in '∴:⁚':  # Ants
+                    line += f"[red]{char}[/red]"
+                elif char == '▪':  # Strong pheromone
+                    line += f"[bright_magenta]{char}[/bright_magenta]"
+                elif char == '·':  # Tunnel/weak pheromone
+                    line += f"[dim white]{char}[/dim white]"
+                elif char == '▓':  # Message blocks
+                    line += f"[bold cyan]{char}[/bold cyan]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class NeonSignFlickerEffect(BaseEffect):
+    """Vintage neon sign with realistic flicker effect."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.1,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Neon sign design
+        self.sign_text = ["TLDW", "CHATBOOK"]
+        self.sign_border = True
+        
+        # Flicker states for each character
+        self.char_states = {}
+        self.flicker_probability = 0.05
+        self.startup_progress = 0.0
+        
+        # Glow effect characters
+        self.glow_chars = {
+            'dim': '░',
+            'medium': '▒',
+            'bright': '▓'
+        }
+        
+        # Electrical buzz visualization
+        self.buzz_particles = []
+        
+    def create_neon_letter(self, letter):
+        """Create neon-style version of a letter."""
+        # Double-line effect for neon tubes
+        neon_map = {
+            'T': ["╔═══╗", "  ║  ", "  ║  "],
+            'L': ["║    ", "║    ", "╚═══ "],
+            'D': ["╔══╗ ", "║  ║ ", "╚══╝ "],
+            'W': ["║   ║", "║ ║ ║", "╚═╩═╝"],
+            'C': ["╔═══ ", "║    ", "╚═══ "],
+            'H': ["║   ║", "╠═══╣", "║   ║"],
+            'A': ["╔═══╗", "╠═══╣", "║   ║"],
+            'B': ["╔══╗ ", "╠══╣ ", "╚══╝ "],
+            'O': ["╔═══╗", "║   ║", "╚═══╝"],
+            'K': ["║  ╱ ", "╠═╱  ", "║ ╲  "]
+        }
+        return neon_map.get(letter, ["     ", "     ", "     "])
+    
+    def update(self) -> Optional[str]:
+        """Update the neon sign animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Update startup progress
+        if elapsed < 2.0:
+            self.startup_progress = elapsed / 2.0
+        else:
+            self.startup_progress = 1.0
+        
+        # Draw sign frame
+        frame_width = 60
+        frame_height = 14
+        frame_x = (self.width - frame_width) // 2
+        frame_y = 5
+        
+        if self.sign_border:
+            # Top and bottom borders
+            for x in range(frame_x, frame_x + frame_width):
+                if x < self.width:
+                    grid[frame_y][x] = '═'
+                    grid[frame_y + frame_height][x] = '═'
+            
+            # Side borders
+            for y in range(frame_y + 1, frame_y + frame_height):
+                if y < self.height:
+                    grid[y][frame_x] = '║'
+                    grid[y][frame_x + frame_width - 1] = '║'
+            
+            # Corners
+            grid[frame_y][frame_x] = '╔'
+            grid[frame_y][frame_x + frame_width - 1] = '╗'
+            grid[frame_y + frame_height][frame_x] = '╚'
+            grid[frame_y + frame_height][frame_x + frame_width - 1] = '╝'
+        
+        # Draw neon text
+        text_y = frame_y + 3
+        
+        for line_idx, line in enumerate(self.sign_text):
+            # Calculate line position
+            line_width = len(line) * 6
+            line_x = (self.width - line_width) // 2
+            line_y = text_y + line_idx * 5
+            
+            # Draw each letter
+            for char_idx, char in enumerate(line):
+                char_x = line_x + char_idx * 6
+                char_key = f"{line_idx}_{char_idx}"
+                
+                # Initialize character state
+                if char_key not in self.char_states:
+                    self.char_states[char_key] = {
+                        'on': False,
+                        'brightness': 0.0,
+                        'flicker_timer': 0
+                    }
+                
+                state = self.char_states[char_key]
+                
+                # Update character state
+                if self.startup_progress < 1.0:
+                    # Startup sequence - letters turn on sequentially
+                    turn_on_time = (line_idx * len(line) + char_idx) / (len(self.sign_text) * max(len(l) for l in self.sign_text))
+                    if self.startup_progress > turn_on_time:
+                        state['on'] = True
+                        state['brightness'] = min(1.0, (self.startup_progress - turn_on_time) * 4)
+                else:
+                    # Normal operation with occasional flicker
+                    if state['flicker_timer'] > 0:
+                        state['flicker_timer'] -= 1
+                        state['on'] = (state['flicker_timer'] % 2 == 0)
+                    else:
+                        state['on'] = True
+                        # Random flicker
+                        if random.random() < self.flicker_probability:
+                            state['flicker_timer'] = random.randint(3, 8)
+                    
+                    state['brightness'] = 1.0 if state['on'] else 0.2
+                
+                # Draw letter if on
+                if state['brightness'] > 0:
+                    letter_pattern = self.create_neon_letter(char)
+                    for row_idx, row in enumerate(letter_pattern):
+                        for col_idx, pixel in enumerate(row):
+                            x = char_x + col_idx
+                            y = line_y + row_idx
+                            if 0 <= x < self.width and 0 <= y < self.height and pixel != ' ':
+                                grid[y][x] = pixel
+                                
+                                # Add glow effect around bright letters
+                                if state['brightness'] > 0.8:
+                                    for dx in [-1, 0, 1]:
+                                        for dy in [-1, 0, 1]:
+                                            gx, gy = x + dx, y + dy
+                                            if (0 <= gx < self.width and 0 <= gy < self.height and 
+                                                grid[gy][gx] == ' ' and random.random() < 0.3):
+                                                grid[gy][gx] = self.glow_chars['dim']
+        
+        # Add electrical effects
+        if self.startup_progress >= 1.0 and random.random() < 0.1:
+            # Spawn buzz particle
+            self.buzz_particles.append({
+                'x': random.randint(frame_x - 2, frame_x + frame_width + 2),
+                'y': random.randint(frame_y - 2, frame_y + frame_height + 2),
+                'life': random.randint(3, 6),
+                'char': random.choice(['*', '×', '+'])
+            })
+        
+        # Update and draw buzz particles
+        particles_to_remove = []
+        for particle in self.buzz_particles:
+            particle['life'] -= 1
+            if particle['life'] <= 0:
+                particles_to_remove.append(particle)
+            else:
+                x, y = particle['x'], particle['y']
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    grid[y][x] = particle['char']
+        
+        for particle in particles_to_remove:
+            self.buzz_particles.remove(particle)
+        
+        # Draw subtitle
+        if self.startup_progress >= 1.0:
+            subtitle = "◆ OPEN 24/7 ◆"
+        else:
+            subtitle = "◆ STARTING UP ◆"
+        
+        subtitle_x = (self.width - len(subtitle)) // 2
+        subtitle_y = frame_y + frame_height + 2
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width and subtitle_y < self.height:
+                grid[subtitle_y][subtitle_x + i] = char
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if char in '═║╔╗╚╝':  # Frame
+                    line += f"[dim white]{char}[/dim white]"
+                elif char in '╠╣╱╲':  # Neon letters
+                    # Check brightness of corresponding character
+                    brightness_found = False
+                    for char_key, state in self.char_states.items():
+                        if state['brightness'] > 0.8:
+                            line += f"[bold magenta]{char}[/bold magenta]"
+                            brightness_found = True
+                            break
+                    if not brightness_found:
+                        line += f"[dim magenta]{char}[/dim magenta]"
+                elif char in '░▒▓':  # Glow
+                    line += f"[dim magenta]{char}[/dim magenta]"
+                elif char in '*×+':  # Electrical effects
+                    line += f"[bold yellow]{char}[/bold yellow]"
+                elif char == '◆':  # Decorative
+                    line += f"[yellow]{char}[/yellow]"
+                elif y == subtitle_y:  # Subtitle
+                    line += f"[cyan]{char}[/cyan]"
+                else:
+                    line += char
+            lines.append(line)
+        
+        return '\n'.join(lines)
+
+
+class ZenGardenEffect(BaseEffect):
+    """Peaceful zen garden with raked sand patterns."""
+    
+    def __init__(
+        self,
+        parent_widget: Any,
+        width: int = 80,
+        height: int = 24,
+        speed: float = 0.05,
+        **kwargs
+    ):
+        super().__init__(parent_widget, **kwargs)
+        self.width = width
+        self.height = height
+        self.speed = speed
+        
+        # Garden elements
+        self.stones = [
+            (20, 10, "◯"),
+            (50, 8, "○"),
+            (35, 15, "●"),
+            (60, 12, "◉")
+        ]
+        
+        # Sand patterns
+        self.rake_progress = 0.0
+        self.pattern_type = "circular"  # circular, horizontal, diagonal
+        
+        # Cherry blossom petals
+        self.petals = []
+        for _ in range(8):
+            self.petals.append({
+                'x': random.randint(10, self.width - 10),
+                'y': random.randint(-5, 5),
+                'speed': random.uniform(0.3, 0.6),
+                'drift': random.uniform(-0.2, 0.2),
+                'char': random.choice(['✿', '❀', '✾'])
+            })
+        
+        # Water ripples
+        self.ripple_center = (65, 10)
+        self.ripple_radius = 0.0
+        
+    def create_sand_pattern(self, x, y, pattern_type):
+        """Create sand pattern at given position."""
+        if pattern_type == "circular":
+            # Calculate distance from stones
+            min_dist = float('inf')
+            for sx, sy, _ in self.stones:
+                dist = math.sqrt((x - sx)**2 + (y - sy)**2)
+                min_dist = min(min_dist, dist)
+            
+            # Create circular pattern
+            if int(min_dist) % 3 == 0:
+                return '～'
+            elif int(min_dist) % 3 == 1:
+                return '∽'
+            else:
+                return ' '
+        
+        elif pattern_type == "horizontal":
+            if y % 2 == 0:
+                return '─' if x % 3 != 0 else ' '
+            else:
+                return ' '
+        
+        elif pattern_type == "diagonal":
+            if (x + y) % 3 == 0:
+                return '╱'
+            elif (x - y) % 3 == 0:
+                return '╲'
+            else:
+                return ' '
+        
+        return ' '
+    
+    def update(self) -> Optional[str]:
+        """Update the zen garden animation."""
+        elapsed = time.time() - self.start_time
+        
+        # Create grid
+        grid = [[' ' for _ in range(self.width)] for _ in range(self.height)]
+        
+        # Update rake progress
+        self.rake_progress = (elapsed * 0.2) % 1.0
+        
+        # Cycle through patterns
+        pattern_cycle = int(elapsed / 5) % 3
+        if pattern_cycle == 0:
+            self.pattern_type = "circular"
+        elif pattern_cycle == 1:
+            self.pattern_type = "horizontal"
+        else:
+            self.pattern_type = "diagonal"
+        
+        # Draw title
+        title = "TLDW CHATBOOK"
+        subtitle = "Find Your Inner Peace"
+        title_x = (self.width - len(title)) // 2
+        subtitle_x = (self.width - len(subtitle)) // 2
+        
+        for i, char in enumerate(title):
+            if 0 <= title_x + i < self.width:
+                grid[2][title_x + i] = char
+        
+        for i, char in enumerate(subtitle):
+            if 0 <= subtitle_x + i < self.width:
+                grid[4][subtitle_x + i] = char
+        
+        # Draw sand patterns (with progressive reveal)
+        sand_area = {
+            'x_start': 10,
+            'x_end': self.width - 10,
+            'y_start': 7,
+            'y_end': self.height - 4
+        }
+        
+        for y in range(sand_area['y_start'], sand_area['y_end']):
+            for x in range(sand_area['x_start'], sand_area['x_end']):
+                # Progressive pattern reveal
+                reveal_progress = (x - sand_area['x_start']) / (sand_area['x_end'] - sand_area['x_start'])
+                if reveal_progress < self.rake_progress:
+                    pattern = self.create_sand_pattern(x, y, self.pattern_type)
+                    if pattern != ' ':
+                        grid[y][x] = pattern
+                else:
+                    # Unraked sand
+                    if random.random() < 0.1:
+                        grid[y][x] = '·'
+        
+        # Draw stones
+        for sx, sy, stone in self.stones:
+            if 0 <= sx < self.width and 0 <= sy < self.height:
+                grid[sy][sx] = stone
+                # Stone shadows
+                if sx + 1 < self.width and sy + 1 < self.height:
+                    if grid[sy + 1][sx + 1] in [' ', '·']:
+                        grid[sy + 1][sx + 1] = '░'
+        
+        # Draw water feature (small pond)
+        pond_x, pond_y = self.ripple_center
+        pond_radius = 4
+        for dy in range(-pond_radius, pond_radius + 1):
+            for dx in range(-pond_radius, pond_radius + 1):
+                x, y = pond_x + dx, pond_y + dy
+                if (0 <= x < self.width and 0 <= y < self.height and 
+                    dx*dx + dy*dy <= pond_radius*pond_radius):
+                    if dx*dx + dy*dy == pond_radius*pond_radius:
+                        grid[y][x] = '○'
+                    else:
+                        grid[y][x] = '≈'
+        
+        # Animate water ripples
+        self.ripple_radius = (elapsed * 2) % pond_radius
+        if self.ripple_radius > 0:
+            for angle in range(0, 360, 30):
+                rx = pond_x + int(self.ripple_radius * math.cos(math.radians(angle)))
+                ry = pond_y + int(self.ripple_radius * math.sin(math.radians(angle)) * 0.5)
+                if (0 <= rx < self.width and 0 <= ry < self.height and 
+                    grid[ry][rx] == '≈'):
+                    grid[ry][rx] = '~'
+        
+        # Update and draw falling petals
+        for petal in self.petals:
+            # Update position
+            petal['y'] += petal['speed'] * self.speed
+            petal['x'] += petal['drift']
+            
+            # Reset if off screen
+            if petal['y'] > self.height:
+                petal['y'] = random.randint(-5, 0)
+                petal['x'] = random.randint(10, self.width - 10)
+            
+            # Draw petal
+            x, y = int(petal['x']), int(petal['y'])
+            if 0 <= x < self.width and 0 <= y < self.height:
+                if grid[y][x] == ' ':
+                    grid[y][x] = petal['char']
+        
+        # Draw bamboo decoration
+        bamboo_x = 8
+        for y in range(8, self.height - 4):
+            if bamboo_x < self.width:
+                if y % 3 == 0:
+                    grid[y][bamboo_x] = '╫'
+                else:
+                    grid[y][bamboo_x] = '║'
+        
+        # Convert grid to string with styling
+        lines = []
+        for y, row in enumerate(grid):
+            line = ""
+            for x, char in enumerate(row):
+                if y == 2 and char != ' ':  # Title
+                    line += f"[bold white]{char}[/bold white]"
+                elif y == 4 and char != ' ':  # Subtitle
+                    line += f"[dim cyan]{char}[/dim cyan]"
+                elif char in '◯○●◉':  # Stones
+                    line += f"[white]{char}[/white]"
+                elif char == '░':  # Shadows
+                    line += f"[dim black]{char}[/dim black]"
+                elif char in '～∽─╱╲':  # Sand patterns
+                    line += f"[dim yellow]{char}[/dim yellow]"
+                elif char == '·':  # Unraked sand
+                    line += f"[dim white]{char}[/dim white]"
+                elif char in '≈~':  # Water
+                    line += f"[blue]{char}[/blue]"
+                elif char in '✿❀✾':  # Petals
+                    line += f"[light_pink]{char}[/light_pink]"
+                elif char in '║╫':  # Bamboo
+                    line += f"[green]{char}[/green]"
+                else:
+                    line += char
+            lines.append(line)
+        
         return '\n'.join(lines)
 
 

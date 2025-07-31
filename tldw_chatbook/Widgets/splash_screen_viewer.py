@@ -99,25 +99,40 @@ class SplashScreenViewer(Container):
     
     DEFAULT_CLASSES = "splash-viewer"
     
-    # Built-in cards list
+    # Built-in cards list - matches available cards from splash_screen.py
     BUILT_IN_CARDS = [
-        "default", "blueprint", "matrix", "glitch", "retro", "tech_pulse",
-        "code_scroll", "minimal_fade", "arcade_high_score", "digital_rain",
-        "neon_city", "wave_pattern", "pixel_art", "terminal_boot", "cyber_grid",
-        "starfield", "circuit_board", "hologram", "vaporwave", "ascii_banner",
-        "loading_bars", "particle_system", "plasma_effect", "fire_effect",
-        "water_ripple", "rainbow_wave", "binary_rain", "hexagon_grid",
-        "fractal_tree", "spiral_loader", "pulse_rings", "data_flow",
-        "neural_network", "quantum_particles", "laser_grid", "constellation",
-        "ascii_art_tldw", "game_of_life", "wireframe_globe", "zen_garden",
-        "ascii_fire", "rubiks_cube", "data_stream", "fractal_zoom",
-        "ascii_spinner", "hacker_terminal"
+        # Original cards
+        "default", "matrix", "glitch", "retro",
+        # Batch 1 additions
+        "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
+        # Batch 2 additions
+        "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal",
+        # Batch 3 additions
+        "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars",
+        # Batch 4 ("Crazy")
+        "raindrops_pond", "pixel_zoom", "text_explosion", "old_film", "maze_generator",
+        # Batch 5 ("Fantasy")
+        "dwarf_fortress",
+        # New 15 animated effects
+        "neural_network", "quantum_particles", "ascii_wave", "binary_matrix", "constellation_map",
+        "typewriter_news", "dna_sequence", "circuit_trace", "plasma_field", "ascii_fire",
+        "rubiks_cube", "data_stream", "fractal_zoom", "ascii_spinner", "hacker_terminal",
+        # Additional animated effects
+        "cyberpunk_glitch", "ascii_mandala", "holographic_interface", "quantum_tunnel", "chaotic_typewriter",
+        # New custom animations
+        "spy_vs_spy", "phonebooths", "emoji_face",
+        # New 10 animations batch
+        "ascii_aquarium", "bookshelf_browser", "train_journey", "clock_mechanism",
+        "weather_system", "music_visualizer", "origami_folding", "ant_colony",
+        "neon_sign_flicker", "zen_garden"
+        # Note: "custom_image" requires user configuration so not included here
     ]
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.splash_cards: Dict[str, SplashCardInfo] = {}
         self._load_splash_cards()
+        self.preview_duration = 3.0  # Default preview duration
     
     def _load_splash_cards(self) -> None:
         """Load all available splash cards."""
@@ -138,7 +153,7 @@ class SplashScreenViewer(Container):
     
     def compose(self) -> ComposeResult:
         """Compose the viewer interface."""
-        # Header
+        # Header (will be hidden when embedded via CSS)
         yield Label("🎨 Splash Screen Gallery", classes="viewer-header")
         yield Static("Select a splash screen below to preview it. Double-click to play.", classes="help-text")
         
@@ -149,7 +164,11 @@ class SplashScreenViewer(Container):
         # Create options for the list
         options = []
         for card_name, card_info in self.splash_cards.items():
-            option_text = f"{card_info.title} [{card_info.type}]"
+            # If title is generic, show the card name too
+            if card_info.title.lower() in ["tldw chatbook", "tldw", "loading tldw chatbook"]:
+                option_text = f"{card_info.title} ({card_name}) [{card_info.type}]"
+            else:
+                option_text = f"{card_info.title} [{card_info.type}]"
             options.append(Option(option_text, id=card_name))
         
         if not options:
@@ -161,10 +180,25 @@ class SplashScreenViewer(Container):
         # Card information display
         yield Static("Select a card to see details", id="card-info", classes="card-info")
         
+        # Duration control section
+        with Horizontal(classes="duration-control"):
+            yield Label("Preview Duration: ", classes="duration-label")
+            yield Input(
+                value="3.0",
+                id="duration-input",
+                classes="duration-input",
+                placeholder="3.0",
+                type="number"
+            )
+            yield Label(" seconds", classes="duration-suffix")
+        
         # Action buttons
         with Horizontal(classes="action-buttons"):
             yield Button("Play Selected", id="play-selected-button", variant="primary")
-            yield Button("Close", id="close-button", variant="default")
+            yield Button("Set as Default", id="set-default-button", variant="success")
+            # Only show close button if we're in a modal (not embedded)
+            if not self.has_class("embedded-splash-viewer"):
+                yield Button("Close", id="close-button", variant="default")
     
     @on(OptionList.OptionHighlighted)
     def on_card_selected(self, event: OptionList.OptionHighlighted) -> None:
@@ -178,10 +212,15 @@ class SplashScreenViewer(Container):
         
         card_info = self.splash_cards[card_name]
         
+        # Check if this is the current default
+        current_default = get_cli_setting("splash_screen", "card_selection", "random")
+        is_default = card_name == current_default
+        
         # Update card info display
         info_widget = self.query_one("#card-info", Static)
-        info_text = f"""[bold]{card_info.title}[/bold]
-Type: {card_info.type}  |  Effect: {card_info.effect or 'None'}
+        default_marker = " [green]✓ DEFAULT[/green]" if is_default else ""
+        info_text = f"""[bold]{card_info.title}[/bold]{default_marker}
+Card ID: {card_name}  |  Type: {card_info.type}  |  Effect: {card_info.effect or 'None'}
 {card_info.description}
 
 [dim]Double-click or press "Play Selected" to view this splash screen[/dim]"""
@@ -192,38 +231,37 @@ Type: {card_info.type}  |  Effect: {card_info.effect or 'None'}
         """Handle double-click on a card to play it."""
         if event.option_id:
             # Play the selected card
-            self.run_worker(self._play_card_worker(event.option_id))
+            self._play_card_async(event.option_id)
     
-    @work(exclusive=True)
+    def _play_card_async(self, card_id: str) -> None:
+        """Start async worker to play a card."""
+        from functools import partial
+        worker_func = partial(self._play_card_worker, card_id)
+        self.run_worker(worker_func, exclusive=True)
+    
     async def _play_card_worker(self, card_id: str) -> None:
         """Worker to play a specific splash screen card."""
         if card_id not in self.splash_cards:
             return
             
-        # Use default duration and animation speed
-        duration = 3.0  # Default 3 seconds for preview
-        animation_speed = 1.0
-        
-        # Create config for the specific card
-        test_config = {
-            "enabled": True,
-            "duration": duration,
-            "card_selection": card_id,
-            "active_cards": [card_id],
-            "effects": {
-                "animation_speed": animation_speed
-            }
-        }
+        # Get duration from input
+        try:
+            duration_input = self.query_one("#duration-input", Input)
+            duration = float(duration_input.value)
+            # Clamp duration between 0.5 and 30 seconds
+            duration = max(0.5, min(30.0, duration))
+        except (ValueError, Exception):
+            duration = 3.0  # Default 3 seconds for preview
         
         # Show notification
         card_info = self.splash_cards[card_id]
         self.app.notify(f"Playing '{card_info.title}' splash screen...", severity="information")
         
-        # Create splash screen with test config
+        # Create splash screen with specific card
         splash = SplashScreen(
+            card_name=card_id,
             duration=duration,
-            show_progress=True,
-            config=test_config
+            show_progress=True
         )
         
         # Create overlay container
@@ -257,8 +295,31 @@ Type: {card_info.type}  |  Effect: {card_info.effect or 'None'}
             self.app.notify("Invalid selection", severity="error")
             return
         
-        # Play the selected card using the shared worker
-        self.run_worker(self._play_card_worker(option_id))
+        # Play the selected card
+        self._play_card_async(option_id)
+    
+    @on(Button.Pressed, "#set-default-button")
+    def on_set_default_button(self, event: Button.Pressed) -> None:
+        """Set the currently selected splash screen as the default."""
+        # Get selected card from option list
+        card_list = self.query_one("#card-list", OptionList)
+        if card_list.highlighted is None:
+            self.app.notify("Please select a splash screen first", severity="warning")
+            return
+            
+        option_id = card_list.get_option_at_index(card_list.highlighted).id
+        if not option_id or option_id not in self.splash_cards:
+            self.app.notify("Invalid selection", severity="error")
+            return
+        
+        # Save the selection to config
+        try:
+            save_setting_to_cli_config("splash_screen", "card_selection", option_id)
+            card_info = self.splash_cards[option_id]
+            self.app.notify(f"Set '{card_info.title}' as default splash screen", severity="success")
+        except Exception as e:
+            self.app.notify(f"Failed to save setting: {e}", severity="error")
+            logger.error(f"Failed to save default splash screen: {e}")
     
     @on(Button.Pressed, "#close-button")
     def on_close_button(self, event: Button.Pressed) -> None:
@@ -269,3 +330,21 @@ Type: {card_info.type}  |  Effect: {card_info.effect or 'None'}
                 self.app.screen.dismiss()
         except Exception as e:
             logger.error(f"Failed to close: {e}")
+    
+    @on(Input.Changed, "#duration-input")
+    def on_duration_changed(self, event: Input.Changed) -> None:
+        """Validate duration input as user types."""
+        try:
+            value = float(event.value) if event.value else 0
+            # Provide feedback if value is out of range
+            if value < 0.5:
+                event.input.add_class("error")
+                self.app.notify("Duration must be at least 0.5 seconds", severity="warning")
+            elif value > 30:
+                event.input.add_class("error")
+                self.app.notify("Duration cannot exceed 30 seconds", severity="warning")
+            else:
+                event.input.remove_class("error")
+        except ValueError:
+            if event.value:  # Only show error if there's actual input
+                event.input.add_class("error")

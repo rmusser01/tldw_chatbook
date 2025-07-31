@@ -101,6 +101,7 @@ class LazyLiveDictationService:
         self.audio_buffer = []
         self.buffer_lock = threading.Lock()
         self.last_speech_time = 0
+        self._current_audio_level = 0.0
         
         # Transcription management
         self.transcript_segments = []
@@ -179,13 +180,23 @@ class LazyLiveDictationService:
             except Exception as e:
                 self._audio_init_error = str(e)
                 logger.error(f"Failed to initialize audio service: {e}")
-                raise AudioInitializationError(
-                    "Unable to access microphone. Please check:\n"
-                    "• Microphone is connected\n"
-                    "• App has microphone permissions\n"
-                    "• No other app is using the microphone\n"
-                    f"\nTechnical details: {e}"
-                )
+                # Special handling for macOS permissions
+                if sys.platform == "darwin" and ("Invalid input device" in str(e) or "no default" in str(e).lower()):
+                    raise AudioInitializationError(
+                        "No microphone access on macOS. Please:\n"
+                        "1. Open System Settings > Privacy & Security > Microphone\n"
+                        "2. Find and enable Terminal (or your IDE/Python app)\n"
+                        "3. Restart this application\n"
+                        "\nNote: You must restart after granting permissions."
+                    )
+                else:
+                    raise AudioInitializationError(
+                        "Unable to access microphone. Please check:\n"
+                        "• Microphone is connected\n"
+                        "• App has microphone permissions\n"
+                        "• No other app is using the microphone\n"
+                        f"\nTechnical details: {e}"
+                    )
         elif self._audio_init_error:
             raise AudioInitializationError(self._audio_init_error)
         
@@ -333,6 +344,17 @@ class LazyLiveDictationService:
     def _audio_callback(self, audio_chunk: bytes):
         """Callback for audio chunks with auto-clear if privacy enabled."""
         try:
+            # Calculate audio level (RMS)
+            try:
+                import numpy as np
+                audio_array = np.frombuffer(audio_chunk, dtype=np.int16)
+                if len(audio_array) > 0:
+                    rms = np.sqrt(np.mean(audio_array.astype(float)**2))
+                    # Normalize to 0.0-1.0 range (assuming 16-bit audio)
+                    self._current_audio_level = min(1.0, rms / 32768.0)
+            except:
+                self._current_audio_level = 0.0
+            
             # Add to buffer
             with self.buffer_lock:
                 self.audio_buffer.append(audio_chunk)
@@ -414,9 +436,23 @@ class LazyLiveDictationService:
     def get_audio_devices(self) -> List[Dict[str, Any]]:
         """Get available audio input devices with error handling."""
         try:
-            return self.audio_service.get_audio_devices()
+            devices = self.audio_service.get_audio_devices()
+            if not devices:
+                logger.warning("No audio input devices found. Check microphone permissions.")
+            return devices
         except AudioInitializationError as e:
             logger.error(f"Cannot get audio devices: {e}")
+            return []
+        except Exception as e:
+            if "Invalid input device" in str(e) or "no default" in str(e).lower():
+                logger.error(
+                    "No microphone access. Please:\n"
+                    "1. Open System Settings > Privacy & Security > Microphone\n"
+                    "2. Grant access to Terminal or your Python app\n"
+                    "3. Restart the application"
+                )
+            else:
+                logger.error(f"Error getting audio devices: {e}")
             return []
     
     def set_buffer_duration(self, duration_ms: int):
@@ -569,6 +605,27 @@ class LazyLiveDictationService:
         save_setting_to_cli_config('dictation.privacy', 'save_history', settings.get('save_history', False))
         save_setting_to_cli_config('dictation.privacy', 'auto_clear_buffer', settings.get('auto_clear_buffer', True))
         logger.info(f"Privacy settings updated: {settings}")
+    
+    def get_full_transcript(self) -> str:
+        """Get the full transcript as a single string."""
+        if self.transcript_segments:
+            return " ".join(seg['text'] for seg in self.transcript_segments)
+        return self.current_transcript or ""
+    
+    def set_audio_device(self, device_id: Optional[str]):
+        """Set the audio input device."""
+        self.audio_device_id = device_id
+        if self.audio_service:
+            try:
+                self.audio_service.set_device(device_id)
+            except Exception as e:
+                logger.warning(f"Could not set audio device: {e}")
+    
+    def get_audio_level(self) -> float:
+        """Get current audio input level (0.0 to 1.0)."""
+        if hasattr(self, '_current_audio_level'):
+            return self._current_audio_level
+        return 0.0
     
     # Include other methods from original implementation with appropriate modifications...
     # (I'm including the key ones here, others remain similar)

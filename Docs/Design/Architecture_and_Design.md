@@ -120,7 +120,7 @@ chunks = chunker.chunk_text(research_paper_text)
 ```
 
 For detailed information, see:
-- [Chunking Architecture](Chunking_Architecture.md)
-- [Chunking API Reference](Chunking_API_Reference.md)
-- [Chunking Templates Guide](Chunking_Templates_Guide.md)
-- [Chunking Use Cases](Chunking_Use_Cases.md)
+- [Chunking Architecture](Chunking/Chunking_Architecture.md)
+- [Chunking API Reference](Chunking/Chunking_API_Reference.md)
+- [Chunking Templates Guide](Chunking/Chunking_Templates_Guide.md)
+- [Chunking Use Cases](Chunking/Chunking_Use_Cases.md)

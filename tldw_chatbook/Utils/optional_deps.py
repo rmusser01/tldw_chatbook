@@ -125,30 +125,76 @@ def check_embeddings_rag_deps() -> bool:
     # Always recheck dependencies - don't return cached False value
     # This ensures we actually check if dependencies are installed
     
-    # Don't actually import heavy deps unless explicitly checking
-    # Just check if they would be importable
+    # Check each dependency more thoroughly
     required_deps = ['torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers']
     all_available = True
+    missing_deps = []
     
     for dep in required_deps:
         try:
-            # Use importlib to check without actually importing
+            # First try the lazy check
             import importlib.util
             spec = importlib.util.find_spec(dep)
             if spec is None:
                 all_available = False
-                logger.debug(f"⚠️ {dep} not found (lazy check)")
+                missing_deps.append(dep)
+                logger.debug(f"⚠️ {dep} not found (spec check)")
             else:
-                logger.debug(f"✅ {dep} is available (lazy check)")
-        except (ImportError, ModuleNotFoundError):
+                # For critical dependencies, also try actual import to be sure
+                try:
+                    if dep == 'torch':
+                        import torch
+                        logger.debug(f"✅ torch {torch.__version__} is available")
+                    elif dep == 'transformers':
+                        import transformers
+                        logger.debug(f"✅ transformers {transformers.__version__} is available")
+                    elif dep == 'numpy':
+                        import numpy
+                        logger.debug(f"✅ numpy {numpy.__version__} is available")
+                    elif dep == 'chromadb':
+                        # ChromaDB has some import quirks, handle them carefully
+                        try:
+                            # First ensure protobuf internal builder is available
+                            from google.protobuf.internal import builder
+                        except ImportError:
+                            # Create a dummy if needed
+                            import google.protobuf.internal
+                            if not hasattr(google.protobuf.internal, 'builder'):
+                                class DummyBuilder:
+                                    pass
+                                google.protobuf.internal.builder = DummyBuilder()
+                        
+                        # Set environment variable to suppress warnings
+                        import os
+                        os.environ['__PYDANTIC_SELF_SCHEMA__'] = 'pydantic.v1'
+                        
+                        import chromadb
+                        logger.debug(f"✅ chromadb {chromadb.__version__} is available")
+                    elif dep == 'sentence_transformers':
+                        import sentence_transformers
+                        logger.debug(f"✅ sentence_transformers {sentence_transformers.__version__} is available")
+                    else:
+                        logger.debug(f"✅ {dep} is available (spec check)")
+                except Exception as e:
+                    all_available = False
+                    missing_deps.append(dep)
+                    logger.debug(f"⚠️ {dep} import failed: {e}")
+        except Exception as e:
             all_available = False
-            logger.debug(f"⚠️ {dep} not found (lazy check)")
+            missing_deps.append(dep)
+            logger.debug(f"⚠️ {dep} check failed: {e}")
+    
+    # Also mark individual dependencies
+    for dep in required_deps:
+        if dep not in missing_deps:
+            # Mark the individual dependency as available
+            DEPENDENCIES_AVAILABLE[dep] = True
     
     DEPENDENCIES_AVAILABLE['embeddings_rag'] = all_available
     if all_available:
         logger.info("✅ All embeddings/RAG dependencies found. Features are enabled.")
     else:
-        logger.warning("⚠️ Some embeddings/RAG dependencies missing. Features will be disabled.")
+        logger.warning(f"⚠️ Some embeddings/RAG dependencies missing: {', '.join(missing_deps)}. Features will be disabled.")
     
     return all_available
 
@@ -675,6 +721,20 @@ def ensure_dependencies_checked():
         initialize_dependency_checks()
         _initialized = True
     
+# Force recheck function for embeddings
+def force_recheck_embeddings():
+    """Force a recheck of embeddings dependencies."""
+    logger.info("Force rechecking embeddings dependencies...")
+    # Reset the cached values
+    DEPENDENCIES_AVAILABLE['embeddings_rag'] = False
+    DEPENDENCIES_AVAILABLE['torch'] = False
+    DEPENDENCIES_AVAILABLE['transformers'] = False
+    DEPENDENCIES_AVAILABLE['numpy'] = False
+    DEPENDENCIES_AVAILABLE['chromadb'] = False
+    DEPENDENCIES_AVAILABLE['sentence_transformers'] = False
+    # Recheck
+    return check_embeddings_rag_deps()
+
 # Check configuration for eager dependency checking
 eager_check = False
 
@@ -693,6 +753,12 @@ else:
                 logger.info("Eager dependency checking enabled via config file")
         except Exception as e:
             logger.debug(f"Could not check config for eager_dependency_check: {e}")
+
+# Always check embeddings dependencies eagerly since they're critical for the UI
+# This ensures the embeddings window loads correctly
+if 'PYTEST_CURRENT_TEST' not in os.environ:
+    logger.info("Checking embeddings dependencies early to ensure UI loads correctly...")
+    check_embeddings_rag_deps()
 
 if eager_check:
     initialize_dependency_checks()

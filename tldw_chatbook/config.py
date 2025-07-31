@@ -1355,7 +1355,12 @@ active_cards = [
     "default", "matrix", "glitch", "retro", "classic", "compact", "minimal",
     "tech_pulse", "code_scroll", "minimal_fade", "blueprint", "arcade_high_score",
     "digital_rain", "loading_bar", "starfield", "terminal_boot", "glitch_reveal",
-    "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars"
+    "ascii_morph", "game_of_life", "scrolling_credits", "spotlight_reveal", "sound_bars",
+    "spy_vs_spy", "phonebooths", "emoji_face",
+    "ascii_aquarium", "bookshelf_browser", "train_journey", "clock_mechanism",
+    "weather_system", "music_visualizer", "origami_folding", "ant_colony",
+    "neon_sign_flicker", "zen_garden"
+    # Note: "custom_image" is not included by default as it requires user configuration
 ]
 
 [splash_screen.effects]
@@ -1363,6 +1368,8 @@ active_cards = [
 fade_in_duration = 0.3  # Fade in time in seconds
 fade_out_duration = 0.2  # Fade out time in seconds
 animation_speed = 1.0  # Animation playback speed multiplier
+
+custom_image_path = ""  # Set path to your image file for custom_image splash screen
 
 [logging]
 # Log file will be placed in the same directory as the chachanotes_db_path below.

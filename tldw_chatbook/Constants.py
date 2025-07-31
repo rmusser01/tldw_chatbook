@@ -26,9 +26,10 @@ TAB_STATS = "stats"
 TAB_LOGS = "logs"
 TAB_CODING = "coding"
 TAB_STTS = "stts"
+TAB_STUDY = "study"
 TAB_SUBSCRIPTIONS = "subscriptions"
 ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
-            TAB_EVALS, TAB_LLM, TAB_STTS, TAB_SUBSCRIPTIONS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_STATS]
+            TAB_EVALS, TAB_LLM, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_STATS]
 
 # --- TLDW API Form Specific Option Containers (IDs) ---
 TLDW_API_VIDEO_OPTIONS_ID = "tldw-api-video-options"
@@ -1754,6 +1755,111 @@ AppFooterStatus {
 }
 
 /* --- End of Search Tab --- */
+/* ----------------------------- ************************* ----------------------------- */
+
+
+/* ----------------------------- ************************* ----------------------------- */
+/* --- Splash Screen Viewer Modal --- */
+.modal-container {
+    width: 100%;
+    height: 100%;
+    align: center middle;
+    background: $background 95%;  /* Semi-transparent background */
+}
+
+.splash-gallery-modal {
+    width: 90%;
+    height: 90%;
+    max-width: 120;
+    max-height: 40;
+    background: $panel;
+    border: thick $accent;
+    padding: 1;
+}
+
+.splash-viewer {
+    layout: vertical;
+    width: 100%;
+    height: 100%;
+}
+
+.splash-viewer .viewer-header {
+    text-style: bold underline;
+    text-align: center;
+    padding: 1;
+    background: $accent;
+    color: $text;
+    margin-bottom: 1;
+}
+
+.splash-viewer .help-text {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+.splash-viewer .card-list {
+    height: 50%;
+    width: 100%;
+    border: round $surface;
+    margin-bottom: 1;
+    overflow-y: auto;
+}
+
+.splash-viewer .card-info {
+    height: 25%;
+    width: 100%;
+    border: round $surface;
+    padding: 1;
+    margin-bottom: 1;
+    background: $surface;
+    overflow-y: auto;
+}
+
+.splash-viewer .action-buttons {
+    layout: horizontal;
+    height: auto;
+    width: 100%;
+    align-horizontal: center;
+}
+
+.splash-viewer .action-buttons Button {
+    margin: 0 1;
+}
+
+#splash-overlay {
+    layer: overlay;
+    width: 100%;
+    height: 100%;
+    background: $background;
+    align: center middle;
+}
+
+/* Embedded splash viewer (when shown in settings tab) */
+.embedded-splash-viewer {
+    width: 100%;
+    height: 100%;
+    border: none;
+    padding: 0;
+}
+
+.embedded-splash-viewer .viewer-header {
+    display: none;  /* Hide header when embedded */
+}
+
+.embedded-splash-viewer .help-text {
+    display: none;  /* Hide help text when embedded */
+}
+
+.embedded-splash-viewer .card-list {
+    height: 60%;
+}
+
+.embedded-splash-viewer .card-info {
+    height: 30%;
+}
+
+/* --- End of Splash Screen Viewer Modal --- */
 /* ----------------------------- ************************* ----------------------------- */
     """
 #

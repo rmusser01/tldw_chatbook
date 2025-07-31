@@ -582,6 +582,20 @@ ModalScreen {
  * Create Embeddings Enhanced Styles
  * ======================================== */
 
+/* Main container for embeddings creation content */
+EmbeddingsCreationContent {
+    layout: vertical;
+    height: 100%;
+    width: 100%;
+}
+
+/* When used within search view */
+#search-view-embeddings-create EmbeddingsCreationContent {
+    display: block;
+    height: 100%;
+    width: 100%;
+}
+
 /* Tabbed content container */
 #embeddings-tabs {
     height: 1fr;
@@ -608,12 +622,12 @@ ModalScreen {
 
 /* Sticky footer for action buttons */
 .embeddings-sticky-footer {
-    dock: bottom;
     width: 100%;
     background: $panel;
     padding: 1 2;
     border-top: thick $primary;
     height: auto;
+    margin-top: 1;
 }
 
 .embeddings-button-group {

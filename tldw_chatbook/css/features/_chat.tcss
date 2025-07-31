@@ -335,6 +335,20 @@
     border: solid $primary;
 }
 
+/* Advanced Settings checkbox styling */
+.advanced-settings-checkbox {
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+.advanced-settings-checkbox > Checkbox {
+    color: $text;
+}
+
+.advanced-settings-checkbox:hover {
+    color: $accent;
+}
+
 /* Settings search input */
 .settings-search-input {
     width: 100%;

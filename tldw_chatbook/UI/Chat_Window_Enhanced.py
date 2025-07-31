@@ -223,22 +223,11 @@ class ChatWindowEnhanced(Container):
         )
 
     async def handle_clear_image_button(self, app_instance, event):
-        """Clear attached image."""
-        self.pending_image = None
-        self.pending_attachment = None
+        """Clear attached file."""
+        # Clear all attachment data
+        self._clear_attachment_state()
         
-        # Update attach button if it exists
-        try:
-            attach_button = self.query_one("#attach-image")
-            attach_button.label = "📎"
-        except Exception:
-            pass
-        
-        # Hide indicator
-        indicator = self.query_one("#image-attachment-indicator")
-        indicator.add_class("hidden")
-        
-        app_instance.notify("Image attachment cleared")
+        app_instance.notify("File attachment cleared")
 
     async def handle_enhanced_send_button(self, app_instance, event):
         """Enhanced send handler that includes image data."""
@@ -247,28 +236,23 @@ class ChatWindowEnhanced(Container):
         # First call the original handler
         await chat_events.handle_chat_send_button_pressed(app_instance, event)
         
-        # Clear any pending image after sending
-        if self.pending_image:
-            self.pending_image = None
-            
-            # Update attach button if it exists
-            try:
-                attach_button = self.query_one("#attach-image")
-                attach_button.label = "📎"
-            except Exception:
-                pass
-            
-            # Hide indicator
-            indicator = self.query_one("#image-attachment-indicator")
-            indicator.add_class("hidden")
+        # Clear attachment states after successful send
+        self._clear_attachment_state()
 
     async def process_file_attachment(self, file_path: str) -> None:
         """Process selected file using appropriate handler."""
         from ..Utils.file_handlers import file_handler_registry
+        from ..Utils.path_validation import is_safe_path
         from pathlib import Path
         
         try:
             logger.info(f"Processing file attachment: {file_path}")
+            
+            # Validate the file path is safe (within user's home directory)
+            import os
+            if not is_safe_path(file_path, os.path.expanduser("~")):
+                raise ValueError("File path is outside allowed directory")
+            
             # Process the file
             processed_file = await file_handler_registry.process_file(file_path)
             logger.info(f"File processed successfully: {processed_file}")
@@ -362,25 +346,33 @@ class ChatWindowEnhanced(Container):
                     except Exception as e:
                         logger.debug(f"Could not check vision capability: {e}")
                 
-                # Update UI to show file is attached
-                try:
-                    attach_button = self.query_one("#attach-image")
-                    attach_button.label = "📎✓"
-                except Exception:
-                    pass
-                
-                # Show indicator with filename
-                indicator = self.query_one("#image-attachment-indicator")
-                emoji_map = {"image": "📷", "file": "📎"}
-                emoji = emoji_map.get(processed_file.file_type, "📎")
-                indicator.update(f"{emoji} {processed_file.display_name}")
-                indicator.remove_class("hidden")
+                # Use centralized UI update
+                self._update_attachment_ui()
                 
                 self.app_instance.notify(f"{processed_file.display_name} attached")
                 
+        except FileNotFoundError as e:
+            logger.error(f"File not found: {file_path}")
+            self.app_instance.notify(f"File not found: {Path(file_path).name}", severity="error")
+            # Clear any partial state
+            self._clear_attachment_state()
+        except PermissionError as e:
+            logger.error(f"Permission denied accessing file: {file_path}")
+            self.app_instance.notify(f"Permission denied: {Path(file_path).name}", severity="error")
+            self._clear_attachment_state()
+        except ValueError as e:
+            # File handler validation errors
+            logger.error(f"File validation error: {e}")
+            self.app_instance.notify(str(e), severity="error")
+            self._clear_attachment_state()
+        except MemoryError as e:
+            logger.error(f"Out of memory processing file: {file_path}")
+            self.app_instance.notify("File too large to process", severity="error")
+            self._clear_attachment_state()
         except Exception as e:
-            logger.error(f"Error processing file attachment: {e}", exc_info=True)
+            logger.error(f"Unexpected error processing file attachment: {e}", exc_info=True)
             self.app_instance.notify(f"Error processing file: {str(e)}", severity="error")
+            self._clear_attachment_state()
 
     async def handle_image_path_submitted(self, event):
         """Handle image path submission from file input field.
@@ -389,11 +381,21 @@ class ChatWindowEnhanced(Container):
         the old file input field behavior.
         """
         from ..Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
+        from ..Utils.path_validation import is_safe_path
         from pathlib import Path
+        import os
         
         try:
             file_path = event.value
             if not file_path:
+                return
+            
+            # Validate the file path is safe
+            if not is_safe_path(file_path, os.path.expanduser("~")):
+                self.app_instance.notify(
+                    "Error: File path is outside allowed directory",
+                    severity="error"
+                )
                 return
             
             path = Path(file_path)
@@ -417,21 +419,8 @@ class ChatWindowEnhanced(Container):
                     'path': str(path)
                 }
                 
-                # Update UI elements
-                try:
-                    # Update attach button
-                    attach_button = self.query_one("#attach-image")
-                    attach_button.label = "📎✓"
-                except Exception:
-                    pass
-                
-                # Show indicator
-                try:
-                    indicator = self.query_one("#image-attachment-indicator")
-                    indicator.update(f"📷 {path.name}")
-                    indicator.remove_class("hidden")
-                except Exception:
-                    pass
+                # Use centralized UI update
+                self._update_attachment_ui()
                 
                 # Hide file input if it exists
                 if hasattr(event, 'input') and event.input:
@@ -539,6 +528,83 @@ class ChatWindowEnhanced(Container):
         """Get the pending image attachment data."""
         return self.pending_image
     
+    def get_pending_attachment(self) -> Optional[dict]:
+        """Get the pending attachment data (new unified system)."""
+        return self.pending_attachment
+    
+    def _clear_attachment_state(self):
+        """Clear all attachment state and update UI consistently."""
+        # Clear data
+        self.pending_image = None
+        self.pending_attachment = None
+        
+        # Update attach button
+        try:
+            attach_button = self.query_one("#attach-image")
+            attach_button.label = "📎"
+        except Exception:
+            pass
+        
+        # Hide indicator
+        try:
+            indicator = self.query_one("#image-attachment-indicator")
+            indicator.add_class("hidden")
+        except Exception:
+            pass
+    
+    def _update_attachment_ui(self):
+        """Update UI elements based on current attachment state."""
+        try:
+            # Update attach button appearance based on attachment state
+            attach_button = self.query_one("#attach-image", Button)
+            
+            if self.pending_image or self.pending_attachment:
+                # Show indicator that file is attached
+                attach_button.label = "📎✓"
+                
+                # Update indicator visibility and text
+                try:
+                    indicator = self.query_one("#image-attachment-indicator", Static)
+                    
+                    if self.pending_attachment:
+                        # For new unified attachment system
+                        display_name = self.pending_attachment.get('display_name', 'File')
+                        file_type = self.pending_attachment.get('file_type', 'file')
+                        emoji_map = {"image": "📷", "file": "📎", "code": "💻", "text": "📄", "data": "📊"}
+                        emoji = emoji_map.get(file_type, "📎")
+                        indicator.update(f"{emoji} {display_name}")
+                    elif self.pending_image:
+                        # For legacy image system
+                        if isinstance(self.pending_image, dict):
+                            # Extract filename from path if available
+                            path = self.pending_image.get('path', '')
+                            if path:
+                                from pathlib import Path
+                                filename = Path(path).name
+                                indicator.update(f"📷 {filename}")
+                            else:
+                                indicator.update("📷 Image attached")
+                        else:
+                            indicator.update("📷 Image attached")
+                    
+                    indicator.remove_class("hidden")
+                except Exception:
+                    # Indicator might not exist yet
+                    pass
+            else:
+                # No attachment - reset to default
+                attach_button.label = "📎"
+                
+                # Hide indicator
+                try:
+                    indicator = self.query_one("#image-attachment-indicator")
+                    indicator.add_class("hidden")
+                except Exception:
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"Error updating attachment UI: {e}")
+    
     async def toggle_attach_button_visibility(self, show: bool) -> None:
         """Toggle the visibility of the attach file button."""
         try:
@@ -565,19 +631,13 @@ class ChatWindowEnhanced(Container):
                 )
                 await input_area.mount(attach_button, after=send_button)
                 
-                # Re-arrange the buttons to maintain order
-                await self._rearrange_chat_buttons()
-                
             else:
                 # Remove the button if it exists
                 try:
                     attach_button = self.query_one("#attach-image")
                     await attach_button.remove()
-                    # Clear any pending image when hiding the button
-                    self.pending_image = None
-                    # Hide the indicator as well
-                    indicator = self.query_one("#image-attachment-indicator")
-                    indicator.add_class("hidden")
+                    # Clear attachment state when hiding the button
+                    self._clear_attachment_state()
                 except Exception:
                     # Button doesn't exist, nothing to remove
                     pass
@@ -585,20 +645,6 @@ class ChatWindowEnhanced(Container):
         except Exception as e:
             logger.error(f"Error toggling attach button visibility: {e}")
     
-    async def _rearrange_chat_buttons(self) -> None:
-        """Rearrange chat buttons to maintain proper order after dynamic addition."""
-        try:
-            input_area = self.query_one("#chat-input-area", Horizontal)
-            
-            # Get all the buttons in the desired order (sidebar toggles are no longer here)
-            send_stop_button = self.query_one("#send-stop-chat", Button)
-            attach_button = self.query_one("#attach-image", Button)
-            
-            # Move them to the end in the correct order
-            send_stop_button.move_after(attach_button)
-            
-        except Exception as e:
-            logger.debug(f"Could not rearrange buttons: {e}")
     
     async def handle_notes_expand_button(self, app, event) -> None:
         """Handle the notes expand/collapse button."""
@@ -764,20 +810,8 @@ class ChatWindowEnhanced(Container):
         # First call the original handler
         await chat_events.handle_chat_send_button_pressed(app_instance, event)
         
-        # Clear any pending image after sending
-        if self.pending_image:
-            self.pending_image = None
-            
-            # Update attach button if it exists
-            try:
-                attach_button = self.query_one("#attach-image")
-                attach_button.label = "📎"
-            except Exception:
-                pass
-            
-            # Hide indicator
-            indicator = self.query_one("#image-attachment-indicator")
-            indicator.add_class("hidden")
+        # Clear attachment states after successful send
+        self._clear_attachment_state()
     
     async def handle_mic_button(self, app_instance, event: Button.Pressed) -> None:
         """Handle microphone button press for voice input."""
@@ -786,35 +820,154 @@ class ChatWindowEnhanced(Container):
     
     def action_toggle_voice_input(self) -> None:
         """Toggle voice input recording."""
-        if not self.voice_input_widget:
-            # Create voice input widget if not exists
+        if not hasattr(self, 'voice_dictation_service'):
+            # Create voice dictation service if not exists
             self._create_voice_input_widget()
+            
+        if not hasattr(self, 'voice_dictation_service') or not self.voice_dictation_service:
+            self.app_instance.notify("Voice input not available", severity="error")
+            return
         
         if self.is_voice_recording:
             # Stop recording
-            self.voice_input_widget.stop_recording()
-            self.is_voice_recording = False
+            self._stop_voice_recording()
         else:
             # Start recording
-            self.voice_input_widget.start_recording()
-            self.is_voice_recording = True
+            self._start_voice_recording()
     
     def _create_voice_input_widget(self):
         """Create the voice input widget."""
         try:
-            self.voice_input_widget = VoiceInputWidget(
-                show_device_selector=False,
-                show_transcript_preview=False,
-                transcription_provider=get_cli_setting('transcription', 'default_provider', 'auto'),
-                transcription_model=get_cli_setting('transcription', 'default_model', None),
-                language=get_cli_setting('transcription', 'default_language', 'en')
+            # Use a simpler approach - just use the dictation service directly
+            from ..Audio.dictation_service_lazy import LazyLiveDictationService, AudioInitializationError
+            
+            self.voice_dictation_service = LazyLiveDictationService(
+                transcription_provider=get_cli_setting('transcription', 'default_provider', 'faster-whisper'),
+                transcription_model=get_cli_setting('transcription', 'default_model', 'base'),
+                language=get_cli_setting('transcription', 'default_language', 'en'),
+                enable_punctuation=True,
+                enable_commands=False
             )
-            # Mount it hidden
-            self.mount(self.voice_input_widget)
-            self.voice_input_widget.display = False
+            logger.info("Voice dictation service created")
         except Exception as e:
-            logger.error(f"Failed to create voice input widget: {e}")
-            self.app_instance.notify("Voice input unavailable", severity="error")
+            logger.error(f"Failed to create voice dictation service: {e}")
+            self.voice_dictation_service = None
+            # Don't show error here - will show when user actually tries to use it
+    
+    def _start_voice_recording(self):
+        """Start voice recording."""
+        try:
+            from ..Audio.dictation_service_lazy import AudioInitializationError
+            
+            # Update UI
+            mic_button = self.query_one("#mic-button", Button)
+            mic_button.label = "🛑"  # Stop icon
+            mic_button.variant = "error"
+            
+            # Start dictation
+            success = self.voice_dictation_service.start_dictation(
+                on_partial_transcript=self._on_voice_partial,
+                on_final_transcript=self._on_voice_final,
+                on_error=self._on_voice_error
+            )
+            
+            if success:
+                self.is_voice_recording = True
+                self.app_instance.notify("🎤 Listening...", timeout=2)
+            else:
+                self.app_instance.notify("Failed to start recording", severity="error")
+                # Reset button
+                mic_button.label = "🎤"
+                mic_button.variant = "default"
+                
+        except AudioInitializationError as e:
+            logger.error(f"Audio initialization error: {e}")
+            # Show the specific error message which includes instructions
+            self.app_instance.notify(str(e), severity="error", timeout=10)
+            # Reset button
+            mic_button = self.query_one("#mic-button", Button)
+            mic_button.label = "🎤"
+            mic_button.variant = "default"
+        except Exception as e:
+            logger.error(f"Error starting voice recording: {e}")
+            if "no default" in str(e).lower() or "invalid input device" in str(e).lower():
+                self.app_instance.notify(
+                    "No microphone access. Grant permissions in System Settings > Privacy > Microphone",
+                    severity="error",
+                    timeout=10
+                )
+            else:
+                self.app_instance.notify(f"Voice recording error: {str(e)}", severity="error")
+            # Reset button
+            mic_button = self.query_one("#mic-button", Button)
+            mic_button.label = "🎤"
+            mic_button.variant = "default"
+    
+    def _stop_voice_recording(self):
+        """Stop voice recording."""
+        try:
+            # Stop dictation
+            result = self.voice_dictation_service.stop_dictation()
+            
+            # Update UI
+            mic_button = self.query_one("#mic-button", Button)
+            mic_button.label = "🎤"
+            mic_button.variant = "default"
+            
+            self.is_voice_recording = False
+            
+            # Insert final transcript if any
+            if result.transcript:
+                self._insert_voice_text(result.transcript)
+                word_count = len(result.transcript.split())
+                self.app_instance.notify(f"✓ Added {word_count} words", timeout=2)
+            else:
+                self.app_instance.notify("No speech detected", severity="warning")
+                
+        except Exception as e:
+            logger.error(f"Error stopping voice recording: {e}")
+            self.app_instance.notify("Error stopping recording", severity="error")
+    
+    def _on_voice_partial(self, text: str):
+        """Handle partial voice transcript."""
+        # Could show preview in status bar or tooltip
+        pass
+    
+    def _on_voice_final(self, text: str):
+        """Handle final voice transcript segment."""
+        # For continuous transcription, could insert segments as they complete
+        pass
+    
+    def _on_voice_error(self, error: Exception):
+        """Handle voice recording error."""
+        logger.error(f"Voice recording error: {error}")
+        self.app_instance.notify(f"Voice error: {str(error)}", severity="error")
+        # Reset UI
+        try:
+            mic_button = self.query_one("#mic-button", Button)
+            mic_button.label = "🎤"
+            mic_button.variant = "default"
+        except:
+            pass
+        self.is_voice_recording = False
+    
+    def _insert_voice_text(self, text: str):
+        """Insert voice text into chat input."""
+        try:
+            chat_input = self.query_one("#chat-input", TextArea)
+            current_text = chat_input.text
+            
+            # Add space if there's existing text
+            if current_text and not current_text.endswith(' '):
+                text = ' ' + text
+            
+            # Append transcribed text
+            chat_input.load_text(current_text + text)
+            
+            # Focus the input
+            chat_input.focus()
+        except Exception as e:
+            logger.error(f"Failed to insert voice text: {e}")
     
     def on_voice_input_message(self, event: VoiceInputMessage) -> None:
         """Handle voice input messages."""

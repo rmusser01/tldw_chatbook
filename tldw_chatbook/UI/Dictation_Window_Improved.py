@@ -6,6 +6,7 @@ Improved dictation interface with privacy settings and better error handling.
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 from datetime import datetime
+import time
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import (

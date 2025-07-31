@@ -272,14 +272,16 @@ class VoiceInputWidget(Widget):
     @work(exclusive=True, thread=True)
     def start_recording(self):
         """Start voice recording and dictation."""
-        if not self.dictation_service:
-            self.error_message = "Voice input not initialized"
-            return
-        
         try:
+            # Initialize service if needed
+            if not self.dictation_service:
+                self._initialize_dictation_service()
+                
+            if not self.dictation_service:
+                self.app.call_from_thread(self._set_error, "Voice input not initialized")
+                return
             # Clear previous state
-            self.error_message = ""
-            self.current_transcript = ""
+            self.app.call_from_thread(self._clear_state)
             
             # Set device if selected
             if self.selected_device_id is not None:
@@ -295,20 +297,20 @@ class VoiceInputWidget(Widget):
             )
             
             if success:
-                self.state = DictationState.LISTENING
+                self.app.call_from_thread(self._set_state, DictationState.LISTENING)
                 self.post_message(DictationStartedEvent(
                     provider=self.transcription_provider,
                     model=self.transcription_model
                 ))
                 
                 # Start audio level monitoring
-                self._start_level_monitoring()
+                self.app.call_from_thread(self._start_level_monitoring)
             else:
-                self.error_message = "Failed to start recording"
+                self.app.call_from_thread(self._set_error, "Failed to start recording")
         
         except Exception as e:
             logger.error(f"Failed to start recording: {e}")
-            self.error_message = f"Recording error: {str(e)}"
+            self.app.call_from_thread(self._set_error, f"Recording error: {str(e)}")
     
     @work(exclusive=True, thread=True)
     def stop_recording(self):
@@ -324,8 +326,8 @@ class VoiceInputWidget(Widget):
             result = self.dictation_service.stop_dictation()
             
             # Update state
-            self.state = DictationState.IDLE
-            self.audio_level = 0.0
+            self.app.call_from_thread(self._set_state, DictationState.IDLE)
+            self.app.call_from_thread(self._set_audio_level, 0.0)
             
             # Send final transcript
             if result.transcript:
@@ -338,12 +340,11 @@ class VoiceInputWidget(Widget):
             
             # Clear transcript preview
             if self.show_transcript_preview:
-                preview = self.query_one("#transcript-preview", Static)
-                preview.update(self.placeholder)
+                self.app.call_from_thread(self._update_preview, self.placeholder)
         
         except Exception as e:
             logger.error(f"Failed to stop recording: {e}")
-            self.error_message = f"Stop error: {str(e)}"
+            self.app.call_from_thread(self._set_error, f"Stop error: {str(e)}")
     
     def pause_recording(self):
         """Pause recording."""
@@ -360,7 +361,7 @@ class VoiceInputWidget(Widget):
     def _on_partial_transcript(self, text: str):
         """Handle partial transcript update."""
         self.current_transcript = text
-        self.call_from_thread(self._update_transcript_preview)
+        self.app.call_from_thread(self._update_transcript_preview)
         self.post_message(PartialTranscriptEvent(text))
         self.post_message(VoiceInputMessage(text, is_final=False))
     
@@ -372,7 +373,7 @@ class VoiceInputWidget(Widget):
         """Handle dictation state change."""
         old_state = self.state
         self.state = new_state
-        self.call_from_thread(self._update_ui_state)
+        self.app.call_from_thread(self._update_ui_state)
     
     def _on_error(self, error: Exception):
         """Handle dictation error."""
@@ -453,7 +454,7 @@ class VoiceInputWidget(Widget):
             if self.dictation_service:
                 level = self.dictation_service.get_audio_level()
                 self.audio_level = level
-                self.call_from_thread(self._update_level_display, level)
+                self._update_level_display(level)
                 self.post_message(AudioLevelUpdateEvent(level))
             
             await asyncio.sleep(0.1)
@@ -479,6 +480,93 @@ class VoiceInputWidget(Widget):
         if self.dictation_service:
             return self.dictation_service.get_full_transcript()
         return ""
+    
+    def _initialize_dictation_service(self):
+        """Initialize the dictation service."""
+        try:
+            from ..config import get_cli_setting
+            
+            self.dictation_service = LazyLiveDictationService(
+                transcription_provider=self.transcription_provider,
+                transcription_model=self.transcription_model,
+                language=self.language,
+                enable_punctuation=True,
+                enable_commands=False
+            )
+            logger.info("Dictation service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize dictation service: {e}")
+            self.dictation_service = None
+    
+    def _clear_state(self):
+        """Clear state - safe to call from any thread."""
+        self.error_message = ""
+        self.current_transcript = ""
+    
+    def _set_state(self, state: str):
+        """Set state - safe to call from any thread."""
+        self.state = state
+    
+    def _set_error(self, error: str):
+        """Set error - safe to call from any thread."""
+        self.error_message = error
+    
+    def _show_status(self, status: str):
+        """Show status - safe to call from any thread."""
+        try:
+            status_widget = self.query_one("#voice-status", Static)
+            status_widget.update(status)
+        except Exception:
+            pass
+    
+    def _start_level_monitoring(self):
+        """Start audio level monitoring."""
+        if not hasattr(self, 'level_monitor_worker') or not self.level_monitor_worker:
+            self.level_monitor_worker = self.run_worker(
+                self._monitor_audio_levels,
+                exclusive=True
+            )
+    
+    def _set_audio_level(self, level: float):
+        """Set audio level - safe to call from any thread."""
+        self.audio_level = level
+    
+    def _update_preview(self, text: str):
+        """Update preview text - safe to call from any thread."""
+        try:
+            preview = self.query_one("#transcript-preview", Static)
+            preview.update(text)
+        except Exception:
+            pass
+    
+    def _update_transcript_preview(self):
+        """Update transcript preview from current transcript."""
+        if self.show_transcript_preview:
+            try:
+                preview = self.query_one("#transcript-preview", Static)
+                preview.update(self.current_transcript or self.placeholder)
+            except Exception:
+                pass
+    
+    def _update_ui_state(self):
+        """Update UI based on current state."""
+        try:
+            # Update button
+            button = self.query_one("#record-button", Button)
+            button.label = self._get_record_button_label()
+            button.classes = f"record-button {self._get_button_class()}"
+            
+            # Update status
+            status = self.query_one("#voice-status", Static)
+            status_text = {
+                DictationState.IDLE: "",
+                DictationState.LISTENING: "Listening...",
+                DictationState.PROCESSING: "Processing...",
+                DictationState.PAUSED: "Paused"
+            }.get(self.state, "")
+            status.update(status_text)
+        except Exception:
+            pass
     
     def clear_transcript(self):
         """Clear the current transcript."""

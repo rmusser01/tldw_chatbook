@@ -34,10 +34,18 @@ from ..Third_Party.textual_fspicker import Filters
 
 # Check if embeddings dependencies are available
 if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
-    from ..Embeddings.Embeddings_Lib import EmbeddingFactory
-    from ..Embeddings.Chroma_Lib import ChromaDBManager
-    from ..Chunking.Chunk_Lib import chunk_for_embedding
+    try:
+        from ..Embeddings.Embeddings_Lib import EmbeddingFactory
+        from ..Embeddings.Chroma_Lib import ChromaDBManager
+        from ..Chunking.Chunk_Lib import chunk_for_embedding
+        logger.info("Successfully imported embeddings modules in EmbeddingsCreationContent")
+    except ImportError as e:
+        logger.error(f"Failed to import embeddings modules: {e}")
+        EmbeddingFactory = None
+        ChromaDBManager = None
+        chunk_for_embedding = None
 else:
+    logger.warning("Embeddings dependencies not available according to DEPENDENCIES_AVAILABLE")
     EmbeddingFactory = None
     ChromaDBManager = None
     chunk_for_embedding = None
@@ -50,6 +58,14 @@ if TYPE_CHECKING:
 
 class EmbeddingsCreationContent(Container):
     """Content container for creating embeddings, designed to work within the Search tab."""
+    
+    DEFAULT_CSS = """
+    EmbeddingsCreationContent {
+        layout: vertical;
+        height: 100%;
+        width: 100%;
+    }
+    """
     
     # Input source types
     SOURCE_FILE = "file"
@@ -113,7 +129,11 @@ class EmbeddingsCreationContent(Container):
                     yield Static("", id="error-model", classes="error-message hidden")
                     
                     # Template selector
-                    yield EmbeddingTemplateQuickSelect(id="embeddings-template-selector")
+                    try:
+                        yield EmbeddingTemplateQuickSelect(id="embeddings-template-selector")
+                    except Exception as e:
+                        logger.error(f"Failed to create template selector: {e}")
+                        yield Static("Template selector unavailable", classes="error-message")
                     
                     yield Rule()
                     
@@ -303,9 +323,16 @@ class EmbeddingsCreationContent(Container):
                     
                     # Chunk preview
                     with Collapsible(title="Chunk Preview", id="embeddings-chunk-preview-collapsible"):
-                        yield ChunkPreview(
+                        # TODO: Fix ChunkPreview widget
+                        # yield ChunkPreview(
+                        #     id="embeddings-chunk-preview",
+                        #     max_chunks=5
+                        # )
+                        yield TextArea(
+                            "",
                             id="embeddings-chunk-preview",
-                            max_chunks=5
+                            classes="embeddings-chunk-preview",
+                            read_only=True
                         )
             
             # Tab 3: Output

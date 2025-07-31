@@ -1,0 +1,822 @@
+# tldw_chatbook/UI/Theme_Editor_Window.py
+"""
+Theme Editor Window for creating and modifying Textual themes.
+Allows users to customize colors, preview changes, and save custom themes.
+"""
+
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from pathlib import Path
+import json
+import toml
+from functools import partial
+
+from textual import on, work
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.widgets import (
+    Static, Button, Input, Label, Tree, Switch,
+    TabbedContent, TabPane, Collapsible
+)
+from textual.reactive import reactive
+from textual.theme import Theme
+from textual.color import Color
+from textual.message import Message
+from textual.binding import Binding
+
+from loguru import logger
+
+# Import all available themes
+from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
+
+if TYPE_CHECKING:
+    from ..app import TldwCli
+
+
+class ThemeModifiedMessage(Message):
+    """Message sent when theme is modified."""
+    
+    def __init__(self, theme_name: str, theme_data: Dict[str, Any]) -> None:
+        self.theme_name = theme_name
+        self.theme_data = theme_data
+        super().__init__()
+
+
+class ThemeEditorView(Container):
+    """Main theme editor interface."""
+    
+    DEFAULT_CSS = """
+    ThemeEditorView {
+        layout: horizontal;
+        height: 100%;
+    }
+    
+    .theme-list-panel {
+        width: 30;
+        min-width: 25;
+        background: $boost;
+        padding: 1;
+        border-right: thick $background;
+    }
+    
+    .color-editor-panel {
+        width: 50%;
+        padding: 1 2;
+        overflow-y: auto;
+    }
+    
+    .preview-panel {
+        width: 1fr;
+        background: $surface;
+        padding: 1;
+        border-left: thick $background;
+        overflow-y: auto;
+    }
+    
+    .section-title {
+        text-style: bold;
+        margin: 1 0;
+        color: $primary;
+    }
+    
+    .color-input-group {
+        height: 4;
+        margin-bottom: 1;
+    }
+    
+    .color-input-row {
+        layout: horizontal;
+        height: 3;
+        align: center middle;
+    }
+    
+    .color-label {
+        width: 15;
+        text-align: right;
+        margin-right: 1;
+    }
+    
+    .color-input {
+        width: 10;
+    }
+    
+    .color-input.invalid-color {
+        border: thick $error;
+        color: $error;
+    }
+    
+    .color-swatch {
+        width: 6;
+        height: 3;
+        margin-left: 1;
+        border: solid $primary;
+    }
+    
+    .theme-actions {
+        layout: horizontal;
+        height: 3;
+        margin-top: 1;
+        align: center middle;
+    }
+    
+    .theme-actions Button {
+        margin: 0 1;
+    }
+    
+    #theme-tree {
+        height: 100%;
+    }
+    
+    .preview-component {
+        margin-bottom: 2;
+    }
+    
+    .preview-label {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    
+    .color-presets-container {
+        margin-bottom: 2;
+    }
+    
+    .preset-row {
+        height: 4;
+        margin-bottom: 1;
+        align: center middle;
+    }
+    
+    .preset-label {
+        width: 10;
+        text-align: right;
+        margin-right: 1;
+    }
+    
+    .color-preset-button {
+        margin: 0 1;
+        border: solid $panel;
+    }
+    
+    .color-preset-button:hover {
+        border: thick $primary;
+    }
+    
+    .preview-surface-demo {
+        background: $surface;
+        padding: 1;
+        margin: 1;
+        height: 3;
+    }
+    
+    .preview-panel-demo {
+        background: $panel;
+        padding: 1;
+        margin: 1;
+        height: 3;
+    }
+    
+    .text-primary {
+        color: $primary;
+    }
+    
+    .text-error {
+        color: $error;
+    }
+    """
+    
+    # Base theme colors to edit
+    BASE_COLORS = [
+        "primary", "secondary", "accent",
+        "background", "surface", "panel",
+        "foreground",
+        "success", "warning", "error"
+    ]
+    
+    # Preset color palettes for quick selection
+    COLOR_PRESETS = {
+        "Blues": ["#0099FF", "#006FB3", "#004D80", "#003366", "#002244"],
+        "Greens": ["#00CC66", "#009944", "#006633", "#004422", "#002211"],
+        "Reds": ["#FF3333", "#CC0000", "#990000", "#660000", "#330000"],
+        "Purples": ["#9966FF", "#7744DD", "#5522BB", "#330099", "#220066"],
+        "Grays": ["#FFFFFF", "#CCCCCC", "#999999", "#666666", "#333333"],
+        "Material": ["#2196F3", "#4CAF50", "#FF9800", "#F44336", "#9C27B0"],
+        "Pastels": ["#FFB3BA", "#BAFFC9", "#BAE1FF", "#FFFFBA", "#FFDFBA"],
+        "Dark": ["#1A1A1A", "#2D2D2D", "#404040", "#525252", "#656565"],
+    }
+    
+    current_theme_name = reactive("textual-dark")
+    current_theme_data = reactive({})
+    is_modified = reactive(False)
+    is_dark_theme = reactive(True)
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.custom_themes_path = Path.home() / ".config" / "tldw_cli" / "themes"
+        self.custom_themes_path.mkdir(parents=True, exist_ok=True)
+        self.color_inputs: Dict[str, Input] = {}
+        self.color_swatches: Dict[str, Static] = {}
+        self.last_focused_color_input: Optional[str] = None
+        
+    def compose(self) -> ComposeResult:
+        """Compose the theme editor layout."""
+        # Left panel - Theme list
+        with Container(classes="theme-list-panel"):
+            yield Label("Theme Library", classes="section-title")
+            tree = Tree("Themes", id="theme-tree")
+            tree.root.expand()
+            
+            # Add built-in themes
+            builtin_node = tree.root.add("Built-in Themes", expand=True)
+            builtin_node.add_leaf("textual-dark")
+            builtin_node.add_leaf("textual-light")
+            
+            # Add custom themes from ALL_THEMES
+            custom_node = tree.root.add("Custom Themes", expand=True)
+            for theme in ALL_THEMES:
+                if hasattr(theme, 'name'):
+                    custom_node.add_leaf(theme.name)
+            
+            # Add user themes
+            user_node = tree.root.add("User Themes", expand=True)
+            self._load_user_themes(user_node)
+            
+            yield tree
+            
+            with Container(classes="theme-actions"):
+                yield Button("New", id="new-theme", variant="primary")
+                yield Button("Clone", id="clone-theme")
+                yield Button("Delete", id="delete-theme", variant="error")
+        
+        # Center panel - Color editor
+        with VerticalScroll(classes="color-editor-panel"):
+            yield Label("Theme Editor", classes="section-title")
+            
+            # Theme name input
+            with Container(classes="color-input-group"):
+                with Horizontal(classes="color-input-row"):
+                    yield Label("Theme Name:", classes="color-label")
+                    yield Input(
+                        placeholder="Enter theme name",
+                        id="theme-name-input",
+                        classes="color-input",
+                        disabled=True
+                    )
+            
+            # Dark/Light mode switch
+            with Container(classes="color-input-group"):
+                with Horizontal(classes="color-input-row"):
+                    yield Label("Dark Theme:", classes="color-label")
+                    yield Switch(value=True, id="dark-mode-switch")
+            
+            yield Label("Colors", classes="section-title")
+            
+            # Color inputs for each base color
+            for color_name in self.BASE_COLORS:
+                with Container(classes="color-input-group"):
+                    with Horizontal(classes="color-input-row"):
+                        yield Label(f"{color_name.title()}:", classes="color-label")
+                        color_input = Input(
+                            placeholder="#000000",
+                            id=f"color-{color_name}",
+                            classes="color-input",
+                            max_length=7
+                        )
+                        yield color_input
+                        yield Static("", id=f"swatch-{color_name}", classes="color-swatch")
+            
+            # Color presets section
+            yield Label("Color Presets", classes="section-title")
+            with Container(classes="color-presets-container"):
+                for palette_name, colors in self.COLOR_PRESETS.items():
+                    with Horizontal(classes="preset-row"):
+                        yield Label(f"{palette_name}:", classes="preset-label")
+                        for i, color in enumerate(colors):
+                            button = Button(
+                                "",
+                                id=f"preset-{palette_name}-{i}",
+                                classes="color-preset-button"
+                            )
+                            button.styles.background = color
+                            button.styles.min_width = 4
+                            button.styles.height = 3
+                            yield button
+            
+            # Action buttons
+            yield Label("Actions", classes="section-title")
+            with Container(classes="theme-actions"):
+                yield Button("Apply", id="apply-theme", variant="primary")
+                yield Button("Save", id="save-theme", variant="success")
+                yield Button("Reset", id="reset-theme", variant="warning")
+                yield Button("Export", id="export-theme")
+            
+            # Theme generation
+            yield Label("Theme Generator", classes="section-title")
+            with Container(classes="theme-generator"):
+                yield Button("Generate from Primary", id="generate-theme", variant="primary")
+                yield Static("Generate a complete theme based on the primary color", classes="section-description")
+        
+        # Right panel - Live preview
+        with VerticalScroll(classes="preview-panel"):
+            yield Label("Live Preview", classes="section-title")
+            
+            # Preview components
+            with Container(classes="preview-component"):
+                yield Label("Buttons", classes="preview-label")
+                with Horizontal():
+                    yield Button("Default", classes="preview-button")
+                    yield Button("Primary", variant="primary", classes="preview-button")
+                    yield Button("Success", variant="success", classes="preview-button")
+                    yield Button("Warning", variant="warning", classes="preview-button")
+                    yield Button("Error", variant="error", classes="preview-button")
+            
+            with Container(classes="preview-component"):
+                yield Label("Text Samples", classes="preview-label")
+                yield Static("Normal text in foreground color")
+                yield Static("[dim]Dimmed text for less emphasis[/dim]")
+                yield Static("Primary colored text", classes="text-primary")
+                yield Static("Error colored text", classes="text-error")
+            
+            with Container(classes="preview-component"):
+                yield Label("Input Fields", classes="preview-label")
+                yield Input(placeholder="Unfocused input field", classes="preview-input")
+                yield Input(value="Focused input field", classes="preview-input focused")
+            
+            with Container(classes="preview-component"):
+                yield Label("Containers", classes="preview-label")
+                yield Static("Surface container", classes="preview-surface-demo")
+                yield Static("Panel container", classes="preview-panel-demo")
+    
+    def on_mount(self) -> None:
+        """Initialize the theme editor."""
+        # Store references to color inputs and swatches
+        for color_name in self.BASE_COLORS:
+            self.color_inputs[color_name] = self.query_one(f"#color-{color_name}", Input)
+            self.color_swatches[color_name] = self.query_one(f"#swatch-{color_name}", Static)
+        
+        # Load the current theme
+        self.load_theme(self.app.theme)
+    
+    def _load_user_themes(self, parent_node) -> None:
+        """Load user-created themes from the themes directory."""
+        for theme_file in self.custom_themes_path.glob("*.toml"):
+            try:
+                with open(theme_file, 'r') as f:
+                    theme_data = toml.load(f)
+                theme_name = theme_data.get('theme', {}).get('name', theme_file.stem)
+                parent_node.add_leaf(f"user:{theme_name}")
+            except Exception as e:
+                logger.error(f"Failed to load user theme {theme_file}: {e}")
+    
+    @on(Tree.NodeSelected)
+    def on_theme_selected(self, event: Tree.NodeSelected) -> None:
+        """Handle theme selection from the tree."""
+        # Check if it's a leaf node (no children)
+        if not event.node.children:
+            theme_name = str(event.node.label)
+            if theme_name.startswith("user:"):
+                theme_name = theme_name[5:]  # Remove "user:" prefix
+                self.load_user_theme(theme_name)
+            else:
+                self.load_theme(theme_name)
+    
+    def load_theme(self, theme_name: str) -> None:
+        """Load a theme for editing."""
+        self.current_theme_name = theme_name
+        
+        # Update theme name input
+        name_input = self.query_one("#theme-name-input", Input)
+        name_input.value = theme_name
+        name_input.disabled = theme_name in ["textual-dark", "textual-light"]
+        
+        # Get theme data
+        if theme_name in ["textual-dark", "textual-light"]:
+            # Built-in themes - extract colors from current app theme
+            self.app.theme = theme_name
+            theme_colors = self._extract_current_theme_colors()
+            self.current_theme_data = theme_colors
+            self.is_dark_theme = theme_name == "textual-dark"
+        else:
+            # Custom theme from ALL_THEMES
+            theme = next((t for t in ALL_THEMES if hasattr(t, 'name') and t.name == theme_name), None)
+            if theme:
+                self.current_theme_data = self._extract_theme_colors(theme)
+                self.is_dark_theme = getattr(theme, 'dark', True)
+        
+        # Update UI
+        self._update_color_inputs()
+        self._update_dark_mode_switch()
+        self.is_modified = False
+    
+    def load_user_theme(self, theme_name: str) -> None:
+        """Load a user-created theme from file."""
+        theme_path = self.custom_themes_path / f"{theme_name}.toml"
+        if theme_path.exists():
+            try:
+                with open(theme_path, 'r') as f:
+                    theme_data = toml.load(f)
+                
+                self.current_theme_name = theme_name
+                self.current_theme_data = theme_data.get('colors', {})
+                self.is_dark_theme = theme_data.get('theme', {}).get('dark', True)
+                
+                # Update UI
+                name_input = self.query_one("#theme-name-input", Input)
+                name_input.value = theme_name
+                name_input.disabled = False
+                
+                self._update_color_inputs()
+                self._update_dark_mode_switch()
+                self.is_modified = False
+                
+            except Exception as e:
+                logger.error(f"Failed to load user theme {theme_name}: {e}")
+                self.app.notify(f"Failed to load theme: {e}", severity="error")
+    
+    def _extract_current_theme_colors(self) -> Dict[str, str]:
+        """Extract colors from the current app theme."""
+        colors = {}
+        for color_name in self.BASE_COLORS:
+            try:
+                # Try to get the color from CSS variables
+                var_name = f"${color_name}"
+                # This is a simplified approach - in reality, we'd need to
+                # extract from the theme object or CSS computed values
+                colors[color_name] = "#000000"  # Placeholder
+            except:
+                colors[color_name] = "#000000"
+        return colors
+    
+    def _extract_theme_colors(self, theme: Theme) -> Dict[str, str]:
+        """Extract colors from a Theme object."""
+        colors = {}
+        for color_name in self.BASE_COLORS:
+            color_value = getattr(theme, color_name, None)
+            if color_value:
+                if isinstance(color_value, Color):
+                    colors[color_name] = color_value.hex
+                elif isinstance(color_value, str):
+                    colors[color_name] = color_value
+                else:
+                    colors[color_name] = "#000000"
+            else:
+                colors[color_name] = "#000000"
+        return colors
+    
+    def _update_color_inputs(self) -> None:
+        """Update color input fields with current theme data."""
+        for color_name, color_value in self.current_theme_data.items():
+            if color_name in self.color_inputs:
+                self.color_inputs[color_name].value = color_value
+                self._update_color_swatch(color_name, color_value)
+    
+    def _update_dark_mode_switch(self) -> None:
+        """Update the dark mode switch."""
+        switch = self.query_one("#dark-mode-switch", Switch)
+        switch.value = self.is_dark_theme
+    
+    def _update_color_swatch(self, color_name: str, color_value: str) -> None:
+        """Update a color swatch preview."""
+        if color_name in self.color_swatches:
+            try:
+                # Validate color
+                Color.parse(color_value)
+                self.color_swatches[color_name].styles.background = color_value
+            except:
+                self.color_swatches[color_name].styles.background = "black"
+    
+    def _validate_color_input(self, color_value: str) -> bool:
+        """Validate a color input value."""
+        try:
+            # Check basic format
+            if not color_value.startswith("#"):
+                return False
+            
+            # Remove # and check length
+            hex_part = color_value[1:]
+            if len(hex_part) not in [3, 6]:
+                return False
+            
+            # Try to parse with Textual's Color
+            Color.parse(color_value)
+            return True
+        except:
+            return False
+    
+    def on_focus(self, event) -> None:
+        """Track which color input has focus."""
+        if isinstance(event.widget, Input) and event.widget.id and event.widget.id.startswith("color-"):
+            self.last_focused_color_input = event.widget.id[6:]  # Remove "color-" prefix
+    
+    @on(Input.Changed)
+    def on_color_input_changed(self, event: Input.Changed) -> None:
+        """Handle color input changes."""
+        if event.input.id and event.input.id.startswith("color-"):
+            color_name = event.input.id[6:]  # Remove "color-" prefix
+            color_value = event.value.strip()
+            
+            # Validate and update
+            if color_value:
+                if self._validate_color_input(color_value):
+                    # Valid color - update swatch and data
+                    self._update_color_swatch(color_name, color_value)
+                    self.current_theme_data[color_name] = color_value
+                    self.is_modified = True
+                    event.input.remove_class("invalid-color")
+                else:
+                    # Invalid color - mark input
+                    event.input.add_class("invalid-color")
+                    self._update_color_swatch(color_name, "#000000")
+    
+    @on(Switch.Changed, "#dark-mode-switch")
+    def on_dark_mode_changed(self, event: Switch.Changed) -> None:
+        """Handle dark mode switch changes."""
+        self.is_dark_theme = event.value
+        self.is_modified = True
+    
+    @on(Button.Pressed, "#apply-theme")
+    def on_apply_theme(self) -> None:
+        """Apply the current theme to the app."""
+        try:
+            # Create a new theme from the current data
+            theme_dict = {
+                **self.current_theme_data,
+                "dark": self.is_dark_theme
+            }
+            
+            theme = create_theme_from_dict(
+                name=f"custom_{self.current_theme_name}",
+                theme_dict=theme_dict
+            )
+            
+            # Register and apply the theme
+            self.app.register_theme(theme)
+            self.app.theme = theme.name
+            
+            self.app.notify(f"Theme '{self.current_theme_name}' applied", severity="information")
+            
+        except Exception as e:
+            logger.error(f"Failed to apply theme: {e}")
+            self.app.notify(f"Failed to apply theme: {e}", severity="error")
+    
+    @on(Button.Pressed, "#save-theme")
+    def on_save_theme(self) -> None:
+        """Save the current theme."""
+        theme_name = self.query_one("#theme-name-input", Input).value.strip()
+        
+        if not theme_name:
+            self.app.notify("Please enter a theme name", severity="warning")
+            return
+        
+        if theme_name in ["textual-dark", "textual-light"]:
+            self.app.notify("Cannot overwrite built-in themes", severity="warning")
+            return
+        
+        # Save to file
+        theme_data = {
+            "theme": {
+                "name": theme_name,
+                "dark": self.is_dark_theme
+            },
+            "colors": self.current_theme_data
+        }
+        
+        theme_path = self.custom_themes_path / f"{theme_name}.toml"
+        
+        try:
+            with open(theme_path, 'w') as f:
+                toml.dump(theme_data, f)
+            
+            self.app.notify(f"Theme '{theme_name}' saved", severity="success")
+            self.is_modified = False
+            
+            # Update the tree to show the new theme
+            tree = self.query_one("#theme-tree", Tree)
+            user_node = None
+            for node in tree.root.children:
+                if node.label == "User Themes":
+                    user_node = node
+                    break
+            
+            if user_node:
+                # Check if theme already exists in tree
+                theme_exists = False
+                for child in user_node.children:
+                    if child.label == f"user:{theme_name}":
+                        theme_exists = True
+                        break
+                
+                if not theme_exists:
+                    user_node.add_leaf(f"user:{theme_name}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save theme: {e}")
+            self.app.notify(f"Failed to save theme: {e}", severity="error")
+    
+    @on(Button.Pressed, "#reset-theme")
+    def on_reset_theme(self) -> None:
+        """Reset theme to original values."""
+        self.load_theme(self.current_theme_name)
+        self.app.notify("Theme reset to original values", severity="information")
+    
+    @on(Button.Pressed, "#new-theme")
+    def on_new_theme(self) -> None:
+        """Create a new theme."""
+        # Start with default dark theme colors
+        self.current_theme_name = "new_theme"
+        self.current_theme_data = {
+            "primary": "#0099FF",
+            "secondary": "#006FB3",
+            "accent": "#FFD700",
+            "background": "#1E1E1E",
+            "surface": "#2C2C2C",
+            "panel": "#252525",
+            "foreground": "#FFFFFF",
+            "success": "#008000",
+            "warning": "#FFD700",
+            "error": "#FF0000"
+        }
+        self.is_dark_theme = True
+        
+        # Update UI
+        name_input = self.query_one("#theme-name-input", Input)
+        name_input.value = "new_theme"
+        name_input.disabled = False
+        name_input.focus()
+        
+        self._update_color_inputs()
+        self._update_dark_mode_switch()
+        self.is_modified = True
+        
+        self.app.notify("Creating new theme", severity="information")
+    
+    @on(Button.Pressed, "#clone-theme")
+    def on_clone_theme(self) -> None:
+        """Clone the current theme."""
+        new_name = f"{self.current_theme_name}_copy"
+        
+        # Update theme name
+        name_input = self.query_one("#theme-name-input", Input)
+        name_input.value = new_name
+        name_input.disabled = False
+        name_input.focus()
+        
+        self.current_theme_name = new_name
+        self.is_modified = True
+        
+        self.app.notify(f"Cloned theme as '{new_name}'", severity="information")
+    
+    @on(Button.Pressed, "#delete-theme")
+    def on_delete_theme(self) -> None:
+        """Delete the current user theme."""
+        if not self.current_theme_name.startswith("user:") and \
+           self.current_theme_name not in ["textual-dark", "textual-light"] and \
+           self.current_theme_name not in [t.name for t in ALL_THEMES if hasattr(t, 'name')]:
+            
+            theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
+            if theme_path.exists():
+                try:
+                    theme_path.unlink()
+                    self.app.notify(f"Deleted theme '{self.current_theme_name}'", severity="success")
+                    
+                    # Remove from tree
+                    tree = self.query_one("#theme-tree", Tree)
+                    for node in tree.root.children:
+                        if node.label == "User Themes":
+                            for child in node.children:
+                                if child.label == f"user:{self.current_theme_name}":
+                                    child.remove()
+                                    break
+                            break
+                    
+                    # Load default theme
+                    self.load_theme("textual-dark")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to delete theme: {e}")
+                    self.app.notify(f"Failed to delete theme: {e}", severity="error")
+        else:
+            self.app.notify("Cannot delete built-in or custom themes", severity="warning")
+    
+    @on(Button.Pressed)
+    def on_preset_color_clicked(self, event: Button.Pressed) -> None:
+        """Handle clicks on color preset buttons."""
+        if event.button.id and event.button.id.startswith("preset-"):
+            # Get the color from the button's background style
+            if event.button.styles.background:
+                color = str(event.button.styles.background)
+                
+                # Apply to the last focused color input
+                if self.last_focused_color_input and self.last_focused_color_input in self.color_inputs:
+                    self.color_inputs[self.last_focused_color_input].value = color
+                    self._update_color_swatch(self.last_focused_color_input, color)
+                    self.current_theme_data[self.last_focused_color_input] = color
+                    self.is_modified = True
+                else:
+                    # If no input was focused, show a notification
+                    self.app.notify("Click on a color input field first, then select a preset color", severity="information")
+    
+    @on(Button.Pressed, "#export-theme")
+    def on_export_theme(self) -> None:
+        """Export the current theme."""
+        # For now, just show the path where it would be saved
+        export_path = Path.home() / "Downloads" / f"{self.current_theme_name}_theme.toml"
+        
+        theme_data = {
+            "theme": {
+                "name": self.current_theme_name,
+                "dark": self.is_dark_theme
+            },
+            "colors": self.current_theme_data
+        }
+        
+        try:
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(export_path, 'w') as f:
+                toml.dump(theme_data, f)
+            
+            self.app.notify(f"Theme exported to: {export_path}", severity="success")
+        except Exception as e:
+            logger.error(f"Failed to export theme: {e}")
+            self.app.notify(f"Failed to export theme: {e}", severity="error")
+    
+    @on(Button.Pressed, "#generate-theme")
+    def on_generate_theme(self) -> None:
+        """Generate a complete theme based on the primary color."""
+        primary_color = self.current_theme_data.get("primary", "#0099FF")
+        
+        try:
+            # Parse the primary color
+            primary = Color.parse(primary_color)
+            
+            # Generate a harmonious color scheme
+            generated_theme = self._generate_theme_from_primary(primary)
+            
+            # Update all color inputs
+            for color_name, color_value in generated_theme.items():
+                if color_name in self.color_inputs:
+                    self.color_inputs[color_name].value = color_value
+                    self._update_color_swatch(color_name, color_value)
+            
+            self.current_theme_data.update(generated_theme)
+            self.is_modified = True
+            
+            self.app.notify("Theme generated from primary color!", severity="success")
+            
+        except Exception as e:
+            logger.error(f"Failed to generate theme: {e}")
+            self.app.notify(f"Failed to generate theme: {e}", severity="error")
+    
+    def _generate_theme_from_primary(self, primary: Color) -> Dict[str, str]:
+        """Generate a complete theme based on a primary color."""
+        # Get HSL values for manipulation
+        h, s, l = primary.hsl
+        
+        # Generate harmonious colors
+        theme = {
+            "primary": primary.hex,
+            "secondary": self._adjust_color(h, s * 0.8, l * 0.8),  # Darker, less saturated
+            "accent": self._adjust_color((h + 180) % 360, s, l),  # Complementary color
+            "background": self._adjust_color(h, s * 0.1, 0.08 if self.is_dark_theme else 0.95),
+            "surface": self._adjust_color(h, s * 0.1, 0.12 if self.is_dark_theme else 0.92),
+            "panel": self._adjust_color(h, s * 0.1, 0.10 if self.is_dark_theme else 0.94),
+            "foreground": "#FFFFFF" if self.is_dark_theme else "#000000",
+            "success": self._adjust_color(120, 0.7, 0.4),  # Green
+            "warning": self._adjust_color(45, 0.9, 0.5),   # Orange/Yellow
+            "error": self._adjust_color(0, 0.8, 0.5),      # Red
+        }
+        
+        return theme
+    
+    def _adjust_color(self, h: float, s: float, l: float) -> str:
+        """Create a color from HSL values."""
+        try:
+            # Ensure values are in valid ranges
+            h = h % 360
+            s = max(0, min(1, s))
+            l = max(0, min(1, l))
+            
+            # Convert HSL to RGB
+            # This is a simplified conversion - for production, use a proper color library
+            c = (1 - abs(2 * l - 1)) * s
+            x = c * (1 - abs((h / 60) % 2 - 1))
+            m = l - c / 2
+            
+            if h < 60:
+                r, g, b = c, x, 0
+            elif h < 120:
+                r, g, b = x, c, 0
+            elif h < 180:
+                r, g, b = 0, c, x
+            elif h < 240:
+                r, g, b = 0, x, c
+            elif h < 300:
+                r, g, b = x, 0, c
+            else:
+                r, g, b = c, 0, x
+            
+            r = int((r + m) * 255)
+            g = int((g + m) * 255)
+            b = int((b + m) * 255)
+            
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except:
+            return "#808080"  # Fallback to gray

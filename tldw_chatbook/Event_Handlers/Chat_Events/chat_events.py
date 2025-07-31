@@ -489,18 +489,19 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                 chat_window = app.query_one(ChatWindowEnhanced)
                 
                 # Try new attachment system first
-                if hasattr(chat_window, 'pending_attachment') and chat_window.pending_attachment:
-                    pending_attachment = chat_window.pending_attachment
-                    loguru_logger.info(f"DEBUG: Retrieved pending_attachment from chat window - file_type: {pending_attachment.get('file_type')}, insert_mode: {pending_attachment.get('insert_mode')}")
-                    # For backward compatibility, if it's an image, also set pending_image
-                    if pending_attachment.get('file_type') == 'image':
-                        pending_image = {
-                            'data': pending_attachment['data'],
-                            'mime_type': pending_attachment['mime_type'],
-                            'path': pending_attachment.get('path')
-                        }
-                        loguru_logger.info(f"DEBUG: Also set pending_image for backward compatibility")
-                    loguru_logger.debug(f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})")
+                if hasattr(chat_window, 'get_pending_attachment'):
+                    pending_attachment = chat_window.get_pending_attachment()
+                    if pending_attachment:
+                        loguru_logger.info(f"DEBUG: Retrieved pending_attachment from chat window - file_type: {pending_attachment.get('file_type')}, insert_mode: {pending_attachment.get('insert_mode')}")
+                        # For backward compatibility, if it's an image, also set pending_image
+                        if pending_attachment.get('file_type') == 'image':
+                            pending_image = {
+                                'data': pending_attachment['data'],
+                                'mime_type': pending_attachment['mime_type'],
+                                'path': pending_attachment.get('path')
+                            }
+                            loguru_logger.info(f"DEBUG: Also set pending_image for backward compatibility")
+                        loguru_logger.debug(f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})")
                 # Fall back to old pending_image system
                 elif hasattr(chat_window, 'get_pending_image'):
                     pending_image = chat_window.get_pending_image()

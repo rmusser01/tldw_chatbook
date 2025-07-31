@@ -243,23 +243,47 @@ class SearchWindow(Container):
             # Create Embeddings View
             with Container(id=SEARCH_VIEW_EMBEDDINGS_CREATE, classes="search-view-area"):
                 try:
-                    from ..UI.Embeddings_Creation_Content import EmbeddingsCreationContent
-                    yield EmbeddingsCreationContent(app_instance=self.app_instance)
-                except ImportError:
+                    # Force check dependencies before importing
+                    from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE, force_recheck_embeddings
+                    embeddings_available = force_recheck_embeddings()
+                    logger.info(f"Embeddings dependencies check in SearchWindow: {embeddings_available}")
+                    
+                    if embeddings_available:
+                        from ..UI.Embeddings_Creation_Content import EmbeddingsCreationContent
+                        yield EmbeddingsCreationContent(app_instance=self.app_instance)
+                    else:
+                        yield Static(
+                            "⚠️ Embeddings Creation functionality is not available.\n\n"
+                            "Required dependencies are not properly detected.\n"
+                            "Please restart the application.",
+                            classes="embeddings-unavailable-message"
+                        )
+                except ImportError as e:
+                    logger.error(f"Failed to import EmbeddingsCreationContent: {e}")
                     # If the refactored component doesn't exist yet, show a placeholder
                     yield Static(
                         "⚠️ Embeddings creation view is being migrated.\n\n"
-                        "This functionality will be available soon.",
+                        f"Import error: {str(e)}",
                         classes="embeddings-unavailable-message"
                     )
                     
             # Manage Embeddings View
             with Container(id=SEARCH_VIEW_EMBEDDINGS_MANAGE, classes="search-view-area"):
                 try:
-                    from ..UI.Embeddings_Management_Window import EmbeddingsManagementWindow
-                    yield EmbeddingsManagementWindow(app_instance=self.app_instance)
+                    # Check dependencies again
+                    from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
+                    if DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+                        from ..UI.Embeddings_Management_Window import EmbeddingsManagementWindow
+                        yield EmbeddingsManagementWindow(app_instance=self.app_instance)
+                    else:
+                        yield Static(
+                            "⚠️ Embeddings Management functionality is not available.\n\n"
+                            "Required dependencies are not properly detected.\n"
+                            "Please restart the application.",
+                            classes="embeddings-unavailable-message"
+                        )
                 except ImportError as e:
-                    logger.warning(f"Could not import EmbeddingsManagementWindow: {e}")
+                    logger.error(f"Could not import EmbeddingsManagementWindow: {e}")
                     yield Static(
                         "⚠️ Embeddings Management functionality is not available.\n\n"
                         f"Error: {str(e)}",

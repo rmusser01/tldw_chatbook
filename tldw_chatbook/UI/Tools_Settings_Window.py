@@ -31,6 +31,7 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..Utils.path_validation import validate_path
+from .Theme_Editor_Window import ThemeEditorView
 #
 # Local Imports
 #
@@ -1853,8 +1854,7 @@ class ToolsSettingsWindow(Container):
             
             # Splash Screen Gallery
             yield Static("Splash Screen Customization", classes="form-section-title")
-            yield Static("View and customize splash screen animations", classes="section-description")
-            yield Button("Open Splash Screen Gallery", id="appearance-splash-gallery", variant="primary")
+            yield Static("View and customize splash screen animations in the Splash Screen Gallery section", classes="section-description")
             
             # Color Customization
             yield Static("Color Customization", classes="form-section-title")
@@ -1894,6 +1894,10 @@ class ToolsSettingsWindow(Container):
             with Container(classes="settings-button-container"):
                 yield Button("Save Appearance Settings", id="save-appearance-settings", variant="primary")
                 yield Button("Reset to Defaults", id="reset-appearance-settings")
+    
+    def _compose_theme_editor(self) -> ComposeResult:
+        """Compose the Theme Editor UI."""
+        yield ThemeEditorView()
     
     def _compose_encryption_config_form(self) -> ComposeResult:
         """Form for encryption configuration section."""
@@ -2039,6 +2043,16 @@ class ToolsSettingsWindow(Container):
             with Collapsible(title="Tool Usage Statistics", collapsed=True):
                 yield Static("Tool execution history and statistics will be displayed here.", classes="tool-stats")
 
+    def _compose_splash_gallery(self) -> ComposeResult:
+        """Compose the Splash Screen Gallery section."""
+        from ..Widgets.splash_screen_viewer import SplashScreenViewer
+        
+        yield Static("🎨 Splash Screen Gallery", classes="section-title")
+        yield Static("Browse and preview all available splash screen animations", classes="section-description")
+        
+        # Include the splash screen viewer directly
+        yield SplashScreenViewer(classes="embedded-splash-viewer")
+    
     def _compose_about(self) -> ComposeResult:
         """Compose the About section."""
         yield Static("About tldw-chatbook", classes="section-title")
@@ -2089,6 +2103,8 @@ Thank you for using tldw-chatbook! 🎉
             yield Button("Configuration File Settings", id="ts-nav-config-file-settings", classes="ts-nav-button")
             yield Button("Database Tools", id="ts-nav-db-tools", classes="ts-nav-button")
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
+            yield Button("Theme Editor", id="ts-nav-theme-editor", classes="ts-nav-button")
+            yield Button("Splash Screen Gallery", id="ts-nav-splash-gallery", classes="ts-nav-button")
             yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
 
@@ -2114,8 +2130,18 @@ Thank you for using tldw-chatbook! 🎉
                 classes="ts-view-area",
             )
             yield Container(
+                *self._compose_theme_editor(),
+                id="ts-view-theme-editor",
+                classes="ts-view-area",
+            )
+            yield Container(
                 *self._compose_tool_settings(),
                 id="ts-view-tool-settings",
+                classes="ts-view-area",
+            )
+            yield Container(
+                *self._compose_splash_gallery(),
+                id="ts-view-splash-gallery",
                 classes="ts-view-area",
             )
             yield Container(
@@ -2146,6 +2172,10 @@ Thank you for using tldw-chatbook! 🎉
             await self._show_view("ts-view-db-tools")
         elif button_id == "ts-nav-appearance":
             await self._show_view("ts-view-appearance")
+        elif button_id == "ts-nav-theme-editor":
+            await self._show_view("ts-view-theme-editor")
+        elif button_id == "ts-nav-splash-gallery":
+            await self._show_view("ts-view-splash-gallery")
         elif button_id == "ts-nav-tool-settings":
             await self._show_view("ts-view-tool-settings")
         elif button_id == "ts-nav-about":
@@ -2259,9 +2289,6 @@ Thank you for using tldw-chatbook! 🎉
         elif button_id == "db-reset-all":
             await self._reset_databases()
         
-        # Appearance handlers
-        elif button_id == "appearance-splash-gallery":
-            await self._open_splash_gallery()
 
     async def _save_general_settings(self) -> None:
         """Save General Settings to the configuration file."""
@@ -3290,7 +3317,10 @@ Thank you for using tldw-chatbook! 🎉
             "ts-view-config-file-settings": "ts-nav-config-file-settings",
             "ts-view-db-tools": "ts-nav-db-tools",
             "ts-view-appearance": "ts-nav-appearance",
-            "ts-view-tool-settings": "ts-nav-tool-settings"
+            "ts-view-theme-editor": "ts-nav-theme-editor",
+            "ts-view-tool-settings": "ts-nav-tool-settings",
+            "ts-view-splash-gallery": "ts-nav-splash-gallery",
+            "ts-view-about": "ts-nav-about"
         }
         
         for v_id, btn_id in nav_buttons.items():
@@ -3734,35 +3764,6 @@ Thank you for using tldw-chatbook! 🎉
                 return f"{size_bytes:.1f} {unit}"
             size_bytes /= 1024.0
         return f"{size_bytes:.1f} TB"
-    
-    async def _open_splash_gallery(self) -> None:
-        """Open the splash screen gallery viewer."""
-        from ..Widgets.splash_screen_viewer import SplashScreenViewer
-        
-        try:
-            # Create a modal screen with the splash viewer
-            class SplashGalleryScreen(Screen):
-                """Modal screen for splash screen gallery."""
-                
-                BINDINGS = [
-                    ("escape", "dismiss", "Close"),
-                ]
-                
-                def compose(self) -> ComposeResult:
-                    """Compose the modal layout."""
-                    with Container(classes="modal-container"):
-                        yield SplashScreenViewer(classes="splash-gallery-modal")
-                
-                def action_dismiss(self) -> None:
-                    """Close the modal."""
-                    self.dismiss()
-            
-            # Push the modal screen
-            await self.app_instance.push_screen(SplashGalleryScreen())
-            
-        except Exception as e:
-            self.app_instance.notify(f"Error opening splash gallery: {e}", severity="error")
-            logger.error(f"Failed to open splash gallery: {e}")
     
     async def on_mount(self) -> None:
         """Called when the widget is mounted. Set initial view."""

@@ -73,7 +73,7 @@ from .config import (
 from .Logging_Config import configure_application_logging
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_SUBSCRIPTIONS
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Logging_Config import RichLogHandler
@@ -139,6 +139,7 @@ from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
+from .UI.Study_Window import StudyWindow
 from .UI.Tab_Bar import TabBar
 from .UI.MediaWindow_v2 import MediaWindow
 from .UI.SearchWindow import SearchWindow
@@ -1394,6 +1395,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             TAB_EVALS: evals_handlers,
             TAB_CODING: {},  # Empty for now - coding handles its own events
             TAB_STTS: {}, # STTS handles its own events
+            TAB_STUDY: {}, # Study handles its own events
             TAB_SUBSCRIPTIONS: {
                 "subscription-add-button": subscription_events.handle_add_subscription,
                 "subscription-check-all-button": subscription_events.handle_check_all_subscriptions,
@@ -1518,6 +1520,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
+            ("study", StudyWindow, "study-window"),
             ("subscriptions", SubscriptionWindow, "subscriptions-window"),
         ]
         
@@ -1595,6 +1598,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
+            ("study", StudyWindow, "study-window"),
         ]
         
         window_widgets = []
@@ -4114,7 +4118,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 TAB_STATS: "stats-window",
                 TAB_EVALS: "evals-window",
                 TAB_CODING: "coding-window",
-                TAB_STTS: "stts-window"
+                TAB_STTS: "stts-window",
+                TAB_STUDY: "study-window"
             }
 
             window_id = window_id_map.get(self.current_tab)
@@ -4336,10 +4341,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Handle attach button visibility toggle
             from .config import save_setting_to_cli_config
             save_setting_to_cli_config("chat.images", "show_attach_button", event.value)
-        elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
-            await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
-        elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:
-            await chat_events_dictionaries.handle_dictionary_enable_checkbox(self, event.value)
             
             # Update the UI if enhanced chat window is active
             use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
@@ -4350,6 +4351,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     await chat_window.toggle_attach_button_visibility(event.value)
                 except Exception as e:
                     loguru_logger.error(f"Error toggling attach button visibility: {e}")
+        elif checkbox_id == "chat-worldbook-enable-checkbox" and current_active_tab == TAB_CHAT:
+            await chat_events_worldbooks.handle_worldbook_enable_checkbox(self, event.value)
+        elif checkbox_id == "chat-dictionary-enable-checkbox" and current_active_tab == TAB_CHAT:
+            await chat_events_dictionaries.handle_dictionary_enable_checkbox(self, event.value)
+        elif checkbox_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
+            # Handle settings mode toggle checkbox
+            await self.handle_settings_mode_toggle_checkbox(event)
         # Add handlers for checkboxes in other tabs if any
 
     async def on_switch_changed(self, event: Switch.Changed) -> None:
@@ -4359,9 +4367,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         switch_id = event.switch.id
         current_active_tab = self.current_tab
         
-        if switch_id == "chat-settings-mode-toggle" and current_active_tab == TAB_CHAT:
-            await self.handle_settings_mode_toggle(event)
-        elif switch_id == "notes-auto-save-toggle":
+        if switch_id == "notes-auto-save-toggle":
             await self.handle_notes_auto_save_toggle(event)
 
 
@@ -4522,6 +4528,33 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # --- End of Chat Event Handlers for Streaming & thinking tags ---
     #####################################################################
 
+    async def handle_settings_mode_toggle_checkbox(self, event: Checkbox.Changed) -> None:
+        """Handles the settings mode toggle checkbox between Basic and Advanced."""
+        try:
+            # Update reactive variable
+            self.chat_settings_mode = "advanced" if event.value else "basic"
+            
+            # Update sidebar class for CSS styling
+            sidebar = self.query_one("#chat-left-sidebar")
+            if self.chat_settings_mode == "basic":
+                sidebar.add_class("basic-mode")
+                sidebar.remove_class("advanced-mode")
+            else:
+                sidebar.add_class("advanced-mode")
+                sidebar.remove_class("basic-mode")
+            
+            # Notify user
+            mode_name = "Advanced" if event.value else "Basic"
+            self.notify(f"Switched to {mode_name} mode", timeout=2)
+            
+            # Save preference to config
+            from .config import save_setting_to_cli_config
+            save_setting_to_cli_config("chat_defaults", "advanced_mode", event.value)
+            
+        except Exception as e:
+            loguru_logger.error(f"Error toggling settings mode: {e}", exc_info=True)
+            self.notify("Error switching modes", severity="error", timeout=4)
+    
     async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
         """Handles the settings mode toggle between Basic and Advanced."""
         try:

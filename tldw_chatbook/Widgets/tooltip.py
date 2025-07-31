@@ -143,10 +143,13 @@ class TooltipMixin:
         self._tooltip.styles.offset = (tooltip_x, tooltip_y)
 
 
-class HelpIcon(Static, TooltipMixin):
+class HelpIcon(Static):
     """Help icon widget with built-in tooltip support."""
     
     DEFAULT_CLASSES = "help-icon"
     
     def __init__(self, help_text: str, icon: str = "ℹ️", **kwargs):
-        super().__init__(icon, tooltip=help_text, **kwargs)
+        # For now, just create a simple static widget without tooltip functionality
+        # TODO: Implement proper tooltip support
+        super().__init__(icon, **kwargs)
+        self.help_text = help_text
