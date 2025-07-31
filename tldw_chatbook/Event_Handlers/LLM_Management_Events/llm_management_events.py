@@ -962,12 +962,10 @@ async def handle_start_model_download_button_pressed(app: "TldwCli", event: Butt
         log_output_widget.write(f"Executing: {' '.join(command)}\n")
 
         app.run_worker(
-            run_model_download_worker,
-            args=[app, command],
+            ModelDownloadWorker(app, command),
             group="model_download",
             description="Downloading model via huggingface-cli",
             exclusive=False,  # Can run multiple downloads
-            thread=True,  # <--- ADDED THIS
             done=lambda w: app.call_from_thread(
                 stream_worker_output_to_log, app, w, "#model-download-log-output"
             ))
