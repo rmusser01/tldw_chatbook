@@ -20,7 +20,7 @@ from tldw_chatbook.Event_Handlers.Study_Events.study_events import (
     StudyCardCreatedEvent, StudyCardReviewedEvent, StudyTopicSelectedEvent
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
-from tldw_chatbook.DB.study_db import StudyDB
+# StudyDB import removed - using ChaChaNotes_DB instead
 
 # Type checking imports
 if TYPE_CHECKING:
@@ -592,8 +592,4 @@ class StudyWindow(Container):
         # Set up initial state
         self.update_button_states("structured_learning")
         
-        # Initialize study database if needed
-        try:
-            self.study_db = StudyDB()
-        except Exception as e:
-            logger.error(f"Failed to initialize study database: {e}")
+        # Note: Study functionality now uses ChaChaNotes_DB from the app instance

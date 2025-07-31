@@ -8,8 +8,7 @@ from textual.widgets import Button, Input, Select, TextArea, Tree
 from loguru import logger
 from datetime import datetime, timezone
 
-from tldw_chatbook.DB.study_db import StudyDB
-from tldw_chatbook.config import get_chachanotes_db_path
+# StudyDB import removed - using ChaChaNotes_DB instead
 
 # Event Classes
 class StudyCardCreatedEvent(Message):
@@ -42,16 +41,8 @@ class StudyEventHandler:
     """Handles all study-related events."""
     
     def __init__(self):
-        self.study_db = None
-        self._init_db()
-    
-    def _init_db(self):
-        """Initialize the study database."""
-        try:
-            db_path = get_chachanotes_db_path().parent / "study.db"
-            self.study_db = StudyDB(db_path=db_path)
-        except Exception as e:
-            logger.error(f"Failed to initialize study database: {e}")
+        # Note: Now uses ChaChaNotes_DB from the app instance
+        pass
     
     async def handle_create_card(self, event: Button.Pressed) -> None:
         """Handle creating a new flashcard."""
@@ -85,8 +76,23 @@ class StudyEventHandler:
                 "last_modified_by": "user"
             }
             
-            # TODO: Save to database
-            # card_id = self.study_db.create_flashcard(card_data)
+            # Save to database
+            from tldw_chatbook.app import TldwCli
+            app = parent.app
+            if isinstance(app, TldwCli) and app.chachanotes_db:
+                # Ensure deck exists
+                deck_id = card_data.get('deck_id', 'default')
+                if deck_id == 'default':
+                    try:
+                        # Try to create default deck if it doesn't exist
+                        deck_id = app.chachanotes_db.create_deck('Default', 'Default flashcard deck')
+                    except Exception:
+                        # Deck might already exist, that's fine
+                        pass
+                card_data['deck_id'] = deck_id
+                
+                card_id = app.chachanotes_db.create_flashcard(card_data)
+                logger.info(f"Saved flashcard to database with ID: {card_id}")
             
             # Fire event
             parent.post_message(StudyCardCreatedEvent(card_data))
@@ -122,12 +128,16 @@ class StudyEventHandler:
             # In a real implementation, we'd check for selected parent node
             topic_tree.root.add(topic_title)
             
-            # TODO: Save to database
-            # topic_id = self.study_db.create_topic({
-            #     "title": topic_title,
-            #     "created_by": "user",
-            #     "last_modified_by": "user"
-            # })
+            # Save to database
+            from tldw_chatbook.app import TldwCli
+            app = parent.app
+            if isinstance(app, TldwCli) and app.chachanotes_db:
+                topic_id = app.chachanotes_db.create_topic({
+                    "title": topic_title,
+                    "created_by": "user",
+                    "last_modified_by": "user"
+                })
+                logger.info(f"Saved topic to database with ID: {topic_id}")
             
             # Clear input
             topic_input.value = ""

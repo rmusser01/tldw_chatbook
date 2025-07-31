@@ -46,29 +46,30 @@ class ThemeEditorView(Container):
     
     DEFAULT_CSS = """
     ThemeEditorView {
-        layout: horizontal;
+        layout: vertical;
         height: 100%;
     }
     
-    .theme-list-panel {
-        width: 30;
-        min-width: 25;
+    .theme-list-section {
+        height: 35%;
+        min-height: 12;
         background: $boost;
         padding: 1;
-        border-right: thick $background;
-    }
-    
-    .color-editor-panel {
-        width: 50%;
-        padding: 1 2;
+        border-bottom: thick $background;
         overflow-y: auto;
     }
     
-    .preview-panel {
-        width: 1fr;
+    .color-editor-section {
+        height: 40%;
+        padding: 1 2;
+        overflow-y: auto;
+        border-bottom: thick $background;
+    }
+    
+    .preview-section {
+        height: 25%;
         background: $surface;
         padding: 1;
-        border-left: thick $background;
         overflow-y: auto;
     }
     
@@ -122,12 +123,56 @@ class ThemeEditorView(Container):
         margin: 0 1;
     }
     
+    .theme-list-container {
+        layout: horizontal;
+        height: 100%;
+    }
+    
+    .theme-tree-wrapper {
+        width: 40%;
+        min-width: 30;
+        padding-right: 1;
+    }
+    
+    .theme-info-wrapper {
+        width: 60%;
+        padding-left: 1;
+    }
+    
     #theme-tree {
         height: 100%;
     }
     
+    .color-editor-container {
+        layout: horizontal;
+        height: 100%;
+    }
+    
+    .color-inputs-wrapper {
+        width: 50%;
+        layout: horizontal;
+    }
+    
+    .color-inputs-column {
+        width: 50%;
+        padding: 0 1;
+    }
+    
+    .theme-actions-wrapper {
+        width: 50%;
+        padding: 0 2;
+    }
+    
+    .preview-container {
+        layout: horizontal;
+        height: 100%;
+        overflow-x: auto;
+    }
+    
     .preview-component {
-        margin-bottom: 2;
+        width: 25%;
+        padding: 0 1;
+        min-width: 20;
     }
     
     .preview-label {
@@ -139,25 +184,26 @@ class ThemeEditorView(Container):
         margin-bottom: 2;
     }
     
-    .preset-row {
-        height: 4;
-        margin-bottom: 1;
-        align: center middle;
-    }
-    
-    .preset-label {
-        width: 10;
-        text-align: right;
-        margin-right: 1;
-    }
     
     .color-preset-button {
-        margin: 0 1;
+        margin: 0 0 0 1;
         border: solid $panel;
     }
     
     .color-preset-button:hover {
         border: thick $primary;
+    }
+    
+    .preset-row {
+        height: 3;
+        margin-bottom: 1;
+        align: center middle;
+    }
+    
+    .preset-label {
+        width: 8;
+        text-align: right;
+        margin-right: 1;
     }
     
     .preview-surface-demo {
@@ -218,132 +264,155 @@ class ThemeEditorView(Container):
         
     def compose(self) -> ComposeResult:
         """Compose the theme editor layout."""
-        # Left panel - Theme list
-        with Container(classes="theme-list-panel"):
+        # Top section - Theme list
+        with Container(classes="theme-list-section"):
             yield Label("Theme Library", classes="section-title")
-            tree = Tree("Themes", id="theme-tree")
-            tree.root.expand()
             
-            # Add built-in themes
-            builtin_node = tree.root.add("Built-in Themes", expand=True)
-            builtin_node.add_leaf("textual-dark")
-            builtin_node.add_leaf("textual-light")
-            
-            # Add custom themes from ALL_THEMES
-            custom_node = tree.root.add("Custom Themes", expand=True)
-            for theme in ALL_THEMES:
-                if hasattr(theme, 'name'):
-                    custom_node.add_leaf(theme.name)
-            
-            # Add user themes
-            user_node = tree.root.add("User Themes", expand=True)
-            self._load_user_themes(user_node)
-            
-            yield tree
-            
-            with Container(classes="theme-actions"):
-                yield Button("New", id="new-theme", variant="primary")
-                yield Button("Clone", id="clone-theme")
-                yield Button("Delete", id="delete-theme", variant="error")
-        
-        # Center panel - Color editor
-        with VerticalScroll(classes="color-editor-panel"):
-            yield Label("Theme Editor", classes="section-title")
-            
-            # Theme name input
-            with Container(classes="color-input-group"):
-                with Horizontal(classes="color-input-row"):
-                    yield Label("Theme Name:", classes="color-label")
-                    yield Input(
-                        placeholder="Enter theme name",
-                        id="theme-name-input",
-                        classes="color-input",
-                        disabled=True
-                    )
-            
-            # Dark/Light mode switch
-            with Container(classes="color-input-group"):
-                with Horizontal(classes="color-input-row"):
-                    yield Label("Dark Theme:", classes="color-label")
-                    yield Switch(value=True, id="dark-mode-switch")
-            
-            yield Label("Colors", classes="section-title")
-            
-            # Color inputs for each base color
-            for color_name in self.BASE_COLORS:
-                with Container(classes="color-input-group"):
-                    with Horizontal(classes="color-input-row"):
-                        yield Label(f"{color_name.title()}:", classes="color-label")
-                        color_input = Input(
-                            placeholder="#000000",
-                            id=f"color-{color_name}",
-                            classes="color-input",
-                            max_length=7
-                        )
-                        yield color_input
-                        yield Static("", id=f"swatch-{color_name}", classes="color-swatch")
-            
-            # Color presets section
-            yield Label("Color Presets", classes="section-title")
-            with Container(classes="color-presets-container"):
-                for palette_name, colors in self.COLOR_PRESETS.items():
-                    with Horizontal(classes="preset-row"):
-                        yield Label(f"{palette_name}:", classes="preset-label")
-                        for i, color in enumerate(colors):
-                            button = Button(
-                                "",
-                                id=f"preset-{palette_name}-{i}",
-                                classes="color-preset-button"
+            with Container(classes="theme-list-container"):
+                # Theme tree on the left
+                with Container(classes="theme-tree-wrapper"):
+                    tree = Tree("Themes", id="theme-tree")
+                    tree.root.expand()
+                    
+                    # Add built-in themes
+                    builtin_node = tree.root.add("Built-in Themes", expand=True)
+                    builtin_node.add_leaf("textual-dark")
+                    builtin_node.add_leaf("textual-light")
+                    
+                    # Add custom themes from ALL_THEMES
+                    custom_node = tree.root.add("Custom Themes", expand=True)
+                    for theme in ALL_THEMES:
+                        if hasattr(theme, 'name'):
+                            custom_node.add_leaf(theme.name)
+                    
+                    # Add user themes
+                    user_node = tree.root.add("User Themes", expand=True)
+                    self._load_user_themes(user_node)
+                    
+                    yield tree
+                
+                # Theme info and actions on the right
+                with Container(classes="theme-info-wrapper"):
+                    # Theme name input
+                    with Container(classes="color-input-group"):
+                        with Horizontal(classes="color-input-row"):
+                            yield Label("Theme Name:", classes="color-label")
+                            yield Input(
+                                placeholder="Enter theme name",
+                                id="theme-name-input",
+                                classes="color-input",
+                                disabled=True
                             )
-                            button.styles.background = color
-                            button.styles.min_width = 4
-                            button.styles.height = 3
-                            yield button
-            
-            # Action buttons
-            yield Label("Actions", classes="section-title")
-            with Container(classes="theme-actions"):
-                yield Button("Apply", id="apply-theme", variant="primary")
-                yield Button("Save", id="save-theme", variant="success")
-                yield Button("Reset", id="reset-theme", variant="warning")
-                yield Button("Export", id="export-theme")
-            
-            # Theme generation
-            yield Label("Theme Generator", classes="section-title")
-            with Container(classes="theme-generator"):
-                yield Button("Generate from Primary", id="generate-theme", variant="primary")
-                yield Static("Generate a complete theme based on the primary color", classes="section-description")
+                    
+                    # Dark/Light mode switch
+                    with Container(classes="color-input-group"):
+                        with Horizontal(classes="color-input-row"):
+                            yield Label("Dark Theme:", classes="color-label")
+                            yield Switch(value=True, id="dark-mode-switch")
+                    
+                    # Theme actions
+                    with Container(classes="theme-actions"):
+                        yield Button("New", id="new-theme", variant="primary")
+                        yield Button("Clone", id="clone-theme")
+                        yield Button("Delete", id="delete-theme", variant="error")
+                        yield Button("Export", id="export-theme")
         
-        # Right panel - Live preview
-        with VerticalScroll(classes="preview-panel"):
+        # Middle section - Color editor
+        with Container(classes="color-editor-section"):
+            yield Label("Color Editor", classes="section-title")
+            
+            with Container(classes="color-editor-container"):
+                # Color inputs split into two columns
+                with Container(classes="color-inputs-wrapper"):
+                    # First column of colors
+                    with Container(classes="color-inputs-column"):
+                        colors_first_half = self.BASE_COLORS[:5]
+                        for color_name in colors_first_half:
+                            with Container(classes="color-input-group"):
+                                with Horizontal(classes="color-input-row"):
+                                    yield Label(f"{color_name.title()}:", classes="color-label")
+                                    color_input = Input(
+                                        placeholder="#000000",
+                                        id=f"color-{color_name}",
+                                        classes="color-input",
+                                        max_length=7
+                                    )
+                                    yield color_input
+                                    yield Static("", id=f"swatch-{color_name}", classes="color-swatch")
+                    
+                    # Second column of colors
+                    with Container(classes="color-inputs-column"):
+                        colors_second_half = self.BASE_COLORS[5:]
+                        for color_name in colors_second_half:
+                            with Container(classes="color-input-group"):
+                                with Horizontal(classes="color-input-row"):
+                                    yield Label(f"{color_name.title()}:", classes="color-label")
+                                    color_input = Input(
+                                        placeholder="#000000",
+                                        id=f"color-{color_name}",
+                                        classes="color-input",
+                                        max_length=7
+                                    )
+                                    yield color_input
+                                    yield Static("", id=f"swatch-{color_name}", classes="color-swatch")
+            
+                # Actions and presets on the right
+                with Container(classes="theme-actions-wrapper"):
+                    # Color presets
+                    yield Label("Color Presets", classes="section-title")
+                    with Container(classes="color-presets-container"):
+                        for palette_name, colors in self.COLOR_PRESETS.items():
+                            with Horizontal(classes="preset-row"):
+                                yield Label(f"{palette_name}:", classes="preset-label")
+                                for i, color in enumerate(colors):
+                                    button = Button(
+                                        "",
+                                        id=f"preset-{palette_name}-{i}",
+                                        classes="color-preset-button"
+                                    )
+                                    button.styles.background = color
+                                    button.styles.min_width = 4
+                                    button.styles.height = 3
+                                    yield button
+                    
+                    # Theme actions
+                    yield Label("Actions", classes="section-title")
+                    with Container(classes="theme-actions"):
+                        yield Button("Apply", id="apply-theme", variant="primary")
+                        yield Button("Save", id="save-theme", variant="success")
+                        yield Button("Reset", id="reset-theme", variant="warning")
+                        yield Button("Generate from Primary", id="generate-theme", variant="primary")
+        
+        # Bottom section - Live preview
+        with Container(classes="preview-section"):
             yield Label("Live Preview", classes="section-title")
             
-            # Preview components
-            with Container(classes="preview-component"):
-                yield Label("Buttons", classes="preview-label")
-                with Horizontal():
+            with Container(classes="preview-container"):
+                # Preview components arranged horizontally
+                with Container(classes="preview-component"):
+                    yield Label("Buttons", classes="preview-label")
                     yield Button("Default", classes="preview-button")
                     yield Button("Primary", variant="primary", classes="preview-button")
                     yield Button("Success", variant="success", classes="preview-button")
                     yield Button("Warning", variant="warning", classes="preview-button")
                     yield Button("Error", variant="error", classes="preview-button")
-            
-            with Container(classes="preview-component"):
-                yield Label("Text Samples", classes="preview-label")
-                yield Static("Normal text in foreground color")
-                yield Static("[dim]Dimmed text for less emphasis[/dim]")
-                yield Static("Primary colored text", classes="text-primary")
-                yield Static("Error colored text", classes="text-error")
-            
-            with Container(classes="preview-component"):
-                yield Label("Input Fields", classes="preview-label")
-                yield Input(placeholder="Unfocused input field", classes="preview-input")
-                yield Input(value="Focused input field", classes="preview-input focused")
-            
-            with Container(classes="preview-component"):
-                yield Label("Containers", classes="preview-label")
-                yield Static("Surface container", classes="preview-surface-demo")
-                yield Static("Panel container", classes="preview-panel-demo")
+                
+                with Container(classes="preview-component"):
+                    yield Label("Text Samples", classes="preview-label")
+                    yield Static("Normal text in foreground color")
+                    yield Static("[dim]Dimmed text for less emphasis[/dim]")
+                    yield Static("Primary colored text", classes="text-primary")
+                    yield Static("Error colored text", classes="text-error")
+                
+                with Container(classes="preview-component"):
+                    yield Label("Input Fields", classes="preview-label")
+                    yield Input(placeholder="Unfocused input field", classes="preview-input")
+                    yield Input(value="Focused input field", classes="preview-input focused")
+                
+                with Container(classes="preview-component"):
+                    yield Label("Containers", classes="preview-label")
+                    yield Static("Surface container", classes="preview-surface-demo")
+                    yield Static("Panel container", classes="preview-panel-demo")
     
     def on_mount(self) -> None:
         """Initialize the theme editor."""
