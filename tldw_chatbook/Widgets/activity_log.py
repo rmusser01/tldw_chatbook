@@ -16,6 +16,7 @@ from textual.widgets import Static, Label, Button, DataTable, Input
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.timer import Timer
+from textual.message import Message
 from loguru import logger
 
 # Configure logger
@@ -23,6 +24,20 @@ logger = logger.bind(module="activity_log")
 
 # Type definitions
 LogLevel = Literal["info", "success", "warning", "error", "debug"]
+
+
+# Event messages
+class ActivityLogCleared(Message):
+    """Event sent when the activity log is cleared."""
+    pass
+
+
+class ActivityLogExported(Message):
+    """Event sent when the activity log is exported."""
+    
+    def __init__(self, file_path: str) -> None:
+        self.file_path = file_path
+        super().__init__()
 
 
 @dataclass
@@ -387,6 +402,7 @@ class ActivityLogWidget(Widget):
                 json.dump(data, f, indent=2)
             
             self.log_success(f"Log exported to {filepath}", "system")
+            self.post_message(ActivityLogExported(filepath))
             
         except Exception as e:
             logger.error(f"Failed to export log: {e}")

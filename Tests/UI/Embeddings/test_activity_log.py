@@ -15,24 +15,24 @@ from textual.containers import Container, ScrollableContainer
 
 from tldw_chatbook.Widgets.activity_log import (
     ActivityLogWidget,
-    LogEntry,
-    LogLevel,
-    ActivityLogCleared,
-    ActivityLogExported
+    ActivityEntry,
+    LogLevel
 )
 
 from .test_base import EmbeddingsTestBase, WidgetTestApp
 
 
-class TestLogEntry(EmbeddingsTestBase):
-    """Test LogEntry dataclass functionality."""
+class TestActivityEntry(EmbeddingsTestBase):
+    """Test ActivityEntry dataclass functionality."""
     
     def test_log_entry_creation(self):
         """Test creating log entries."""
         # Test with minimal args
-        entry = LogEntry(
-            message="Test message",
-            level="info"
+        entry = ActivityEntry(
+            timestamp=datetime.now(),
+            level="info",
+            category="general",
+            message="Test message"
         )
         
         assert entry.message == "Test message"
@@ -44,10 +44,11 @@ class TestLogEntry(EmbeddingsTestBase):
     def test_log_entry_with_all_fields(self):
         """Test log entry with all fields specified."""
         timestamp = datetime.now()
-        entry = LogEntry(
-            message="Detailed message",
+        entry = ActivityEntry(
+            timestamp=timestamp,
             level="error",
             category="processing",
+            message="Detailed message",
             timestamp=timestamp,
             details={"error_code": 500, "file": "test.txt"}
         )
@@ -61,7 +62,7 @@ class TestLogEntry(EmbeddingsTestBase):
     
     def test_log_entry_to_dict(self):
         """Test converting log entry to dictionary."""
-        entry = LogEntry(
+        entry = ActivityEntry(
             message="Export test",
             level="warning",
             category="export",
@@ -77,7 +78,7 @@ class TestLogEntry(EmbeddingsTestBase):
     
     def test_log_entry_to_string(self):
         """Test string representation of log entry."""
-        entry = LogEntry(
+        entry = ActivityEntry(
             message="String test",
             level="debug",
             category="test"

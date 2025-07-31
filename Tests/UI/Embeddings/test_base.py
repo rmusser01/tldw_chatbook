@@ -96,7 +96,7 @@ class EmbeddingsTestBase:
         return app
     
     @pytest.fixture
-    def mock_performance_metrics():
+    def mock_performance_metrics(self):
         """Mock psutil for performance metrics."""
         with patch('psutil.Process') as mock_process:
             process_instance = MagicMock()
