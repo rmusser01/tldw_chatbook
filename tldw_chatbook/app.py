@@ -2949,6 +2949,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
+        import asyncio
         logging.info("--- App Unmounting ---")
         self._ui_ready = False
         

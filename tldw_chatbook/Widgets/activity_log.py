@@ -296,7 +296,9 @@ class ActivityLogWidget(Widget):
         """Update the entire log display."""
         try:
             container = self.query_one("#log-entries", Container)
-            container.clear()
+            # Remove all children from the container
+            for child in list(container.children):
+                child.remove()
             
             # Add filtered entries
             for entry in self.entries:
