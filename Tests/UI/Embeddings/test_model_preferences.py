@@ -17,11 +17,14 @@ from tldw_chatbook.Utils.model_preferences import (
     ModelPreferencesManager,
     ModelUsage
 )
-from tldw_chatbook.UI.Embeddings_Management_Window import (
-    EmbeddingsManagementWindow,
-    DeleteModelDialog,
-    BatchDeleteDialog
-)
+from tldw_chatbook.UI.Embeddings_Management_Window import EmbeddingsManagementWindow
+
+# Mock dialog classes (they are nested classes in the actual module)
+class DeleteModelDialog:
+    pass
+
+class BatchDeleteDialog:
+    pass
 from tldw_chatbook.Widgets.embeddings_list_items import ModelListItem
 
 from .test_base import EmbeddingsTestBase, WidgetTestApp

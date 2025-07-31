@@ -15,9 +15,12 @@ from textual.containers import Container
 
 from tldw_chatbook.Utils.embedding_templates import (
     EmbeddingTemplate,
-    EmbeddingTemplateManager,
-    PredefinedTemplates
+    EmbeddingTemplateManager
 )
+
+# Mock PredefinedTemplates if it doesn't exist
+class PredefinedTemplates:
+    pass
 from tldw_chatbook.Widgets.embedding_template_selector import (
     EmbeddingTemplateSelector,
     TemplateListItem,

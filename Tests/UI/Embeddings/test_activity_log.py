@@ -49,7 +49,6 @@ class TestActivityEntry(EmbeddingsTestBase):
             level="error",
             category="processing",
             message="Detailed message",
-            timestamp=timestamp,
             details={"error_code": 500, "file": "test.txt"}
         )
         
@@ -63,9 +62,10 @@ class TestActivityEntry(EmbeddingsTestBase):
     def test_log_entry_to_dict(self):
         """Test converting log entry to dictionary."""
         entry = ActivityEntry(
-            message="Export test",
+            timestamp=datetime.now(),
             level="warning",
             category="export",
+            message="Export test",
             details={"count": 10}
         )
         
@@ -79,9 +79,10 @@ class TestActivityEntry(EmbeddingsTestBase):
     def test_log_entry_to_string(self):
         """Test string representation of log entry."""
         entry = ActivityEntry(
-            message="String test",
+            timestamp=datetime.now(),
             level="debug",
-            category="test"
+            category="test",
+            message="String test"
         )
         
         string_repr = entry.to_string()

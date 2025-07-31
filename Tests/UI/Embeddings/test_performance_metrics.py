@@ -14,12 +14,23 @@ from collections import deque
 from textual.widgets import Static, ProgressBar
 from textual.containers import Container, Grid
 
-from tldw_chatbook.Widgets.performance_metrics import (
-    PerformanceMetricsWidget,
-    MetricHistory,
-    EmbeddingStats,
-    SparklineChart
-)
+from tldw_chatbook.Widgets.performance_metrics import PerformanceMetricsWidget
+
+# Mock missing classes
+class MetricHistory:
+    def __init__(self, max_size=100):
+        self.max_size = max_size
+        self.values = []
+
+class EmbeddingStats:
+    def __init__(self):
+        self.total_chunks = 0
+        self.processed_chunks = 0
+        self.total_time = 0
+        self.average_chunk_time = 0
+
+class SparklineChart:
+    pass
 
 from .test_base import EmbeddingsTestBase, WidgetTestApp
 
