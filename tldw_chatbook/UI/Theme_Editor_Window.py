@@ -12,7 +12,7 @@ from functools import partial
 
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll, ScrollableContainer
 from textual.widgets import (
     Static, Button, Input, Label, Tree, Switch,
     TabbedContent, TabPane, Collapsible
@@ -41,18 +41,19 @@ class ThemeModifiedMessage(Message):
         super().__init__()
 
 
-class ThemeEditorView(Container):
+class ThemeEditorView(VerticalScroll):
     """Main theme editor interface."""
     
     DEFAULT_CSS = """
     ThemeEditorView {
-        layout: vertical;
         height: 100%;
+        scrollbar-gutter: stable;
     }
     
     .theme-list-section {
-        height: 35%;
-        min-height: 12;
+        height: auto;
+        min-height: 20;
+        max-height: 30;
         background: $boost;
         padding: 1;
         border-bottom: thick $background;
@@ -60,44 +61,64 @@ class ThemeEditorView(Container):
     }
     
     .color-editor-section {
-        height: 40%;
+        height: auto;
+        min-height: 30;
         padding: 1 2;
-        overflow-y: auto;
         border-bottom: thick $background;
     }
     
+    .actions-section {
+        height: auto;
+        min-height: 8;
+        padding: 1 2;
+        background: $boost;
+        border-bottom: thick $background;
+        layout: vertical;
+        align: center middle;
+    }
+    
     .preview-section {
-        height: 25%;
+        height: auto;
+        min-height: 15;
         background: $surface;
         padding: 1;
-        overflow-y: auto;
+        margin-bottom: 2;
     }
     
     .section-title {
         text-style: bold;
-        margin: 1 0;
+        margin: 1 0 2 0;
         color: $primary;
+        text-align: center;
+        border-bottom: solid $primary;
+        padding-bottom: 1;
     }
     
     .color-input-group {
-        height: 4;
+        height: 5;
         margin-bottom: 1;
+        width: 100%;
     }
     
     .color-input-row {
         layout: horizontal;
-        height: 3;
+        height: 4;
         align: center middle;
+        width: 100%;
     }
     
     .color-label {
-        width: 15;
+        width: 18;
         text-align: right;
-        margin-right: 1;
+        margin-right: 2;
+        padding-right: 1;
     }
     
     .color-input {
-        width: 10;
+        width: 16;
+        min-width: 12;
+        height: 3;
+        padding: 0 1;
     }
     
     .color-input.invalid-color {
@@ -105,22 +126,46 @@ class ThemeEditorView(Container):
         color: $error;
     }
     
-    .color-swatch {
-        width: 6;
+    .color-input.selected {
+        border: thick $accent;
+    }
+    
+    .theme-name-input {
+        width: 40;
+        min-width: 30;
         height: 3;
-        margin-left: 1;
+        padding: 0 1;
+    }
+    
+    .color-swatch {
+        width: 14;
+        height: 4;
+        margin-left: 2;
         border: solid $primary;
+        content-align: center middle;
+        padding: 0;
+        text-align: center;
+        text-style: bold;
     }
     
     .theme-actions {
         layout: horizontal;
-        height: 3;
-        margin-top: 1;
+        height: auto;
+        margin-top: 0;
         align: center middle;
+        width: 100%;
     }
     
     .theme-actions Button {
-        margin: 0 1;
+        margin: 0 2;
+        min-width: 20;
+        height: 3;
+    }
+    
+    .actions-section .section-title {
+        margin: 0 0 1 0;
+        border-bottom: none;
+        padding-bottom: 0;
     }
     
     .theme-list-container {
@@ -146,48 +191,71 @@ class ThemeEditorView(Container):
     .color-editor-container {
         layout: horizontal;
         height: 100%;
+        width: 100%;
     }
     
     .color-inputs-wrapper {
-        width: 50%;
+        width: 70%;
         layout: horizontal;
+        padding: 0 2;
     }
     
     .color-inputs-column {
         width: 50%;
-        padding: 0 1;
+        padding: 0 2;
+        margin-right: 1;
     }
     
     .theme-actions-wrapper {
-        width: 50%;
-        padding: 0 2;
+        width: 30%;
+        padding: 0 1;
+        overflow-y: auto;
     }
     
     .preview-container {
-        layout: horizontal;
-        height: 100%;
+        layout: grid;
+        grid-size: 4 1;
+        grid-columns: 1fr 1fr 1fr 1fr;
+        height: auto;
+        width: 100%;
         overflow-x: auto;
     }
     
     .preview-component {
-        width: 25%;
         padding: 0 1;
         min-width: 20;
+        layout: vertical;
+        height: auto;
     }
     
     .preview-label {
         text-style: bold;
         margin-bottom: 1;
+        color: $primary;
+    }
+    
+    .preview-button {
+        margin: 0 0 1 0;
+        width: 100%;
+    }
+    
+    .preview-input {
+        margin-bottom: 1;
+        width: 100%;
     }
     
     .color-presets-container {
-        margin-bottom: 2;
+        margin-bottom: 1;
+        max-height: 25;
+        overflow-y: auto;
     }
     
-    
     .color-preset-button {
-        margin: 0 0 0 1;
+        margin: 0 1 0 0;
         border: solid $panel;
+        min-width: 4;
+        width: 4;
+        height: 3;
     }
     
     .color-preset-button:hover {
@@ -195,9 +263,11 @@ class ThemeEditorView(Container):
     }
     
     .preset-row {
-        height: 3;
+        layout: horizontal;
+        height: 4;
         margin-bottom: 1;
         align: center middle;
+        width: 100%;
     }
     
     .preset-label {
@@ -209,15 +279,25 @@ class ThemeEditorView(Container):
     .preview-surface-demo {
         background: $surface;
         padding: 1;
-        margin: 1;
+        margin: 0 0 1 0;
         height: 3;
+        width: 100%;
     }
     
     .preview-panel-demo {
         background: $panel;
         padding: 1;
-        margin: 1;
+        margin: 0 0 1 0;
         height: 3;
+        width: 100%;
+    }
+    
+    .preview-boost-demo {
+        background: $boost;
+        padding: 1;
+        margin: 0 0 1 0;
+        height: 3;
+        width: 100%;
     }
     
     .text-primary {
@@ -300,7 +380,7 @@ class ThemeEditorView(Container):
                             yield Input(
                                 placeholder="Enter theme name",
                                 id="theme-name-input",
-                                classes="color-input",
+                                classes="theme-name-input",
                                 disabled=True
                             )
                     
@@ -324,72 +404,79 @@ class ThemeEditorView(Container):
             with Container(classes="color-editor-container"):
                 # Color inputs split into two columns
                 with Container(classes="color-inputs-wrapper"):
-                    # First column of colors
+                    # First column of colors - Primary colors
                     with Container(classes="color-inputs-column"):
-                        colors_first_half = self.BASE_COLORS[:5]
-                        for color_name in colors_first_half:
+                        primary_colors = ["primary", "secondary", "accent", "foreground", "background"]
+                        for color_name in primary_colors:
                             with Container(classes="color-input-group"):
                                 with Horizontal(classes="color-input-row"):
-                                    yield Label(f"{color_name.title()}:", classes="color-label")
+                                    label = Label(f"{color_name.title()}:", classes="color-label")
+                                    yield label
                                     color_input = Input(
-                                        placeholder="#000000",
+                                        placeholder="#RRGGBB",
                                         id=f"color-{color_name}",
                                         classes="color-input",
-                                        max_length=7
+                                        max_length=7,
+                                        tooltip=f"Enter hex color for {color_name}"
                                     )
                                     yield color_input
-                                    yield Static("", id=f"swatch-{color_name}", classes="color-swatch")
+                                    swatch = Static("", id=f"swatch-{color_name}", classes="color-swatch")
+                                    yield swatch
                     
-                    # Second column of colors
+                    # Second column of colors - Surface and status colors
                     with Container(classes="color-inputs-column"):
-                        colors_second_half = self.BASE_COLORS[5:]
-                        for color_name in colors_second_half:
+                        surface_colors = ["surface", "panel", "success", "warning", "error"]
+                        for color_name in surface_colors:
                             with Container(classes="color-input-group"):
                                 with Horizontal(classes="color-input-row"):
-                                    yield Label(f"{color_name.title()}:", classes="color-label")
+                                    label = Label(f"{color_name.title()}:", classes="color-label")
+                                    yield label
                                     color_input = Input(
-                                        placeholder="#000000",
+                                        placeholder="#RRGGBB",
                                         id=f"color-{color_name}",
                                         classes="color-input",
-                                        max_length=7
+                                        max_length=7,
+                                        tooltip=f"Enter hex color for {color_name}"
                                     )
                                     yield color_input
-                                    yield Static("", id=f"swatch-{color_name}", classes="color-swatch")
+                                    swatch = Static("", id=f"swatch-{color_name}", classes="color-swatch")
+                                    yield swatch
             
                 # Actions and presets on the right
                 with Container(classes="theme-actions-wrapper"):
                     # Color presets
                     yield Label("Color Presets", classes="section-title")
-                    with Container(classes="color-presets-container"):
+                    with VerticalScroll(classes="color-presets-container"):
                         for palette_name, colors in self.COLOR_PRESETS.items():
-                            with Horizontal(classes="preset-row"):
+                            with Container(classes="preset-row"):
                                 yield Label(f"{palette_name}:", classes="preset-label")
-                                for i, color in enumerate(colors):
+                                for i, color in enumerate(colors[:5]):
                                     button = Button(
                                         "",
                                         id=f"preset-{palette_name}-{i}",
                                         classes="color-preset-button"
                                     )
                                     button.styles.background = color
-                                    button.styles.min_width = 4
-                                    button.styles.height = 3
                                     yield button
                     
-                    # Theme actions
-                    yield Label("Actions", classes="section-title")
-                    with Container(classes="theme-actions"):
-                        yield Button("Apply", id="apply-theme", variant="primary")
-                        yield Button("Save", id="save-theme", variant="success")
-                        yield Button("Reset", id="reset-theme", variant="warning")
-                        yield Button("Generate from Primary", id="generate-theme", variant="primary")
+                    # Remove actions from here - they'll be moved below
+        
+        # Actions section - between color editor and preview
+        with Container(classes="actions-section"):
+            yield Label("Actions", classes="section-title")
+            with Container(classes="theme-actions"):
+                yield Button("Apply", id="apply-theme", variant="primary")
+                yield Button("Save", id="save-theme", variant="success")
+                yield Button("Reset", id="reset-theme", variant="warning")
+                yield Button("Generate from Primary", id="generate-theme", variant="primary")
         
         # Bottom section - Live preview
         with Container(classes="preview-section"):
             yield Label("Live Preview", classes="section-title")
             
             with Container(classes="preview-container"):
-                # Preview components arranged horizontally
-                with Container(classes="preview-component"):
+                # Preview components arranged in grid
+                with Vertical(classes="preview-component"):
                     yield Label("Buttons", classes="preview-label")
                     yield Button("Default", classes="preview-button")
                     yield Button("Primary", variant="primary", classes="preview-button")
@@ -397,22 +484,25 @@ class ThemeEditorView(Container):
                     yield Button("Warning", variant="warning", classes="preview-button")
                     yield Button("Error", variant="error", classes="preview-button")
                 
-                with Container(classes="preview-component"):
-                    yield Label("Text Samples", classes="preview-label")
-                    yield Static("Normal text in foreground color")
-                    yield Static("[dim]Dimmed text for less emphasis[/dim]")
-                    yield Static("Primary colored text", classes="text-primary")
-                    yield Static("Error colored text", classes="text-error")
+                with Vertical(classes="preview-component"):
+                    yield Label("Text & Labels", classes="preview-label")
+                    yield Static("Normal text on background")
+                    yield Static("[dim]Dimmed text variant[/dim]")
+                    yield Static("[bold]Bold emphasis text[/bold]")
+                    yield Static("Primary accent", classes="text-primary")
+                    yield Static("Error message", classes="text-error")
                 
-                with Container(classes="preview-component"):
+                with Vertical(classes="preview-component"):
                     yield Label("Input Fields", classes="preview-label")
-                    yield Input(placeholder="Unfocused input field", classes="preview-input")
-                    yield Input(value="Focused input field", classes="preview-input focused")
+                    yield Input(placeholder="Enter text...", classes="preview-input")
+                    yield Input(value="Focused input", classes="preview-input")
+                    yield Input(value="Disabled", disabled=True, classes="preview-input")
                 
-                with Container(classes="preview-component"):
-                    yield Label("Containers", classes="preview-label")
-                    yield Static("Surface container", classes="preview-surface-demo")
-                    yield Static("Panel container", classes="preview-panel-demo")
+                with Vertical(classes="preview-component"):
+                    yield Label("Surfaces", classes="preview-label")
+                    yield Static("Surface background", classes="preview-surface-demo")
+                    yield Static("Panel background", classes="preview-panel-demo")
+                    yield Static("Boost background", classes="preview-boost-demo")
     
     def on_mount(self) -> None:
         """Initialize the theme editor."""
@@ -423,6 +513,11 @@ class ThemeEditorView(Container):
         
         # Load the current theme
         self.load_theme(self.app.theme)
+        
+        # Select primary color input by default
+        if "primary" in self.color_inputs:
+            self.color_inputs["primary"].add_class("selected")
+            self.last_focused_color_input = "primary"
     
     def _load_user_themes(self, parent_node) -> None:
         """Load user-created themes from the themes directory."""
@@ -503,31 +598,107 @@ class ThemeEditorView(Container):
     def _extract_current_theme_colors(self) -> Dict[str, str]:
         """Extract colors from the current app theme."""
         colors = {}
-        for color_name in self.BASE_COLORS:
-            try:
-                # Try to get the color from CSS variables
-                var_name = f"${color_name}"
-                # This is a simplified approach - in reality, we'd need to
-                # extract from the theme object or CSS computed values
-                colors[color_name] = "#000000"  # Placeholder
-            except:
-                colors[color_name] = "#000000"
+        
+        # Get the current theme from the app
+        if self.app.theme == "textual-dark":
+            # Default dark theme colors
+            colors = {
+                "primary": "#004578",
+                "secondary": "#0178D4", 
+                "accent": "#FFD700",
+                "background": "#0C0C0C",
+                "surface": "#1A1A1A",
+                "panel": "#1A1A1A",
+                "foreground": "#E0E0E0",
+                "success": "#4EBF71",
+                "warning": "#FFA62B",
+                "error": "#BA3C5B"
+            }
+        elif self.app.theme == "textual-light":
+            # Default light theme colors  
+            colors = {
+                "primary": "#004578",
+                "secondary": "#0178D4",
+                "accent": "#FFD700", 
+                "background": "#F5F5F5",
+                "surface": "#FFFFFF",
+                "panel": "#EEEEEE",
+                "foreground": "#333333",
+                "success": "#228B22",
+                "warning": "#FFA500",
+                "error": "#DC143C"
+            }
+        else:
+            # For custom themes, try to extract from current styles
+            # This is a fallback - ideally we'd extract from the theme object
+            for color_name in self.BASE_COLORS:
+                colors[color_name] = "#808080"  # Gray as fallback
+                
         return colors
     
     def _extract_theme_colors(self, theme: Theme) -> Dict[str, str]:
         """Extract colors from a Theme object."""
         colors = {}
-        for color_name in self.BASE_COLORS:
-            color_value = getattr(theme, color_name, None)
+        
+        # Map of theme attributes to our color names
+        color_mappings = {
+            "primary": "primary",
+            "secondary": "secondary", 
+            "accent": "accent",
+            "background": "background",
+            "surface": "surface",
+            "panel": "panel",
+            "foreground": "foreground",
+            "success": "success",
+            "warning": "warning",
+            "error": "error"
+        }
+        
+        for our_name, theme_attr in color_mappings.items():
+            color_value = getattr(theme, theme_attr, None)
             if color_value:
                 if isinstance(color_value, Color):
-                    colors[color_name] = color_value.hex
+                    colors[our_name] = color_value.hex
                 elif isinstance(color_value, str):
-                    colors[color_name] = color_value
+                    try:
+                        # Ensure it's a valid color string
+                        parsed_color = Color.parse(color_value)
+                        colors[our_name] = parsed_color.hex
+                    except:
+                        colors[our_name] = "#808080"  # Gray fallback
                 else:
-                    colors[color_name] = "#000000"
+                    colors[our_name] = "#808080"
             else:
-                colors[color_name] = "#000000"
+                # Provide sensible defaults based on theme darkness
+                is_dark = getattr(theme, 'dark', True)
+                if is_dark:
+                    defaults = {
+                        "primary": "#0099FF",
+                        "secondary": "#006FB3",
+                        "accent": "#FFD700",
+                        "background": "#1E1E1E",
+                        "surface": "#2C2C2C",
+                        "panel": "#252525",
+                        "foreground": "#FFFFFF",
+                        "success": "#008000",
+                        "warning": "#FFD700",
+                        "error": "#FF0000"
+                    }
+                else:
+                    defaults = {
+                        "primary": "#0066CC",
+                        "secondary": "#004499",
+                        "accent": "#FF9900",
+                        "background": "#FFFFFF",
+                        "surface": "#F5F5F5",
+                        "panel": "#EEEEEE",
+                        "foreground": "#000000",
+                        "success": "#228B22",
+                        "warning": "#FFA500",
+                        "error": "#DC143C"
+                    }
+                colors[our_name] = defaults.get(our_name, "#808080")
+                
         return colors
     
     def _update_color_inputs(self) -> None:
@@ -547,10 +718,19 @@ class ThemeEditorView(Container):
         if color_name in self.color_swatches:
             try:
                 # Validate color
-                Color.parse(color_value)
+                parsed_color = Color.parse(color_value)
                 self.color_swatches[color_name].styles.background = color_value
+                # Update the swatch text to show the hex value
+                self.color_swatches[color_name].update(color_value.upper())
+                # Set text color based on background brightness
+                if parsed_color.brightness > 0.5:
+                    self.color_swatches[color_name].styles.color = "black"
+                else:
+                    self.color_swatches[color_name].styles.color = "white"
             except:
-                self.color_swatches[color_name].styles.background = "black"
+                self.color_swatches[color_name].styles.background = "#808080"
+                self.color_swatches[color_name].update("Invalid")
+                self.color_swatches[color_name].styles.color = "white"
     
     def _validate_color_input(self, color_value: str) -> bool:
         """Validate a color input value."""
@@ -570,10 +750,16 @@ class ThemeEditorView(Container):
         except:
             return False
     
-    def on_focus(self, event) -> None:
-        """Track which color input has focus."""
-        if isinstance(event.widget, Input) and event.widget.id and event.widget.id.startswith("color-"):
-            self.last_focused_color_input = event.widget.id[6:]  # Remove "color-" prefix
+    def watch_focused(self, focused) -> None:
+        """Watch for focus changes to track color input selection."""
+        if focused and isinstance(focused, Input) and focused.id and focused.id.startswith("color-"):
+            # Remove selection from all inputs
+            for input_widget in self.color_inputs.values():
+                input_widget.remove_class("selected")
+            
+            # Add selection to focused input
+            focused.add_class("selected")
+            self.last_focused_color_input = focused.id[6:]  # Remove "color-" prefix
     
     @on(Input.Changed)
     def on_color_input_changed(self, event: Input.Changed) -> None:
@@ -779,9 +965,18 @@ class ThemeEditorView(Container):
                     self._update_color_swatch(self.last_focused_color_input, color)
                     self.current_theme_data[self.last_focused_color_input] = color
                     self.is_modified = True
+                    
+                    # Keep the input selected
+                    self.color_inputs[self.last_focused_color_input].add_class("selected")
                 else:
-                    # If no input was focused, show a notification
-                    self.app.notify("Click on a color input field first, then select a preset color", severity="information")
+                    # If no input was focused, default to primary
+                    self.last_focused_color_input = "primary"
+                    self.color_inputs["primary"].value = color
+                    self._update_color_swatch("primary", color)
+                    self.current_theme_data["primary"] = color
+                    self.is_modified = True
+                    self.color_inputs["primary"].add_class("selected")
+                    self.app.notify("Applied to primary color. Click a color input to select it.", severity="information")
     
     @on(Button.Pressed, "#export-theme")
     def on_export_theme(self) -> None:
