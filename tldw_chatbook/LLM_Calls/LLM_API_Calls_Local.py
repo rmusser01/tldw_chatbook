@@ -184,7 +184,7 @@ def _chat_with_openai_compatible_local_server(
     else:
         # If it doesn't end with the standard path, append it.
         # This handles cases where the config provides just the server root.
-        full_api_url = base_url + "/" + chat_completions_path
+        full_api_url = base_url.rstrip('/') + "/" + chat_completions_path
 
     logging.debug(
         f"{provider_name}: Posting to {full_api_url}. Payload keys: {list(payload.keys())}")
