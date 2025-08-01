@@ -423,7 +423,7 @@ class TestLearningPaths:
         
         # Verify parent-child relationship
         with db_instance.transaction() as cursor:
-        cursor.execute(
+            cursor.execute(
             "SELECT parent_id FROM topics WHERE id = ?",
             (child_id,)
         )
@@ -443,7 +443,7 @@ class TestLearningPaths:
         
         # Verify update
         with db_instance.transaction() as cursor:
-        cursor.execute(
+            cursor.execute(
             "SELECT progress, status FROM topics WHERE id = ?",
             (topic_id,)
         )
@@ -505,7 +505,7 @@ class TestMindmaps:
         
         # Verify node was created
         with db_instance.transaction() as cursor:
-        cursor.execute(
+            cursor.execute(
             "SELECT * FROM mindmap_nodes WHERE id = ?",
             (node_id,)
         )
@@ -539,7 +539,7 @@ class TestMindmaps:
         
         # Verify parent-child relationships
         with db_instance.transaction() as cursor:
-        cursor.execute(
+            cursor.execute(
             "SELECT COUNT(*) as count FROM mindmap_nodes WHERE parent_id = ?",
             (root_id,)
         )
@@ -824,7 +824,7 @@ class TestStudyProperties:
         
         # Verify
         with mem_db_instance.transaction() as cursor:
-        cursor.execute("SELECT progress FROM topics WHERE id = ?", (topic_id,))
+            cursor.execute("SELECT progress FROM topics WHERE id = ?", (topic_id,))
         result = cursor.fetchone()
         assert result["progress"] == pytest.approx(progress)
 
@@ -836,59 +836,59 @@ class TestSchemaMigration:
         """Test that all study tables are created after migration."""
         with db_instance.transaction() as cursor:
         
-        # Check that all tables exist
-        tables = [
-            "learning_paths", "topics", "decks", "flashcards",
-            "review_history", "mindmaps", "mindmap_nodes", "study_sessions"
-        ]
+            # Check that all tables exist
+            tables = [
+                "learning_paths", "topics", "decks", "flashcards",
+                "review_history", "mindmaps", "mindmap_nodes", "study_sessions"
+            ]
         
-        for table in tables:
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (table,)
-            )
-            result = cursor.fetchone()
-            assert result is not None, f"Table {table} should exist"
+            for table in tables:
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,)
+                )
+                result = cursor.fetchone()
+                assert result is not None, f"Table {table} should exist"
     
     def test_migration_creates_fts_tables(self, db_instance):
         """Test that FTS tables are created."""
         with db_instance.transaction() as cursor:
         
-        fts_tables = ["topics_fts", "flashcards_fts", "mindmap_nodes_fts"]
-        
-        for table in fts_tables:
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (table,)
-            )
-            result = cursor.fetchone()
-            assert result is not None, f"FTS table {table} should exist"
+            fts_tables = ["topics_fts", "flashcards_fts", "mindmap_nodes_fts"]
+
+            for table in fts_tables:
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,)
+                )
+                result = cursor.fetchone()
+                assert result is not None, f"FTS table {table} should exist"
     
     def test_migration_creates_triggers(self, db_instance):
         """Test that FTS triggers are created."""
         with db_instance.transaction() as cursor:
         
-        # Check for some key triggers
-        triggers = [
-            "topics_ai", "topics_ad", "topics_au",
-            "flashcards_ai", "flashcards_ad", "flashcards_au"
-        ]
-        
-        for trigger in triggers:
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='trigger' AND name=?",
-                (trigger,)
-            )
-            result = cursor.fetchone()
-            assert result is not None, f"Trigger {trigger} should exist"
+            # Check for some key triggers
+            triggers = [
+                "topics_ai", "topics_ad", "topics_au",
+                "flashcards_ai", "flashcards_ad", "flashcards_au"
+            ]
+
+            for trigger in triggers:
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='trigger' AND name=?",
+                    (trigger,)
+                )
+                result = cursor.fetchone()
+                assert result is not None, f"Trigger {trigger} should exist"
     
     def test_schema_version_updated(self, db_instance):
         """Test that schema version is correctly updated to 11."""
         with db_instance.transaction() as cursor:
         
-        cursor.execute(
-            "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"
-        )
-        result = cursor.fetchone()
-        assert result is not None
-        assert result["version"] == 11
+            cursor.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"
+            )
+            result = cursor.fetchone()
+            assert result is not None
+            assert result["version"] == 11
