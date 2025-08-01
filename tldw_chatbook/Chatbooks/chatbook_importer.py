@@ -25,8 +25,8 @@ from .conflict_resolver import ConflictResolver, ConflictResolution
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
-from ..DB.RAG_Indexing_DB import RAGDatabase
-from ..DB.Evals_DB import EvalsDatabase
+from ..DB.RAG_Indexing_DB import RAGIndexingDB
+from ..DB.Evals_DB import EvalsDB
 
 
 class ImportStatus:
