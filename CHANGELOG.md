@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stuff
 
 ### Added
+- Subscriptions
+- Chatbooks
+
+### Fixed
+- Stuff
+
+
+## [0.1.5.0] - 2025-07-27
+### Fixed
+- Stuff
+
+### Added
 - Other stuff
 - Other Stuff:
   - Theme editor
@@ -23,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Model download via huggingface interface
   - Model view + delete of models downloaded via HF
   - Logits + Logprobs in evals
-  - 
 
 
 ## [0.1.4.1] - 2025-07-27

@@ -408,7 +408,7 @@ class ChatbookCreator:
         for prompt_id in prompt_ids:
             try:
                 # Get prompt details
-                prompt = db.get_prompt_by_id(prompt_id)
+                prompt = db.get_prompt_by_id(int(prompt_id))
                 if not prompt:
                     continue
                 
@@ -416,10 +416,10 @@ class ChatbookCreator:
                 prompt_data = {
                     "id": prompt['id'],
                     "name": prompt['name'],
-                    "description": prompt.get('description', ''),
-                    "content": prompt['content'],
-                    "created_at": prompt['created_at'],
-                    "updated_at": prompt['updated_at']
+                    "description": prompt.get('details', ''),
+                    "content": prompt.get('system_prompt', '') or prompt.get('user_prompt', ''),
+                    "created_at": prompt.get('created_at', datetime.now().isoformat()),
+                    "updated_at": prompt.get('updated_at', datetime.now().isoformat())
                 }
                 
                 # Write prompt file

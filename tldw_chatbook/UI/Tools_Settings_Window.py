@@ -4324,11 +4324,128 @@ Thank you for using tldw-chatbook! 🎉
     # Chatbook methods
     async def _create_chatbook(self) -> None:
         """Create a new chatbook."""
-        self.app_instance.notify("Chatbook creation feature coming soon!", severity="information")
+        from .ChatbookCreationWindow import ChatbookCreationWindow
+        
+        try:
+            # Show chatbook creation window
+            result = await self.app_instance.push_screen(
+                ChatbookCreationWindow(self.app_instance),
+                wait_for_dismiss=True
+            )
+            
+            if result:
+                self.app_instance.notify(f"Chatbook saved to: {result}", severity="success")
+                
+        except Exception as e:
+            logger.error(f"Error showing chatbook creation window: {e}")
+            self.app_instance.notify(f"Error creating chatbook: {str(e)}", severity="error")
     
     async def _import_chatbook(self) -> None:
         """Import a chatbook."""
-        self.app_instance.notify("Chatbook import feature coming soon!", severity="information")
+        from ..Widgets.file_picker_dialog import FilePickerDialog
+        from ..Chatbooks.chatbook_importer import ChatbookImporter
+        from ..Chatbooks.conflict_resolver import ConflictResolution
+        
+        try:
+            # Show file picker to select chatbook
+            chatbooks_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chatbooks"
+            chatbooks_dir.mkdir(parents=True, exist_ok=True)
+            
+            file_path = await self.app_instance.push_screen(
+                FilePickerDialog(
+                    title="Select Chatbook to Import",
+                    start_path=str(chatbooks_dir),
+                    file_filter="*.zip",
+                    allow_create_new=False
+                ),
+                wait_for_dismiss=True
+            )
+            
+            if file_path:
+                # Get database paths from config
+                db_config = self.config_data.get("database", {})
+                db_paths = {
+                    "chachanotes": db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"),
+                    "prompts": db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"),
+                    "media": db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"),
+                    "evals": db_config.get("evals_db_path", "~/.local/share/tldw_cli/tldw_evals_db.db"),
+                    "rag": db_config.get("rag_db_path", "~/.local/share/tldw_cli/tldw_rag_db.db"),
+                    "subscriptions": db_config.get("subscriptions_db_path", "~/.local/share/tldw_cli/tldw_subscriptions_db.db")
+                }
+                
+                # Initialize importer
+                importer = ChatbookImporter(db_paths)
+                
+                # Preview chatbook first
+                self.app_instance.notify("Loading chatbook preview...", severity="information")
+                manifest, error = importer.preview_chatbook(Path(file_path))
+                
+                if error:
+                    self.app_instance.notify(error, severity="error")
+                    return
+                
+                if manifest:
+                    # Show import confirmation
+                    # For now, just import with default settings
+                    self.app_instance.notify(f"Importing chatbook '{manifest.name}'...", severity="information")
+                    
+                    # Run import in worker
+                    self.run_worker(
+                        self._import_chatbook_worker,
+                        file_path,
+                        db_paths,
+                        name="import_chatbook_worker"
+                    )
+                    
+        except Exception as e:
+            logger.error(f"Error importing chatbook: {e}")
+            self.app_instance.notify(f"Error importing chatbook: {str(e)}", severity="error")
+    
+    @work(thread=True)
+    def _import_chatbook_worker(self, file_path: str, db_paths: dict) -> None:
+        """Worker to import chatbook in background."""
+        try:
+            from ..Chatbooks.chatbook_importer import ChatbookImporter
+            from ..Chatbooks.conflict_resolver import ConflictResolution
+            
+            importer = ChatbookImporter(db_paths)
+            
+            # Import with default settings
+            success, status = importer.import_chatbook(
+                chatbook_path=Path(file_path),
+                conflict_resolution=ConflictResolution.RENAME,
+                prefix_imported=True,
+                import_media=True,
+                import_embeddings=False
+            )
+            
+            if success:
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    f"Successfully imported {status.successful_items} items "
+                    f"({status.skipped_items} skipped, {status.failed_items} failed)",
+                    severity="success"
+                )
+            else:
+                error_msg = "Import failed"
+                if status.errors:
+                    error_msg += f": {status.errors[0]}"
+                self.call_from_thread(
+                    self.app_instance.notify,
+                    error_msg,
+                    severity="error"
+                )
+                
+            # Log any warnings
+            for warning in status.warnings:
+                logger.warning(f"Import warning: {warning}")
+                
+        except Exception as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                f"Error during import: {str(e)}",
+                severity="error"
+            )
     
     async def on_mount(self) -> None:
         """Called when the widget is mounted. Set initial view."""
