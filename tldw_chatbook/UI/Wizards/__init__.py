@@ -1,31 +1,38 @@
-# __init__.py
-# Description: Wizard components module
-#
-"""
-Wizard Components
------------------
+# tldw_chatbook/UI/Wizards/__init__.py
+# Description: Wizard components for guided user interfaces
 
-Multi-step wizard framework for creating guided workflows.
-"""
-
-from .BaseWizard import (
-    BaseWizard,
-    WizardStep,
-    SimpleWizardStep,
-    WizardStepConfig,
-    WizardDirection,
-    StepProgress
+from .BaseWizard import WizardContainer, WizardStep, WizardNavigation, WizardProgress
+from .EmbeddingsWizard import (
+    EmbeddingsCreationWizard, 
+    EmbeddingsWizardScreen,
+    SimpleEmbeddingsWizard,
+    EmbeddingsCreatedMessage,
+    EmbeddingsCancelledMessage
 )
-from .ChatbookCreationWizard import ChatbookCreationWizard
-from .ChatbookImportWizard import ChatbookImportWizard
+from .EmbeddingSteps import (
+    ContentSelectionStep,
+    SpecificContentStep,
+    QuickSettingsStep,
+    ProcessingStep
+)
 
 __all__ = [
-    'BaseWizard',
-    'WizardStep',
-    'SimpleWizardStep',
-    'WizardStepConfig',
-    'WizardDirection',
-    'StepProgress',
-    'ChatbookCreationWizard',
-    'ChatbookImportWizard'
+    # Base wizard components
+    "WizardContainer",
+    "WizardStep", 
+    "WizardNavigation",
+    "WizardProgress",
+    
+    # Embeddings wizard
+    "EmbeddingsCreationWizard",
+    "EmbeddingsWizardScreen",
+    "SimpleEmbeddingsWizard",
+    "EmbeddingsCreatedMessage",
+    "EmbeddingsCancelledMessage",
+    
+    # Embedding steps
+    "ContentSelectionStep",
+    "SpecificContentStep",
+    "QuickSettingsStep",
+    "ProcessingStep"
 ]

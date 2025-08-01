@@ -10,6 +10,9 @@ import asyncio
 import json
 import zipfile
 import io
+import os
+import subprocess
+from pathlib import Path
 from datetime import datetime
 
 from loguru import logger
@@ -247,6 +250,16 @@ class CodeRepoCopyPasteWindow(ModalScreen):
     .preview-panel {
         width: 60%;
         padding: 1;
+        layout: vertical;
+    }
+    
+    .aggregated-text-container {
+        height: 50%;
+        margin-bottom: 1;
+    }
+    
+    .file-preview-container {
+        height: 50%;
     }
     
     .preview-header {
@@ -281,10 +294,6 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         background: $panel;
         padding: 1 2;
         border-top: solid $background-lighten-1;
-    }
-    
-    .action-bar.hidden {
-        display: none;
     }
     
     .action-buttons {
@@ -348,6 +357,8 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         self.tree_data: Optional[List[Dict]] = None
         self.has_loaded_repo = False
         self.selected_files: set = set()
+        self.compiled_text = reactive("")  # Store the compiled text
+        self.is_local_repo = False  # Track if it's a local repo
         
     def compose(self) -> ComposeResult:
         """Compose the UI."""
@@ -359,7 +370,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                 # Repository input
                 with Container(classes="repo-input-container"):
                     yield Input(
-                        placeholder="Enter GitHub URL (e.g., https://github.com/user/repo)",
+                        placeholder="Enter GitHub URL or local Git repo path",
                         id="repo-url-input",
                         classes="repo-url-input"
                     )
@@ -447,26 +458,40 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                                 on_node_selected=self.handle_node_selected
                             )
                     
-                    # Preview panel
+                    # Right panel with aggregated text and preview
                     with Container(classes="preview-panel"):
-                        with Container(classes="preview-header"):
-                            yield Static("File Preview", id="preview-title", classes="preview-title")
-                        with ScrollableContainer(classes="preview-content"):
-                            yield TextArea(
-                                "Select a file to preview its contents",
-                                id="file-preview",
-                                read_only=True,
-                                language="python"
-                            )
+                        # Aggregated text display (top half)
+                        with Container(classes="aggregated-text-container"):
+                            with Container(classes="preview-header"):
+                                yield Static("Generated Compilation", id="compilation-title", classes="preview-title")
+                            with ScrollableContainer(classes="preview-content"):
+                                yield TextArea(
+                                    "Click 'Generate Compilation' to aggregate selected files",
+                                    id="aggregated-text",
+                                    read_only=True,
+                                    language="markdown"
+                                )
+                        
+                        # File preview (bottom half)
+                        with Container(classes="file-preview-container"):
+                            with Container(classes="preview-header"):
+                                yield Static("File Preview", id="preview-title", classes="preview-title")
+                            with ScrollableContainer(classes="preview-content"):
+                                yield TextArea(
+                                    "Select a file to preview its contents",
+                                    id="file-preview",
+                                    read_only=True,
+                                    language="python"
+                                )
             
-            # Action bar (hidden until files selected)
-            with Container(id="action-bar", classes="action-bar hidden"):
+            # Action bar
+            with Container(id="action-bar", classes="action-bar"):
                 with Container(classes="action-buttons"):
                     yield Static(classes="action-spacer")
-                    yield Button("Cancel", id="cancel-btn", variant="error", classes="action-button")
+                    yield Button("Reset", id="reset-btn", classes="action-button")
                     yield Button("Export ZIP", id="export-zip-btn", classes="action-button")
                     yield Button("Copy to Clipboard", id="copy-clipboard-btn", classes="action-button")
-                    yield Button("Create Embeddings", id="create-embeddings-btn", variant="primary", classes="action-button")
+                    yield Button("Generate Compilation", id="generate-compilation-btn", variant="primary", classes="action-button")
                     yield Static(classes="action-spacer")
             
             # Loading overlay
@@ -505,9 +530,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         # Show main content
         self.query_one("#main-content").remove_class("hidden")
         
-        # Show action bar if files are selected
-        if self.selected_files:
-            self.query_one("#action-bar").remove_class("hidden")
+        # Action bar is always visible
         
         self.has_loaded_repo = True
     
@@ -520,39 +543,159 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         self.query_one("#repo-controls-container").add_class("hidden")
         self.query_one("#filter-bar").add_class("hidden")
         self.query_one("#main-content").add_class("hidden")
-        self.query_one("#action-bar").add_class("hidden")
+        # Action bar is always visible
         
         self.has_loaded_repo = False
     
+    async def load_local_repository(self, repo_path: str) -> None:
+        """Load a local Git repository."""
+        try:
+            repo_path = Path(repo_path).resolve()
+            
+            if not repo_path.exists():
+                raise Exception(f"Path does not exist: {repo_path}")
+            
+            if not repo_path.is_dir():
+                raise Exception(f"Path is not a directory: {repo_path}")
+            
+            # Check if it's a git repository
+            git_dir = repo_path / ".git"
+            if not git_dir.exists():
+                raise Exception(f"Not a Git repository: {repo_path}")
+            
+            self.current_repo = {"path": str(repo_path), "type": "local"}
+            
+            # Get branch info
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["git", "branch", "--all"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True
+                )
+                
+                branches = []
+                current_branch = None
+                for line in result.stdout.strip().split("\n"):
+                    line = line.strip()
+                    if line.startswith("*"):
+                        current_branch = line[2:]
+                        branches.append(current_branch)
+                    elif line and not line.startswith("remotes/"):
+                        branches.append(line)
+                
+                branch_selector = self.query_one("#branch-selector", Select)
+                if branches:
+                    branch_selector.set_options([(b, b) for b in branches])
+                    if current_branch:
+                        branch_selector.value = current_branch
+                else:
+                    branch_selector.set_options([("main", "main")])
+            except Exception as e:
+                logger.warning(f"Could not get branch info: {e}")
+                branch_selector = self.query_one("#branch-selector", Select)
+                branch_selector.set_options([("main", "main")])
+            
+            # Load file tree
+            await self.load_local_tree(repo_path)
+            
+        except Exception as e:
+            raise Exception(f"Failed to load local repository: {e}")
+    
+    async def load_local_tree(self, repo_path: Path) -> None:
+        """Load file tree from local repository."""
+        try:
+            # Build tree structure from local files
+            tree_data = []
+            
+            # Walk through the directory
+            for root, dirs, files in os.walk(repo_path):
+                # Skip hidden directories and common ignore patterns
+                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in [
+                    'node_modules', '__pycache__', 'venv', '.venv', 'env', '.env',
+                    'build', 'dist', 'target', 'out'
+                ]]
+                
+                rel_root = Path(root).relative_to(repo_path)
+                
+                # Add directories
+                for dir_name in sorted(dirs):
+                    rel_path = str(rel_root / dir_name) if str(rel_root) != '.' else dir_name
+                    tree_data.append({
+                        "path": rel_path,
+                        "type": "tree",
+                        "name": dir_name
+                    })
+                
+                # Add files
+                for file_name in sorted(files):
+                    # Skip hidden files and common ignore patterns
+                    if file_name.startswith('.') or file_name.endswith(('.pyc', '.pyo')):
+                        continue
+                    
+                    rel_path = str(rel_root / file_name) if str(rel_root) != '.' else file_name
+                    file_path = repo_path / rel_path
+                    
+                    tree_data.append({
+                        "path": rel_path,
+                        "type": "blob",
+                        "name": file_name,
+                        "size": file_path.stat().st_size
+                    })
+            
+            # Build hierarchical tree
+            self.tree_data = self.api_client.build_tree_hierarchy(tree_data)
+            
+            # Load into tree view
+            tree_view = self.query_one("#repo-tree", TreeView)
+            await tree_view.load_tree(self.tree_data)
+            
+            # Show the loaded state UI
+            self._show_loaded_state()
+            
+            self.notify(f"Loaded {len(tree_data)} items from local repository", severity="information")
+            
+        except Exception as e:
+            raise Exception(f"Failed to load local tree: {e}")
+    
     @on(Button.Pressed, "#load-repo-btn")
     async def load_repository(self, event: Button.Pressed) -> None:
-        """Load repository from URL."""
+        """Load repository from URL or local path."""
         url_input = self.query_one("#repo-url-input", Input)
-        repo_url = url_input.value.strip()
+        repo_input = url_input.value.strip()
         
-        if not repo_url:
-            self.notify("Please enter a GitHub repository URL", severity="error")
+        if not repo_input:
+            self.notify("Please enter a GitHub repository URL or local path", severity="error")
             return
         
         self.loading_message = "Loading repository..."
         self.is_loading = True
         
         try:
-            # Parse repository URL
-            owner, repo = self.api_client.parse_github_url(repo_url)
-            self.current_repo = {"owner": owner, "repo": repo}
-            
-            # Get repository info
-            repo_info = await self.api_client.get_repository_info(owner, repo)
-            logger.info(f"Loaded repository: {owner}/{repo}")
-            
-            # Get branches
-            branches = await self.api_client.get_branches(owner, repo)
-            branch_selector = self.query_one("#branch-selector", Select)
-            branch_selector.set_options([(b, b) for b in branches])
-            
-            # Load repository tree
-            await self.load_tree()
+            # Check if it's a local path
+            if os.path.exists(repo_input) and os.path.isdir(repo_input):
+                # Handle local repository
+                self.is_local_repo = True
+                await self.load_local_repository(repo_input)
+            else:
+                # Handle GitHub repository
+                self.is_local_repo = False
+                # Parse repository URL
+                owner, repo = self.api_client.parse_github_url(repo_input)
+                self.current_repo = {"owner": owner, "repo": repo}
+                
+                # Get repository info
+                repo_info = await self.api_client.get_repository_info(owner, repo)
+                logger.info(f"Loaded repository: {owner}/{repo}")
+                
+                # Get branches
+                branches = await self.api_client.get_branches(owner, repo)
+                branch_selector = self.query_one("#branch-selector", Select)
+                branch_selector.set_options([(b, b) for b in branches])
+                
+                # Load repository tree
+                await self.load_tree()
             
         except GitHubAPIError as e:
             self.notify(str(e), severity="error")
@@ -618,7 +761,12 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         """Handle branch selection change."""
         if self.current_repo and not self.is_loading:
             self.is_loading = True
-            await self.load_tree()
+            if self.is_local_repo:
+                # For local repos, we might want to checkout the branch
+                # For now, just reload the tree
+                await self.load_local_tree(Path(self.current_repo["path"]))
+            else:
+                await self.load_tree()
             self.is_loading = False
     
     def handle_selection_change(self, path: str, selected: bool) -> None:
@@ -644,12 +792,7 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         else:
             self.selected_files.discard(path)
         
-        # Show/hide action bar based on selection
-        action_bar = self.query_one("#action-bar")
-        if self.selected_files:
-            action_bar.remove_class("hidden")
-        else:
-            action_bar.add_class("hidden")
+        # Action bar is always visible
     
     async def handle_node_expanded(self, path: str, expanded: bool) -> None:
         """Handle node expansion - load children if needed."""
@@ -683,13 +826,20 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         self.is_loading = True
         
         try:
-            branch = self.query_one("#branch-selector", Select).value
-            content = await self.api_client.get_file_content(
-                self.current_repo["owner"],
-                self.current_repo["repo"],
-                path,
-                branch
-            )
+            if self.is_local_repo:
+                # Load from local file
+                full_path = Path(self.current_repo["path"]) / path
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            else:
+                # Load from GitHub
+                branch = self.query_one("#branch-selector", Select).value
+                content = await self.api_client.get_file_content(
+                    self.current_repo["owner"],
+                    self.current_repo["repo"],
+                    path,
+                    branch
+                )
             
             # Display in preview
             preview_area = self.query_one("#file-preview", TextArea)
@@ -789,7 +939,31 @@ class CodeRepoCopyPasteWindow(ModalScreen):
     
     @on(Button.Pressed, "#copy-clipboard-btn")
     async def copy_to_clipboard(self, event: Button.Pressed) -> None:
-        """Copy selected files to clipboard."""
+        """Copy compiled text to clipboard."""
+        aggregated_text = self.query_one("#aggregated-text", TextArea).text
+        
+        if not aggregated_text or aggregated_text == "Click 'Generate Compilation' to aggregate selected files":
+            self.notify("No compilation to copy. Generate compilation first.", severity="warning")
+            return
+        
+        try:
+            # Copy to clipboard (this would need platform-specific implementation)
+            # For now, we'll dismiss with the content
+            self.notify("Copied compilation to clipboard", severity="success")
+            self.dismiss((self.selected_files, aggregated_text))
+            
+        except Exception as e:
+            self.notify(f"Failed to copy to clipboard: {e}", severity="error")
+            logger.error(f"Failed to copy to clipboard: {e}")
+    
+    @on(Button.Pressed, "#export-zip-btn")
+    async def export_to_zip(self, event: Button.Pressed) -> None:
+        """Export selected files to ZIP."""
+        self.notify("ZIP export functionality coming soon!", severity="info")
+    
+    @on(Button.Pressed, "#generate-compilation-btn")
+    async def generate_compilation(self, event: Button.Pressed) -> None:
+        """Generate compilation from selected files."""
         tree_view = self.query_one("#repo-tree", TreeView)
         selected_files = tree_view.get_selected_files()
         
@@ -797,58 +971,82 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             self.notify("No files selected", severity="warning")
             return
         
-        if not self.current_repo:
+        if not self.current_repo and not self.is_local_repo:
             return
         
-        self.loading_message = "Fetching file contents..."
+        self.loading_message = "Generating compilation..."
         self.is_loading = True
         
         try:
             # Fetch content for all selected files
             contents = []
-            branch = self.query_one("#branch-selector", Select).value
             
-            for file_path in selected_files:
-                content = await self.api_client.get_file_content(
-                    self.current_repo["owner"],
-                    self.current_repo["repo"],
-                    file_path,
-                    branch
-                )
+            if self.is_local_repo:
+                # Load from local files
+                for file_path in selected_files:
+                    try:
+                        full_path = Path(self.current_repo["path"]) / file_path
+                        with open(full_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        # Format with file markers
+                        contents.append(f"```{file_path}\n{content}\n```")
+                    except Exception as e:
+                        logger.error(f"Failed to read file {file_path}: {e}")
+                        contents.append(f"```{file_path}\n# Error reading file: {e}\n```")
+            else:
+                # Load from GitHub
+                branch = self.query_one("#branch-selector", Select).value
                 
-                # Format with file markers
-                contents.append(f"```{file_path}\n{content}\n```")
+                for file_path in selected_files:
+                    content = await self.api_client.get_file_content(
+                        self.current_repo["owner"],
+                        self.current_repo["repo"],
+                        file_path,
+                        branch
+                    )
+                    
+                    # Format with file markers
+                    contents.append(f"```{file_path}\n{content}\n```")
             
             # Join all contents
             full_content = "\n\n".join(contents)
+            self.compiled_text = full_content
             
-            # Copy to clipboard (this would need platform-specific implementation)
-            # For now, we'll just show it in a message
-            self.notify(f"Copied {len(selected_files)} files to clipboard", severity="success")
+            # Update the aggregated text display
+            aggregated_text_area = self.query_one("#aggregated-text", TextArea)
+            aggregated_text_area.text = full_content
             
-            # Dismiss the modal and pass the content back
-            self.dismiss((selected_files, full_content))
+            self.notify(f"Generated compilation with {len(selected_files)} files", severity="success")
             
         except Exception as e:
-            self.notify(f"Failed to copy files: {e}", severity="error")
-            logger.error(f"Failed to copy files: {e}")
+            self.notify(f"Failed to generate compilation: {e}", severity="error")
+            logger.error(f"Failed to generate compilation: {e}")
         finally:
             self.is_loading = False
     
-    @on(Button.Pressed, "#export-zip-btn")
-    async def export_to_zip(self, event: Button.Pressed) -> None:
-        """Export selected files to ZIP."""
-        self.notify("ZIP export functionality coming soon!", severity="info")
-    
-    @on(Button.Pressed, "#create-embeddings-btn")
-    async def create_embeddings(self, event: Button.Pressed) -> None:
-        """Create embeddings from selected files."""
-        self.notify("Embeddings creation functionality coming soon!", severity="info")
-    
-    @on(Button.Pressed, "#cancel-btn")
-    def close_window(self) -> None:
-        """Close the window."""
-        self.dismiss(None)
+    @on(Button.Pressed, "#reset-btn")
+    def reset_selection(self) -> None:
+        """Reset all selections and compiled text."""
+        # Clear selections
+        tree_view = self.query_one("#repo-tree", TreeView)
+        tree_view.deselect_all()
+        self.selected_files.clear()
+        
+        # Clear compiled text
+        self.compiled_text = ""
+        aggregated_text_area = self.query_one("#aggregated-text", TextArea)
+        aggregated_text_area.text = "Click 'Generate Compilation' to aggregate selected files"
+        
+        # Update selection stats
+        count_label = self.query_one("#selection-count", Static)
+        size_label = self.query_one("#selection-size", Static)
+        tokens_label = self.query_one("#selection-tokens", Static)
+        
+        count_label.update("0 files selected")
+        size_label.update("0 KB")
+        tokens_label.update("~0 tokens")
+        
+        self.notify("Reset selection and compilation", severity="info")
     
     def action_close_window(self) -> None:
         """Close window action."""

@@ -263,13 +263,20 @@ class TreeView(VerticalScroll):
         self,
         on_selection_change: Optional[Callable[[str, bool], None]] = None,
         on_node_expanded: Optional[Callable[[str, bool], None]] = None,
+        on_node_selected: Optional[Callable] = None,
         **kwargs
     ):
+        # Remove custom callbacks from kwargs before passing to parent
+        kwargs.pop('on_selection_change', None)
+        kwargs.pop('on_node_expanded', None)
+        kwargs.pop('on_node_selected', None)
+        
         super().__init__(**kwargs)
         self.nodes: Dict[str, TreeNode] = {}
         self.selection: Set[str] = set()
         self.on_selection_change = on_selection_change
         self.on_node_expanded = on_node_expanded
+        self.on_node_selected = on_node_selected
         self._tree_data: Optional[List[Dict]] = None
         
     def compose(self) -> ComposeResult:

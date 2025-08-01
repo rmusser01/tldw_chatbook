@@ -1,467 +1,391 @@
-# BaseWizard.py
-# Description: Base class for multi-step wizard screens
+# tldw_chatbook/UI/Wizards/BaseWizard.py
+# Description: Base wizard framework for creating step-by-step guided interfaces
 #
-"""
-Base Wizard Framework
---------------------
+# Imports
+from __future__ import annotations
+from typing import TYPE_CHECKING, Optional, List, Dict, Any, Callable
+from abc import ABC, abstractmethod
 
-Provides abstract base classes for creating multi-step wizards with:
-- Step management and navigation
-- Progress tracking
-- State persistence
-- Validation between steps
-"""
-
-from abc import abstractmethod
-from typing import Dict, List, Optional, Any, Callable, TYPE_CHECKING, Protocol
-from dataclasses import dataclass, field
-from enum import Enum
-
-from textual.app import ComposeResult
-from textual.screen import ModalScreen
-from textual.containers import Container, Horizontal, VerticalScroll
-from textual.widgets import Static, Button, ProgressBar
-from textual.reactive import reactive
-from textual.message import Message
+# 3rd-Party Imports
 from loguru import logger
+from textual import on
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, Vertical
+from textual.reactive import reactive
+from textual.widgets import Static, Button, Label
+from textual.binding import Binding
+from textual.css.query import NoMatches
+
+# Configure logger
+logger = logger.bind(module="BaseWizard")
 
 if TYPE_CHECKING:
-    from ...app import TldwCli
+    from textual.app import App
 
-
-class WizardDirection(Enum):
-    """Direction of wizard navigation."""
-    FORWARD = "forward"
-    BACKWARD = "backward"
-
-
-@dataclass
-class WizardStepConfig:
-    """Configuration for a wizard step."""
-    id: str
-    title: str
-    description: str
-    can_skip: bool = False
-    validator: Optional[Callable[[], tuple[bool, Optional[str]]]] = None
-
-
-class WizardStepComplete(Message):
-    """Message sent when a wizard step is completed."""
-    def __init__(self, step_id: str, data: Dict[str, Any]) -> None:
-        super().__init__()
-        self.step_id = step_id
-        self.data = data
-
+########################################################################################################################
+#
+# Base Classes
+#
+########################################################################################################################
 
 class WizardStep(Container):
     """Base class for individual wizard steps."""
     
-    def __init__(self, wizard: 'BaseWizard', config: WizardStepConfig, **kwargs):
-        """Initialize wizard step."""
-        super().__init__(**kwargs)
-        self.wizard = wizard
-        self.config = config
-        self._is_active = False
+    # Step metadata
+    step_number = reactive(0)
+    step_title = reactive("")
+    step_description = reactive("")
+    
+    # Step state
+    is_active = reactive(False)
+    is_complete = reactive(False)
+    is_valid = reactive(True)
+    
+    # Validation
+    validation_errors: reactive[List[str]] = reactive([])
+    
+    def __init__(
+        self,
+        step_number: int,
+        step_title: str,
+        step_description: str = "",
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.step_number = step_number
+        self.step_title = step_title
+        self.step_description = step_description
+        self.add_class("wizard-step")
         
     @abstractmethod
     def compose(self) -> ComposeResult:
-        """Compose the step UI."""
+        """Compose the step's UI elements."""
         pass
-    
+        
     @abstractmethod
-    def get_step_data(self) -> Dict[str, Any]:
-        """Get the data entered in this step."""
-        pass
-    
-    def validate(self) -> tuple[bool, Optional[str]]:
+    def validate(self) -> tuple[bool, List[str]]:
         """
-        Validate the step data.
+        Validate the step's data.
         
         Returns:
-            Tuple of (is_valid, error_message)
+            Tuple of (is_valid, error_messages)
         """
-        if self.config.validator:
-            return self.config.validator()
-        return True, None
+        pass
+        
+    @abstractmethod
+    def get_data(self) -> Dict[str, Any]:
+        """Get the step's collected data."""
+        pass
+        
+    def on_show(self) -> None:
+        """Called when the step becomes active."""
+        self.is_active = True
+        self.add_class("active")
+        logger.debug(f"Step {self.step_number} '{self.step_title}' activated")
+        
+    def on_hide(self) -> None:
+        """Called when the step becomes inactive."""
+        self.is_active = False
+        self.remove_class("active")
+        logger.debug(f"Step {self.step_number} '{self.step_title}' deactivated")
+        
+    def reset(self) -> None:
+        """Reset the step to initial state."""
+        self.is_complete = False
+        self.is_valid = True
+        self.validation_errors = []
+
+
+class WizardNavigation(Horizontal):
+    """Navigation controls for the wizard."""
     
-    async def on_enter(self) -> None:
-        """Called when entering this step."""
-        self._is_active = True
+    can_go_back = reactive(True)
+    can_go_forward = reactive(False)
+    current_step = reactive(1)
+    total_steps = reactive(1)
+    
+    def compose(self) -> ComposeResult:
+        """Compose navigation elements."""
+        yield Button("← Back", id="wizard-back", variant="default")
+        yield Static("", id="wizard-progress", classes="wizard-progress-text")
+        yield Button("Next →", id="wizard-next", variant="primary")
         
-    async def on_leave(self) -> None:
-        """Called when leaving this step."""
-        self._is_active = False
+    def on_mount(self) -> None:
+        """Update initial state."""
+        self.update_progress_text()
+        self.update_button_states()
         
-    def can_proceed(self) -> bool:
-        """Check if we can proceed to the next step."""
-        is_valid, _ = self.validate()
-        return is_valid or self.config.can_skip
+    def watch_current_step(self) -> None:
+        """React to step changes."""
+        self.update_progress_text()
+        self.update_button_states()
+        
+    def watch_total_steps(self) -> None:
+        """React to total steps changes."""
+        self.update_progress_text()
+        
+    def update_progress_text(self) -> None:
+        """Update the progress text."""
+        try:
+            progress = self.query_one("#wizard-progress", Static)
+            progress.update(f"Step {self.current_step} of {self.total_steps}")
+        except NoMatches:
+            pass
+            
+    def update_button_states(self) -> None:
+        """Update button enabled states."""
+        try:
+            back_btn = self.query_one("#wizard-back", Button)
+            next_btn = self.query_one("#wizard-next", Button)
+            
+            back_btn.disabled = not self.can_go_back or self.current_step <= 1
+            next_btn.disabled = not self.can_go_forward
+            
+            # Update next button text for last step
+            if self.current_step >= self.total_steps:
+                next_btn.label = "Finish"
+                next_btn.variant = "success"
+            else:
+                next_btn.label = "Next →"
+                next_btn.variant = "primary"
+        except NoMatches:
+            pass
 
 
-class StepProgress(Static):
+class WizardProgress(Horizontal):
     """Visual progress indicator for wizard steps."""
     
-    DEFAULT_CSS = """
-    StepProgress {
-        height: 3;
-        padding: 1 2;
-        background: $boost;
-        border-bottom: solid $background-darken-1;
-    }
+    current_step = reactive(1)
+    total_steps = reactive(1)
+    step_titles: reactive[List[str]] = reactive([])
     
-    .step-indicator {
-        layout: horizontal;
-        height: 1;
-        align: center middle;
-    }
-    
-    .step-dot {
-        width: 3;
-        height: 1;
-        text-align: center;
-        margin: 0 1;
-    }
-    
-    .step-dot.completed {
-        color: $success;
-    }
-    
-    .step-dot.current {
-        color: $primary;
-        text-style: bold;
-    }
-    
-    .step-dot.pending {
-        color: $text-muted;
-    }
-    
-    .step-connector {
-        width: 5;
-        height: 1;
-        text-align: center;
-        color: $text-muted;
-    }
-    
-    .step-label {
-        text-align: center;
-        color: $text-muted;
-        margin-top: 0;
-    }
-    """
-    
-    def __init__(self, steps: List[WizardStepConfig], current_step: int = 0, **kwargs):
-        """Initialize progress indicator."""
-        super().__init__(**kwargs)
-        self.steps = steps
-        self.current_step = current_step
-        
     def compose(self) -> ComposeResult:
-        """Compose the progress indicator."""
-        with Container(classes="step-indicator"):
-            for i, step in enumerate(self.steps):
-                if i > 0:
-                    yield Static("───", classes="step-connector")
+        """Compose progress indicators."""
+        for i in range(1, self.total_steps + 1):
+            # Step indicator
+            is_active = i == self.current_step
+            is_complete = i < self.current_step
+            
+            with Container(classes="step-indicator-container"):
+                # Step number circle
+                step_classes = "step-number"
+                if is_active:
+                    step_classes += " active"
+                elif is_complete:
+                    step_classes += " complete"
                     
-                if i < self.current_step:
-                    yield Static("●", classes="step-dot completed")
-                elif i == self.current_step:
-                    yield Static("●", classes="step-dot current")
-                else:
-                    yield Static("○", classes="step-dot pending")
-        
-        yield Static(
-            f"Step {self.current_step + 1} of {len(self.steps)}: {self.steps[self.current_step].title}",
-            classes="step-label"
-        )
-    
-    def update_step(self, step_index: int) -> None:
-        """Update the current step."""
-        self.current_step = step_index
-        self.refresh()
+                yield Static(
+                    "✓" if is_complete else str(i),
+                    classes=step_classes
+                )
+                
+                # Step title
+                if i <= len(self.step_titles):
+                    title_classes = "step-title"
+                    if is_active:
+                        title_classes += " active"
+                    elif is_complete:
+                        title_classes += " complete"
+                    yield Label(
+                        self.step_titles[i-1],
+                        classes=title_classes
+                    )
+                
+                # Connector line (except for last step)
+                if i < self.total_steps:
+                    connector_classes = "step-connector"
+                    if is_complete:
+                        connector_classes += " complete"
+                    yield Static("", classes=connector_classes)
 
 
-class BaseWizard(ModalScreen):
-    """Base class for multi-step wizards."""
+class WizardContainer(Container):
+    """Main wizard container that manages steps and navigation."""
     
-    DEFAULT_CSS = """
-    BaseWizard {
-        align: center middle;
-    }
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel wizard"),
+        Binding("ctrl+b", "back", "Previous step"),
+        Binding("ctrl+n", "next", "Next step"),
+    ]
     
-    BaseWizard > Container {
-        width: 90%;
-        height: 90%;
-        max-width: 120;
-        max-height: 50;
-        background: $surface;
-        border: thick $primary;
-    }
+    # Wizard state
+    current_step = reactive(0)
+    total_steps = reactive(0)
+    can_proceed = reactive(False)
+    is_complete = reactive(False)
     
-    .wizard-header {
-        height: auto;
-        padding: 1 2;
-        background: $boost;
-        border-bottom: solid $background-darken-1;
-    }
+    # Callbacks
+    on_complete: Optional[Callable[[Dict[str, Any]], None]] = None
+    on_cancel: Optional[Callable[[], None]] = None
     
-    .wizard-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        margin-bottom: 0;
-    }
-    
-    .wizard-subtitle {
-        text-align: center;
-        color: $text-muted;
-        margin-top: 0;
-    }
-    
-    .wizard-content {
-        height: 1fr;
-        padding: 2;
-        overflow-y: auto;
-    }
-    
-    .wizard-footer {
-        dock: bottom;
-        height: auto;
-        padding: 1 2;
-        background: $panel;
-        border-top: solid $background-darken-1;
-    }
-    
-    .wizard-buttons {
-        layout: horizontal;
-        height: auto;
-        align: center middle;
-    }
-    
-    .wizard-buttons Button {
-        margin: 0 1;
-        min-width: 16;
-    }
-    
-    .wizard-buttons .spacer {
-        width: 1fr;
-    }
-    """
-    
-    # Reactive properties
-    current_step_index = reactive(0)
-    can_go_back = reactive(False)
-    can_go_forward = reactive(True)
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
-        """Initialize wizard."""
-        super().__init__(**kwargs)
-        self.app_instance = app_instance
-        self.steps: List[WizardStep] = []
-        self.step_configs: List[WizardStepConfig] = []
-        self.wizard_data: Dict[str, Any] = {}
-        self.progress_indicator: Optional[StepProgress] = None
+    def __init__(
+        self,
+        steps: List[WizardStep],
+        title: str = "Wizard",
+        on_complete: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_cancel: Optional[Callable[[], None]] = None,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.steps = steps
+        self.title = title
+        self.on_complete = on_complete
+        self.on_cancel = on_cancel
+        self.total_steps = len(steps)
+        self.add_class("wizard-container")
         
-    @abstractmethod
-    def get_wizard_title(self) -> str:
-        """Get the wizard title."""
-        pass
-    
-    @abstractmethod
-    def get_wizard_subtitle(self) -> str:
-        """Get the wizard subtitle."""
-        pass
-    
-    @abstractmethod
-    def create_steps(self) -> List[WizardStep]:
-        """Create and return the wizard steps."""
-        pass
-    
+        # Initialize step numbers and hide all steps
+        for i, step in enumerate(steps):
+            step.step_number = i + 1
+            step.add_class("hidden")
+            
     def compose(self) -> ComposeResult:
         """Compose the wizard UI."""
-        # Create steps
-        self.steps = self.create_steps()
-        self.step_configs = [step.config for step in self.steps]
+        # Title
+        yield Label(self.title, classes="wizard-title")
         
-        with Container():
-            # Header
-            with Container(classes="wizard-header"):
-                yield Static(self.get_wizard_title(), classes="wizard-title")
-                yield Static(self.get_wizard_subtitle(), classes="wizard-subtitle")
+        # Progress indicator
+        step_titles = [step.step_title for step in self.steps]
+        yield WizardProgress(
+            current_step=self.current_step + 1,
+            total_steps=self.total_steps,
+            step_titles=step_titles,
+            classes="wizard-progress"
+        )
+        
+        # Step container
+        with Container(classes="wizard-steps-container"):
+            for step in self.steps:
+                yield step
                 
-                # Progress indicator
-                self.progress_indicator = StepProgress(self.step_configs)
-                yield self.progress_indicator
+        # Navigation
+        yield WizardNavigation(
+            current_step=self.current_step + 1,
+            total_steps=self.total_steps,
+            can_go_back=self.current_step > 0,
+            can_go_forward=self.can_proceed,
+            classes="wizard-navigation"
+        )
+        
+    def on_mount(self) -> None:
+        """Initialize wizard on mount."""
+        self.show_step(0)
+        
+    def show_step(self, step_index: int) -> None:
+        """Show a specific step."""
+        if 0 <= step_index < len(self.steps):
+            # Hide current step
+            if 0 <= self.current_step < len(self.steps):
+                current = self.steps[self.current_step]
+                current.add_class("hidden")
+                current.on_hide()
+                
+            # Show new step
+            self.current_step = step_index
+            new_step = self.steps[step_index]
+            new_step.remove_class("hidden")
+            new_step.on_show()
             
-            # Content area
-            with VerticalScroll(classes="wizard-content", id="wizard-content"):
-                # All steps are added but only current one is visible
-                for i, step in enumerate(self.steps):
-                    step.display = i == 0  # Only first step visible initially
-                    step.id = f"wizard-step-{i}"
-                    yield step
+            # Update progress
+            self.update_progress()
             
-            # Footer with navigation
-            with Container(classes="wizard-footer"):
-                with Horizontal(classes="wizard-buttons"):
-                    yield Button("← Back", id="wizard-back", variant="default")
-                    yield Button("Cancel", id="wizard-cancel", variant="default")
-                    yield Static("", classes="spacer")
-                    yield Button("Next →", id="wizard-next", variant="primary")
-    
-    async def on_mount(self) -> None:
-        """Called when wizard is mounted."""
-        await self._update_navigation_state()
-        # Enter the first step
-        if self.steps:
-            await self.steps[0].on_enter()
-    
-    def watch_current_step_index(self, old_value: int, new_value: int) -> None:
-        """Handle step changes."""
-        if self.progress_indicator:
-            self.progress_indicator.update_step(new_value)
-        
-        # Update navigation button states
-        self.can_go_back = new_value > 0
-        self.can_go_forward = new_value < len(self.steps) - 1
-        
-        # Update button labels
-        if new_value == len(self.steps) - 1:
-            next_button = self.query_one("#wizard-next", Button)
-            next_button.label = "Finish"
-            next_button.variant = "success"
-        else:
-            next_button = self.query_one("#wizard-next", Button)
-            next_button.label = "Next →"
-            next_button.variant = "primary"
-    
-    async def _update_navigation_state(self) -> None:
-        """Update navigation button states."""
-        back_button = self.query_one("#wizard-back", Button)
-        back_button.disabled = not self.can_go_back
-        
-        # Check if current step can proceed
-        current_step = self.steps[self.current_step_index]
-        next_button = self.query_one("#wizard-next", Button)
-        next_button.disabled = not current_step.can_proceed()
-    
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        button_id = event.button.id
-        
-        if button_id == "wizard-cancel":
-            self.dismiss(None)
+            # Validate step to update navigation
+            self.validate_current_step()
             
-        elif button_id == "wizard-back":
-            await self._go_to_previous_step()
-            
-        elif button_id == "wizard-next":
-            if self.current_step_index == len(self.steps) - 1:
-                # Finish wizard
-                await self._finish_wizard()
-            else:
-                await self._go_to_next_step()
-    
-    async def _go_to_previous_step(self) -> None:
-        """Navigate to previous step."""
-        if self.current_step_index > 0:
-            # Leave current step
-            current_step = self.steps[self.current_step_index]
-            await current_step.on_leave()
-            current_step.display = False
-            
-            # Go to previous step
-            self.current_step_index -= 1
-            previous_step = self.steps[self.current_step_index]
-            previous_step.display = True
-            await previous_step.on_enter()
-            
-            await self._update_navigation_state()
-    
-    async def _go_to_next_step(self) -> None:
-        """Navigate to next step."""
-        current_step = self.steps[self.current_step_index]
-        
-        # Validate current step
-        is_valid, error_msg = current_step.validate()
-        if not is_valid and not current_step.config.can_skip:
-            self.app.notify(error_msg or "Please complete this step before proceeding", severity="warning")
-            return
-        
-        # Save step data
-        step_data = current_step.get_step_data()
-        self.wizard_data[current_step.config.id] = step_data
-        
-        # Leave current step
-        await current_step.on_leave()
-        current_step.display = False
-        
-        # Go to next step
-        self.current_step_index += 1
-        next_step = self.steps[self.current_step_index]
-        next_step.display = True
-        await next_step.on_enter()
-        
-        await self._update_navigation_state()
-    
-    async def _finish_wizard(self) -> None:
-        """Complete the wizard."""
-        # Get final step data
-        final_step = self.steps[self.current_step_index]
-        is_valid, error_msg = final_step.validate()
-        
-        if not is_valid:
-            self.app.notify(error_msg or "Please complete this step", severity="warning")
-            return
-        
-        # Save final step data
-        step_data = final_step.get_step_data()
-        self.wizard_data[final_step.config.id] = step_data
-        
-        # Call the completion handler
+    def update_progress(self) -> None:
+        """Update progress indicators."""
         try:
-            result = await self.on_wizard_complete(self.wizard_data)
-            self.dismiss(result)
-        except Exception as e:
-            logger.error(f"Error completing wizard: {e}")
-            self.app.notify(f"Error: {str(e)}", severity="error")
-    
-    @abstractmethod
-    async def on_wizard_complete(self, wizard_data: Dict[str, Any]) -> Any:
-        """
-        Called when wizard is completed.
-        
-        Args:
-            wizard_data: All data collected from wizard steps
+            # Update progress bar
+            progress = self.query_one(".wizard-progress", WizardProgress)
+            progress.current_step = self.current_step + 1
             
-        Returns:
-            Result to return when dismissing the wizard
-        """
-        pass
-    
-    def refresh_current_step(self) -> None:
-        """Refresh the current step's navigation state."""
-        self.call_after_refresh(self._update_navigation_state)
-
-
-class SimpleWizardStep(WizardStep):
-    """Simple wizard step with just a container for content."""
-    
-    def __init__(self, wizard: BaseWizard, config: WizardStepConfig, **kwargs):
-        """Initialize simple step."""
-        super().__init__(wizard, config, **kwargs)
-        self._content_container: Optional[Container] = None
+            # Update navigation
+            nav = self.query_one(".wizard-navigation", WizardNavigation)
+            nav.current_step = self.current_step + 1
+            nav.can_go_back = self.current_step > 0
+            nav.can_go_forward = self.can_proceed
+        except NoMatches:
+            pass
+            
+    def validate_current_step(self) -> None:
+        """Validate the current step and update navigation."""
+        if 0 <= self.current_step < len(self.steps):
+            step = self.steps[self.current_step]
+            is_valid, errors = step.validate()
+            step.is_valid = is_valid
+            step.validation_errors = errors
+            self.can_proceed = is_valid
+            
+            # Update navigation
+            try:
+                nav = self.query_one(".wizard-navigation", WizardNavigation)
+                nav.can_go_forward = is_valid
+            except NoMatches:
+                pass
+                
+    @on(Button.Pressed, "#wizard-next")
+    def handle_next(self) -> None:
+        """Handle next button press."""
+        if self.current_step < len(self.steps) - 1:
+            # Validate current step
+            if self.can_proceed:
+                # Mark current step as complete
+                self.steps[self.current_step].is_complete = True
+                
+                # Move to next step
+                self.show_step(self.current_step + 1)
+        else:
+            # Last step - complete wizard
+            self.complete_wizard()
+            
+    @on(Button.Pressed, "#wizard-back")
+    def handle_back(self) -> None:
+        """Handle back button press."""
+        if self.current_step > 0:
+            self.show_step(self.current_step - 1)
+            
+    def action_next(self) -> None:
+        """Keyboard shortcut for next."""
+        self.handle_next()
         
-    def compose(self) -> ComposeResult:
-        """Compose step with container."""
-        self._content_container = Container(id=f"step-content-{self.config.id}")
-        yield self._content_container
-    
-    def get_step_data(self) -> Dict[str, Any]:
-        """Default implementation returns empty dict."""
-        return {}
-    
-    def mount_content(self, *widgets) -> None:
-        """Mount widgets to the content container."""
-        if self._content_container:
-            for widget in widgets:
-                self._content_container.mount(widget)
+    def action_back(self) -> None:
+        """Keyboard shortcut for back."""
+        self.handle_back()
+        
+    def action_cancel(self) -> None:
+        """Cancel the wizard."""
+        logger.info("Wizard cancelled")
+        if self.on_cancel:
+            self.on_cancel()
+            
+    def complete_wizard(self) -> None:
+        """Complete the wizard and collect all data."""
+        # Validate final step
+        if not self.can_proceed:
+            return
+            
+        # Mark as complete
+        self.is_complete = True
+        self.steps[self.current_step].is_complete = True
+        
+        # Collect all data
+        wizard_data = {}
+        for step in self.steps:
+            step_data = step.get_data()
+            wizard_data.update(step_data)
+            
+        logger.info(f"Wizard completed with data: {wizard_data}")
+        
+        # Call completion callback
+        if self.on_complete:
+            self.on_complete(wizard_data)
+            
+    def get_all_data(self) -> Dict[str, Any]:
+        """Get data from all completed steps."""
+        all_data = {}
+        for step in self.steps:
+            if step.is_complete or step.is_active:
+                all_data.update(step.get_data())
+        return all_data

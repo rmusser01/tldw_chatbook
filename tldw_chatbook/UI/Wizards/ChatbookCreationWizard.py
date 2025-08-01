@@ -228,15 +228,15 @@ class ContentSelectionStep(WizardStep):
                     
                     # Characters
                     characters = self.wizard.app_instance.db.get_all_characters()
-                for char_id, name, description in characters:
-                    content_data[ContentType.CHARACTER].append(
-                        ContentNodeData(
-                            type=ContentType.CHARACTER,
-                            id=str(char_id),
-                            title=name,
-                            subtitle=description[:50] + "..." if description and len(description) > 50 else description
+                    for char_id, name, description in characters:
+                        content_data[ContentType.CHARACTER].append(
+                            ContentNodeData(
+                                type=ContentType.CHARACTER,
+                                id=str(char_id),
+                                title=name,
+                                subtitle=description[:50] + "..." if description and len(description) > 50 else description
+                            )
                         )
-                    )
                 
                 # Prompts
                 if hasattr(self.wizard.app_instance, 'prompts_db') and self.wizard.app_instance.prompts_db:

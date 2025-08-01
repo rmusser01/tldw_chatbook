@@ -139,7 +139,7 @@ from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Evals_Window_v3 import EvalsWindow
 from .UI.Coding_Window import CodingWindow
 from .UI.STTS_Window import STTSWindow
-from .UI.Mindmap_Viewer_Window import MindmapViewerWindow
+from .UI.Study_Window import StudyWindow
 from .UI.Chatbooks_Window import ChatbooksWindow
 from .UI.Tab_Bar import TabBar
 from .UI.Tab_Dropdown import TabDropdown, TabChanged
@@ -1534,7 +1534,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
-            ("study", MindmapViewerWindow, "study-window"),
+            ("study", StudyWindow, "study-window"),
             ("chatbooks", ChatbooksWindow, "chatbooks-window"),
             # ("subscriptions", SubscriptionWindow, "subscriptions-window"),  # Temporarily disabled
         ]
@@ -1614,7 +1614,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             ("stats", StatsWindow, "stats-window"),
             ("evals", EvalsWindow, "evals-window"),
             ("stts", STTSWindow, "stts-window"),
-            ("study", MindmapViewerWindow, "study-window"),
+            ("study", StudyWindow, "study-window"),
             ("chatbooks", ChatbooksWindow, "chatbooks-window"),
         ]
         
